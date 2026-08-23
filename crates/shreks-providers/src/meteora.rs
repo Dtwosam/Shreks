@@ -39,7 +39,6 @@ struct MeteoraToken {
 struct MeteoraPool {
     address: String,
     created_at: Option<i64>,
-    current_price: Option<f64>,
     #[allow(dead_code)]
     is_blacklisted: Option<bool>,
     token_x: MeteoraToken,
@@ -106,7 +105,7 @@ pub fn parse_pool_page_json(
             quote_mint: quote.address.clone(),
             quote_name: quote.name.clone(),
             quote_symbol: quote.symbol.clone(),
-            // Meteora's pool-level current_price convention depends on pool
+            // Meteora's pool-level current-price convention depends on pool
             // orientation. Until orientation semantics are encoded explicitly,
             // do not expose it as a provider-neutral native price.
             price_native: None,
