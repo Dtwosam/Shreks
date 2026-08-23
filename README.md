@@ -63,6 +63,26 @@ Migration 1 creates:
 
 The default runtime path in `.env.example` is `data/shreks.db`. Runtime databases, WAL/SHM files, and Parquet datasets are ignored by Git.
 
+## Future outcome checkpoints
+
+Phase A9 schedules future learning checkpoints for every durable observed candidate at:
+
+- 1 minute,
+- 5 minutes,
+- 15 minutes,
+- 30 minutes,
+- 1 hour,
+- 4 hours,
+- 24 hours.
+
+Checkpoint rows are durable and idempotent. Pending checkpoints survive SQLite/process restart, repeated scheduling does not duplicate them, and a completed checkpoint keeps references to the actual baseline and checkpoint market snapshots used for its metrics.
+
+Outcome sampling runs only as part of normal full observer cycles. Realtime Pump wake-ups between cycles remain durable-write-only. Multiple overdue horizons for one candidate share one market-observation pass, and due work is bounded to at most 16 candidates per cycle while reusing the existing provider pacing. A candidate revisited only for an outcome checkpoint does not trigger mint-state/chain enrichment solely because the checkpoint is due.
+
+When sufficient point-in-time evidence exists, Shreks records return, MFE, MAE, liquidity change, 5-minute volume change, and signed 5-minute buy/sell-count changes. Metrics stay `NULL` when required values are missing or a percentage denominator is not positive. If there is no usable price-bearing snapshot at or after a due horizon, the checkpoint stays pending for a later cycle rather than being falsely completed. `rug_or_dead_pool` and `exitability` also stay `NULL` until an explicit detector or quote provides evidence; absence of a provider pair is not treated as proof.
+
+Phase A9 is observation and dataset infrastructure only. It does not enable transaction signing, transaction submission, paper execution, or live trading.
+
 ## Local setup
 
 ### Rust
