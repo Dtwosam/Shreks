@@ -5,7 +5,9 @@
 //! worth fetching; only a Pump-program instruction with a known creation
 //! discriminator is allowed to become a discovered token.
 
-use serde_json::Value;
+use std::time::Duration;
+
+use serde_json::{json, Value};
 use shreks_core::{DiscoveredToken, ProviderId, VenueId};
 
 use crate::{ProviderError, ProviderErrorKind};
@@ -20,6 +22,67 @@ pub const PUMP_CREATE_V2_DISCRIMINATOR: [u8; 8] = [214, 144, 76, 236, 95, 139, 4
 pub struct PumpCreationSignal {
     pub signature: String,
     pub slot: u64,
+}
+
+/// Build the standard Solana `logsSubscribe` request used for Pump discovery.
+/// The `mentions` filter intentionally contains exactly one pubkey, matching
+/// the standard PubSub contract.
+pub fn pump_logs_subscribe_request() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "logsSubscribe",
+        "params": [
+            {
+                "mentions": [PUMP_PROGRAM_ID]
+            },
+            {
+                "commitment": "confirmed"
+            }
+        ]
+    })
+}
+
+/// Parse the acknowledgement for Shreks' Pump log subscription.
+/// Notifications and other unrelated websocket frames are not acknowledgements.
+pub fn parse_pump_subscription_ack(body: &str) -> Result<Option<u64>, ProviderError> {
+    let value: Value = serde_json::from_str(body).map_err(|error| {
+        invalid_response(format!("invalid Pump subscription JSON: {error}"))
+    })?;
+
+    if value.get("id").and_then(Value::as_u64) != Some(1) {
+        return Ok(None);
+    }
+
+    if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+        let code = error.get("code").and_then(Value::as_i64);
+        let message = error
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("subscription rejected");
+        let kind = match code {
+            Some(-32602..=-32600) => ProviderErrorKind::InvalidRequest,
+            _ => ProviderErrorKind::InvalidResponse,
+        };
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            kind,
+            format!("Pump log subscription rejected: {message}"),
+        ));
+    }
+
+    let subscription_id = value
+        .get("result")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| invalid_response("Pump subscription acknowledgement missing result"))?;
+    Ok(Some(subscription_id))
+}
+
+/// Bounded exponential reconnect delay for a dropped Pump websocket.
+pub fn pump_reconnect_delay(attempt: u32) -> Duration {
+    let exponent = attempt.min(5);
+    let seconds = (1_u64 << exponent).min(30);
+    Duration::from_secs(seconds)
 }
 
 /// Parse one standard Solana `logsNotification` frame and return a cheap Pump
