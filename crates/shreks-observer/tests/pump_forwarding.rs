@@ -1,8 +1,8 @@
 use async_trait::async_trait;
 use shreks_core::ProviderId;
-use shreks_observer::forward_pump_signals;
 use shreks_providers::{
-    pump::PumpCreationSignal, ProviderError, ProviderErrorKind, PumpSignalSource,
+    forward_pump_signals, pump::PumpCreationSignal, ProviderError, ProviderErrorKind,
+    PumpSignalSource,
 };
 use tokio::sync::mpsc;
 
