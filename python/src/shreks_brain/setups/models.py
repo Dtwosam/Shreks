@@ -7,6 +7,8 @@ import math
 
 FRESH_LAUNCH_SETUP_NAME = "fresh_launch_continuation"
 FRESH_LAUNCH_CONFIRMATIONS_REQUIRED = 9
+GRADUATION_BREAKOUT_SETUP_NAME = "graduation_breakout"
+GRADUATION_BREAKOUT_CONFIRMATIONS_REQUIRED = 8
 
 
 class SetupState(StrEnum):
@@ -42,6 +44,43 @@ class FreshLaunchReasonCode(StrEnum):
     RETURN_1M_BELOW_MINIMUM = "RETURN_1M_BELOW_MINIMUM"
     RETURN_5M_UNKNOWN = "RETURN_5M_UNKNOWN"
     RETURN_5M_BELOW_MINIMUM = "RETURN_5M_BELOW_MINIMUM"
+    LIQUIDITY_CHANGE_5M_UNKNOWN = "LIQUIDITY_CHANGE_5M_UNKNOWN"
+    LIQUIDITY_CHANGE_5M_BELOW_MINIMUM = "LIQUIDITY_CHANGE_5M_BELOW_MINIMUM"
+    DISTANCE_FROM_LOCAL_HIGH_UNKNOWN = "DISTANCE_FROM_LOCAL_HIGH_UNKNOWN"
+    TOO_FAR_BELOW_LOCAL_HIGH = "TOO_FAR_BELOW_LOCAL_HIGH"
+    RANGE_POSITION_UNKNOWN = "RANGE_POSITION_UNKNOWN"
+    RANGE_POSITION_BELOW_MINIMUM = "RANGE_POSITION_BELOW_MINIMUM"
+
+    ALL_CONFIRMATIONS_PASSED = "ALL_CONFIRMATIONS_PASSED"
+
+
+class GraduationBreakoutReasonCode(StrEnum):
+    SAFETY_NOT_PASS = "SAFETY_NOT_PASS"
+    GRADUATION_NOT_VERIFIED = "GRADUATION_NOT_VERIFIED"
+    GRADUATION_EVENT_NOT_PUMP = "GRADUATION_EVENT_NOT_PUMP"
+    GRADUATION_VENUE_TRANSITION_INVALID = "GRADUATION_VENUE_TRANSITION_INVALID"
+    GRADUATION_AFTER_AS_OF = "GRADUATION_AFTER_AS_OF"
+    POST_GRADUATION_WINDOW_EXPIRED = "POST_GRADUATION_WINDOW_EXPIRED"
+    SOURCE_DATA_TOO_OLD = "SOURCE_DATA_TOO_OLD"
+    LIQUIDITY_BELOW_MINIMUM = "LIQUIDITY_BELOW_MINIMUM"
+    EXIT_PRICE_IMPACT_TOO_HIGH = "EXIT_PRICE_IMPACT_TOO_HIGH"
+    MOVE_TOO_EXTENDED = "MOVE_TOO_EXTENDED"
+
+    GRADUATION_TOO_RECENT = "GRADUATION_TOO_RECENT"
+    LIQUIDITY_UNKNOWN = "LIQUIDITY_UNKNOWN"
+    EXIT_PRICE_IMPACT_UNKNOWN = "EXIT_PRICE_IMPACT_UNKNOWN"
+    TX_COUNT_M5_UNKNOWN = "TX_COUNT_M5_UNKNOWN"
+    TX_COUNT_M5_BELOW_MINIMUM = "TX_COUNT_M5_BELOW_MINIMUM"
+    VOLUME_VELOCITY_UNKNOWN = "VOLUME_VELOCITY_UNKNOWN"
+    VOLUME_VELOCITY_BELOW_MINIMUM = "VOLUME_VELOCITY_BELOW_MINIMUM"
+    BUY_FRACTION_M5_UNKNOWN = "BUY_FRACTION_M5_UNKNOWN"
+    BUY_FRACTION_M5_BELOW_MINIMUM = "BUY_FRACTION_M5_BELOW_MINIMUM"
+    BUY_PRESSURE_ACCELERATION_UNKNOWN = "BUY_PRESSURE_ACCELERATION_UNKNOWN"
+    BUY_PRESSURE_ACCELERATION_BELOW_MINIMUM = (
+        "BUY_PRESSURE_ACCELERATION_BELOW_MINIMUM"
+    )
+    RETURN_1M_UNKNOWN = "RETURN_1M_UNKNOWN"
+    RETURN_1M_BELOW_MINIMUM = "RETURN_1M_BELOW_MINIMUM"
     LIQUIDITY_CHANGE_5M_UNKNOWN = "LIQUIDITY_CHANGE_5M_UNKNOWN"
     LIQUIDITY_CHANGE_5M_BELOW_MINIMUM = "LIQUIDITY_CHANGE_5M_BELOW_MINIMUM"
     DISTANCE_FROM_LOCAL_HIGH_UNKNOWN = "DISTANCE_FROM_LOCAL_HIGH_UNKNOWN"
@@ -145,6 +184,156 @@ class FreshLaunchAssessment:
         if self.confirmations_passed > self.confirmations_required:
             raise ValueError("confirmations_passed cannot exceed confirmations_required")
         _require_bounded_finite("confirmation_score", self.confirmation_score, 0, 100)
+
+
+@dataclass(frozen=True, slots=True)
+class GraduationContext:
+    event_type: str
+    provider: str
+    mint: str
+    quote_mint: str
+    from_venue: str
+    to_venue: str
+    pool_address: str
+    signature: str
+    slot: int
+    detected_at_unix_ms: int
+    occurred_at_unix_ms: int | None
+
+    def __post_init__(self) -> None:
+        for name in (
+            "event_type",
+            "provider",
+            "mint",
+            "quote_mint",
+            "from_venue",
+            "to_venue",
+            "pool_address",
+            "signature",
+        ):
+            _require_non_empty_string(name, getattr(self, name))
+        _require_non_negative_int("slot", self.slot)
+        _require_non_negative_int("detected_at_unix_ms", self.detected_at_unix_ms)
+        if self.occurred_at_unix_ms is not None:
+            _require_non_negative_int("occurred_at_unix_ms", self.occurred_at_unix_ms)
+
+
+@dataclass(frozen=True, slots=True)
+class GraduationBreakoutFinding:
+    code: GraduationBreakoutReasonCode
+    message: str
+    observed_value: float | int | str | None = None
+    threshold_value: float | int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GraduationBreakoutPolicy:
+    version: str
+    min_seconds_since_graduation: float
+    max_seconds_since_graduation: float
+    max_source_age_ms: int
+    min_liquidity_usd: float
+    max_exit_price_impact_pct: float
+    min_tx_count_m5: int
+    min_volume_velocity_ratio: float
+    min_buy_fraction_m5: float
+    min_buy_pressure_acceleration: float
+    min_return_1m_pct: float
+    max_return_1m_pct: float
+    min_liquidity_change_5m_pct: float
+    min_distance_from_local_high_pct: float
+    min_range_position_pct: float
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("version", self.version)
+
+        for name in (
+            "min_seconds_since_graduation",
+            "max_seconds_since_graduation",
+            "min_liquidity_usd",
+            "max_exit_price_impact_pct",
+            "min_volume_velocity_ratio",
+        ):
+            _require_non_negative_finite(name, getattr(self, name))
+
+        _require_non_negative_int("max_source_age_ms", self.max_source_age_ms)
+        _require_non_negative_int("min_tx_count_m5", self.min_tx_count_m5)
+
+        for name in (
+            "min_buy_pressure_acceleration",
+            "min_return_1m_pct",
+            "max_return_1m_pct",
+            "min_liquidity_change_5m_pct",
+            "min_distance_from_local_high_pct",
+        ):
+            _require_finite(name, getattr(self, name))
+
+        _require_bounded_finite("min_buy_fraction_m5", self.min_buy_fraction_m5, 0, 1)
+        _require_bounded_finite(
+            "min_range_position_pct", self.min_range_position_pct, 0, 100
+        )
+
+        if self.max_seconds_since_graduation <= self.min_seconds_since_graduation:
+            raise ValueError(
+                "max_seconds_since_graduation must be greater than "
+                "min_seconds_since_graduation"
+            )
+        if self.min_distance_from_local_high_pct > 0:
+            raise ValueError("min_distance_from_local_high_pct must be <= 0")
+        if self.max_return_1m_pct < self.min_return_1m_pct:
+            raise ValueError("max_return_1m_pct must be >= min_return_1m_pct")
+
+
+@dataclass(frozen=True, slots=True)
+class GraduationBreakoutAssessment:
+    setup_name: str
+    policy_version: str
+    feature_schema_version: str
+    as_of_unix_ms: int
+    graduation_mint: str | None
+    graduation_detected_at_unix_ms: int | None
+    seconds_since_graduation: float | None
+    state: SetupState
+    confirmation_score: float
+    confirmations_passed: int
+    confirmations_required: int
+    findings: tuple[GraduationBreakoutFinding, ...]
+
+    def __post_init__(self) -> None:
+        if self.setup_name != GRADUATION_BREAKOUT_SETUP_NAME:
+            raise ValueError(
+                f"setup_name must be {GRADUATION_BREAKOUT_SETUP_NAME!r}"
+            )
+        _require_non_empty_string("policy_version", self.policy_version)
+        _require_non_empty_string("feature_schema_version", self.feature_schema_version)
+        _require_non_negative_int("as_of_unix_ms", self.as_of_unix_ms)
+
+        if self.graduation_mint is not None:
+            _require_non_empty_string("graduation_mint", self.graduation_mint)
+        if self.graduation_detected_at_unix_ms is not None:
+            _require_non_negative_int(
+                "graduation_detected_at_unix_ms",
+                self.graduation_detected_at_unix_ms,
+            )
+        if self.seconds_since_graduation is not None:
+            _require_non_negative_finite(
+                "seconds_since_graduation", self.seconds_since_graduation
+            )
+
+        if not isinstance(self.state, SetupState):
+            raise ValueError("state must be a SetupState")
+        _require_non_negative_int("confirmations_passed", self.confirmations_passed)
+        _require_non_negative_int("confirmations_required", self.confirmations_required)
+        if self.confirmations_required <= 0:
+            raise ValueError("confirmations_required must be positive")
+        if self.confirmations_passed > self.confirmations_required:
+            raise ValueError("confirmations_passed cannot exceed confirmations_required")
+        _require_bounded_finite("confirmation_score", self.confirmation_score, 0, 100)
+
+
+def _require_non_empty_string(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
 
 
 def _require_finite(name: str, value: float) -> None:
