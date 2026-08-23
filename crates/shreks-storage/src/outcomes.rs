@@ -73,6 +73,17 @@ pub struct DueOutcomeCheckpoint {
     pub due_at_unix_ms: i64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct MetricSnapshot {
+    id: i64,
+    observed_at_unix_ms: i64,
+    price_usd: f64,
+    liquidity_usd: Option<f64>,
+    volume_m5_usd: Option<f64>,
+    buys_m5: Option<i64>,
+    sells_m5: Option<i64>,
+}
+
 impl ShreksDb {
     /// Idempotently schedule all approved future-outcome horizons for a
     /// candidate. All due timestamps are validated before any row is written.
@@ -246,6 +257,110 @@ impl ShreksDb {
             .collect()
     }
 
+    /// Finalize every pending checkpoint for one candidate that is due and has
+    /// a usable post-due price snapshot. Only snapshots observed no later than
+    /// `completed_at_unix_ms` participate, preventing future-dated provider
+    /// data from leaking into the outcome label.
+    pub fn finalize_due_outcome_checkpoints(
+        &self,
+        candidate_id: i64,
+        completed_at_unix_ms: i64,
+    ) -> Result<usize, StorageError> {
+        if candidate_id <= 0 {
+            return Err(StorageError::InvalidData(
+                "outcome candidate_id must be positive".to_owned(),
+            ));
+        }
+
+        let discovered_at_unix_ms = self
+            .connection
+            .query_row(
+                "SELECT discovered_at_unix_ms FROM token_candidates WHERE id = ?1",
+                [candidate_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                StorageError::InvalidData(format!(
+                    "outcome candidate {candidate_id} does not exist"
+                ))
+            })?;
+
+        let baseline = self.load_baseline_metric_snapshot(
+            candidate_id,
+            discovered_at_unix_ms,
+            completed_at_unix_ms,
+        )?;
+        let Some(baseline) = baseline else {
+            return Ok(0);
+        };
+
+        let pending = {
+            let mut statement = self.connection.prepare(
+                r#"SELECT horizon_seconds, due_at_unix_ms
+                   FROM candidate_outcome_checkpoints
+                   WHERE candidate_id = ?1
+                     AND status = 'pending'
+                     AND due_at_unix_ms <= ?2
+                   ORDER BY horizon_seconds ASC"#,
+            )?;
+            statement
+                .query_map(params![candidate_id, completed_at_unix_ms], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut completed = 0usize;
+        for (raw_horizon, due_at_unix_ms) in pending {
+            let horizon_seconds = parse_horizon(raw_horizon)?;
+            let checkpoint = self.load_checkpoint_metric_snapshot(
+                candidate_id,
+                due_at_unix_ms,
+                completed_at_unix_ms,
+            )?;
+            let Some(checkpoint) = checkpoint else {
+                continue;
+            };
+
+            let return_pct = finite_percentage_change(checkpoint.price_usd, baseline.price_usd);
+            let Some(return_pct) = return_pct else {
+                continue;
+            };
+            let (mfe_pct, mae_pct) = self.excursions_between(
+                candidate_id,
+                &baseline,
+                checkpoint.observed_at_unix_ms,
+            )?;
+
+            let completion = OutcomeCheckpointCompletion {
+                baseline_snapshot_id: baseline.id,
+                checkpoint_snapshot_id: checkpoint.id,
+                completed_at_unix_ms,
+                return_pct: Some(return_pct),
+                mfe_pct,
+                mae_pct,
+                liquidity_change_pct: endpoint_percentage_change(
+                    checkpoint.liquidity_usd,
+                    baseline.liquidity_usd,
+                ),
+                volume_m5_change_pct: endpoint_percentage_change(
+                    checkpoint.volume_m5_usd,
+                    baseline.volume_m5_usd,
+                ),
+                buys_m5_change: endpoint_integer_change(checkpoint.buys_m5, baseline.buys_m5),
+                sells_m5_change: endpoint_integer_change(checkpoint.sells_m5, baseline.sells_m5),
+                rug_or_dead_pool: None,
+                exitability: None,
+            };
+
+            self.complete_outcome_checkpoint(candidate_id, horizon_seconds, &completion)?;
+            completed = completed.saturating_add(1);
+        }
+
+        Ok(completed)
+    }
+
     /// Complete one pending checkpoint exactly once. Both evidence snapshots
     /// must belong to the checkpoint candidate, preventing cross-token metric
     /// contamination when many candidates are measured concurrently.
@@ -367,6 +482,121 @@ impl ShreksDb {
         transaction.commit()?;
         Ok(())
     }
+
+    fn load_baseline_metric_snapshot(
+        &self,
+        candidate_id: i64,
+        discovered_at_unix_ms: i64,
+        completed_at_unix_ms: i64,
+    ) -> Result<Option<MetricSnapshot>, StorageError> {
+        self.connection
+            .query_row(
+                r#"SELECT id, observed_at_unix_ms, price_usd, liquidity_usd,
+                          volume_m5_usd, buys_m5, sells_m5
+                   FROM market_snapshots
+                   WHERE candidate_id = ?1
+                     AND observed_at_unix_ms >= ?2
+                     AND observed_at_unix_ms <= ?3
+                     AND price_usd IS NOT NULL
+                     AND price_usd > 0
+                   ORDER BY observed_at_unix_ms ASC, id ASC
+                   LIMIT 1"#,
+                params![candidate_id, discovered_at_unix_ms, completed_at_unix_ms],
+                metric_snapshot_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    fn load_checkpoint_metric_snapshot(
+        &self,
+        candidate_id: i64,
+        due_at_unix_ms: i64,
+        completed_at_unix_ms: i64,
+    ) -> Result<Option<MetricSnapshot>, StorageError> {
+        self.connection
+            .query_row(
+                r#"SELECT id, observed_at_unix_ms, price_usd, liquidity_usd,
+                          volume_m5_usd, buys_m5, sells_m5
+                   FROM market_snapshots
+                   WHERE candidate_id = ?1
+                     AND observed_at_unix_ms >= ?2
+                     AND observed_at_unix_ms <= ?3
+                     AND price_usd IS NOT NULL
+                   ORDER BY observed_at_unix_ms DESC, id DESC
+                   LIMIT 1"#,
+                params![candidate_id, due_at_unix_ms, completed_at_unix_ms],
+                metric_snapshot_from_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    fn excursions_between(
+        &self,
+        candidate_id: i64,
+        baseline: &MetricSnapshot,
+        checkpoint_observed_at_unix_ms: i64,
+    ) -> Result<(Option<f64>, Option<f64>), StorageError> {
+        let mut statement = self.connection.prepare(
+            r#"SELECT price_usd
+               FROM market_snapshots
+               WHERE candidate_id = ?1
+                 AND observed_at_unix_ms >= ?2
+                 AND observed_at_unix_ms <= ?3
+                 AND price_usd IS NOT NULL
+               ORDER BY observed_at_unix_ms ASC, id ASC"#,
+        )?;
+        let prices = statement
+            .query_map(
+                params![
+                    candidate_id,
+                    baseline.observed_at_unix_ms,
+                    checkpoint_observed_at_unix_ms
+                ],
+                |row| row.get::<_, f64>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let mut mfe: Option<f64> = None;
+        let mut mae: Option<f64> = None;
+        for price in prices {
+            let Some(change) = finite_percentage_change(price, baseline.price_usd) else {
+                continue;
+            };
+            mfe = Some(mfe.map_or(change, |current| current.max(change)));
+            mae = Some(mae.map_or(change, |current| current.min(change)));
+        }
+        Ok((mfe, mae))
+    }
+}
+
+fn metric_snapshot_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MetricSnapshot> {
+    Ok(MetricSnapshot {
+        id: row.get(0)?,
+        observed_at_unix_ms: row.get(1)?,
+        price_usd: row.get(2)?,
+        liquidity_usd: row.get(3)?,
+        volume_m5_usd: row.get(4)?,
+        buys_m5: row.get(5)?,
+        sells_m5: row.get(6)?,
+    })
+}
+
+fn finite_percentage_change(current: f64, baseline: f64) -> Option<f64> {
+    if !current.is_finite() || !baseline.is_finite() || baseline <= 0.0 {
+        return None;
+    }
+    let change = ((current - baseline) / baseline) * 100.0;
+    change.is_finite().then_some(change)
+}
+
+fn endpoint_percentage_change(current: Option<f64>, baseline: Option<f64>) -> Option<f64> {
+    finite_percentage_change(current?, baseline?)
+}
+
+fn endpoint_integer_change(current: Option<i64>, baseline: Option<i64>) -> Option<i64> {
+    current?.checked_sub(baseline?)
 }
 
 fn parse_horizon(value: i64) -> Result<u32, StorageError> {
