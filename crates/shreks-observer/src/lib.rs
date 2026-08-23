@@ -354,6 +354,10 @@ impl Observer {
                         );
 
                         let candidate_id = self.db.upsert_candidate(&candidate)?;
+                        self.db.ensure_outcome_checkpoints(
+                            candidate_id,
+                            candidate.discovered_at_unix_ms,
+                        )?;
                         if seen_candidate_ids.insert(candidate_id) {
                             candidates.push((candidate_id, candidate));
                         }
@@ -524,6 +528,10 @@ impl Observer {
                     self.db
                         .record_pump_launch_attempt(&signal.signature, attempted_at, None)?;
                     let candidate_id = self.db.upsert_candidate(&candidate)?;
+                    self.db.ensure_outcome_checkpoints(
+                        candidate_id,
+                        candidate.discovered_at_unix_ms,
+                    )?;
                     self.db
                         .mark_pump_launch_verified(&signal.signature, candidate_id)?;
                     report.pump_signals_verified =
