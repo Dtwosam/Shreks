@@ -65,7 +65,7 @@ mark_pump_migration_rejected(signature, attempted_at_unix_ms, reason)
 lifecycle_events_for_mint(mint)
 ```
 
-- [ ] **RED:** Write tests proving schema version 5; both new tables/indexes; u64 slot TEXT round-trip; earliest-observation preservation; terminal-state preservation; restart replay; oldest-first bounded pending query; attempt counting; atomic completion; multiple events per signature; deterministic mint lookup; rejection auditability; input validation.
+- [x] **RED:** Write tests proving schema version 5; both new tables/indexes; u64 slot TEXT round-trip; earliest-observation preservation; terminal-state preservation; restart replay; oldest-first bounded pending query; attempt counting; atomic completion; multiple events per signature; deterministic mint lookup; rejection auditability; input validation.
 
 Completion replay semantics are exact:
 
@@ -76,9 +76,9 @@ Completion replay semantics are exact:
 - event signature must equal inbox signature;
 - empty event set -> fail closed.
 
-- [ ] **Verify RED:** Full CI must fail in Rust only because lifecycle/storage APIs do not exist.
-- [ ] **GREEN:** Add lifecycle enum/type, migration 5, validation helpers, migration inbox methods, atomic completion transaction, lifecycle mint query.
-- [ ] **Verify GREEN:** Full repository CI.
+- [x] **Verify RED:** Full CI fails in Rust only because lifecycle/storage APIs do not exist.
+- [x] **GREEN:** Add lifecycle enum/type, migration 5, validation helpers, migration inbox methods, atomic completion transaction, lifecycle mint query.
+- [x] **Verify GREEN:** Full repository CI.
 
 ---
 
@@ -119,10 +119,10 @@ pub fn classify_pump_migration_transaction(body: &str, signature: &str)
 
 `PumpLogStream::next_lifecycle_signal()` is added while creation-only APIs remain compatible until Task 3.
 
-- [ ] **RED:** Prove Create/CreateV2 and Migrate/MigrateV2 lifecycle classification; explicit `MigrateBondingCurveCreator` negative case; reconnecting stream lifecycle delivery; Pending on result-null; legacy and v2 account extraction; Pump/PumpSwap identity checks; minimum account lengths; blockTime conversion/null/invalid handling; inner instruction support; deterministic deduplication.
-- [ ] **Verify RED:** Rust fails only on missing lifecycle protocol APIs.
-- [ ] **GREEN:** Implement exact-suffix log matching and pinned-IDL discriminator/account decoding. Legacy requires >=15 accounts with PumpSwap at 8, pool 9, mint 2, WSOL 14. V2 requires >=11 accounts with PumpSwap 9, pool 10, base mint 2, quote mint 3.
-- [ ] **Verify GREEN:** Full repository CI, including all existing creation tests.
+- [x] **RED:** Prove Create/CreateV2 and Migrate/MigrateV2 lifecycle classification; explicit `MigrateBondingCurveCreator` negative case; reconnecting stream lifecycle delivery; Pending on result-null; legacy and v2 account extraction; Pump/PumpSwap identity checks; minimum account lengths; blockTime conversion/null/invalid handling; inner instruction support; deterministic deduplication.
+- [x] **Verify RED:** Rust fails only on missing lifecycle protocol APIs.
+- [x] **GREEN:** Implement exact-suffix log matching and pinned-IDL discriminator/account decoding. Legacy requires >=15 accounts with PumpSwap at 8, pool 9, mint 2, WSOL 14. V2 requires >=11 accounts with PumpSwap 9, pool 10, base mint 2, quote mint 3.
+- [x] **Verify GREEN:** Full repository CI, including all existing creation tests.
 
 ---
 
@@ -150,9 +150,9 @@ pump_migration_signals_rejected
 lifecycle_events_stored
 ```
 
-- [ ] **RED:** Prove creation + migration forwarding; durable-only realtime migration ingestion; Pending/Verified/Rejected/provider-failure behavior; normalized event construction uses actual `TransactionProvider::provider_id()`; existing creation candidate/checkpoint path stays intact; total transaction calls <=32; migration has 8 reserved slots when backlog exists; creation can use all 32 when migrations are absent; spare creation capacity can be used by additional migrations.
-- [ ] **Verify RED:** Rust fails because observer/forwarder are creation-only.
-- [ ] **GREEN:** Add:
+- [x] **RED:** Prove creation + migration forwarding; durable-only realtime migration ingestion; Pending/Verified/Rejected/provider-failure behavior; normalized event construction uses actual `TransactionProvider::provider_id()`; existing creation candidate/checkpoint path stays intact; total transaction calls <=32; migration has 8 reserved slots when backlog exists; creation can use all 32 when migrations are absent; spare creation capacity can be used by additional migrations.
+- [x] **Verify RED:** Rust fails because observer/forwarder are creation-only.
+- [x] **GREEN:** Add:
 
 ```rust
 const PUMP_TOTAL_PENDING_BATCH_LIMIT: usize = 32;
@@ -160,7 +160,7 @@ const PUMP_MIGRATION_RESERVED_BATCH: usize = 8;
 ```
 
 Scheduling is: process up to 8 reserved migrations, then creations up to remaining budget, then extra migrations with unused budget. Every fetch uses the existing chain pacing lane. Verified migration evidence is converted to `TokenLifecycleEvent` using the durable signal signature/slot/detection time and actual transaction-provider ID, then atomically completed in storage.
-- [ ] **Verify GREEN:** Full repository CI.
+- [x] **Verify GREEN:** Full repository CI.
 
 ---
 
@@ -170,17 +170,29 @@ Scheduling is: process up to 8 reserved migrations, then creations up to remaini
 - Modify `README.md`
 - Modify this plan
 
-- [ ] Document that Shreks observes protocol-verified Pump graduation via one websocket, supports legacy and v2 migration, preserves restart-safe detection time/optional block time/quote mint/pool/venue transition, and still does not make Graduation/Breakout decisions or trade.
+- [x] Document that Shreks observes protocol-verified Pump graduation via one websocket, supports legacy and v2 migration, preserves restart-safe detection time/optional block time/quote mint/pool/venue transition, and still does not make Graduation/Breakout decisions or trade.
 - [ ] Run code/docs full CI.
-- [ ] Record exact RED/GREEN commits and CI run IDs for Tasks 1-3.
+- [x] Record exact RED/GREEN commits and CI run IDs for Tasks 1-3.
 - [ ] Run a fresh full CI on the documentation-only verification-record head.
 - [ ] Open/update a stacked **draft** PR against `feat/phase-b3-fresh-launch`; keep it unmerged. Include final head SHA, CI run ID, pinned Pump IDL SHA, and explicit no-strategy/no-execution scope.
 
+## Verification record
+
+| Task | RED commit | RED CI | GREEN commit | GREEN CI |
+| --- | --- | --- | --- | --- |
+| 1 — lifecycle domain + storage | `4375dfb944babbf43be5c68def85ceaa8729bceb` | `32660874131` | `10f7f4e1ed5475c0c075d2b665cac3b92aa66752` | `32662388627` |
+| 2 — Pump protocol verification | `2ddb5ee0dfdc70d45471b1aa4ae5c1d537be20d9` | `32662495057` | `cd65ec68f1cbfc9209bec689b5e0fd37611a885c` | `32662695907` |
+| 3 — observer integration + shared budget | `ba1492130a4020188bcfc4b497df205673895ea3` | `32662807628` | `0e401116b94f296426181ac62363f40e2693afe4` | `32663298258` |
+
+Pinned official Pump IDL blob for all Task 2 protocol indexes/discriminators: `062e66f032bb9f295353b573be3400070bd55e5b`.
+
+The Task 3 GREEN head includes the lifecycle-aware runtime compatibility fix after CI identified one stale test fixture still sending a bare `PumpCreationSignal` into the widened lifecycle channel. No transaction scheduler, storage, or strategy semantics were relaxed to make that test pass.
+
 ## Self-review
 
-- Official indexes/discriminators must match the pinned spec.
-- Protocol decoder must remain provider-neutral.
-- `MigrateBondingCurveCreator` must never be graduation.
+- Official indexes/discriminators match the pinned spec.
+- Protocol decoder remains provider-neutral.
+- `MigrateBondingCurveCreator` is never graduation.
 - Verified replay cannot mutate normalized lifecycle truth.
 - Total Pump verification budget remains 32, not 32+32.
 - Migration completion and normalized event persistence are atomic.
