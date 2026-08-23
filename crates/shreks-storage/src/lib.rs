@@ -6,6 +6,12 @@ pub use outcomes::{
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
 };
 
+mod path_sampling;
+pub use path_sampling::{
+    path_sampling_interval_seconds, DuePathSample, PathSamplingRecord, PathSamplingStatus,
+    PATH_CADENCE_VERSION,
+};
+
 use std::{
     error::Error,
     fmt, fs,
@@ -47,6 +53,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         name: "candidate_outcome_checkpoints",
         sql: include_str!("../migrations/0004_candidate_outcome_checkpoints.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "adaptive_path_sampling",
+        sql: include_str!("../migrations/0005_adaptive_path_sampling.sql"),
     },
 ];
 
