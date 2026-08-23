@@ -150,12 +150,12 @@ impl ShreksDb {
         let created_at = unix_time_ms()?;
 
         self.connection.execute(
-            "INSERT INTO token_candidates (\
-                 mint, pair_address, discovery_source, discovered_at_unix_ms, created_at_unix_ms, venue\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)\
-             ON CONFLICT(mint, pair_address, discovery_source) DO UPDATE SET\
-                 venue = COALESCE(excluded.venue, token_candidates.venue),\
-                 discovered_at_unix_ms = MIN(token_candidates.discovered_at_unix_ms, excluded.discovered_at_unix_ms)",
+            r#"INSERT INTO token_candidates (
+                   mint, pair_address, discovery_source, discovered_at_unix_ms, created_at_unix_ms, venue
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+               ON CONFLICT(mint, pair_address, discovery_source) DO UPDATE SET
+                   venue = COALESCE(excluded.venue, token_candidates.venue),
+                   discovered_at_unix_ms = MIN(token_candidates.discovered_at_unix_ms, excluded.discovered_at_unix_ms)"#,
             params![
                 candidate.mint,
                 pair_address,
@@ -215,16 +215,16 @@ impl ShreksDb {
         let sells_h1 = optional_u64_as_i64(h1.map(|window| window.sells), "sells_h1")?;
 
         self.connection.execute(
-            "INSERT OR IGNORE INTO market_snapshots (\
-                 candidate_id, observed_at_unix_ms, source, source_observed_at_unix_ms,\
-                 venue, pair_address, dex_id, base_mint, quote_mint, price_native, price_usd,\
-                 market_cap_usd, fdv_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,\
-                 volume_h6_usd, volume_h24_usd, buys_m5, sells_m5, buys_h1, sells_h1,\
-                 pair_created_at_unix_ms\
-             ) VALUES (\
-                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,\
-                 ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23\
-             )",
+            r#"INSERT OR IGNORE INTO market_snapshots (
+                   candidate_id, observed_at_unix_ms, source, source_observed_at_unix_ms,
+                   venue, pair_address, dex_id, base_mint, quote_mint, price_native, price_usd,
+                   market_cap_usd, fdv_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+                   volume_h6_usd, volume_h24_usd, buys_m5, sells_m5, buys_h1, sells_h1,
+                   pair_created_at_unix_ms
+               ) VALUES (
+                   ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                   ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23
+               )"#,
             params![
                 candidate_id,
                 snapshot.observed_at_unix_ms,
@@ -268,10 +268,10 @@ impl ShreksDb {
         }
 
         self.connection.execute(
-            "INSERT OR IGNORE INTO token_mint_states (\
-                 candidate_id, provider, owner_program, supply, decimals, mint_authority,\
-                 freeze_authority, slot, observed_at_unix_ms\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            r#"INSERT OR IGNORE INTO token_mint_states (
+                   candidate_id, provider, owner_program, supply, decimals, mint_authority,
+                   freeze_authority, slot, observed_at_unix_ms
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
             params![
                 candidate_id,
                 state.provider.as_str(),
@@ -301,15 +301,15 @@ impl ShreksDb {
         let consecutive_failures = u64_as_i64(consecutive_failures, "provider consecutive_failures")?;
 
         self.connection.execute(
-            "INSERT INTO provider_health (\
-                 provider, status, observed_at_unix_ms, latency_ms, detail, consecutive_failures\
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)\
-             ON CONFLICT(provider) DO UPDATE SET\
-                 status = excluded.status,\
-                 observed_at_unix_ms = excluded.observed_at_unix_ms,\
-                 latency_ms = excluded.latency_ms,\
-                 detail = excluded.detail,\
-                 consecutive_failures = excluded.consecutive_failures",
+            r#"INSERT INTO provider_health (
+                   provider, status, observed_at_unix_ms, latency_ms, detail, consecutive_failures
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+               ON CONFLICT(provider) DO UPDATE SET
+                   status = excluded.status,
+                   observed_at_unix_ms = excluded.observed_at_unix_ms,
+                   latency_ms = excluded.latency_ms,
+                   detail = excluded.detail,
+                   consecutive_failures = excluded.consecutive_failures"#,
             params![
                 provider.as_str(),
                 state.as_str(),
@@ -336,11 +336,11 @@ impl ShreksDb {
         }
 
         self.connection.execute(
-            "INSERT INTO ingestion_checkpoints (provider, stream, cursor, updated_at_unix_ms)\
-             VALUES (?1, ?2, ?3, ?4)\
-             ON CONFLICT(provider, stream) DO UPDATE SET\
-                 cursor = excluded.cursor,\
-                 updated_at_unix_ms = excluded.updated_at_unix_ms",
+            r#"INSERT INTO ingestion_checkpoints (provider, stream, cursor, updated_at_unix_ms)
+               VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(provider, stream) DO UPDATE SET
+                   cursor = excluded.cursor,
+                   updated_at_unix_ms = excluded.updated_at_unix_ms"#,
             params![provider.as_str(), stream, cursor, unix_time_ms()?],
         )?;
         Ok(())
