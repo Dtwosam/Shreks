@@ -28,7 +28,9 @@ use shreks_providers::{
     ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
     TransactionProvider,
 };
-use shreks_storage::{ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS};
+use shreks_storage::{
+    PathSamplingStatus, ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS,
+};
 use tokio::{
     sync::mpsc,
     time::{sleep_until, Instant},
@@ -38,9 +40,9 @@ const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
 const DEXSCREENER_DISCOVERY_RPS: u32 = 1;
 const PUMP_PENDING_BATCH_LIMIT: usize = 32;
-const OUTCOME_DUE_CANDIDATE_LIMIT: usize = 16;
+const MARKET_REVISIT_CANDIDATE_LIMIT: usize = 16;
 const OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT: usize =
-    OUTCOME_DUE_CANDIDATE_LIMIT * OUTCOME_HORIZONS_SECONDS.len();
+    MARKET_REVISIT_CANDIDATE_LIMIT * OUTCOME_HORIZONS_SECONDS.len();
 const PUMP_TRANSACTION_NOT_AVAILABLE: &str = "confirmed Pump transaction not available yet";
 
 /// Summary of one finite observer pass.
@@ -133,6 +135,13 @@ impl CycleHealth {
         self.state = error.health_state();
         self.detail = Some(truncate_detail(&error.message));
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RevisitCandidate {
+    candidate_id: i64,
+    mint: String,
+    path_sample_due: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -305,7 +314,7 @@ impl Observer {
     pub async fn run_cycle(&mut self) -> Result<ObserverCycleReport, ObserverError> {
         let mut report = ObserverCycleReport::default();
         self.drain_pump_signal_queue(&mut report)?;
-        let due_outcome_candidates = self.due_outcome_candidates()?;
+        let due_revisit_candidates = self.due_revisit_candidates()?;
 
         let mut health: HashMap<ProviderId, CycleHealth> = HashMap::new();
         let mut candidates = Vec::new();
@@ -401,7 +410,12 @@ impl Observer {
             .await?;
         }
 
-        for (candidate_id, mint) in due_outcome_candidates {
+        for revisit in due_revisit_candidates {
+            let RevisitCandidate {
+                candidate_id,
+                mint,
+                path_sample_due: _,
+            } = revisit;
             if seen_candidate_ids.contains(&candidate_id) {
                 continue;
             }
@@ -682,25 +696,57 @@ impl Observer {
         Ok(())
     }
 
-    fn due_outcome_candidates(&self) -> Result<Vec<(i64, String)>, ObserverError> {
-        let due = self.db.due_outcome_checkpoints(
-            unix_time_ms()?,
-            OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT,
-        )?;
+    fn due_revisit_candidates(&self) -> Result<Vec<RevisitCandidate>, ObserverError> {
+        let now = unix_time_ms()?;
+        let due_outcomes = self
+            .db
+            .due_outcome_checkpoints(now, OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT)?;
         let mut seen_candidate_ids = HashSet::new();
         let mut candidates = Vec::new();
 
-        for checkpoint in due {
+        for checkpoint in due_outcomes {
             if !seen_candidate_ids.insert(checkpoint.candidate_id) {
                 continue;
             }
-            candidates.push((checkpoint.candidate_id, checkpoint.mint));
-            if candidates.len() == OUTCOME_DUE_CANDIDATE_LIMIT {
+            let path_sample_due = self.path_sample_due(checkpoint.candidate_id, now)?;
+            candidates.push(RevisitCandidate {
+                candidate_id: checkpoint.candidate_id,
+                mint: checkpoint.mint,
+                path_sample_due,
+            });
+            if candidates.len() == MARKET_REVISIT_CANDIDATE_LIMIT {
+                return Ok(candidates);
+            }
+        }
+
+        for sample in self
+            .db
+            .due_path_samples(now, MARKET_REVISIT_CANDIDATE_LIMIT)?
+        {
+            if !seen_candidate_ids.insert(sample.candidate_id) {
+                continue;
+            }
+            candidates.push(RevisitCandidate {
+                candidate_id: sample.candidate_id,
+                mint: sample.mint,
+                path_sample_due: true,
+            });
+            if candidates.len() == MARKET_REVISIT_CANDIDATE_LIMIT {
                 break;
             }
         }
 
         Ok(candidates)
+    }
+
+    fn path_sample_due(&self, candidate_id: i64, now_unix_ms: i64) -> Result<bool, ObserverError> {
+        let Some(schedule) = self.db.path_sampling(candidate_id)? else {
+            return Ok(false);
+        };
+        Ok(schedule.status == PathSamplingStatus::Active
+            && schedule
+                .next_due_at_unix_ms
+                .is_some_and(|due_at| due_at <= now_unix_ms))
     }
 
     fn ensure_health(
