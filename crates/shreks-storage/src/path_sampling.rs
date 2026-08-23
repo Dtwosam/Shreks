@@ -180,7 +180,7 @@ impl ShreksDb {
                LIMIT ?2"#,
         )?;
 
-        statement
+        let rows = statement
             .query_map(params![now_unix_ms, limit], |row| {
                 Ok(DuePathSample {
                     candidate_id: row.get(0)?,
@@ -188,7 +188,7 @@ impl ShreksDb {
                     due_at_unix_ms: row.get(2)?,
                 })
             })?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(StorageError::from)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 }
