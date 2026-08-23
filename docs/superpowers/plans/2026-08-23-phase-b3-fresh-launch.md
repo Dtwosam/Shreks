@@ -32,20 +32,9 @@
 **Produces:** `SetupState`, `FreshLaunchReasonCode`, `SetupFinding`, `FreshLaunchPolicy`, `FreshLaunchAssessment`, and constants `FRESH_LAUNCH_SETUP_NAME = "fresh_launch_continuation"`, `FRESH_LAUNCH_CONFIRMATIONS_REQUIRED = 9`.
 
 - [x] **Step 1: Write failing tests**
-
-Test exact enum/reason strings, constants, frozen dataclasses, policy validation, and absence of future/trading fields. Validation tests cover empty version; NaN/inf; negative ages/source age/liquidity/exit impact/max return/tx count/volume velocity; `max_age_seconds <= min_age_seconds`; buy fraction outside `[0,1]`; range position outside `[0,100]`; positive `min_distance_from_local_high_pct`; and `max_return_5m_pct < min_return_5m_pct`.
-
-- [x] **Step 2: Verify RED in CI**
-
-Observed: commit `00384f2995d1bb907dcd75f1e3bd1376e7790eb3`, CI `32658868362`; Python failed because `shreks_brain.setups` did not exist while repository-safety remained green.
-
+- [x] **Step 2: Verify RED in CI** — `00384f2995d1bb907dcd75f1e3bd1376e7790eb3`, CI `32658868362`.
 - [x] **Step 3: Implement immutable models and validation**
-
-Implemented with `StrEnum`, frozen/slotted dataclasses, finite/int/range helpers, and no production default policy.
-
-- [x] **Step 4: Run full CI and verify GREEN**
-
-Observed: commit `fd870d72c1e6ce277c12e2eb2e48202e9c7358b4`, CI `32658923308`; Rust, Python, metadata, and repository-safety all passed.
+- [x] **Step 4: Run full CI and verify GREEN** — `fd870d72c1e6ce277c12e2eb2e48202e9c7358b4`, CI `32658923308`.
 
 ---
 
@@ -55,31 +44,12 @@ Observed: commit `fd870d72c1e6ce277c12e2eb2e48202e9c7358b4`, CI `32658923308`; R
 - Create: `python/src/shreks_brain/setups/fresh_launch.py`
 - Create: `python/tests/test_fresh_launch_setup.py`
 
-**Produces:**
-
-```python
-def assess_fresh_launch(
-    features: FeatureVector,
-    policy: FreshLaunchPolicy,
-) -> FreshLaunchAssessment:
-    ...
-```
+**Produces:** `assess_fresh_launch(features: FeatureVector, policy: FreshLaunchPolicy) -> FreshLaunchAssessment`.
 
 - [x] **Step 1: Write failing evaluator tests**
-
-Tests prove READY behavior, every independent hard blocker, safety precedence, too-young/unknown evidence WATCH behavior, every confirmation failure/unknown path, equality boundaries, research scoring on blocked candidates, deterministic reason ordering, and deterministic repeated calls.
-
-- [x] **Step 2: Verify RED in CI**
-
-Observed: commit `bd95bb412fdb0b2ff6652fbdd8825822be3f9782`, CI `32659018401`; Python failed only because `shreks_brain.setups.fresh_launch` was absent.
-
+- [x] **Step 2: Verify RED in CI** — `bd95bb412fdb0b2ff6652fbdd8825822be3f9782`, CI `32659018401`.
 - [x] **Step 3: Implement ordered evaluator**
-
-Implemented in four visible stages: hard gates, age/executability watch evidence, nine confirmation checks, then state resolution and optional ready marker. Hard blockers do not short-circuit confirmation research.
-
-- [x] **Step 4: Run full CI and verify GREEN**
-
-Observed: commit `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`; complete repository gate passed.
+- [x] **Step 4: Run full CI and verify GREEN** — `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`.
 
 ---
 
@@ -91,40 +61,13 @@ Observed: commit `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`; c
 - Modify: `README.md`
 - Modify: this plan
 
-**Public API:**
-
-```python
-from shreks_brain.setups import (
-    FRESH_LAUNCH_CONFIRMATIONS_REQUIRED,
-    FRESH_LAUNCH_SETUP_NAME,
-    FreshLaunchAssessment,
-    FreshLaunchPolicy,
-    FreshLaunchReasonCode,
-    SetupFinding,
-    SetupState,
-    assess_fresh_launch,
-)
-```
+**Public API:** `FRESH_LAUNCH_CONFIRMATIONS_REQUIRED`, `FRESH_LAUNCH_SETUP_NAME`, `FreshLaunchAssessment`, `FreshLaunchPolicy`, `FreshLaunchReasonCode`, `SetupFinding`, `SetupState`, and `assess_fresh_launch`.
 
 - [x] **Step 1: Write failing public-API tests**
-
-The public-API test imports only from `shreks_brain.setups`, constructs an explicit policy/vector, proves a ready assessment, and confirms `FreshLaunchAssessment` contains no trade-intent/execution fields.
-
-- [x] **Step 2: Verify RED**
-
-Observed: commit `9fb9cdc83ba74e80c79cde403e3e931035d3395a`, CI `32659150856`; Rust and repository-safety passed, and Python failed only because package-level setup exports were absent.
-
-- [x] **Step 3: Export API and document operator semantics**
-
-Exports added at commit `142d2b56c9847d5679b74c9fcb948147d25085ba`. README documentation completed at commit `78a2e5188e096e1fc25d80cede20de2ef4eac186`, covering blind-snipe avoidance, hypothesis-only thresholds, state meanings, safety precedence, anti-chase ceiling, confirmation-score semantics, absence of production defaults, and the non-trading boundary.
-
-- [x] **Step 4: Run final full CI**
-
-Code/docs head `78a2e5188e096e1fc25d80cede20de2ef4eac186` passed full CI `32659708880`.
-
-- [x] **Step 5: Record exact RED/GREEN commits and CI run IDs**
-
-Recorded above. This documentation-only verification-record commit must itself pass a fresh exact-head CI before B3 is considered sealed.
+- [x] **Step 2: Verify RED** — `9fb9cdc83ba74e80c79cde403e3e931035d3395a`, CI `32659150856`.
+- [x] **Step 3: Export API and document operator semantics** — exports `142d2b56c9847d5679b74c9fcb948147d25085ba`; README `78a2e5188e096e1fc25d80cede20de2ef4eac186`.
+- [x] **Step 4: Run final full CI** — code/docs head `78a2e5188e096e1fc25d80cede20de2ef4eac186`, CI `32659708880`.
+- [x] **Step 5: Record exact RED/GREEN commits and CI run IDs** — verification record commit `085cd579cfe0d1ec3031d68dfe17a116c927eb52`.
 
 ---
 
@@ -145,5 +88,6 @@ TDD sequence:
 - Task 2 GREEN — `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`
 - Task 3 RED — `9fb9cdc83ba74e80c79cde403e3e931035d3395a`, CI `32659150856`
 - Task 3 code/docs GREEN — `78a2e5188e096e1fc25d80cede20de2ef4eac186`, CI `32659708880`
+- Exact final head GREEN — `085cd579cfe0d1ec3031d68dfe17a116c927eb52`, CI `32659792356`
 
-The next CI run on this documentation-only record commit is the exact-head completion gate.
+B3 is sealed on the exact final head. The branch remains isolated in its draft PR and is not merged automatically.
