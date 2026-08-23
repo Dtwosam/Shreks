@@ -73,7 +73,7 @@ Pump logsSubscribe
     -> normal market + chain observation
 ```
 
-The WebSocket producer never writes SQLite directly. The observer remains the single database writer. Duplicate signatures are idempotent; RPC lag keeps a signal pending for retry; confirmed non-creation transactions are rejected audibly. Realtime arrivals can wake a sleeping observer for a durable inbox write without forcing another expensive full provider cycle.
+The WebSocket producer never writes SQLite directly. The observer remains the single database writer. Duplicate signatures are idempotent; RPC lag keeps a signal pending for retry; confirmed non-creation transactions are rejected audibly. Realtime arrivals can wake a sleeping observer for a durable inbox write without forcing another expensive full provider cycle. Adaptive path sampling follows the same isolation rule: a realtime Pump wake does not trigger market polling between full cycles.
 
 ## Operational database
 
@@ -91,6 +91,7 @@ Current migrations are additive and restart-safe:
 - **Migration 2 — observer normalization:** venue-aware candidate/snapshot identity and full-width Solana mint-state history.
 - **Migration 3 — Pump launch inbox:** durable pending/verified/rejected realtime Pump signatures and verification audit state.
 - **Migration 4 — candidate outcome checkpoints:** standardized future-outcome labels for every durable candidate.
+- **Migration 5 — adaptive path sampling:** one restart-safe lifecycle schedule per candidate for budget-aware observations between official checkpoints.
 
 The default runtime path in `.env.example` is `data/shreks.db`. Runtime databases, WAL/SHM files, and Parquet datasets are ignored by Git.
 
@@ -118,7 +119,29 @@ Unsupported or unproven values stay `NULL`. In particular, absence of a pair doe
 
 Outcome schedules survive restart. A pending checkpoint can be completed after reopening the same database, and a completed checkpoint is terminal: later observations/restarts do not rewrite its result.
 
-The official checkpoints do not prevent Shreks from storing additional market observations between them. A separate budget-aware adaptive path-observation layer is being added so future research can study the sequence that led to each checkpoint outcome without querying every token every few seconds for 24 hours.
+## Adaptive path observation
+
+Official checkpoints describe where a token ended up; adaptive path observation records useful market evidence between those milestones so later research can study how it got there. Adaptive observations are ordinary normalized `market_snapshots`, so the same evidence naturally contributes to path analysis and existing MFE/MAE calculations instead of creating a competing data table.
+
+The V0 lifecycle cadence is deliberately dense early and sparse later:
+
+```text
+age < 5m       -> every 30s
+5m to < 15m    -> every 60s
+15m to < 30m   -> every 2m
+30m to < 1h    -> every 5m
+1h to < 4h     -> every 15m
+4h to < 24h    -> every 1h
+24h and later  -> stop
+```
+
+This cadence is best-effort rather than a promise that every target timestamp will be hit exactly. Shreks has one shared **16-candidate market-revisit budget per full observer cycle**. Official checkpoint-due candidates are selected first; adaptive-only candidates may use only the remaining capacity. Candidate IDs are deduplicated, so a token due for both a checkpoint and an adaptive sample gets one market pass.
+
+Adaptive sampling reuses the existing DEX Screener/Meteora market pacing and never requests chain state solely because a path sample is due. A schedule advances only when the market pass inserts at least one **new durable normalized snapshot**. Provider errors, empty pair lists, invalid/mismatched snapshots, and duplicate snapshots ignored by SQLite leave the schedule due for retry.
+
+Schedules are restart-safe and do not replay missed historical intervals. If an observation target was delayed, one successful sample is recorded at the actual sample time and the next target is calculated forward from that time. This prevents restart or provider downtime from creating catch-up request storms. Sampling becomes terminal at the 24-hour lifecycle boundary.
+
+Realtime Pump signals remain durable-write-only while the observer is between full cycles; they do not wake adaptive market polling. This keeps launch ingestion responsive without turning the realtime path into an unbounded second polling loop.
 
 ## Running observe mode
 
