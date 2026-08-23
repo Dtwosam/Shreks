@@ -4,6 +4,12 @@
 //! intents. Its only responsibilities are provider orchestration, normalized
 //! persistence, pacing, and operational provider-health tracking.
 
+mod runtime;
+pub use runtime::{
+    build_free_observer, free_observe_provider_plan, ObserveProviderPlan, ObserverRuntimeConfig,
+    RuntimeConfigError,
+};
+
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
