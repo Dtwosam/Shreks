@@ -36,14 +36,14 @@ fn open_creates_parent_directory_and_configures_sqlite() {
     let diagnostics = db.diagnostics().unwrap();
     assert_eq!(diagnostics.journal_mode, "wal");
     assert!(diagnostics.foreign_keys_enabled);
-    assert_eq!(diagnostics.schema_version, 4);
+    assert_eq!(diagnostics.schema_version, 5);
 
     drop(db);
     cleanup_dir(&root);
 }
 
 #[test]
-fn migrations_create_phase_a_operational_tables() {
+fn migrations_create_operational_and_lifecycle_tables() {
     let root = unique_test_dir("tables");
     let db_path = root.join("shreks.db");
 
@@ -59,6 +59,9 @@ fn migrations_create_phase_a_operational_tables() {
         "token_mint_states",
         "raw_observations",
         "ingestion_checkpoints",
+        "pump_launch_signals",
+        "pump_migration_signals",
+        "token_lifecycle_events",
         "candidate_outcome_checkpoints",
     ] {
         let count: i64 = connection
@@ -82,11 +85,11 @@ fn reopening_database_does_not_reapply_migrations() {
 
     drop(ShreksDb::open(&db_path).unwrap());
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 4);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 5);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
-    for version in [1_i64, 2_i64, 3_i64, 4_i64] {
+    for version in [1_i64, 2_i64, 3_i64, 4_i64, 5_i64] {
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",

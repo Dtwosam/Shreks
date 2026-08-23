@@ -19,16 +19,22 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId};
+use shreks_core::{
+    DiscoveredToken, LifecycleEventKind, ProviderHealthState, ProviderId, TokenLifecycleEvent,
+    VenueId,
+};
 use shreks_providers::{
     config::ProviderConfig,
     pump::{
-        classify_pump_creation_transaction, PumpCreationSignal, PumpCreationVerification,
+        classify_pump_creation_transaction, classify_pump_migration_transaction,
+        PumpCreationVerification, PumpLifecycleSignal, PumpMigrationVerification,
     },
     ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
     TransactionProvider,
 };
-use shreks_storage::{ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS};
+use shreks_storage::{
+    PumpMigrationSignalRecord, ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS,
+};
 use tokio::{
     sync::mpsc,
     time::{sleep_until, Instant},
@@ -37,7 +43,8 @@ use tokio::{
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
 const DEXSCREENER_DISCOVERY_RPS: u32 = 1;
-const PUMP_PENDING_BATCH_LIMIT: usize = 32;
+const PUMP_TRANSACTION_BUDGET: usize = 32;
+const PUMP_MIGRATION_RESERVED: usize = 8;
 const OUTCOME_DUE_CANDIDATE_LIMIT: usize = 16;
 const OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT: usize =
     OUTCOME_DUE_CANDIDATE_LIMIT * OUTCOME_HORIZONS_SECONDS.len();
@@ -56,6 +63,12 @@ pub struct ObserverCycleReport {
     pub pump_signals_pending: usize,
     pub pump_signals_verified: usize,
     pub pump_signals_rejected: usize,
+    pub pump_migration_signals_received: usize,
+    pub pump_migration_signals_processed: usize,
+    pub pump_migration_signals_pending: usize,
+    pub pump_migration_signals_verified: usize,
+    pub pump_migration_signals_rejected: usize,
+    pub lifecycle_events_stored: usize,
 }
 
 /// Fatal observer errors. Provider failures are deliberately not fatal; they
@@ -203,7 +216,7 @@ pub struct Observer {
     market_providers: Vec<Arc<dyn MarketDataProvider>>,
     chain_providers: Vec<Arc<dyn ChainDataProvider>>,
     transaction_providers: Vec<Arc<dyn TransactionProvider>>,
-    pump_signal_receiver: Option<mpsc::Receiver<PumpCreationSignal>>,
+    pump_signal_receiver: Option<mpsc::Receiver<PumpLifecycleSignal>>,
     pacer: RequestPacer,
 }
 
@@ -240,12 +253,12 @@ impl Observer {
         self
     }
 
-    /// Attach the receiving end of the realtime Pump stream. The producer is
-    /// intentionally unable to access SQLite; only this observer drains and
-    /// persists signals, preserving the single-writer storage contract.
+    /// Attach the receiving end of the realtime Pump lifecycle stream. The
+    /// producer remains unable to access SQLite; only this observer persists
+    /// creation/migration signals, preserving the single-writer contract.
     pub fn with_pump_signal_receiver(
         mut self,
-        receiver: mpsc::Receiver<PumpCreationSignal>,
+        receiver: mpsc::Receiver<PumpLifecycleSignal>,
     ) -> Self {
         self.pump_signal_receiver = Some(receiver);
         self
@@ -255,9 +268,8 @@ impl Observer {
     ///
     /// A full provider cycle starts immediately and then follows the configured
     /// interval. Between cycles, realtime Pump signals can wake the observer
-    /// solely for a durable inbox write; they do not force extra discovery or
-    /// market-data calls. In-flight provider calls are allowed to finish so a
-    /// cycle's durable state is not left half-written.
+    /// solely for a durable inbox write; they never trigger transaction fetches
+    /// or market calls on the realtime path.
     pub async fn run_until_shutdown<F>(
         &mut self,
         cycle_interval: Duration,
@@ -311,7 +323,7 @@ impl Observer {
         let mut candidates = Vec::new();
         let mut seen_candidate_ids = HashSet::new();
 
-        self.process_pending_pump_signals(
+        self.process_pending_pump_transactions(
             &mut report,
             &mut health,
             &mut candidates,
@@ -322,9 +334,7 @@ impl Observer {
         for provider in self.discovery_providers.clone() {
             let provider_id = provider.provider_id();
             self.ensure_health(&mut health, provider_id)?;
-            self.pacer
-                .wait(PacingLane::Discovery(provider_id))
-                .await;
+            self.pacer.wait(PacingLane::Discovery(provider_id)).await;
 
             match provider.discover().await {
                 Ok(items) => {
@@ -426,19 +436,27 @@ impl Observer {
         Ok(report)
     }
 
-    async fn next_pump_signal(&mut self) -> Option<PumpCreationSignal> {
+    async fn next_pump_signal(&mut self) -> Option<PumpLifecycleSignal> {
         match self.pump_signal_receiver.as_mut() {
             Some(receiver) => receiver.recv().await,
             None => pending().await,
         }
     }
 
-    fn persist_pump_signal(&self, signal: &PumpCreationSignal) -> Result<(), ObserverError> {
-        self.db.record_pump_launch_signal(
-            &signal.signature,
-            signal.slot,
-            unix_time_ms()?,
-        )?;
+    fn persist_pump_signal(&self, signal: &PumpLifecycleSignal) -> Result<(), ObserverError> {
+        let observed_at = unix_time_ms()?;
+        match signal {
+            PumpLifecycleSignal::Creation(signal) => self.db.record_pump_launch_signal(
+                &signal.signature,
+                signal.slot,
+                observed_at,
+            )?,
+            PumpLifecycleSignal::Migration(signal) => self.db.record_pump_migration_signal(
+                &signal.signature,
+                signal.slot,
+                observed_at,
+            )?,
+        }
         Ok(())
     }
 
@@ -460,12 +478,25 @@ impl Observer {
             };
 
             self.persist_pump_signal(&signal)?;
-            report.pump_signals_received = report.pump_signals_received.saturating_add(1);
+            match signal {
+                PumpLifecycleSignal::Creation(_) => {
+                    report.pump_signals_received = report.pump_signals_received.saturating_add(1);
+                }
+                PumpLifecycleSignal::Migration(_) => {
+                    report.pump_migration_signals_received =
+                        report.pump_migration_signals_received.saturating_add(1);
+                }
+            }
         }
         Ok(())
     }
 
-    async fn process_pending_pump_signals(
+    /// Share one bounded confirmed-transaction budget across creation and
+    /// migration verification. Up to eight migration rows are serviced first,
+    /// then creation keeps the established path, then any spare capacity returns
+    /// to older migrations. The preloaded migration slice prevents same-cycle
+    /// retries of a still-pending signature.
+    async fn process_pending_pump_transactions(
         &mut self,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
@@ -478,9 +509,65 @@ impl Observer {
         let provider_id = provider.provider_id();
         self.ensure_health(health, provider_id)?;
 
-        let pending = self
+        let pending_migrations = self
             .db
-            .pending_pump_launch_signals(PUMP_PENDING_BATCH_LIMIT)?;
+            .pending_pump_migration_signals(PUMP_TRANSACTION_BUDGET)?;
+        let reserved_migration_count = pending_migrations
+            .len()
+            .min(PUMP_MIGRATION_RESERVED)
+            .min(PUMP_TRANSACTION_BUDGET);
+
+        self.process_pump_migration_records(
+            provider.clone(),
+            &pending_migrations[..reserved_migration_count],
+            report,
+            health,
+        )
+        .await?;
+
+        let mut remaining_budget = PUMP_TRANSACTION_BUDGET - reserved_migration_count;
+        let creation_calls = self
+            .process_pending_pump_creation_signals(
+                provider.clone(),
+                remaining_budget,
+                report,
+                health,
+                candidates,
+                seen_candidate_ids,
+            )
+            .await?;
+        remaining_budget = remaining_budget.saturating_sub(creation_calls);
+
+        if remaining_budget > 0 && reserved_migration_count < pending_migrations.len() {
+            let end = (reserved_migration_count + remaining_budget).min(pending_migrations.len());
+            self.process_pump_migration_records(
+                provider,
+                &pending_migrations[reserved_migration_count..end],
+                report,
+                health,
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn process_pending_pump_creation_signals(
+        &mut self,
+        provider: Arc<dyn TransactionProvider>,
+        limit: usize,
+        report: &mut ObserverCycleReport,
+        health: &mut HashMap<ProviderId, CycleHealth>,
+        candidates: &mut Vec<(i64, DiscoveredToken)>,
+        seen_candidate_ids: &mut HashSet<i64>,
+    ) -> Result<usize, ObserverError> {
+        if limit == 0 {
+            return Ok(0);
+        }
+        let provider_id = provider.provider_id();
+        let pending = self.db.pending_pump_launch_signals(limit)?;
+        let calls = pending.len();
+
         for signal in pending {
             report.pump_signals_processed = report.pump_signals_processed.saturating_add(1);
             self.pacer.wait(PacingLane::Chain(provider_id)).await;
@@ -563,6 +650,113 @@ impl Observer {
                     )?;
                     report.pump_signals_rejected =
                         report.pump_signals_rejected.saturating_add(1);
+                }
+            }
+        }
+
+        Ok(calls)
+    }
+
+    async fn process_pump_migration_records(
+        &mut self,
+        provider: Arc<dyn TransactionProvider>,
+        signals: &[PumpMigrationSignalRecord],
+        report: &mut ObserverCycleReport,
+        health: &mut HashMap<ProviderId, CycleHealth>,
+    ) -> Result<(), ObserverError> {
+        let provider_id = provider.provider_id();
+
+        for signal in signals {
+            report.pump_migration_signals_processed =
+                report.pump_migration_signals_processed.saturating_add(1);
+            self.pacer.wait(PacingLane::Chain(provider_id)).await;
+            let attempted_at = unix_time_ms()?;
+
+            let body = match provider.transaction_json(&signal.signature).await {
+                Ok(body) => body,
+                Err(error) => {
+                    let detail = truncate_detail(&error.message);
+                    self.db.record_pump_migration_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(&detail),
+                    )?;
+                    report.pump_migration_signals_pending =
+                        report.pump_migration_signals_pending.saturating_add(1);
+                    report.provider_failures = report.provider_failures.saturating_add(1);
+                    record_adapter_failure(health, provider_id, &error);
+                    continue;
+                }
+            };
+
+            let verification = match classify_pump_migration_transaction(&body, &signal.signature) {
+                Ok(verification) => verification,
+                Err(error) => {
+                    let detail = truncate_detail(&error.message);
+                    self.db.record_pump_migration_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(&detail),
+                    )?;
+                    report.pump_migration_signals_pending =
+                        report.pump_migration_signals_pending.saturating_add(1);
+                    report.provider_failures = report.provider_failures.saturating_add(1);
+                    record_adapter_failure(health, provider_id, &error);
+                    continue;
+                }
+            };
+
+            health
+                .get_mut(&provider_id)
+                .expect("health initialized before provider call")
+                .record_success();
+
+            match verification {
+                PumpMigrationVerification::Pending => {
+                    self.db.record_pump_migration_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(PUMP_TRANSACTION_NOT_AVAILABLE),
+                    )?;
+                    report.pump_migration_signals_pending =
+                        report.pump_migration_signals_pending.saturating_add(1);
+                }
+                PumpMigrationVerification::Verified(evidence) => {
+                    let events = evidence
+                        .into_iter()
+                        .map(|evidence| TokenLifecycleEvent {
+                            kind: LifecycleEventKind::PumpGraduation,
+                            provider: provider_id,
+                            mint: evidence.mint,
+                            quote_mint: evidence.quote_mint,
+                            from_venue: VenueId::PumpFunBondingCurve,
+                            to_venue: VenueId::PumpSwap,
+                            pool_address: evidence.pool_address,
+                            signature: signal.signature.clone(),
+                            slot: signal.slot,
+                            detected_at_unix_ms: signal.observed_at_unix_ms,
+                            occurred_at_unix_ms: evidence.occurred_at_unix_ms,
+                        })
+                        .collect::<Vec<_>>();
+                    let stored = self.db.complete_pump_migration(
+                        &signal.signature,
+                        attempted_at,
+                        &events,
+                    )?;
+                    report.lifecycle_events_stored =
+                        report.lifecycle_events_stored.saturating_add(stored);
+                    report.pump_migration_signals_verified =
+                        report.pump_migration_signals_verified.saturating_add(1);
+                }
+                PumpMigrationVerification::Rejected(reason) => {
+                    let reason = truncate_detail(&reason);
+                    self.db.mark_pump_migration_rejected(
+                        &signal.signature,
+                        attempted_at,
+                        &reason,
+                    )?;
+                    report.pump_migration_signals_rejected =
+                        report.pump_migration_signals_rejected.saturating_add(1);
                 }
             }
         }

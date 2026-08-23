@@ -1,6 +1,8 @@
 //! Operational SQLite storage for Shreks.
 
+mod lifecycle;
 mod outcomes;
+pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
@@ -47,6 +49,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 4,
         name: "candidate_outcome_checkpoints",
         sql: include_str!("../migrations/0004_candidate_outcome_checkpoints.sql"),
+    },
+    Migration {
+        version: 5,
+        name: "pump_graduation_lifecycle",
+        sql: include_str!("../migrations/0005_pump_graduation_lifecycle.sql"),
     },
 ];
 
