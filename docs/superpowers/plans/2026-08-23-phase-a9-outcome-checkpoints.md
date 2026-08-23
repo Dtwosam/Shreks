@@ -44,19 +44,19 @@
 
 The table must use `(candidate_id, horizon_seconds)` as a unique identity and foreign keys to candidate/baseline/checkpoint snapshots. Numeric outcome fields are nullable: `return_pct`, `mfe_pct`, `mae_pct`, `liquidity_change_pct`, `volume_m5_change_pct`, `buys_m5_change`, `sells_m5_change`, `rug_or_dead_pool`, and `exitability` (`exitable`/`not_exitable`/NULL). `due_at_unix_ms`, `completed_at_unix_ms`, and both snapshot IDs remain explicit for latency/audit analysis.
 
-- [ ] **Step 1: Write failing migration/storage tests**
+- [x] **Step 1: Write failing migration/storage tests**
 
 Tests must prove a fresh DB reports schema v4; scheduling inserts exactly seven rows with the approved horizons and exact due timestamps; scheduling is idempotent across restart; `due_outcome_checkpoints` returns only pending rows whose due time has arrived, in deterministic due-time order; completion links real snapshot IDs and removes the row from the due set.
 
-- [ ] **Step 2: Run full CI and verify RED**
+- [x] **Step 2: Run full CI and verify RED**
 
 Expected: Rust fails on schema version 3/missing outcome types and methods while Python and repository safety remain unchanged.
 
-- [ ] **Step 3: Add migration and minimal typed storage API**
+- [x] **Step 3: Add migration and minimal typed storage API**
 
 Use checked timestamp addition so overflow becomes `StorageError::InvalidData`. Validate horizon values against the approved set. Completion must reject snapshot IDs owned by another candidate and must never overwrite a completed checkpoint.
 
-- [ ] **Step 4: Run full CI and verify GREEN**
+- [x] **Step 4: Run full CI and verify GREEN**
 
 Expected: Rust, Python, and repository-safety checks all pass.
 
@@ -73,19 +73,19 @@ Expected: Rust, Python, and repository-safety checks all pass.
 - Consumes: candidate IDs returned by `ShreksDb::upsert_candidate` and `ensure_outcome_checkpoints` from Task 1.
 - Produces: exactly seven durable future checkpoints for candidates discovered through generic discovery and verified Pump creation.
 
-- [ ] **Step 1: Write failing observer tests**
+- [x] **Step 1: Write failing observer tests**
 
 After one discovery cycle, query SQLite and assert seven checkpoint rows exist for the candidate. Repeat the cycle and assert the count remains seven. Verify a Pump-created candidate gets the same schedule. A rejected Pump log signal that never becomes a candidate must not create checkpoint rows.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Expected: candidate rows exist but outcome schedules are absent.
 
-- [ ] **Step 3: Schedule immediately after every successful candidate upsert**
+- [x] **Step 3: Schedule immediately after every successful candidate upsert**
 
 Use the candidate's durable `discovered_at_unix_ms` as the anchor. Do not create a second candidate or modify discovery identity.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run full CI.
 
@@ -102,19 +102,19 @@ Run full CI.
 - Consumes: `due_outcome_checkpoints(now, limit)`, existing `MarketDataProvider`, request pacer, and normalized market snapshot persistence.
 - Produces: due candidates are re-observed through the same market-provider path in a bounded batch without duplicating candidate rows or triggering chain-state calls solely for outcome sampling.
 
-- [ ] **Step 1: Write failing timing/budget tests**
+- [x] **Step 1: Write failing timing/budget tests**
 
 Use deterministic fake market providers and due checkpoint fixtures. Prove: a not-yet-due candidate causes no extra market call; a due candidate causes one market-observation pass even if several horizons are overdue; the due batch is capped; existing provider pacing still applies; outcome sampling does not request mint state solely because a checkpoint is due.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Expected: due candidates are currently ignored by the observer.
 
-- [ ] **Step 3: Add a bounded `OUTCOME_DUE_CANDIDATE_LIMIT` path**
+- [x] **Step 3: Add a bounded `OUTCOME_DUE_CANDIDATE_LIMIT` path**
 
 Load distinct due candidates at the start of a normal full cycle, merge them with newly discovered candidates by candidate ID, mark whether each candidate needs chain enrichment, and reuse the existing market provider orchestration/pacing. Realtime Pump wake-ups between cycles remain durable-write-only and do not trigger outcome sampling.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run full CI.
 
@@ -133,19 +133,19 @@ Run full CI.
 
 For each due horizon, choose a baseline price-bearing snapshot at/after discovery and the latest price-bearing snapshot collected at/after the checkpoint due time. Store both snapshot IDs. Compute return from `price_usd`; compute liquidity and 5m-volume percentage changes only when both endpoints are valid and the baseline denominator is positive; compute signed buy/sell-count changes when both values exist. Compute MFE/MAE from price-bearing snapshots between the baseline and checkpoint snapshot using the baseline price. If the available snapshot history is insufficient for a metric, leave it NULL. `rug_or_dead_pool` and `exitability` remain NULL until an explicit detector/quote proves them; absence of a provider pair is not enough to guess either state.
 
-- [ ] **Step 1: Write failing metric tests**
+- [x] **Step 1: Write failing metric tests**
 
 Fixtures must cover positive/negative return, MFE/MAE, nullable denominator handling, signed flow changes, multiple provider/venue snapshots with preserved snapshot IDs, and no fabricated rug/exitability values.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Expected: due observations are stored but checkpoint rows remain pending/uncomputed.
 
-- [ ] **Step 3: Implement deterministic finalization**
+- [x] **Step 3: Implement deterministic finalization**
 
 Finalize only after the due candidate market observation pass. If no usable post-due price-bearing snapshot exists, keep the checkpoint pending for a later cycle rather than marking false completion.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run full CI.
 
@@ -162,15 +162,17 @@ Run full CI.
 - Consumes: completed A9 scheduler/finalizer.
 - Produces: documented restart semantics and a regression proving pending checkpoints survive process restart and complete later without duplicate schedules.
 
-- [ ] **Step 1: Add restart regression**
+- [x] **Step 1: Add restart regression**
 
 Schedule a candidate, close/reopen SQLite before a horizon is completed, run a due observation with deterministic market data, and assert the same checkpoint row completes exactly once.
 
-- [ ] **Step 2: Verify RED/GREEN as appropriate**
+- [x] **Step 2: Verify RED/GREEN as appropriate**
 
 If the existing implementation already passes the regression, record that as verification rather than manufacturing a failure.
 
-- [ ] **Step 3: Update README operator notes**
+The regression passed without a production-code change on clean A9 commit `8679cf7cc628e8d9eb52615694f88b5b3e5faf88` in CI run `32654661976`; Rust, Python, and repository-safety jobs were all green.
+
+- [x] **Step 3: Update README operator notes**
 
 Document the seven horizons, bounded/full-cycle-only sampling behavior, NULL semantics for unavailable metrics, and that no trading is enabled by A9.
 
@@ -179,6 +181,12 @@ Document the seven horizons, bounded/full-cycle-only sampling behavior, NULL sem
 Expected: Rust, Python, and repository-safety checks all pass.
 
 ---
+
+## Verification record
+
+- Task 4's implementation was fully green at commit `80153d1e800d865d6ee206861ac58e02a432483b` in CI run `32651274531`.
+- Task 5's restart regression passed the existing implementation at commit `8679cf7cc628e8d9eb52615694f88b5b3e5faf88` in CI run `32654661976`; no production fix was needed.
+- Final documentation-complete CI remains the last gate before A9 is marked complete.
 
 ## Self-review
 
