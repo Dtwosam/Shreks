@@ -21,8 +21,10 @@ use std::{
 
 use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId};
 use shreks_providers::{
-    config::ProviderConfig, ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError,
-    ProviderErrorKind,
+    config::ProviderConfig,
+    pump::{classify_pump_creation_transaction, PumpCreationVerification},
+    ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
+    TransactionProvider,
 };
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::time::{sleep, sleep_until, Instant};
@@ -30,6 +32,8 @@ use tokio::time::{sleep, sleep_until, Instant};
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
 const DEXSCREENER_DISCOVERY_RPS: u32 = 1;
+const PUMP_PENDING_BATCH_LIMIT: usize = 32;
+const PUMP_TRANSACTION_NOT_AVAILABLE: &str = "confirmed Pump transaction not available yet";
 
 /// Summary of one finite observer pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -39,6 +43,10 @@ pub struct ObserverCycleReport {
     pub market_snapshots_stored: usize,
     pub mint_states_stored: usize,
     pub provider_failures: usize,
+    pub pump_signals_processed: usize,
+    pub pump_signals_pending: usize,
+    pub pump_signals_verified: usize,
+    pub pump_signals_rejected: usize,
 }
 
 /// Fatal observer errors. Provider failures are deliberately not fatal; they
@@ -185,6 +193,7 @@ pub struct Observer {
     discovery_providers: Vec<Arc<dyn DiscoveryProvider>>,
     market_providers: Vec<Arc<dyn MarketDataProvider>>,
     chain_providers: Vec<Arc<dyn ChainDataProvider>>,
+    transaction_providers: Vec<Arc<dyn TransactionProvider>>,
     pacer: RequestPacer,
 }
 
@@ -195,6 +204,7 @@ impl Observer {
             discovery_providers: Vec::new(),
             market_providers: Vec::new(),
             chain_providers: Vec::new(),
+            transaction_providers: Vec::new(),
             pacer: RequestPacer::free_tier_defaults(),
         }
     }
@@ -211,6 +221,11 @@ impl Observer {
 
     pub fn with_chain_provider(mut self, provider: Arc<dyn ChainDataProvider>) -> Self {
         self.chain_providers.push(provider);
+        self
+    }
+
+    pub fn with_transaction_provider(mut self, provider: Arc<dyn TransactionProvider>) -> Self {
+        self.transaction_providers.push(provider);
         self
     }
 
@@ -252,6 +267,14 @@ impl Observer {
         let mut health: HashMap<ProviderId, CycleHealth> = HashMap::new();
         let mut candidates = Vec::new();
         let mut seen_candidate_ids = HashSet::new();
+
+        self.process_pending_pump_signals(
+            &mut report,
+            &mut health,
+            &mut candidates,
+            &mut seen_candidate_ids,
+        )
+        .await?;
 
         for provider in self.discovery_providers.clone() {
             let provider_id = provider.provider_id();
@@ -346,6 +369,107 @@ impl Observer {
         }
 
         Ok(report)
+    }
+
+    async fn process_pending_pump_signals(
+        &mut self,
+        report: &mut ObserverCycleReport,
+        health: &mut HashMap<ProviderId, CycleHealth>,
+        candidates: &mut Vec<(i64, DiscoveredToken)>,
+        seen_candidate_ids: &mut HashSet<i64>,
+    ) -> Result<(), ObserverError> {
+        let Some(provider) = self.transaction_providers.first().cloned() else {
+            return Ok(());
+        };
+        let provider_id = provider.provider_id();
+        self.ensure_health(health, provider_id)?;
+
+        let pending = self
+            .db
+            .pending_pump_launch_signals(PUMP_PENDING_BATCH_LIMIT)?;
+        for signal in pending {
+            report.pump_signals_processed = report.pump_signals_processed.saturating_add(1);
+            self.pacer.wait(PacingLane::Chain(provider_id)).await;
+            let attempted_at = unix_time_ms()?;
+
+            let body = match provider.transaction_json(&signal.signature).await {
+                Ok(body) => body,
+                Err(error) => {
+                    let detail = truncate_detail(&error.message);
+                    self.db.record_pump_launch_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(&detail),
+                    )?;
+                    report.pump_signals_pending = report.pump_signals_pending.saturating_add(1);
+                    report.provider_failures = report.provider_failures.saturating_add(1);
+                    record_adapter_failure(health, provider_id, &error);
+                    continue;
+                }
+            };
+
+            let verification = match classify_pump_creation_transaction(
+                &body,
+                &signal.signature,
+                signal.observed_at_unix_ms,
+            ) {
+                Ok(verification) => verification,
+                Err(error) => {
+                    let detail = truncate_detail(&error.message);
+                    self.db.record_pump_launch_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(&detail),
+                    )?;
+                    report.pump_signals_pending = report.pump_signals_pending.saturating_add(1);
+                    report.provider_failures = report.provider_failures.saturating_add(1);
+                    record_adapter_failure(health, provider_id, &error);
+                    continue;
+                }
+            };
+
+            health
+                .get_mut(&provider_id)
+                .expect("health initialized before provider call")
+                .record_success();
+
+            match verification {
+                PumpCreationVerification::Pending => {
+                    self.db.record_pump_launch_attempt(
+                        &signal.signature,
+                        attempted_at,
+                        Some(PUMP_TRANSACTION_NOT_AVAILABLE),
+                    )?;
+                    report.pump_signals_pending = report.pump_signals_pending.saturating_add(1);
+                }
+                PumpCreationVerification::Verified(candidate) => {
+                    self.db
+                        .record_pump_launch_attempt(&signal.signature, attempted_at, None)?;
+                    let candidate_id = self.db.upsert_candidate(&candidate)?;
+                    self.db
+                        .mark_pump_launch_verified(&signal.signature, candidate_id)?;
+                    report.pump_signals_verified =
+                        report.pump_signals_verified.saturating_add(1);
+                    if seen_candidate_ids.insert(candidate_id) {
+                        candidates.push((candidate_id, candidate));
+                    }
+                }
+                PumpCreationVerification::Rejected(reason) => {
+                    self.db
+                        .record_pump_launch_attempt(&signal.signature, attempted_at, None)?;
+                    let reason = truncate_detail(&reason);
+                    self.db.mark_pump_launch_rejected(
+                        &signal.signature,
+                        attempted_at,
+                        &reason,
+                    )?;
+                    report.pump_signals_rejected =
+                        report.pump_signals_rejected.saturating_add(1);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn observe_market_data(
