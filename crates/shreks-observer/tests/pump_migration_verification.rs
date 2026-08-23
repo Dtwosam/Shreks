@@ -11,9 +11,7 @@ use rusqlite::Connection;
 use shreks_core::ProviderId;
 use shreks_observer::Observer;
 use shreks_providers::{
-    pump::{
-        PUMP_AMM_PROGRAM_ID, PUMP_MIGRATE_V2_DISCRIMINATOR, PUMP_PROGRAM_ID,
-    },
+    pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID},
     ProviderError, ProviderErrorKind, TransactionProvider,
 };
 use shreks_storage::ShreksDb;
@@ -22,6 +20,7 @@ const MINT: &str = "9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump";
 const QUOTE: &str = "quote-mint-111111111111111111111111111111111";
 const POOL: &str = "pump-swap-pool-1111111111111111111111111111111";
 const CREATE_V2_DATA: &str = "ctY7UoGVwdd";
+const MIGRATE_V2_DATA: &str = "YQq8B6nbicx";
 
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -39,7 +38,6 @@ fn cleanup_dir(path: &Path) {
 }
 
 fn migrate_v2_body(block_time: &str) -> String {
-    let data = bs58::encode(PUMP_MIGRATE_V2_DISCRIMINATOR).into_string();
     format!(
         r#"{{
           "jsonrpc":"2.0",
@@ -49,7 +47,7 @@ fn migrate_v2_body(block_time: &str) -> String {
             "meta":{{"err":null,"innerInstructions":[]}},
             "transaction":{{"message":{{"instructions":[{{
               "programId":"{PUMP_PROGRAM_ID}",
-              "data":"{data}",
+              "data":"{MIGRATE_V2_DATA}",
               "accounts":[
                 "global","withdraw-authority","{MINT}","{QUOTE}",
                 "bonding-curve","associated-bonding-curve","user",
