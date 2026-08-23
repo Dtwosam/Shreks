@@ -212,6 +212,24 @@ Every numerical threshold belongs to an explicit, versioned `RegimePolicy`; B6 s
 
 A regime label is **not** a trade instruction, expected-return forecast, confidence score, or sizing command. B6 adds no wallet intelligence, deterministic trade score, `TradeDecision`, `TradeIntent`, position sizing, paper fill, signer, swap request, transaction submission, or live-money path.
 
+## Deterministic candidate score
+
+Phase B7 adds the source build-order deterministic-score capability under `shreks_brain.scoring`. The B7 label preserves repository chronology; the shared B2 feature schema remains exactly `b2-v1`.
+
+Score-v1 combines four explicit `0..100` candidate families: safety quality, money flow, setup quality, and liquidity/executability. Safety quality applies only configured penalties for the current B2 soft-safety flags; money flow normalizes volume velocity, five-minute buy fraction, and buy-pressure acceleration; setup quality passes through the selected setup family's confirmation score; liquidity/executability combines normalized liquidity with inversely normalized exit price impact.
+
+Every family weight, soft-safety penalty, and normalization endpoint belongs to a required versioned `ScorePolicy`. B7 ships **no production scoring policy, weights, or entry threshold**. The values are hypotheses to be calibrated later against unseen point-in-time outcomes and realistic paper-trading costs.
+
+Missing evidence never becomes zero and never causes silent weight renormalization. If a family with positive configured weight cannot be computed, `total_score` remains `None`. A deliberately zero-weight family may be absent for controlled ablation research because the remaining configured weights already sum to one.
+
+B1 safety and setup eligibility stay independent from scoring. `REJECT`/`INCOMPLETE` safety candidates and `BLOCKED`/`WATCH` setups may still receive a numeric research score when the underlying score evidence is complete, preserving rejected opportunities for filter-value and selection-bias research. Their original safety decision and setup state are carried into the score assessment and cannot be changed by a high score.
+
+The B6 `HOT / NORMAL / WEAK / DEAD` regime is also carried into the score assessment but is not a weighted score-v1 component. This avoids double-counting global liquidity/volume conditions; the later Decision Engine owns regime-specific entry permission and score-threshold policy.
+
+Wallet quality is intentionally absent from score-v1 rather than zero-filled. The repository does not yet have the Phase D wallet-history, confidence, and independence evidence needed to make a statistically defensible wallet score.
+
+`total_score` is **not** win probability, expected return, confidence, position size, or trade permission. B7 adds no `TradeDecision`, `TradeIntent`, risk sizing, paper fill, wallet/signing, transaction construction/submission, or live-money path.
+
 ## Local setup
 
 ### Rust
