@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 
 use super::{ShreksDb, StorageError};
 
@@ -34,6 +34,25 @@ pub struct OutcomeCheckpointRecord {
     pub baseline_snapshot_id: Option<i64>,
     pub checkpoint_snapshot_id: Option<i64>,
     pub completed_at_unix_ms: Option<i64>,
+    pub return_pct: Option<f64>,
+    pub mfe_pct: Option<f64>,
+    pub mae_pct: Option<f64>,
+    pub liquidity_change_pct: Option<f64>,
+    pub volume_m5_change_pct: Option<f64>,
+    pub buys_m5_change: Option<i64>,
+    pub sells_m5_change: Option<i64>,
+    pub rug_or_dead_pool: Option<bool>,
+    pub exitability: Option<String>,
+}
+
+/// Values written when one scheduled checkpoint has been measured. Snapshot
+/// identifiers are mandatory so every metric remains traceable to source data;
+/// metrics that the free-data path cannot support remain explicitly nullable.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutcomeCheckpointCompletion {
+    pub baseline_snapshot_id: i64,
+    pub checkpoint_snapshot_id: i64,
+    pub completed_at_unix_ms: i64,
     pub return_pct: Option<f64>,
     pub mfe_pct: Option<f64>,
     pub mae_pct: Option<f64>,
@@ -225,6 +244,128 @@ impl ShreksDb {
                 })
             })
             .collect()
+    }
+
+    /// Complete one pending checkpoint exactly once. Both evidence snapshots
+    /// must belong to the checkpoint candidate, preventing cross-token metric
+    /// contamination when many candidates are measured concurrently.
+    pub fn complete_outcome_checkpoint(
+        &self,
+        candidate_id: i64,
+        horizon_seconds: u32,
+        completion: &OutcomeCheckpointCompletion,
+    ) -> Result<(), StorageError> {
+        if candidate_id <= 0 {
+            return Err(StorageError::InvalidData(
+                "outcome candidate_id must be positive".to_owned(),
+            ));
+        }
+        parse_horizon(i64::from(horizon_seconds))?;
+        if completion.baseline_snapshot_id <= 0 || completion.checkpoint_snapshot_id <= 0 {
+            return Err(StorageError::InvalidData(
+                "outcome snapshot ids must be positive".to_owned(),
+            ));
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let status = transaction
+            .query_row(
+                r#"SELECT status
+                   FROM candidate_outcome_checkpoints
+                   WHERE candidate_id = ?1 AND horizon_seconds = ?2"#,
+                params![candidate_id, i64::from(horizon_seconds)],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+
+        match status.as_deref() {
+            Some("pending") => {}
+            Some("completed") => {
+                return Err(StorageError::InvalidData(format!(
+                    "outcome checkpoint for candidate {candidate_id} at {horizon_seconds}s is already completed"
+                )));
+            }
+            Some(other) => {
+                return Err(StorageError::InvalidData(format!(
+                    "unknown outcome checkpoint status '{other}'"
+                )));
+            }
+            None => {
+                return Err(StorageError::InvalidData(format!(
+                    "outcome checkpoint for candidate {candidate_id} at {horizon_seconds}s does not exist"
+                )));
+            }
+        }
+
+        for (label, snapshot_id) in [
+            ("baseline", completion.baseline_snapshot_id),
+            ("checkpoint", completion.checkpoint_snapshot_id),
+        ] {
+            let owner = transaction
+                .query_row(
+                    "SELECT candidate_id FROM market_snapshots WHERE id = ?1",
+                    [snapshot_id],
+                    |row| row.get::<_, i64>(0),
+                )
+                .optional()?;
+            match owner {
+                Some(owner) if owner == candidate_id => {}
+                Some(owner) => {
+                    return Err(StorageError::InvalidData(format!(
+                        "outcome {label} snapshot {snapshot_id} belongs to candidate {owner}, not candidate {candidate_id}"
+                    )));
+                }
+                None => {
+                    return Err(StorageError::InvalidData(format!(
+                        "outcome {label} snapshot {snapshot_id} does not exist for candidate {candidate_id}"
+                    )));
+                }
+            }
+        }
+
+        let changed = transaction.execute(
+            r#"UPDATE candidate_outcome_checkpoints
+               SET status = 'completed',
+                   baseline_snapshot_id = ?3,
+                   checkpoint_snapshot_id = ?4,
+                   completed_at_unix_ms = ?5,
+                   return_pct = ?6,
+                   mfe_pct = ?7,
+                   mae_pct = ?8,
+                   liquidity_change_pct = ?9,
+                   volume_m5_change_pct = ?10,
+                   buys_m5_change = ?11,
+                   sells_m5_change = ?12,
+                   rug_or_dead_pool = ?13,
+                   exitability = ?14
+               WHERE candidate_id = ?1
+                 AND horizon_seconds = ?2
+                 AND status = 'pending'"#,
+            params![
+                candidate_id,
+                i64::from(horizon_seconds),
+                completion.baseline_snapshot_id,
+                completion.checkpoint_snapshot_id,
+                completion.completed_at_unix_ms,
+                completion.return_pct,
+                completion.mfe_pct,
+                completion.mae_pct,
+                completion.liquidity_change_pct,
+                completion.volume_m5_change_pct,
+                completion.buys_m5_change,
+                completion.sells_m5_change,
+                completion.rug_or_dead_pool.map(i64::from),
+                completion.exitability,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(StorageError::InvalidData(format!(
+                "outcome checkpoint for candidate {candidate_id} at {horizon_seconds}s changed concurrently"
+            )));
+        }
+
+        transaction.commit()?;
+        Ok(())
     }
 }
 
