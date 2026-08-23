@@ -6,6 +6,7 @@ pub mod helius;
 pub mod http;
 pub mod jupiter;
 pub mod meteora;
+pub mod pump;
 
 use std::{error::Error, fmt};
 
