@@ -1,51 +1,43 @@
 # Phase B4a Graduation Lifecycle Evidence Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans and test-driven-development task-by-task.
 
-**Goal:** Add restart-safe, transaction-verified Pump.fun graduation evidence and normalized Pump.fun -> PumpSwap lifecycle events without increasing the existing per-cycle Pump transaction-verification budget.
+**Goal:** Add restart-safe, transaction-verified Pump.fun graduation evidence and normalized Pump.fun -> PumpSwap lifecycle events without increasing the existing Pump transaction-verification budget.
 
-**Architecture:** `shreks-core` owns normalized lifecycle types. `shreks-storage` owns a migration-verification inbox plus normalized lifecycle-event persistence. `shreks-providers::pump` detects migration log signals and verifies legacy `migrate` plus `migrate_v2` transactions against the pinned official Pump IDL. `shreks-observer` routes both creation and migration signals through the existing single websocket/channel and performs bounded verification in normal cycles.
+**Architecture:** `shreks-core` owns normalized lifecycle types. `shreks-storage` owns the migration inbox and lifecycle-event persistence. `shreks-providers::pump` detects and verifies official `migrate` / `migrate_v2` instructions. `shreks-observer` routes creation and migration through the existing one Pump websocket and verifies them during bounded full cycles.
 
-**Tech Stack:** Rust stable, rusqlite 0.40.x bundled SQLite, serde_json, bs58, tokio, tokio-tungstenite, existing provider/observer traits and GitHub Actions CI.
+**Tech Stack:** Rust stable, rusqlite 0.40.x, serde_json, bs58, tokio, tokio-tungstenite, existing Shreks provider/observer boundaries.
 
 **Spec:** `docs/superpowers/specs/2026-08-23-phase-b4a-graduation-lifecycle-design.md`
 
 ## Global Constraints
 
-- Official Pump IDL blob SHA is `062e66f032bb9f295353b573be3400070bd55e5b`.
-- Pump program is `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`.
-- PumpSwap program is `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`.
-- Legacy `migrate` discriminator is `[155, 234, 231, 146, 236, 158, 162, 30]`.
-- `migrate_v2` discriminator is `[187, 203, 18, 31, 206, 237, 254, 41]`.
-- Migration evidence comes from a verified Pump instruction, never from seeing a PumpSwap pair alone.
-- One Pump websocket remains in use; no second migration websocket is allowed.
-- Realtime wake-ups remain durable-write-only; confirmed transaction fetches stay in full cycles.
-- Total Pump transaction verifications remain capped at 32 per cycle.
-- `detected_at_unix_ms` is the decision-safe lifecycle timestamp; optional block time must not replace it.
-- No B2 feature change, setup thresholds, scoring, paper trading, signer, or live execution in B4a.
+- Pinned official Pump IDL blob: `062e66f032bb9f295353b573be3400070bd55e5b`.
+- Pump program: `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`.
+- PumpSwap program: `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`.
+- Legacy migrate discriminator: `[155, 234, 231, 146, 236, 158, 162, 30]`.
+- Migrate-v2 discriminator: `[187, 203, 18, 31, 206, 237, 254, 41]`.
+- Migration evidence must come from a verified Pump instruction, never a PumpSwap pair alone.
+- Keep one Pump websocket and at most 32 Pump transaction verifications per full cycle.
+- Realtime signals are durable-write-only; transaction verification stays in full cycles.
+- `detected_at_unix_ms` remains the decision-safe lifecycle timestamp.
+- No lifecycle strategy thresholds, B2 schema change, paper trading, signing, or live execution.
 
 ---
 
 ### Task 1: Normalized lifecycle domain and durable migration storage
 
 **Files:**
-- Modify: `crates/shreks-core/src/lib.rs`
-- Create: `crates/shreks-storage/migrations/0005_pump_graduation_lifecycle.sql`
-- Modify: `crates/shreks-storage/src/lib.rs`
-- Create: `crates/shreks-storage/tests/pump_migration_storage.rs`
-- Modify: `crates/shreks-storage/tests/database.rs`
+- Modify `crates/shreks-core/src/lib.rs`
+- Create `crates/shreks-storage/migrations/0005_pump_graduation_lifecycle.sql`
+- Modify `crates/shreks-storage/src/lib.rs`
+- Create `crates/shreks-storage/tests/pump_migration_storage.rs`
+- Modify `crates/shreks-storage/tests/database.rs`
 
-**Interfaces:**
+**Produces:**
 
 ```rust
-pub enum LifecycleEventKind {
-    PumpGraduation,
-}
-
-impl LifecycleEventKind {
-    pub const fn as_str(self) -> &'static str;
-}
-
+pub enum LifecycleEventKind { PumpGraduation }
 pub struct TokenLifecycleEvent {
     pub kind: LifecycleEventKind,
     pub provider: ProviderId,
@@ -59,323 +51,137 @@ pub struct TokenLifecycleEvent {
     pub detected_at_unix_ms: i64,
     pub occurred_at_unix_ms: Option<i64>,
 }
-
-pub struct PumpMigrationSignalRecord {
-    pub signature: String,
-    pub slot: u64,
-    pub observed_at_unix_ms: i64,
-    pub status: PumpSignalStatus,
-    pub attempt_count: u64,
-    pub last_attempt_at_unix_ms: Option<i64>,
-    pub last_error: Option<String>,
-}
+pub struct PumpMigrationSignalRecord { /* signal/retry fields from spec */ }
 ```
 
-Storage methods:
+Storage API:
 
 ```rust
-pub fn record_pump_migration_signal(
-    &self,
-    signature: &str,
-    slot: u64,
-    observed_at_unix_ms: i64,
-) -> Result<(), StorageError>;
-
-pub fn pending_pump_migration_signals(
-    &self,
-    limit: usize,
-) -> Result<Vec<PumpMigrationSignalRecord>, StorageError>;
-
-pub fn record_pump_migration_attempt(
-    &self,
-    signature: &str,
-    attempted_at_unix_ms: i64,
-    error: Option<&str>,
-) -> Result<(), StorageError>;
-
-pub fn complete_pump_migration(
-    &self,
-    signature: &str,
-    attempted_at_unix_ms: i64,
-    events: &[TokenLifecycleEvent],
-) -> Result<usize, StorageError>;
-
-pub fn mark_pump_migration_rejected(
-    &self,
-    signature: &str,
-    attempted_at_unix_ms: i64,
-    reason: &str,
-) -> Result<(), StorageError>;
-
-pub fn lifecycle_events_for_mint(
-    &self,
-    mint: &str,
-) -> Result<Vec<TokenLifecycleEvent>, StorageError>;
+record_pump_migration_signal(signature, slot, observed_at_unix_ms)
+pending_pump_migration_signals(limit)
+record_pump_migration_attempt(signature, attempted_at_unix_ms, error)
+complete_pump_migration(signature, attempted_at_unix_ms, events)
+mark_pump_migration_rejected(signature, attempted_at_unix_ms, reason)
+lifecycle_events_for_mint(mint)
 ```
 
-- [ ] **Step 1: Write RED storage/domain tests**
+- [ ] **RED:** Write tests proving schema version 5; both new tables/indexes; u64 slot TEXT round-trip; earliest-observation preservation; terminal-state preservation; restart replay; oldest-first bounded pending query; attempt counting; atomic completion; multiple events per signature; deterministic mint lookup; rejection auditability; input validation.
 
-Tests must assert:
+Completion replay semantics are exact:
 
-```rust
-assert_eq!(LifecycleEventKind::PumpGraduation.as_str(), "pump_graduation");
-assert_eq!(db.diagnostics().unwrap().schema_version, 5);
-```
+- pending + valid non-empty event set -> atomically insert events and mark verified;
+- already verified + identical event set -> idempotent no-op returning 0 inserted rows;
+- already verified + any missing/different event -> fail closed;
+- rejected or unknown signature -> fail closed;
+- event signature must equal inbox signature;
+- empty event set -> fail closed.
 
-And prove:
-
-- migration 5 creates `pump_migration_signals` and `token_lifecycle_events`;
-- migration signal slot is stored as decimal TEXT and supports `u64::MAX`;
-- duplicate signal keeps the earliest observation timestamp;
-- duplicate signal does not reset `verified` or `rejected` state;
-- pending rows survive DB reopen and return oldest-first with a limit;
-- attempts increment while remaining pending;
-- `complete_pump_migration` inserts normalized event(s), marks the inbox row verified, and returns inserted-event count;
-- completion is idempotent for the same event;
-- multiple distinct `(mint, quote_mint, pool)` events for one signature can be stored;
-- `lifecycle_events_for_mint` returns deterministic `detected_at_unix_ms ASC, signature ASC, pool_address ASC` order;
-- rejection removes the signal from pending replay but preserves reason/time;
-- completing an unknown/non-pending signature fails closed;
-- completion with an empty event slice fails closed;
-- invalid empty mint/quote/pool/signature or negative timestamps are rejected by storage rather than persisted.
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected: Rust fails because lifecycle types/migration-5 storage APIs are missing. Existing Python and repository-safety jobs remain unchanged.
-
-- [ ] **Step 3: Implement minimal domain + migration + storage APIs**
-
-Migration SQL creates the two tables/indexes from the spec. Add migration version 5 to `MIGRATIONS`.
-
-`complete_pump_migration` must use one SQLite transaction. Within it:
-
-```text
-validate pending signal
-insert events with ON CONFLICT DO NOTHING
-update signal status='verified', attempt_count=attempt_count+1,
-       last_attempt_at_unix_ms=?, last_error=NULL
-commit
-```
-
-Rows in `token_lifecycle_events` use enum/provider/venue `as_str()` values and store `slot` as decimal TEXT.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: all Task 1 storage/domain tests and all pre-existing repository tests pass.
+- [ ] **Verify RED:** Full CI must fail in Rust only because lifecycle/storage APIs do not exist.
+- [ ] **GREEN:** Add lifecycle enum/type, migration 5, validation helpers, migration inbox methods, atomic completion transaction, lifecycle mint query.
+- [ ] **Verify GREEN:** Full repository CI.
 
 ---
 
-### Task 2: Pump lifecycle log classification and migration transaction decoder
+### Task 2: Pump lifecycle signal and migration transaction verification
 
 **Files:**
-- Modify: `crates/shreks-providers/src/pump.rs`
-- Modify: `crates/shreks-providers/tests/pump.rs`
-- Modify: `crates/shreks-providers/tests/pump_stream.rs`
+- Modify `crates/shreks-providers/src/pump.rs`
+- Modify `crates/shreks-providers/tests/pump.rs`
+- Modify `crates/shreks-providers/tests/pump_stream.rs`
 
-**Interfaces:**
+**Produces:**
 
 ```rust
 pub const PUMP_MIGRATE_DISCRIMINATOR: [u8; 8];
 pub const PUMP_MIGRATE_V2_DISCRIMINATOR: [u8; 8];
 pub const WRAPPED_SOL_MINT: &str;
-
-pub struct PumpMigrationSignal {
-    pub signature: String,
-    pub slot: u64,
-}
-
+pub struct PumpMigrationSignal { pub signature: String, pub slot: u64 }
 pub enum PumpLifecycleSignal {
     Creation(PumpCreationSignal),
     Migration(PumpMigrationSignal),
 }
-
 pub struct PumpMigrationEvidence {
     pub mint: String,
     pub quote_mint: String,
     pub pool_address: String,
     pub occurred_at_unix_ms: Option<i64>,
 }
-
 pub enum PumpMigrationVerification {
     Pending,
     Verified(Vec<PumpMigrationEvidence>),
     Rejected(String),
 }
-
-pub fn parse_pump_lifecycle_log_notification(
-    body: &str,
-) -> Result<Option<PumpLifecycleSignal>, ProviderError>;
-
-pub fn classify_pump_migration_transaction(
-    body: &str,
-    signature: &str,
-) -> Result<PumpMigrationVerification, ProviderError>;
-
-impl PumpLogStream {
-    pub async fn next_lifecycle_signal(
-        &mut self,
-    ) -> Result<PumpLifecycleSignal, ProviderError>;
-}
+pub fn parse_pump_lifecycle_log_notification(body: &str)
+    -> Result<Option<PumpLifecycleSignal>, ProviderError>;
+pub fn classify_pump_migration_transaction(body: &str, signature: &str)
+    -> Result<PumpMigrationVerification, ProviderError>;
 ```
 
-Keep the existing creation-only `parse_pump_log_notification` and `next_signal` behavior green during this task; they may delegate to the lifecycle parser while filtering to creation so current observer code still compiles until Task 3.
+`PumpLogStream::next_lifecycle_signal()` is added while creation-only APIs remain compatible until Task 3.
 
-- [ ] **Step 1: Write RED protocol tests**
-
-Add tests proving:
-
-- official migration discriminators and wrapped-SOL mint are exact;
-- `Create`/`CreateV2` logs produce `Creation`;
-- exact `Migrate`/`MigrateV2` logs produce `Migration`;
-- `MigrateBondingCurveCreator`, buy/sell logs, and failed notifications do not produce migration;
-- reconnecting `PumpLogStream::next_lifecycle_signal` returns migration as well as creation without opening a second subscription;
-- RPC `result:null` -> `Pending`;
-- failed on-chain migration transaction -> `Rejected`;
-- legacy migration with accounts `[2]=mint`, `[8]=PUMP_AMM_PROGRAM_ID`, `[9]=pool`, `[14]=WRAPPED_SOL_MINT` verifies;
-- v2 migration with `[2]=base_mint`, `[3]=quote_mint`, `[9]=PUMP_AMM_PROGRAM_ID`, `[10]=pool` verifies;
-- wrong Pump program, wrong discriminator, wrong PumpSwap program account, too-short account list, or blank identity field cannot verify;
-- `blockTime` seconds converts to exact milliseconds;
-- `blockTime:null` remains `None`;
-- negative/overflowing/malformed block time is `InvalidResponse`;
-- matching inner instructions verify;
-- duplicate migration evidence in outer/inner instructions deduplicates deterministically.
-
-Synthetic transaction helpers must base58-encode the real 8-byte discriminator and use `jsonParsed` partially decoded instruction shape (`programId`, string `accounts`, `data`).
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected: Rust fails on missing lifecycle types/constants/parser/verifier while Task 1 storage remains green.
-
-- [ ] **Step 3: Implement minimal lifecycle parser/verifier**
-
-Use exact suffix matching for instruction log names. Reuse the existing top-level + inner instruction scanning pattern and `bs58` decode path.
-
-For legacy migration, require at least 15 accounts and verify account 8 PumpSwap + account 14 wrapped SOL. For v2, require at least 11 accounts and verify account 9 PumpSwap. Extract only the fixed verified indexes from the pinned IDL.
-
-Parse transaction-wide block time once, then attach it to each deduplicated evidence item.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: provider lifecycle tests and all existing creation/stream tests pass.
+- [ ] **RED:** Prove Create/CreateV2 and Migrate/MigrateV2 lifecycle classification; explicit `MigrateBondingCurveCreator` negative case; reconnecting stream lifecycle delivery; Pending on result-null; legacy and v2 account extraction; Pump/PumpSwap identity checks; minimum account lengths; blockTime conversion/null/invalid handling; inner instruction support; deterministic deduplication.
+- [ ] **Verify RED:** Rust fails only on missing lifecycle protocol APIs.
+- [ ] **GREEN:** Implement exact-suffix log matching and pinned-IDL discriminator/account decoding. Legacy requires >=15 accounts with PumpSwap at 8, pool 9, mint 2, WSOL 14. V2 requires >=11 accounts with PumpSwap 9, pool 10, base mint 2, quote mint 3.
+- [ ] **Verify GREEN:** Full repository CI, including all existing creation tests.
 
 ---
 
-### Task 3: Single-stream observer integration and bounded migration verification
+### Task 3: Single-stream observer integration and bounded verification
 
 **Files:**
-- Modify: `crates/shreks-providers/src/lib.rs`
-- Modify: `crates/shreks-observer/src/lib.rs`
-- Modify: `crates/shreks-observer/src/bin/shreks-observe.rs`
-- Modify: `crates/shreks-observer/tests/pump_forwarding.rs`
-- Modify: `crates/shreks-observer/tests/pump_signal_ingestion.rs`
-- Modify: `crates/shreks-observer/tests/pump_verification.rs`
-- Create: `crates/shreks-observer/tests/pump_migration_verification.rs`
+- Modify `crates/shreks-providers/src/lib.rs`
+- Modify `crates/shreks-observer/src/lib.rs`
+- Modify `crates/shreks-observer/src/bin/shreks-observe.rs`
+- Modify `crates/shreks-observer/tests/pump_forwarding.rs`
+- Modify `crates/shreks-observer/tests/pump_signal_ingestion.rs`
+- Modify `crates/shreks-observer/tests/pump_verification.rs`
+- Create `crates/shreks-observer/tests/pump_migration_verification.rs`
 
-**Interfaces:**
-
-`PumpSignalSource` and `forward_pump_signals` now carry `PumpLifecycleSignal` rather than creation-only signals. `Observer::with_pump_signal_receiver` accepts `mpsc::Receiver<PumpLifecycleSignal>`.
+`PumpSignalSource`, `forward_pump_signals`, and the observer channel carry `PumpLifecycleSignal`.
 
 `ObserverCycleReport` adds:
 
 ```rust
-pub pump_migration_signals_received: usize,
-pub pump_migration_signals_processed: usize,
-pub pump_migration_signals_pending: usize,
-pub pump_migration_signals_verified: usize,
-pub pump_migration_signals_rejected: usize,
-pub lifecycle_events_stored: usize,
+pump_migration_signals_received
+pump_migration_signals_processed
+pump_migration_signals_pending
+pump_migration_signals_verified
+pump_migration_signals_rejected
+lifecycle_events_stored
 ```
 
-- [ ] **Step 1: Write RED observer/forwarding tests**
-
-Update forwarding/ingestion tests to use lifecycle variants and prove both variants survive the bounded channel.
-
-Migration verification tests must prove:
-
-- realtime migration signal persists in `pump_migration_signals` but does not perform an immediate transaction fetch before a full cycle;
-- pending RPC result increments migration pending/processed counters and remains replayable;
-- verified legacy and v2 migrations create `token_lifecycle_events` with provider from the actual `TransactionProvider`, Pump.fun -> PumpSwap venues, signal slot/detected timestamp, optional block time, mint/quote/pool;
-- provider failure records an attempt/error and leaves signal pending;
-- fetched non-migration becomes terminal rejected and is not replayed next cycle;
-- existing Pump creation path still creates candidate + outcome checkpoints;
-- with migration and creation backlogs, at most 32 total transaction calls occur in one cycle;
-- if at least 8 migrations are pending, at least 8 migration calls occur before creation consumes the rest;
-- if there are no migrations, creation can still consume all 32 slots;
-- unused creation capacity can be consumed by additional migration work.
-
-Use a counting `TransactionProvider` keyed by signature prefix (`launch-` vs `migrate-`) so budget assertions test real observer calls rather than mocks of internal helpers.
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected: Rust fails because observer/provider forwarding still uses creation-only signal types and migration counters/processing are absent.
-
-- [ ] **Step 3: Implement lifecycle forwarding and observer processing**
-
-Set constants:
+- [ ] **RED:** Prove creation + migration forwarding; durable-only realtime migration ingestion; Pending/Verified/Rejected/provider-failure behavior; normalized event construction uses actual `TransactionProvider::provider_id()`; existing creation candidate/checkpoint path stays intact; total transaction calls <=32; migration has 8 reserved slots when backlog exists; creation can use all 32 when migrations are absent; spare creation capacity can be used by additional migrations.
+- [ ] **Verify RED:** Rust fails because observer/forwarder are creation-only.
+- [ ] **GREEN:** Add:
 
 ```rust
 const PUMP_TOTAL_PENDING_BATCH_LIMIT: usize = 32;
 const PUMP_MIGRATION_RESERVED_BATCH: usize = 8;
 ```
 
-Cycle scheduling:
-
-```text
-migration_reserved = min(8, pending_migrations.len())
-process reserved migrations
-remaining = 32 - migration_reserved
-process min(remaining, pending_launches.len()) launches
-remaining -= launches_processed
-process min(remaining, remaining_migrations.len()) additional migrations
-```
-
-Each request uses the existing Helius/transaction `PacingLane::Chain(provider_id)` wait.
-
-For `Verified(evidence)`, construct `TokenLifecycleEvent` using the actual provider ID plus durable signal metadata, then call atomic `complete_pump_migration`.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: observer lifecycle tests, all existing observer tests, provider tests, storage tests, Python tests, metadata, and repository-safety pass.
+Scheduling is: process up to 8 reserved migrations, then creations up to remaining budget, then extra migrations with unused budget. Every fetch uses the existing chain pacing lane. Verified migration evidence is converted to `TokenLifecycleEvent` using the durable signal signature/slot/detection time and actual transaction-provider ID, then atomically completed in storage.
+- [ ] **Verify GREEN:** Full repository CI.
 
 ---
 
-### Task 4: Operator documentation, PR evidence, and exact-head gate
+### Task 4: Documentation and exact-head completion
 
 **Files:**
-- Modify: `README.md`
-- Modify: `docs/superpowers/plans/2026-08-23-phase-b4a-graduation-lifecycle.md`
+- Modify `README.md`
+- Modify this plan
 
-- [ ] **Step 1: Update README**
+- [ ] Document that Shreks observes protocol-verified Pump graduation via one websocket, supports legacy and v2 migration, preserves restart-safe detection time/optional block time/quote mint/pool/venue transition, and still does not make Graduation/Breakout decisions or trade.
+- [ ] Run code/docs full CI.
+- [ ] Record exact RED/GREEN commits and CI run IDs for Tasks 1-3.
+- [ ] Run a fresh full CI on the documentation-only verification-record head.
+- [ ] Open/update a stacked **draft** PR against `feat/phase-b3-fresh-launch`; keep it unmerged. Include final head SHA, CI run ID, pinned Pump IDL SHA, and explicit no-strategy/no-execution scope.
 
-Document:
+## Self-review
 
-- Shreks now observes actual Pump migration/graduation evidence rather than inferring it from market momentum;
-- one Pump websocket carries creation + migration signals;
-- both official migration generations are verified;
-- migration signals are restart-safe and provider failures remain pending;
-- normalized events preserve detection time, optional block time, quote mint, PumpSwap pool, and venue transition;
-- B4a is lifecycle evidence only and does not enable Graduation/Breakout decisions or trading.
-
-- [ ] **Step 2: Run code/docs full CI**
-
-Expected: all repository jobs pass.
-
-- [ ] **Step 3: Record exact RED/GREEN commits and CI run IDs in this plan**
-
-Record each task’s actual RED/GREEN evidence. Do not claim B4a complete until this documentation-only verification record itself receives a fresh full CI run.
-
-- [ ] **Step 4: Run exact-final-head CI and update the stacked draft PR**
-
-PR base is `feat/phase-b3-fresh-launch`. Keep it draft and unmerged. The PR body must state exact head SHA, CI run ID, official pinned Pump IDL SHA, and that no strategy/execution behavior was added.
-
----
-
-## Self-review checklist
-
-- Every official account index in implementation must match the pinned B4a spec.
-- Provider decoder must not hardcode Helius as normalized provider identity.
-- `MigrateBondingCurveCreator` must have a dedicated negative test.
-- Total transaction verification budget must remain 32, not 32 launch + 32 migration.
-- Migration verification and normalized event persistence must be atomic.
-- Existing creation behavior must remain green throughout final verification.
-- No production trading thresholds or execution code enter this branch.
+- Official indexes/discriminators must match the pinned spec.
+- Protocol decoder must remain provider-neutral.
+- `MigrateBondingCurveCreator` must never be graduation.
+- Verified replay cannot mutate normalized lifecycle truth.
+- Total Pump verification budget remains 32, not 32+32.
+- Migration completion and normalized event persistence are atomic.
+- Existing Pump creation behavior remains green.
