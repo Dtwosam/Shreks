@@ -1,0 +1,37 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Rust
+/target/
+**/target/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Runtime data
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+/data/*.parquet
+/data/**/*.parquet
+
+# Local worktrees
+.worktrees/
+worktrees/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
