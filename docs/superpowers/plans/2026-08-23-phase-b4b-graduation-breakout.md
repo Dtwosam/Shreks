@@ -150,13 +150,13 @@ Full repository CI passes.
 
 README documents the verified-lifecycle requirement, local detection-time decision clock, unchanged B2 schema, eight-confirmation evidence score, no production defaults, cross-regime momentum exclusion, and no-execution guarantee.
 
-- [ ] **Step 6: Run exact-head full CI**
+- [x] **Step 6: Run documentation-head full CI**
 
-Run after this verification-record commit and record the final exact head only after Rust, Python, workspace validation, and repository safety are all green.
+Documentation/verification candidate head `a953656c46fc7f396aa6b267686f5fceb77bc6ce` passed full CI `32665204666`: Rust, Python, workspace metadata, and repository safety are green.
 
-- [ ] **Step 7: Keep stacked draft PR sealed and unmerged**
+- [x] **Step 7: Keep stacked draft PR sealed and unmerged**
 
-Update draft PR #7 against `feat/phase-b4a-graduation-lifecycle` with exact RED/GREEN/final evidence, unchanged B2 schema, eight-confirmation contract, local detection-time rule, no-production-default rule, and explicit no-execution scope.
+PR #7 remains stacked against `feat/phase-b4a-graduation-lifecycle`, draft, and intentionally unmerged. Its final body is updated after the metadata-only seal CI so it can record the true immutable final branch head without creating another branch commit.
 
 ## Verification Record
 
@@ -167,8 +167,9 @@ Update draft PR #7 against `feat/phase-b4a-graduation-lifecycle` with exact RED/
 - Task 2 GREEN: `6b94a0a2f9177879fb2770134ddf93944e471eab`; CI `32664936611` passed Rust, Python, workspace metadata, and repository safety.
 - Task 3 RED: `e45230bfe74d82caeee51a5b53d0457c85c57b48`; CI `32665007991` failed in Python only because B4b package-level exports did not yet exist.
 - Task 3 package GREEN: `d92e214cca3a7938ec4109ce18494875281e838e`; CI `32665067816` passed Rust, Python, workspace metadata, and repository safety.
-- Documentation commit: `fc3789503adc2d768142ec5eec725a9ec0f6b43a`.
-- Final exact-head CI: pending this record commit.
+- README documentation: `fc3789503adc2d768142ec5eec725a9ec0f6b43a`.
+- Documentation/verification head: `a953656c46fc7f396aa6b267686f5fceb77bc6ce`; CI `32665204666` passed Rust, Python, workspace metadata, and repository safety.
+- The final metadata-only branch head and its fresh CI run are recorded in draft PR #7 after this file is committed, avoiding a self-referential documentation commit loop.
 
 ## Self-Review
 
