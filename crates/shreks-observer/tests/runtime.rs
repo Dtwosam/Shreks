@@ -2,7 +2,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -12,7 +15,7 @@ use shreks_core::{DiscoveredToken, PairMarketData, ProviderId};
 use shreks_observer::Observer;
 use shreks_providers::{DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind};
 use shreks_storage::ShreksDb;
-use tokio::time::Instant;
+use tokio::{sync::oneshot, time::Instant};
 
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 
@@ -54,6 +57,22 @@ impl DiscoveryProvider for FakeDiscovery {
 
     async fn discover(&self) -> Result<Vec<DiscoveredToken>, ProviderError> {
         self.result.clone()
+    }
+}
+
+struct CountingDiscovery {
+    calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl DiscoveryProvider for CountingDiscovery {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::DexScreener
+    }
+
+    async fn discover(&self) -> Result<Vec<DiscoveredToken>, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(Vec::new())
     }
 }
 
@@ -198,6 +217,42 @@ async fn dexscreener_market_calls_respect_the_conservative_four_rps_budget() {
     );
 
     drop(calls);
+    drop(observer);
+    cleanup_dir(&root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn shutdown_interrupts_a_long_inter_cycle_sleep() {
+    let root = unique_test_dir("shutdown");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let discovery = Arc::new(CountingDiscovery {
+        calls: Arc::clone(&calls),
+    });
+    let mut observer = Observer::new(db).with_discovery_provider(discovery);
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let run = observer.run_until_shutdown(Duration::from_secs(3_600), async move {
+        let _ = shutdown_rx.await;
+    });
+    let signal = async move {
+        tokio::task::yield_now().await;
+        let _ = shutdown_tx.send(());
+    };
+
+    let joined = async {
+        let (run_result, _) = tokio::join!(run, signal);
+        run_result
+    };
+    let cycles = tokio::time::timeout(Duration::from_millis(100), joined)
+        .await
+        .expect("shutdown should interrupt the one-hour sleep")
+        .unwrap();
+
+    assert_eq!(cycles, 1, "one cycle should complete before shutdown");
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
     drop(observer);
     cleanup_dir(&root);
 }
