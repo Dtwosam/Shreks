@@ -394,13 +394,19 @@ impl Observer {
         report.candidates_processed = candidates.len();
 
         for (candidate_id, candidate) in &candidates {
-            self.observe_market_data(
-                *candidate_id,
-                &candidate.mint,
-                &mut report,
-                &mut health,
-            )
-            .await?;
+            let path_sample_due = self.path_sample_due(*candidate_id, unix_time_ms()?)?;
+            let new_market_evidence = self
+                .observe_market_data(
+                    *candidate_id,
+                    &candidate.mint,
+                    &mut report,
+                    &mut health,
+                )
+                .await?;
+            if path_sample_due && new_market_evidence > 0 {
+                self.db
+                    .advance_path_sampling(*candidate_id, unix_time_ms()?)?;
+            }
             self.observe_chain_data(
                 *candidate_id,
                 candidate,
@@ -414,13 +420,18 @@ impl Observer {
             let RevisitCandidate {
                 candidate_id,
                 mint,
-                path_sample_due: _,
+                path_sample_due,
             } = revisit;
             if seen_candidate_ids.contains(&candidate_id) {
                 continue;
             }
-            self.observe_market_data(candidate_id, &mint, &mut report, &mut health)
+            let new_market_evidence = self
+                .observe_market_data(candidate_id, &mint, &mut report, &mut health)
                 .await?;
+            if path_sample_due && new_market_evidence > 0 {
+                self.db
+                    .advance_path_sampling(candidate_id, unix_time_ms()?)?;
+            }
         }
 
         let observed_at = unix_time_ms()?;
@@ -598,7 +609,8 @@ impl Observer {
         token_mint: &str,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
-    ) -> Result<(), ObserverError> {
+    ) -> Result<usize, ObserverError> {
+        let mut new_market_evidence = 0usize;
         for provider in self.market_providers.clone() {
             let provider_id = provider.provider_id();
             self.ensure_health(health, provider_id)?;
@@ -636,9 +648,14 @@ impl Observer {
                             continue;
                         }
 
-                        self.db.insert_market_snapshot(candidate_id, &snapshot)?;
-                        report.market_snapshots_stored =
-                            report.market_snapshots_stored.saturating_add(1);
+                        if self
+                            .db
+                            .insert_market_snapshot_if_new(candidate_id, &snapshot)?
+                        {
+                            new_market_evidence = new_market_evidence.saturating_add(1);
+                            report.market_snapshots_stored =
+                                report.market_snapshots_stored.saturating_add(1);
+                        }
                     }
                 }
                 Err(error) => {
@@ -650,7 +667,7 @@ impl Observer {
 
         self.db
             .finalize_due_outcome_checkpoints(candidate_id, unix_time_ms()?)?;
-        Ok(())
+        Ok(new_market_evidence)
     }
 
     async fn observe_chain_data(
