@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use shreks_core::ProviderId;
 use shreks_providers::{
-    forward_pump_signals, pump::PumpCreationSignal, ProviderError, ProviderErrorKind,
-    PumpSignalSource,
+    forward_pump_signals,
+    pump::{PumpCreationSignal, PumpLifecycleSignal, PumpMigrationSignal},
+    ProviderError, ProviderErrorKind, PumpSignalSource,
 };
 use tokio::sync::mpsc;
 
@@ -12,12 +13,20 @@ struct TwoSignalSource {
 
 #[async_trait]
 impl PumpSignalSource for TwoSignalSource {
-    async fn next_pump_signal(&mut self) -> Result<PumpCreationSignal, ProviderError> {
+    async fn next_pump_signal(&mut self) -> Result<PumpLifecycleSignal, ProviderError> {
         self.next += 1;
-        Ok(PumpCreationSignal {
-            signature: format!("stream-sig-{}", self.next),
-            slot: self.next as u64,
-        })
+        let signal = if self.next == 1 {
+            PumpLifecycleSignal::Creation(PumpCreationSignal {
+                signature: "stream-create-1".to_owned(),
+                slot: 1,
+            })
+        } else {
+            PumpLifecycleSignal::Migration(PumpMigrationSignal {
+                signature: "stream-migrate-2".to_owned(),
+                slot: 2,
+            })
+        };
+        Ok(signal)
     }
 }
 
@@ -25,7 +34,7 @@ struct FailingSource;
 
 #[async_trait]
 impl PumpSignalSource for FailingSource {
-    async fn next_pump_signal(&mut self) -> Result<PumpCreationSignal, ProviderError> {
+    async fn next_pump_signal(&mut self) -> Result<PumpLifecycleSignal, ProviderError> {
         Err(ProviderError::new(
             ProviderId::Helius,
             ProviderErrorKind::InvalidResponse,
@@ -35,21 +44,27 @@ impl PumpSignalSource for FailingSource {
 }
 
 #[tokio::test]
-async fn forwarding_task_sends_signals_and_stops_when_observer_receiver_is_gone() {
+async fn forwarding_task_sends_creation_and_migration_and_stops_when_receiver_is_gone() {
     let source = TwoSignalSource { next: 0 };
-    let (sender, mut receiver) = mpsc::channel(1);
+    let (sender, mut receiver) = mpsc::channel(2);
 
-    let forwarding = forward_pump_signals(source, sender);
-    let consume = async {
-        let first = receiver.recv().await.unwrap();
-        drop(receiver);
-        first
+    let forwarding = tokio::spawn(forward_pump_signals(source, sender));
+    let first = receiver.recv().await.unwrap();
+    let second = receiver.recv().await.unwrap();
+    drop(receiver);
+    forwarding.await.unwrap().unwrap();
+
+    let PumpLifecycleSignal::Creation(first) = first else {
+        panic!("first signal must be creation");
     };
-
-    let (result, first) = tokio::join!(forwarding, consume);
-    result.unwrap();
-    assert_eq!(first.signature, "stream-sig-1");
+    assert_eq!(first.signature, "stream-create-1");
     assert_eq!(first.slot, 1);
+
+    let PumpLifecycleSignal::Migration(second) = second else {
+        panic!("second signal must be migration");
+    };
+    assert_eq!(second.signature, "stream-migrate-2");
+    assert_eq!(second.slot, 2);
 }
 
 #[tokio::test]
