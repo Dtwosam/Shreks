@@ -160,6 +160,24 @@ Migration inbox replay is restart-safe and deterministic. Verified lifecycle per
 
 B4a adds no Graduation/Breakout threshold, setup score, `TradeIntent`, paper fill, wallet, signer, transaction construction, submission, or live execution path.
 
+## Graduation/Breakout setup
+
+Phase B4b introduces the second explicit setup family under `shreks_brain.setups`: `graduation_breakout`.
+
+Graduation/Breakout requires normalized, protocol-verified B4a `pump_graduation` evidence with the exact Pump.fun bonding-curve -> PumpSwap transition. A PumpSwap pair or generic momentum alone is not enough. The setup consumes that immutable `GraduationContext` beside the unchanged B2 `b2-v1` `FeatureVector`; B4b does not widen the shared B2 schema or read SQLite/provider payloads inside strategy logic.
+
+The first locally observed B4a `detected_at_unix_ms` is the sole graduation decision clock. Optional on-chain `occurred_at_unix_ms` remains audit/research metadata and cannot make a historical setup eligible before Shreks actually observed the migration.
+
+Every numerical threshold belongs to an explicit, versioned `GraduationBreakoutPolicy`. B4b ships **no production default trading thresholds**. The policy values are research hypotheses that must later be calibrated against unseen, point-in-time outcomes after realistic fees, slippage, and exitability constraints.
+
+The setup remains `BLOCKED / WATCH / READY`. Hard blockers include B1 safety not passing, missing or invalid verified graduation evidence, future-dated local detection, an expired post-graduation window, stale market data, inadequate known liquidity, excessive known exit price impact, or an already-overextended one-minute move. A graduation that is still too recent, missing executability evidence, or incomplete confirmation evidence remains `WATCH` when no hard blocker exists.
+
+B4b-v1 uses exactly eight equal-weight confirmations: five-minute transaction participation, volume velocity, five-minute buy fraction, buy-pressure acceleration, one-minute return, five-minute liquidity growth, distance from the local high, and local-range position. Positive five-minute return and 1m-vs-5m momentum acceleration are deliberately excluded because their anchors can straddle the pre/post-graduation regime boundary immediately after migration.
+
+`confirmation_score` is checklist completeness: `confirmations_passed / 8 * 100`. It is not expected return, win probability, confidence, position size, or a final trade score. Blocked candidates still retain computable confirmation evidence so later research can measure the opportunity cost and value of filters rather than hiding rejected opportunities.
+
+`READY` is **not** an order or trading instruction. B4b creates no `TradeIntent`, position size, paper fill, wallet, signer, Jupiter execution request, transaction construction, submission, or live-money path.
+
 ## Local setup
 
 ### Rust
