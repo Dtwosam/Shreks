@@ -4,7 +4,7 @@ use std::{
     error::Error,
     fmt, fs,
     path::Path,
-    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
+    time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
 use rusqlite::{params, Connection};
@@ -17,11 +17,18 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    name: "operational",
-    sql: include_str!("../migrations/0001_operational.sql"),
-}];
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        name: "operational",
+        sql: include_str!("../migrations/0001_operational.sql"),
+    },
+    Migration {
+        version: 2,
+        name: "observer_normalization",
+        sql: include_str!("../migrations/0002_observer_normalization.sql"),
+    },
+];
 
 /// Read-only operational diagnostics for a Shreks database connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,10 +130,10 @@ impl ShreksDb {
 
 fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
     connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))?;
+    connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))?;
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;\n\
-         PRAGMA synchronous = NORMAL;\n\
-         PRAGMA busy_timeout = 5000;",
+         PRAGMA synchronous = NORMAL;",
     )?;
 
     Ok(())
