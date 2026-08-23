@@ -119,7 +119,7 @@ async fn unavailable_confirmed_transaction_stays_pending_for_retry() {
 }
 
 #[tokio::test]
-async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
+async fn verified_pump_creation_becomes_candidate_with_outcome_and_path_schedules() {
     let root = unique_test_dir("verified");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
@@ -169,13 +169,21 @@ async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
             |row| row.get(0),
         )
         .unwrap();
+    let path_schedule_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM candidate_path_sampling WHERE candidate_id = ?1",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(checkpoint_count, 7);
+    assert_eq!(path_schedule_count, 1);
 
     cleanup_dir(&root);
 }
 
 #[tokio::test]
-async fn fetched_non_creation_is_rejected_once_and_not_replayed() {
+async fn fetched_non_creation_is_rejected_once_and_gets_no_candidate_schedules() {
     let root = unique_test_dir("rejected");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
@@ -210,8 +218,12 @@ async fn fetched_non_creation_is_rejected_once_and_not_replayed() {
     let checkpoints: i64 = connection
         .query_row("SELECT COUNT(*) FROM candidate_outcome_checkpoints", [], |row| row.get(0))
         .unwrap();
+    let path_schedules: i64 = connection
+        .query_row("SELECT COUNT(*) FROM candidate_path_sampling", [], |row| row.get(0))
+        .unwrap();
     assert_eq!(candidates, 0);
     assert_eq!(checkpoints, 0);
+    assert_eq!(path_schedules, 0);
 
     cleanup_dir(&root);
 }
