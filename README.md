@@ -122,6 +122,28 @@ B1 remains the hard safety gate. B2 computes feature vectors for `PASS`, `REJECT
 
 B2 accepts no future outcome checkpoint or realized trade-result fields and does not read SQLite or call providers directly. It adds no setup score, trade intent, paper fill, signer, swap submission, or live-trading path.
 
+## Fresh Launch Continuation setup
+
+Phase B3 introduces the first explicit setup family under `shreks_brain.setups`: `fresh_launch_continuation`.
+
+Fresh Launch Continuation is designed for newly launched Solana memecoins and intentionally avoids first-second blind sniping. It waits for point-in-time evidence that the token has survived long enough to evaluate, still has fresh source data, remains executable, and shows continuation characteristics across participation, volume velocity, buy pressure, short-term momentum, liquidity improvement, and local price structure.
+
+Every numerical setup threshold belongs to an explicit, versioned `FreshLaunchPolicy`. B3 ships **no production default trading thresholds**. Thresholds are research hypotheses that must be calibrated against Shreks' own unseen, post-cost outcome data before they can be treated as useful trading rules.
+
+A setup assessment is one of:
+
+- `BLOCKED` — a hard condition currently prevents entry consideration, including safety not passing, stale data, expired setup window, inadequate liquidity, excessive exit impact, or an already-overextended 5-minute move;
+- `WATCH` — no hard blocker is proven, but the setup is too young, evidence is missing, or one or more continuation confirmations have not passed;
+- `READY` — safety/executability/age gates pass and all nine continuation confirmations are satisfied.
+
+`READY` is **not** an order or trade instruction. It only means the setup is eligible for later decision, risk, and paper-trading layers. B1 safety `PASS` is mandatory and cannot be overridden by setup strength.
+
+The 5-minute return ceiling is an explicit anti-chase guard: a token can have strong confirmation evidence and still be `BLOCKED` if the move is already too extended under the active policy.
+
+B3's `confirmation_score` is only checklist completeness: `confirmations_passed / 9 * 100`. It is not expected return, win probability, confidence, or a final trade score. Hard-blocked candidates still retain confirmation counts for research so Shreks can later measure the opportunity cost and value of its filters instead of hiding rejected opportunities from the dataset.
+
+B3 adds no `TradeIntent`, position size, paper fill, wallet, signer, transaction construction, submission, or live execution path.
+
 ## Local setup
 
 ### Rust
