@@ -32,6 +32,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "observer_normalization",
         sql: include_str!("../migrations/0002_observer_normalization.sql"),
     },
+    Migration {
+        version: 3,
+        name: "pump_launch_signals",
+        sql: include_str!("../migrations/0003_pump_launch_signals.sql"),
+    },
 ];
 
 /// Read-only operational diagnostics for a Shreks database connection.
@@ -40,6 +45,49 @@ pub struct DatabaseDiagnostics {
     pub journal_mode: String,
     pub foreign_keys_enabled: bool,
     pub schema_version: i64,
+}
+
+/// Durable state of a Pump launch signal after it has entered the local inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PumpSignalStatus {
+    Pending,
+    Verified,
+    Rejected,
+}
+
+impl PumpSignalStatus {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Verified => "verified",
+            Self::Rejected => "rejected",
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, StorageError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "verified" => Ok(Self::Verified),
+            "rejected" => Ok(Self::Rejected),
+            other => Err(StorageError::InvalidData(format!(
+                "unknown Pump signal status '{other}'"
+            ))),
+        }
+    }
+}
+
+/// One durable Pump launch signal. Slots remain unsigned in memory and are
+/// stored as decimal text so the full Solana u64 range is preserved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PumpSignalRecord {
+    pub signature: String,
+    pub slot: u64,
+    pub observed_at_unix_ms: i64,
+    pub status: PumpSignalStatus,
+    pub attempt_count: u64,
+    pub last_attempt_at_unix_ms: Option<i64>,
+    pub candidate_id: Option<i64>,
+    pub last_error: Option<String>,
 }
 
 /// Errors produced while opening, validating, migrating, or writing Shreks
@@ -172,6 +220,173 @@ impl ShreksDb {
             |row| row.get(0),
         )?;
         Ok(id)
+    }
+
+    /// Durably accept one Pump log signal before any transaction fetch occurs.
+    /// Duplicate signatures never reset terminal state and preserve the first
+    /// local observation timestamp.
+    pub fn record_pump_launch_signal(
+        &self,
+        signature: &str,
+        slot: u64,
+        observed_at_unix_ms: i64,
+    ) -> Result<(), StorageError> {
+        if signature.trim().is_empty() {
+            return Err(StorageError::InvalidData(
+                "Pump launch signature must not be empty".to_owned(),
+            ));
+        }
+
+        self.connection.execute(
+            r#"INSERT INTO pump_launch_signals (
+                   signature, slot, observed_at_unix_ms, status
+               ) VALUES (?1, ?2, ?3, ?4)
+               ON CONFLICT(signature) DO UPDATE SET
+                   observed_at_unix_ms = MIN(
+                       pump_launch_signals.observed_at_unix_ms,
+                       excluded.observed_at_unix_ms
+                   )"#,
+            params![
+                signature,
+                slot.to_string(),
+                observed_at_unix_ms,
+                PumpSignalStatus::Pending.as_str(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Return the oldest pending Pump signals for deterministic restart replay.
+    pub fn pending_pump_launch_signals(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpSignalRecord>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("Pump pending-signal limit exceeds i64".to_owned())
+        })?;
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   signature, slot, observed_at_unix_ms, status, attempt_count,
+                   last_attempt_at_unix_ms, candidate_id, last_error
+               FROM pump_launch_signals
+               WHERE status = 'pending'
+               ORDER BY observed_at_unix_ms ASC, signature ASC
+               LIMIT ?1"#,
+        )?;
+        let raw = statement
+            .query_map([limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, Option<i64>>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        raw.into_iter()
+            .map(
+                |(
+                    signature,
+                    slot,
+                    observed_at_unix_ms,
+                    status,
+                    attempt_count,
+                    last_attempt_at_unix_ms,
+                    candidate_id,
+                    last_error,
+                )| {
+                    let slot = slot.parse::<u64>().map_err(|error| {
+                        StorageError::InvalidData(format!(
+                            "Pump signal slot is not u64 decimal text: {error}"
+                        ))
+                    })?;
+                    let attempt_count = u64::try_from(attempt_count).map_err(|_| {
+                        StorageError::InvalidData(
+                            "Pump signal attempt count was negative".to_owned(),
+                        )
+                    })?;
+                    Ok(PumpSignalRecord {
+                        signature,
+                        slot,
+                        observed_at_unix_ms,
+                        status: PumpSignalStatus::parse(&status)?,
+                        attempt_count,
+                        last_attempt_at_unix_ms,
+                        candidate_id,
+                        last_error,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    /// Record one verification attempt while leaving the signal pending.
+    pub fn record_pump_launch_attempt(
+        &self,
+        signature: &str,
+        attempted_at_unix_ms: i64,
+        error: Option<&str>,
+    ) -> Result<(), StorageError> {
+        validate_pump_signature(signature)?;
+        let changed = self.connection.execute(
+            r#"UPDATE pump_launch_signals
+               SET attempt_count = attempt_count + 1,
+                   last_attempt_at_unix_ms = ?2,
+                   last_error = ?3
+               WHERE signature = ?1 AND status = 'pending'"#,
+            params![signature, attempted_at_unix_ms, error],
+        )?;
+        ensure_pump_signal_changed(changed, signature, "record attempt")
+    }
+
+    /// Mark a verified Pump signal and link it to the normalized token row.
+    pub fn mark_pump_launch_verified(
+        &self,
+        signature: &str,
+        candidate_id: i64,
+    ) -> Result<(), StorageError> {
+        validate_pump_signature(signature)?;
+        let changed = self.connection.execute(
+            r#"UPDATE pump_launch_signals
+               SET status = 'verified', candidate_id = ?2, last_error = NULL
+               WHERE signature = ?1 AND status = 'pending'"#,
+            params![signature, candidate_id],
+        )?;
+        ensure_pump_signal_changed(changed, signature, "mark verified")
+    }
+
+    /// Permanently reject a signal that was fetched successfully but did not
+    /// verify as a Pump Create/CreateV2 transaction. The reason stays auditable.
+    pub fn mark_pump_launch_rejected(
+        &self,
+        signature: &str,
+        rejected_at_unix_ms: i64,
+        reason: &str,
+    ) -> Result<(), StorageError> {
+        validate_pump_signature(signature)?;
+        if reason.trim().is_empty() {
+            return Err(StorageError::InvalidData(
+                "Pump rejection reason must not be empty".to_owned(),
+            ));
+        }
+        let changed = self.connection.execute(
+            r#"UPDATE pump_launch_signals
+               SET status = 'rejected',
+                   last_attempt_at_unix_ms = ?2,
+                   last_error = ?3
+               WHERE signature = ?1 AND status = 'pending'"#,
+            params![signature, rejected_at_unix_ms, reason],
+        )?;
+        ensure_pump_signal_changed(changed, signature, "mark rejected")
     }
 
     /// Persist one provider-neutral pair snapshot. Duplicate observations of
@@ -410,6 +625,28 @@ fn apply_migrations(connection: &mut Connection) -> Result<(), StorageError> {
         transaction.commit()?;
     }
 
+    Ok(())
+}
+
+fn validate_pump_signature(signature: &str) -> Result<(), StorageError> {
+    if signature.trim().is_empty() {
+        return Err(StorageError::InvalidData(
+            "Pump launch signature must not be empty".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_pump_signal_changed(
+    changed: usize,
+    signature: &str,
+    operation: &str,
+) -> Result<(), StorageError> {
+    if changed == 0 {
+        return Err(StorageError::InvalidData(format!(
+            "cannot {operation} Pump signal '{signature}': signal is missing or no longer pending"
+        )));
+    }
     Ok(())
 }
 
