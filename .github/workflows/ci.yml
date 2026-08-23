@@ -11,14 +11,33 @@ permissions:
   contents: read
 
 jobs:
+  repository-safety:
+    name: Repository safety
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Reject committed secret assignments
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='(PRIVATE_''KEY|SEED_''PHRASE|SECRET_''KEY)='
+          if git grep -n -E "$pattern" -- ':!docs/**' ':!.env.example' ':!.github/workflows/ci.yml'; then
+            echo "Potential secret assignment found in committed source."
+            exit 1
+          fi
+          echo "No forbidden secret assignments found."
+
   rust:
     name: Rust tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Validate workspace metadata
+        run: cargo metadata --no-deps --format-version 1 > /dev/null
       - name: Run Rust tests
         run: cargo test --workspace
 
@@ -27,9 +46,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
