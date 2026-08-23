@@ -73,3 +73,201 @@ impl FromStr for RuntimeMode {
         }
     }
 }
+
+/// External source identifier stored with every provider-derived observation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderId {
+    DexScreener,
+    Helius,
+    Jupiter,
+}
+
+impl ProviderId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DexScreener => "dexscreener",
+            Self::Helius => "helius",
+            Self::Jupiter => "jupiter",
+        }
+    }
+}
+
+impl fmt::Display for ProviderId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Provider health vocabulary shared by observers and operational storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderHealthState {
+    Healthy,
+    Degraded,
+    RateLimited,
+    Unavailable,
+}
+
+impl ProviderHealthState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::Degraded => "degraded",
+            Self::RateLimited => "rate_limited",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// A token surfaced by one of Shreks' discovery sources.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredToken {
+    pub mint: String,
+    pub pair_address: Option<String>,
+    pub dex_id: Option<String>,
+    pub discovered_at_unix_ms: i64,
+    pub source: ProviderId,
+}
+
+/// Buy/sell transaction counts for one provider-defined time window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransactionWindow {
+    pub window: String,
+    pub buys: u64,
+    pub sells: u64,
+}
+
+/// Provider-neutral market information for one DEX pair.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PairMarketData {
+    pub provider: ProviderId,
+    pub chain_id: String,
+    pub dex_id: String,
+    pub pair_address: String,
+    pub base_mint: String,
+    pub base_name: Option<String>,
+    pub base_symbol: Option<String>,
+    pub quote_mint: String,
+    pub quote_name: Option<String>,
+    pub quote_symbol: Option<String>,
+    pub price_native: Option<String>,
+    pub price_usd: Option<String>,
+    pub liquidity_usd: Option<f64>,
+    pub volume_5m: Option<f64>,
+    pub volume_1h: Option<f64>,
+    pub volume_6h: Option<f64>,
+    pub volume_24h: Option<f64>,
+    pub transactions: Vec<TransactionWindow>,
+    pub fdv_usd: Option<f64>,
+    pub market_cap_usd: Option<f64>,
+    pub pair_created_at_unix_ms: Option<i64>,
+    pub observed_at_unix_ms: i64,
+}
+
+/// Parsed SPL-token mint state observed through a Solana RPC provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenMintState {
+    pub provider: ProviderId,
+    pub mint: String,
+    pub owner_program: String,
+    pub supply: u64,
+    pub decimals: u8,
+    pub mint_authority: Option<String>,
+    pub freeze_authority: Option<String>,
+    pub slot: u64,
+    pub observed_at_unix_ms: i64,
+}
+
+/// Validated request for a read-only executable Jupiter route/build quote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteRequest {
+    pub input_mint: String,
+    pub output_mint: String,
+    pub amount: u64,
+    pub taker: String,
+    pub slippage_bps: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QuoteRequestError {
+    EmptyInputMint,
+    EmptyOutputMint,
+    IdenticalMints,
+    ZeroAmount,
+    EmptyTaker,
+    SlippageOutOfRange(u16),
+}
+
+impl fmt::Display for QuoteRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyInputMint => formatter.write_str("input mint must not be empty"),
+            Self::EmptyOutputMint => formatter.write_str("output mint must not be empty"),
+            Self::IdenticalMints => formatter.write_str("input and output mints must differ"),
+            Self::ZeroAmount => formatter.write_str("quote amount must be greater than zero"),
+            Self::EmptyTaker => formatter.write_str("quote taker must not be empty"),
+            Self::SlippageOutOfRange(value) => {
+                write!(formatter, "slippage bps must be <= 10000; got {value}")
+            }
+        }
+    }
+}
+
+impl Error for QuoteRequestError {}
+
+impl QuoteRequest {
+    pub fn new(
+        input_mint: impl Into<String>,
+        output_mint: impl Into<String>,
+        amount: u64,
+        taker: impl Into<String>,
+        slippage_bps: u16,
+    ) -> Result<Self, QuoteRequestError> {
+        let input_mint = input_mint.into();
+        let output_mint = output_mint.into();
+        let taker = taker.into();
+
+        if input_mint.trim().is_empty() {
+            return Err(QuoteRequestError::EmptyInputMint);
+        }
+        if output_mint.trim().is_empty() {
+            return Err(QuoteRequestError::EmptyOutputMint);
+        }
+        if input_mint == output_mint {
+            return Err(QuoteRequestError::IdenticalMints);
+        }
+        if amount == 0 {
+            return Err(QuoteRequestError::ZeroAmount);
+        }
+        if taker.trim().is_empty() {
+            return Err(QuoteRequestError::EmptyTaker);
+        }
+        if slippage_bps > 10_000 {
+            return Err(QuoteRequestError::SlippageOutOfRange(slippage_bps));
+        }
+
+        Ok(Self {
+            input_mint,
+            output_mint,
+            amount,
+            taker,
+            slippage_bps,
+        })
+    }
+}
+
+/// Read-only route/build information. Instructions and signed transaction data
+/// intentionally do not cross into the trading brain in Phase A.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuoteSnapshot {
+    pub provider: ProviderId,
+    pub input_mint: String,
+    pub output_mint: String,
+    pub input_amount: u64,
+    pub output_amount: u64,
+    pub minimum_output_amount: u64,
+    pub slippage_bps: u16,
+    pub price_impact_pct: Option<String>,
+    pub route_labels: Vec<String>,
+    pub route_available: bool,
+    pub quoted_at_unix_ms: i64,
+}
