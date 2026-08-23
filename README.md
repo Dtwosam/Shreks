@@ -230,6 +230,20 @@ Wallet quality is intentionally absent from score-v1 rather than zero-filled. Th
 
 `total_score` is **not** win probability, expected return, confidence, position size, or trade permission. B7 adds no `TradeDecision`, `TradeIntent`, risk sizing, paper fill, wallet/signing, transaction construction/submission, or live-money path.
 
+## Deterministic entry decision engine
+
+Phase B8 adds the source build-order Decision Engine under `shreks_brain.decision`. It consumes one B7 `ScoreAssessment` and an explicit versioned `DecisionPolicy`; it does not recompute safety, setup, regime, or score evidence.
+
+The public decision vocabulary is `REJECT / WATCH / ENTER / HOLD / REDUCE / EXIT`, but B8-v1 is intentionally pre-entry only and emits exactly `REJECT`, `WATCH`, or `ENTER`. `HOLD`, `REDUCE`, and `EXIT` are reserved for the later position/exit layer, where actual open-position evidence will exist.
+
+Entry precedence is fail-closed and fixed: score-policy compatibility, B1 safety decision, setup state, exact setup rule, market regime, total-score availability, then the selected threshold. A high score cannot bypass a safety rejection, incomplete critical safety evidence, blocked setup, missing setup rule, disabled setup, or DEAD regime.
+
+Each setup has its own optional HOT/NORMAL/WEAK threshold in `DecisionPolicy`. There is no global fallback rule. A `None` threshold explicitly disables entry for that setup/regime and returns `WATCH`; `DEAD` always returns `REJECT`. Threshold equality is eligible for `ENTER`.
+
+B8 ships **no production decision policy or score thresholds**. Those values remain research hypotheses for calibration on unseen point-in-time and later realistic paper results.
+
+`ENTER` is not an order. It means only that the candidate may be forwarded to the independent Risk Engine. B8 adds no requested notional, capital percentage, position size, slippage allowance, idempotency key, `TradeIntent`, paper fill, wallet/signing, transaction construction/submission, or live-money path.
+
 ## Local setup
 
 ### Rust
