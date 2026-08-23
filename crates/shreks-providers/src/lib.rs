@@ -2,6 +2,7 @@
 
 pub mod dexscreener;
 pub mod http;
+pub mod meteora;
 
 use std::{error::Error, fmt};
 
