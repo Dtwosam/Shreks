@@ -176,9 +176,9 @@ The regression passed without a production-code change on clean A9 commit `8679c
 
 Document the seven horizons, bounded/full-cycle-only sampling behavior, NULL semantics for unavailable metrics, and that no trading is enabled by A9.
 
-- [ ] **Step 4: Run final full CI**
+- [x] **Step 4: Run final full CI**
 
-Expected: Rust, Python, and repository-safety checks all pass.
+Final documentation-complete commit `2aa751b4f95ab463d0782a660631ea9c7dd49cbe` passed full CI run `32654776507`: Rust, Python, workspace metadata validation, and repository-safety checks were green.
 
 ---
 
@@ -186,7 +186,7 @@ Expected: Rust, Python, and repository-safety checks all pass.
 
 - Task 4's implementation was fully green at commit `80153d1e800d865d6ee206861ac58e02a432483b` in CI run `32651274531`.
 - Task 5's restart regression passed the existing implementation at commit `8679cf7cc628e8d9eb52615694f88b5b3e5faf88` in CI run `32654661976`; no production fix was needed.
-- Final documentation-complete CI remains the last gate before A9 is marked complete.
+- A9 documentation-complete commit `2aa751b4f95ab463d0782a660631ea9c7dd49cbe` passed final full CI run `32654776507`.
 
 ## Self-review
 
