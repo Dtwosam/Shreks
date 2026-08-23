@@ -127,6 +127,23 @@ pub trait TransactionProvider: Send + Sync {
     async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError>;
 }
 
+/// Sequential realtime Pump signal boundary.
+///
+/// The source owns its reconnect/subscription behavior. Consumers only see
+/// normalized cheap launch signals or a terminal provider error, which keeps
+/// transport details out of the observer runtime.
+#[async_trait]
+pub trait PumpSignalSource: Send {
+    async fn next_pump_signal(&mut self) -> Result<pump::PumpCreationSignal, ProviderError>;
+}
+
+#[async_trait]
+impl PumpSignalSource for pump::PumpLogStream {
+    async fn next_pump_signal(&mut self) -> Result<pump::PumpCreationSignal, ProviderError> {
+        self.next_signal().await
+    }
+}
+
 #[async_trait]
 pub trait QuoteProvider: Send + Sync {
     fn provider_id(&self) -> ProviderId;
