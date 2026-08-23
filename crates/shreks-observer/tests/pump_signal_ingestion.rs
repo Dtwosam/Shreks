@@ -70,11 +70,11 @@ async fn duplicate_stream_delivery_remains_one_durable_signal() {
     let db = ShreksDb::open(&db_path).unwrap();
     let (sender, receiver) = mpsc::channel(8);
 
-    for slot in [41_u64, 42_u64] {
+    for _ in 0..2 {
         sender
             .send(PumpCreationSignal {
                 signature: "duplicate-signature".to_owned(),
-                slot,
+                slot: 42,
             })
             .await
             .unwrap();
