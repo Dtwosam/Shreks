@@ -1,0 +1,15 @@
+[package]
+name = "shreks-observer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+shreks-core = { path = "../shreks-core" }
+shreks-providers = { path = "../shreks-providers" }
+shreks-storage = { path = "../shreks-storage" }
+
+[dev-dependencies]
+async-trait = "0.1"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+tokio = { version = "1", features = ["macros", "rt"] }
