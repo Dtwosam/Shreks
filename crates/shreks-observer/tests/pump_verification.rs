@@ -149,17 +149,27 @@ async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
     assert_eq!(signal.0, "verified");
     assert_eq!(signal.1, 1);
     assert!(signal.2.is_some());
+    let candidate_id = signal.2.unwrap();
 
     let candidate: (String, String, Option<String>) = connection
         .query_row(
             "SELECT mint, discovery_source, venue FROM token_candidates WHERE id = ?1",
-            [signal.2.unwrap()],
+            [candidate_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .unwrap();
     assert_eq!(candidate.0, MINT);
     assert_eq!(candidate.1, "helius");
     assert_eq!(candidate.2.as_deref(), Some("pump_fun_bonding_curve"));
+
+    let checkpoint_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM candidate_outcome_checkpoints WHERE candidate_id = ?1",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(checkpoint_count, 7);
 
     cleanup_dir(&root);
 }
@@ -193,6 +203,15 @@ async fn fetched_non_creation_is_rejected_once_and_not_replayed() {
     assert_eq!(row.0, "rejected");
     assert_eq!(row.1, 1);
     assert!(row.2.unwrap().contains("no verified Create/CreateV2"));
+
+    let candidates: i64 = connection
+        .query_row("SELECT COUNT(*) FROM token_candidates", [], |row| row.get(0))
+        .unwrap();
+    let checkpoints: i64 = connection
+        .query_row("SELECT COUNT(*) FROM candidate_outcome_checkpoints", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(candidates, 0);
+    assert_eq!(checkpoints, 0);
 
     cleanup_dir(&root);
 }
