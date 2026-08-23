@@ -171,10 +171,10 @@ Scheduling is: process up to 8 reserved migrations, then creations up to remaini
 - Modify this plan
 
 - [x] Document that Shreks observes protocol-verified Pump graduation via one websocket, supports legacy and v2 migration, preserves restart-safe detection time/optional block time/quote mint/pool/venue transition, and still does not make Graduation/Breakout decisions or trade.
-- [ ] Run code/docs full CI.
+- [x] Run code/docs full CI.
 - [x] Record exact RED/GREEN commits and CI run IDs for Tasks 1-3.
-- [ ] Run a fresh full CI on the documentation-only verification-record head.
-- [ ] Open/update a stacked **draft** PR against `feat/phase-b3-fresh-launch`; keep it unmerged. Include final head SHA, CI run ID, pinned Pump IDL SHA, and explicit no-strategy/no-execution scope.
+- [x] Run a fresh full CI on the documentation-only verification-record head.
+- [x] Open/update a stacked **draft** PR against `feat/phase-b3-fresh-launch`; keep it unmerged. Include final verified documentation head SHA, CI run ID, pinned Pump IDL SHA, and explicit no-strategy/no-execution scope.
 
 ## Verification record
 
@@ -183,6 +183,8 @@ Scheduling is: process up to 8 reserved migrations, then creations up to remaini
 | 1 — lifecycle domain + storage | `4375dfb944babbf43be5c68def85ceaa8729bceb` | `32660874131` | `10f7f4e1ed5475c0c075d2b665cac3b92aa66752` | `32662388627` |
 | 2 — Pump protocol verification | `2ddb5ee0dfdc70d45471b1aa4ae5c1d537be20d9` | `32662495057` | `cd65ec68f1cbfc9209bec689b5e0fd37611a885c` | `32662695907` |
 | 3 — observer integration + shared budget | `ba1492130a4020188bcfc4b497df205673895ea3` | `32662807628` | `0e401116b94f296426181ac62363f40e2693afe4` | `32663298258` |
+
+Documentation/verification-record seal: `6ed1a1cad539281b15b5b6eceb406cd9755cfc83`, full CI `32663548533`.
 
 Pinned official Pump IDL blob for all Task 2 protocol indexes/discriminators: `062e66f032bb9f295353b573be3400070bd55e5b`.
 
