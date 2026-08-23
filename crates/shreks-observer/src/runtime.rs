@@ -84,6 +84,7 @@ pub struct ObserveProviderPlan {
     pub market: Vec<ProviderId>,
     pub chain: Vec<ProviderId>,
     pub transactions: Vec<ProviderId>,
+    pub realtime: Vec<ProviderId>,
 }
 
 impl ObserveProviderPlan {
@@ -95,6 +96,7 @@ impl ObserveProviderPlan {
             .chain(self.market.iter())
             .chain(self.chain.iter())
             .chain(self.transactions.iter())
+            .chain(self.realtime.iter())
             .copied()
         {
             if !providers.contains(&provider) {
@@ -113,6 +115,7 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
     let mut market = Vec::new();
     let mut chain = Vec::new();
     let mut transactions = Vec::new();
+    let mut realtime = Vec::new();
 
     if config.dexscreener_enabled {
         discovery.push(ProviderId::DexScreener);
@@ -124,6 +127,7 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
     if config.helius_enabled() {
         chain.push(ProviderId::Helius);
         transactions.push(ProviderId::Helius);
+        realtime.push(ProviderId::Helius);
     }
 
     ObserveProviderPlan {
@@ -131,6 +135,7 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
         market,
         chain,
         transactions,
+        realtime,
     }
 }
 
