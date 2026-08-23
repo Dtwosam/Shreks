@@ -27,11 +27,12 @@ fn table_has_column(connection: &Connection, table: &str, column: &str) -> bool 
     let mut statement = connection
         .prepare(&format!("PRAGMA table_info({table})"))
         .unwrap();
-    statement
+    let found = statement
         .query_map([], |row| row.get::<_, String>(1))
         .unwrap()
         .map(Result::unwrap)
-        .any(|name| name == column)
+        .any(|name| name == column);
+    found
 }
 
 #[test]
@@ -108,10 +109,12 @@ fn token_mint_states_reference_candidates_and_store_supply_as_text() {
         let mut fk = connection
             .prepare("PRAGMA foreign_key_list(token_mint_states)")
             .unwrap();
-        fk.query_map([], |_| Ok(1_i64))
+        let count = fk
+            .query_map([], |_| Ok(1_i64))
             .unwrap()
             .map(Result::unwrap)
-            .sum()
+            .sum();
+        count
     };
     assert!(foreign_key_count >= 1);
 
