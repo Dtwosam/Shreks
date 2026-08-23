@@ -1,6 +1,6 @@
 # Phase B1 Deterministic Safety Assessment Design
 
-**Status:** Approved in-chat design, pending written-spec review  
+**Status:** Ready for written-spec review  
 **Date:** 2026-08-23  
 **Repository:** `Dtwosam/Shreks`
 
@@ -82,8 +82,8 @@ A string enum with exactly:
 Semantics:
 
 - `REJECT`: one or more proven hard blockers are present.
-- `INCOMPLETE`: there is no proven hard blocker, but a policy-required critical fact is unknown/stale/contradictory, so downstream entry scoring must fail closed.
-- `PASS`: no hard blocker exists and all policy-required critical facts are usable.
+- `INCOMPLETE`: there is no proven hard blocker, but required critical evidence is unknown, stale, or contradictory, so downstream entry scoring must fail closed.
+- `PASS`: no hard blocker exists and all required critical evidence is usable and fresh.
 
 Precedence is always `REJECT > INCOMPLETE > PASS`.
 
@@ -182,12 +182,13 @@ Immutable configuration with an explicit version string:
 
 Validation rules:
 
-- version must be non-empty;
-- numeric thresholds must be finite and non-negative;
+- version must be non-empty after trimming whitespace;
+- all numeric thresholds must be finite and non-negative;
 - `soft_min_liquidity_usd >= min_liquidity_usd`;
-- `soft_max_top_holder_concentration_pct <= max_top_holder_concentration_pct`;
-- concentration and price-impact percentages must lie within policy-appropriate non-negative bounds;
-- `max_critical_data_age_ms >= 0`.
+- `0 <= soft_max_top_holder_concentration_pct <= max_top_holder_concentration_pct <= 100`;
+- `0 <= soft_max_creator_concentration_pct <= 100`;
+- `0 <= soft_max_exit_price_impact_pct <= 100`;
+- `max_critical_data_age_ms` must be an integer `>= 0`.
 
 Invalid policy construction raises `ValueError` before evaluation.
 
@@ -229,25 +230,26 @@ A hard finding always produces overall `REJECT`, even when critical data is also
 
 ### 6.2 Critical-data rules
 
-If no fact can prove a hard blocker, unknown critical fields generate `DATA_QUALITY` findings only when the corresponding `require_*` policy flag is true.
+Unknown critical fields generate `DATA_QUALITY` findings only when the corresponding `require_*` policy flag is true.
 
-Freshness is evaluated as:
+Freshness is always a critical requirement for the facts supplied to one assessment. It is evaluated as:
 
 ```text
 age_ms = as_of_unix_ms - critical_data_observed_at_unix_ms
 ```
 
-If the observation timestamp is missing, required critical data is treated as stale/unknown through `CRITICAL_DATA_STALE`. If the timestamp is in the future, the input is contradictory and produces `CRITICAL_DATA_CONTRADICTORY` rather than accepting look-ahead data.
-
-If `age_ms > max_critical_data_age_ms`, append `CRITICAL_DATA_STALE`.
-
-`critical_data_contradictory=True` appends `CRITICAL_DATA_CONTRADICTORY`.
+- If `critical_data_observed_at_unix_ms` is missing, append `CRITICAL_DATA_STALE`.
+- If `critical_data_observed_at_unix_ms > as_of_unix_ms`, append `CRITICAL_DATA_CONTRADICTORY`; do not also append `CRITICAL_DATA_STALE` for that same timestamp.
+- Otherwise, if `age_ms > max_critical_data_age_ms`, append `CRITICAL_DATA_STALE`.
+- If `critical_data_contradictory=True`, append `CRITICAL_DATA_CONTRADICTORY` unless that code is already present from a future-dated observation timestamp.
 
 One or more data-quality findings with no hard findings produce `INCOMPLETE`.
 
+Hard rules are evaluated first for deterministic ordering and precedence, but data-quality and soft findings are still appended afterward for auditability. Thus a proven hard blocker remains `REJECT` even if the same assessment also contains missing, stale, or contradictory evidence.
+
 ### 6.3 Soft rules
 
-Soft findings are still evaluated for auditability, even if the overall decision is already `REJECT` or `INCOMPLETE`.
+Soft findings are evaluated for auditability even if the overall decision is already `REJECT` or `INCOMPLETE`.
 
 Append soft findings in this fixed order when the value is known:
 
@@ -262,14 +264,14 @@ Soft findings never cancel or override hard/data-quality findings and never inde
 
 `SafetyInputs` validates local invariants before evaluation:
 
-- timestamps are non-negative integers;
-- known monetary/percentage values are finite and non-negative;
-- concentration percentages are within `[0, 100]`;
-- a negative or NaN value raises `ValueError` rather than being interpreted optimistically.
+- `as_of_unix_ms` and a present `critical_data_observed_at_unix_ms` must be non-negative integers;
+- known monetary values must be finite and non-negative;
+- known concentration and price-impact percentages must be finite and within `[0, 100]`;
+- a negative, infinite, or NaN numeric input raises `ValueError` rather than being interpreted optimistically.
 
-The evaluator does not guess missing values. Unknown required critical data produces `INCOMPLETE`; downstream entry logic must later treat both `REJECT` and `INCOMPLETE` as non-enterable.
+The evaluator does not guess missing values. Unknown required critical data produces `INCOMPLETE`; stale or contradictory critical evidence also produces `INCOMPLETE` unless a proven hard blocker is present, in which case precedence keeps the decision at `REJECT`.
 
-B1 itself does not know about `ENTER`, `WATCH`, or strategy scores, so it cannot accidentally turn incomplete data into a trade decision.
+Downstream entry logic must later treat both `REJECT` and `INCOMPLETE` as non-enterable. B1 itself does not know about `ENTER`, `WATCH`, or strategy scores, so it cannot accidentally turn incomplete data into a trade decision.
 
 ## 8. Auditability
 
@@ -281,7 +283,7 @@ No provider-specific names or payload fields appear in these types. Provider ada
 
 B1 accepts only a single `as_of_unix_ms` and facts intended to be known at or before that timestamp. It has no API for candidate outcome checkpoints, future returns, future liquidity, future MFE/MAE, or later trade results.
 
-A `critical_data_observed_at_unix_ms` greater than `as_of_unix_ms` is rejected as contradictory data through the assessment rather than treated as fresh evidence.
+A `critical_data_observed_at_unix_ms` greater than `as_of_unix_ms` produces `CRITICAL_DATA_CONTRADICTORY` and cannot produce `PASS`.
 
 Tests must explicitly prove that the public input model has no future-outcome fields and that future critical-data timestamps do not produce `PASS`.
 
@@ -303,7 +305,7 @@ Development is test-first.
 - every hard rule independently produces `REJECT` with its exact reason code;
 - hard rejection wins over missing/stale data;
 - every required unknown critical fact produces `INCOMPLETE`;
-- optional unknown facts do not force `INCOMPLETE`;
+- optional unknown facts do not add their field-specific unknown finding, while freshness still remains a separate critical requirement;
 - stale and future-dated/contradictory critical data fail closed;
 - soft conditions create ordered `SOFT` findings without becoming hard rejects;
 - threshold boundary behavior is exact;
