@@ -9,6 +9,7 @@ use shreks_core::{ProviderId, TokenMintState};
 
 use crate::{
     http::classify_http_failure, ChainDataProvider, ProviderError, ProviderErrorKind,
+    TransactionProvider,
 };
 
 const MAINNET_RPC_BASE: &str = "https://mainnet.helius-rpc.com/?api-key=";
@@ -275,6 +276,17 @@ impl ChainDataProvider for HeliusProvider {
 
         let body = self.post_rpc(&payload).await?;
         parse_mint_account_response(&body, token_mint, unix_time_ms()?)
+    }
+}
+
+#[async_trait]
+impl TransactionProvider for HeliusProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Helius
+    }
+
+    async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
+        HeliusProvider::transaction_json(self, signature).await
     }
 }
 
