@@ -1,0 +1,323 @@
+//! Helius-backed Solana chain-data adapter.
+
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use async_trait::async_trait;
+use serde::Deserialize;
+use serde_json::{json, Value};
+use shreks_core::{ProviderId, TokenMintState};
+
+use crate::{
+    http::classify_http_failure, ChainDataProvider, ProviderError, ProviderErrorKind,
+    TransactionProvider,
+};
+
+const MAINNET_RPC_BASE: &str = "https://mainnet.helius-rpc.com/?api-key=";
+const MAINNET_WS_BASE: &str = "wss://mainnet.helius-rpc.com/?api-key=";
+
+pub fn helius_rpc_url(api_key: &str) -> String {
+    format!("{MAINNET_RPC_BASE}{api_key}")
+}
+
+/// Build Helius' standard Solana mainnet PubSub endpoint.
+///
+/// Callers must never log or expose the returned URL because it contains the
+/// API key as a query parameter.
+pub fn helius_ws_url(api_key: &str) -> String {
+    format!("{MAINNET_WS_BASE}{api_key}")
+}
+
+/// Build the current object-form Solana `getTransaction` request used to
+/// verify a cheap websocket launch signal before it can become a candidate.
+pub fn get_transaction_request(signature: &str) -> Result<Value, ProviderError> {
+    if signature.trim().is_empty() {
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidRequest,
+            "transaction signature must not be empty",
+        ));
+    }
+
+    Ok(json!({
+        "jsonrpc": "2.0",
+        "id": "shreks-pump-transaction",
+        "method": "getTransaction",
+        "params": [
+            signature,
+            {
+                "commitment": "confirmed",
+                "encoding": "jsonParsed",
+                "maxSupportedTransactionVersion": 0
+            }
+        ]
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcResponse {
+    result: Option<AccountInfoResult>,
+    error: Option<RpcError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcError {
+    code: i64,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountInfoResult {
+    context: RpcContext,
+    value: Option<AccountValue>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RpcContext {
+    slot: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AccountValue {
+    data: ParsedAccountData,
+    owner: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParsedAccountData {
+    parsed: ParsedAccount,
+}
+
+#[derive(Debug, Deserialize)]
+struct ParsedAccount {
+    #[serde(rename = "type")]
+    account_type: String,
+    info: MintInfo,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MintInfo {
+    decimals: u8,
+    freeze_authority: Option<String>,
+    is_initialized: bool,
+    mint_authority: Option<String>,
+    supply: String,
+}
+
+pub fn parse_mint_account_response(
+    body: &str,
+    mint: &str,
+    observed_at_unix_ms: i64,
+) -> Result<TokenMintState, ProviderError> {
+    let response: RpcResponse = serde_json::from_str(body).map_err(|error| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            format!("invalid Helius JSON-RPC response: {error}"),
+        )
+    })?;
+
+    if let Some(error) = response.error {
+        let kind = match error.code {
+            -32602..=-32600 => ProviderErrorKind::InvalidRequest,
+            _ => ProviderErrorKind::Unavailable,
+        };
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            kind,
+            format!("Solana JSON-RPC error {}: {}", error.code, error.message),
+        ));
+    }
+
+    let result = response.result.ok_or_else(|| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            "Helius response contained neither result nor error",
+        )
+    })?;
+
+    let value = result.value.ok_or_else(|| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::NotFound,
+            format!("mint account {mint} does not exist"),
+        )
+    })?;
+
+    if value.data.parsed.account_type != "mint" {
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            format!(
+                "account {mint} parsed as '{}' instead of mint",
+                value.data.parsed.account_type
+            ),
+        ));
+    }
+
+    let info = value.data.parsed.info;
+    if !info.is_initialized {
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            format!("mint account {mint} is not initialized"),
+        ));
+    }
+
+    let supply = info.supply.parse::<u64>().map_err(|error| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            format!("invalid mint supply for {mint}: {error}"),
+        )
+    })?;
+
+    Ok(TokenMintState {
+        provider: ProviderId::Helius,
+        mint: mint.to_owned(),
+        owner_program: value.owner,
+        supply,
+        decimals: info.decimals,
+        mint_authority: info.mint_authority,
+        freeze_authority: info.freeze_authority,
+        slot: result.context.slot,
+        observed_at_unix_ms,
+    })
+}
+
+#[derive(Clone)]
+pub struct HeliusProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl HeliusProvider {
+    pub fn new(api_key: impl Into<String>) -> Result<Self, ProviderError> {
+        let api_key = api_key.into();
+        if api_key.trim().is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "Helius API key must not be empty",
+            ));
+        }
+
+        Ok(Self {
+            api_key,
+            client: reqwest::Client::new(),
+        })
+    }
+
+    /// Fetch a confirmed transaction as raw JSON for a protocol-specific
+    /// verifier such as the Pump creation parser. The Helius API key never
+    /// appears in returned transport errors.
+    pub async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
+        let payload = get_transaction_request(signature)?;
+        self.post_rpc(&payload).await
+    }
+
+    async fn post_rpc(&self, payload: &Value) -> Result<String, ProviderError> {
+        let response = self
+            .client
+            .post(helius_rpc_url(&self.api_key))
+            .json(payload)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = response.text().await.map_err(map_reqwest_error)?;
+
+        if !status.is_success() {
+            return Err(classify_http_failure(
+                ProviderId::Helius,
+                status.as_u16(),
+                retry_after.as_deref(),
+                &body,
+            ));
+        }
+
+        Ok(body)
+    }
+}
+
+#[async_trait]
+impl ChainDataProvider for HeliusProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Helius
+    }
+
+    async fn token_mint_state(&self, token_mint: &str) -> Result<TokenMintState, ProviderError> {
+        if token_mint.trim().is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "token mint must not be empty",
+            ));
+        }
+
+        let payload = json!({
+            "jsonrpc": "2.0",
+            "id": "shreks-mint-state",
+            "method": "getAccountInfo",
+            "params": [
+                token_mint,
+                {
+                    "commitment": "confirmed",
+                    "encoding": "jsonParsed"
+                }
+            ]
+        });
+
+        let body = self.post_rpc(&payload).await?;
+        parse_mint_account_response(&body, token_mint, unix_time_ms()?)
+    }
+}
+
+#[async_trait]
+impl TransactionProvider for HeliusProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Helius
+    }
+
+    async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
+        HeliusProvider::transaction_json(self, signature).await
+    }
+}
+
+fn map_reqwest_error(error: reqwest::Error) -> ProviderError {
+    let (kind, message) = if error.is_timeout() {
+        (ProviderErrorKind::Timeout, "Helius request timed out")
+    } else {
+        (
+            ProviderErrorKind::Unavailable,
+            "Helius transport request failed",
+        )
+    };
+
+    // Do not include reqwest's Display string: the request URL contains the
+    // Helius API key as a query parameter.
+    ProviderError::new(ProviderId::Helius, kind, message)
+}
+
+fn unix_time_ms() -> Result<i64, ProviderError> {
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            format!("system clock before Unix epoch: {error}"),
+        )
+    })?;
+    i64::try_from(elapsed.as_millis()).map_err(|_| {
+        ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidResponse,
+            "system clock exceeds i64 milliseconds",
+        )
+    })
+}
