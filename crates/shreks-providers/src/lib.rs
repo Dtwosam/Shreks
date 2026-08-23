@@ -1,5 +1,7 @@
 //! External data-provider boundaries for Shreks.
 
+pub mod http;
+
 use std::{error::Error, fmt};
 
 use async_trait::async_trait;
