@@ -1,5 +1,6 @@
 //! External data-provider boundaries for Shreks.
 
+pub mod config;
 pub mod dexscreener;
 pub mod helius;
 pub mod http;
