@@ -13,7 +13,7 @@ The feature engine is not a strategy and does not decide whether to trade. It de
 B2 therefore optimizes for three things that matter directly to eventual profitability:
 
 1. **signal quality** — capture liquidity, participation, flow, momentum, structure, and executability information that can plausibly affect trade expectancy;
-2. **look-ahead safety** — use only observations available at or before the feature timestamp;
+2. **look-ahead safety** — use only observations available at or before the feature timestamp and enforce honest time-window semantics;
 3. **research honesty** — preserve missing values as unknown instead of converting them to optimistic zeros.
 
 ## 2. Source-of-Truth Requirements
@@ -77,7 +77,7 @@ The package depends only on the Python standard library and `shreks_brain.safety
 
 A later assembler may read SQLite and construct these inputs, but no database/provider code enters B2.
 
-## 5. Feature Schema Version
+## 5. Feature Schema Version and Timing Contract
 
 The first schema version is exactly:
 
@@ -85,7 +85,20 @@ The first schema version is exactly:
 FEATURE_SCHEMA_VERSION = "b2-v1"
 ```
 
-The schema version is part of every `FeatureVector` and is immutable. Any future semantic change to a feature definition requires a new version rather than silently changing historical meaning.
+The schema version is part of every `FeatureVector` and is immutable. Any future semantic change to a feature definition or anchor-timing rule requires a new version rather than silently changing historical meaning.
+
+B2 defines versioned anchor timing bands so a feature named `return_1m_pct` cannot accidentally be calculated from a point that is actually 30 seconds or 4 minutes old.
+
+```python
+ANCHOR_1M_MIN_AGE_MS = 60_000
+ANCHOR_1M_MAX_AGE_MS = 90_000
+ANCHOR_5M_MIN_AGE_MS = 300_000
+ANCHOR_5M_MAX_AGE_MS = 360_000
+ANCHOR_15M_MIN_AGE_MS = 900_000
+ANCHOR_15M_MAX_AGE_MS = 1_020_000
+```
+
+These are feature-schema semantics, not trading thresholds. They allow modest sampling delay while preserving the meaning of each return horizon.
 
 ## 6. Domain Types
 
@@ -125,13 +138,19 @@ Immutable point-in-time input bundle:
 - `exit_price_impact_pct: float | None`
 - `safety: SafetyAssessment`
 
-All supplied observations must have `observed_at_unix_ms <= as_of_unix_ms`. Future observations raise `ValueError` instead of being accepted as feature evidence.
+Validation rules:
 
-`pair_created_at_unix_ms` must be non-negative and cannot be later than `as_of_unix_ms`.
+- `as_of_unix_ms` is a non-negative integer;
+- `current.observed_at_unix_ms <= as_of_unix_ms`;
+- when present, each named historical anchor must fall inside its exact versioned age band relative to `as_of_unix_ms`;
+- an anchor outside its band raises `ValueError` rather than producing a mislabeled return;
+- `pair_created_at_unix_ms` must be non-negative and cannot be later than either `current.observed_at_unix_ms` or `as_of_unix_ms`;
+- known local high/low prices must be finite and strictly positive;
+- if both local high and low are known, high must be greater than or equal to low;
+- known exit-price-impact values must be finite and non-negative;
+- `safety.as_of_unix_ms` must equal `FeatureInputs.as_of_unix_ms` exactly.
 
-Known local high/low prices and exit-price-impact values must be finite and non-negative. If both local high and local low are known, high must be greater than or equal to low. If current price is known and extrema are supplied, extrema are treated as historical path evidence and current price may equal either boundary.
-
-The B1 `SafetyAssessment` must have `as_of_unix_ms <= FeatureInputs.as_of_unix_ms`; a future safety assessment raises `ValueError`.
+The exact safety timestamp requirement ensures a feature vector cannot combine current market evidence with a stale earlier safety decision.
 
 B2 accepts no future outcome checkpoint, realized return, future MFE/MAE, or trade-result fields.
 
@@ -144,6 +163,7 @@ Identity/audit fields:
 - `schema_version: str`
 - `as_of_unix_ms: int`
 - `source_observed_at_unix_ms: int`
+- `source_age_ms: int`
 - `safety_policy_version: str`
 - `safety_decision: SafetyDecision`
 
@@ -195,13 +215,21 @@ Data-availability metadata:
 
 - `missing_features: tuple[str, ...]`
 
-`missing_features` contains the public feature-field names whose values are `None`, in the exact canonical field order defined by this spec. It does not list boolean safety flags or identity fields.
+`missing_features` contains the public numeric feature-field names whose values are `None`, in the exact canonical field order listed in this spec: market quality, participation/volume, flow, momentum, then path/structure. It does not list identity fields, booleans, safety decision, or counts that are known to be zero.
 
 ## 7. Deterministic Calculations
 
 All percentage values use percentage points.
 
-### 7.1 Safe percentage change
+### 7.1 Source age
+
+```text
+source_age_ms = as_of_unix_ms - current.observed_at_unix_ms
+```
+
+This is always non-negative because future current observations are invalid. B2 records source age rather than imposing a trading-specific freshness threshold.
+
+### 7.2 Safe percentage change
 
 For current value `x` and earlier value `b`:
 
@@ -216,7 +244,7 @@ Used for:
 - liquidity change over 5 minutes;
 - 1m/5m/15m returns.
 
-### 7.2 Token age
+### 7.3 Token age
 
 ```text
 token_age_seconds = (as_of_unix_ms - pair_created_at_unix_ms) / 1000
@@ -224,7 +252,7 @@ token_age_seconds = (as_of_unix_ms - pair_created_at_unix_ms) / 1000
 
 Return `None` when pair creation time is unknown.
 
-### 7.3 Transaction counts
+### 7.4 Transaction counts
 
 For a window, if both buy and sell counts are known:
 
@@ -234,7 +262,7 @@ tx_count = buys + sells
 
 Otherwise return `None`.
 
-### 7.4 Buy fraction
+### 7.5 Buy fraction
 
 If both counts are known and total transactions are positive:
 
@@ -246,7 +274,7 @@ Otherwise return `None`.
 
 This produces a `[0, 1]` fraction, not percentage points.
 
-### 7.5 Buy/sell ratio
+### 7.6 Buy/sell ratio
 
 If buys and sells are known and `sells > 0`:
 
@@ -256,7 +284,7 @@ buy_sell_ratio = buys / sells
 
 If sells are zero, return `None`; do not manufacture an arbitrarily large ratio.
 
-### 7.6 Buy-pressure acceleration
+### 7.7 Buy-pressure acceleration
 
 When both window buy fractions are known:
 
@@ -266,7 +294,7 @@ buy_pressure_acceleration = buy_fraction_m5 - buy_fraction_h1
 
 Positive values mean recent transaction-count pressure is more buy-heavy than the broader hour.
 
-### 7.7 Volume velocity
+### 7.8 Volume velocity
 
 When both current rolling volumes are known and hourly volume is positive:
 
@@ -282,7 +310,7 @@ Interpretation:
 
 Return `None` when hourly volume is zero/unknown.
 
-### 7.8 Momentum acceleration
+### 7.9 Momentum acceleration
 
 When 1-minute and 5-minute returns are known:
 
@@ -292,7 +320,7 @@ momentum_acceleration_1m_vs_5m = return_1m_pct - (return_5m_pct / 5)
 
 This compares the latest one-minute return with the average per-minute return implied by the five-minute move. It is intentionally simple and explainable.
 
-### 7.9 Distance from local high
+### 7.10 Distance from local high
 
 When current price and a positive local high are known:
 
@@ -302,7 +330,7 @@ distance_from_local_high_pct = ((price / local_high) - 1) * 100
 
 Typical values are `<= 0`. The engine does not clamp positive values because inconsistent path evidence should remain visible rather than silently altered.
 
-### 7.10 Range position
+### 7.11 Range position
 
 When current price, local high, and local low are known and `high > low`:
 
@@ -351,13 +379,14 @@ The feature vector records which derived/public numeric features are missing so 
 
 ## 10. Point-in-Time / Look-Ahead Protection
 
-The public B2 API accepts only current/earlier observations and B1 safety state at or before the feature timestamp.
+The public B2 API accepts only current/earlier observations and a B1 safety assessment evaluated at the exact same feature timestamp.
 
 Tests must prove:
 
-- a future market point is rejected;
-- a future pair creation timestamp is rejected;
-- a future safety assessment is rejected;
+- a future current market point is rejected;
+- historical anchors outside their versioned timing bands are rejected;
+- a future or stale-timestamp safety assessment relative to the feature timestamp is rejected by exact timestamp mismatch;
+- a pair-creation timestamp later than the current market observation is rejected;
 - no future-outcome fields exist on `FeatureInputs`;
 - repeated calls with identical inputs produce equal vectors.
 
@@ -391,15 +420,15 @@ Development is test-first.
 Prove:
 
 - immutable types;
-- validation of timestamps, monetary values, counts, extrema, and future observations;
-- safety timestamp ordering;
+- validation of timestamps, anchor timing bands, monetary values, counts, extrema, pair creation ordering, and safety timestamp equality;
 - absence of future-outcome fields.
 
 ### Engine tests
 
 Use fixed numerical fixtures to prove exact calculations for:
 
-- age;
+- source age;
+- token age;
 - liquidity change;
 - returns;
 - volume velocity;
