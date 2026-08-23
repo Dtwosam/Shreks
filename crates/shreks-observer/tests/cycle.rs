@@ -258,3 +258,34 @@ async fn successful_chain_observation_persists_mint_state_and_marks_provider_hea
     drop(observer);
     cleanup_dir(&root);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn durable_discovery_candidate_gets_exactly_seven_outcome_checkpoints_once() {
+    let root = unique_test_dir("outcome-schedule");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let discovery = Arc::new(FakeDiscovery {
+        provider: ProviderId::DexScreener,
+        result: Ok(vec![candidate()]),
+    });
+    let mut observer = Observer::new(db).with_discovery_provider(discovery);
+
+    observer.run_cycle().await.unwrap();
+    observer.run_cycle().await.unwrap();
+    drop(observer);
+
+    let connection = Connection::open(&db_path).unwrap();
+    let candidate_id: i64 = connection
+        .query_row("SELECT id FROM token_candidates WHERE mint = 'mint-a'", [], |row| row.get(0))
+        .unwrap();
+    let checkpoint_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM candidate_outcome_checkpoints WHERE candidate_id = ?1",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(checkpoint_count, 7);
+
+    cleanup_dir(&root);
+}
