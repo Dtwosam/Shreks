@@ -95,7 +95,7 @@ fn migration_two_adds_venue_aware_observer_schema() {
     let db_path = root.join("shreks.db");
 
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 2);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 3);
     drop(db);
 
     let connection = Connection::open(&db_path).unwrap();
