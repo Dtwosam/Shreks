@@ -304,11 +304,12 @@ impl ShreksDb {
                      AND due_at_unix_ms <= ?2
                    ORDER BY horizon_seconds ASC"#,
             )?;
-            statement
+            let rows = statement
                 .query_map(params![candidate_id, completed_at_unix_ms], |row| {
                     Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
                 })?
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
         };
 
         let mut completed = 0usize;
