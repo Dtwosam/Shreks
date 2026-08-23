@@ -144,6 +144,22 @@ B3's `confirmation_score` is only checklist completeness: `confirmations_passed 
 
 B3 adds no `TradeIntent`, position size, paper fill, wallet, signer, transaction construction, submission, or live execution path.
 
+## Pump graduation lifecycle evidence
+
+Phase B4a adds the protocol-evidence prerequisite for a later Graduation/Breakout setup. It does **not** decide whether a graduation is tradable.
+
+The existing single Pump websocket now carries both creation and migration log signals. Realtime delivery remains durable-write-only: a migration wake-up records its signature, full-width Solana slot, and local detection time, but does not fetch the transaction or trigger a setup decision between normal observer cycles.
+
+During a full observer cycle, creation and migration verification share the same hard budget of at most 32 Pump transaction fetches. When migration backlog exists, up to eight slots are serviced first, creation verification can use the remaining capacity, and any unused creation capacity returns to older migration work. This is one shared budget, not separate 32-call budgets.
+
+A normalized `pump_graduation` event is created only from a fetched transaction containing a verified Pump `migrate` or `migrate_v2` instruction with the pinned protocol identities/account layout. A PumpSwap market pair by itself is never graduation evidence, and `MigrateBondingCurveCreator` is intentionally not classified as a token graduation.
+
+The durable lifecycle event preserves the token mint, quote mint, Pump.fun bonding-curve -> PumpSwap venue transition, PumpSwap pool, transaction provider, signature, full `u64` slot, decision-safe `detected_at_unix_ms`, and optional chain `occurred_at_unix_ms`. Legacy migrations normalize the quote asset to wrapped SOL; v2 migrations preserve the instruction's explicit quote mint.
+
+Migration inbox replay is restart-safe and deterministic. Verified lifecycle persistence and terminal inbox completion are atomic, and an already-verified signature cannot silently mutate its normalized lifecycle truth on replay.
+
+B4a adds no Graduation/Breakout threshold, setup score, `TradeIntent`, paper fill, wallet, signer, transaction construction, submission, or live execution path.
+
 ## Local setup
 
 ### Rust
