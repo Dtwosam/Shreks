@@ -39,6 +39,7 @@ Verified program IDs already present in Shreks:
 ```text
 Pump program:     6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P
 PumpSwap program: pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA
+Wrapped SOL mint: So11111111111111111111111111111111111111112
 ```
 
 Migration instructions that B4a must support:
@@ -108,8 +109,8 @@ Seeing a PumpSwap pair is useful enrichment but is not equivalent to proving the
 
 A successful log notification becomes:
 
-- `Creation` only when logs contain exact Anchor instruction suffix `Instruction: Create` or `Instruction: CreateV2`;
-- `Migration` only when logs contain exact Anchor instruction suffix `Instruction: Migrate` or `Instruction: MigrateV2`.
+- `Creation` only when a log ends with exact Anchor instruction text `Instruction: Create` or `Instruction: CreateV2`;
+- `Migration` only when a log ends with exact Anchor instruction text `Instruction: Migrate` or `Instruction: MigrateV2`.
 
 The parser must **not** classify `Instruction: MigrateBondingCurveCreator` as graduation.
 
@@ -119,21 +120,32 @@ A cheap log signal is never lifecycle truth by itself. It only schedules confirm
 
 ## 6. Confirmed Migration Verification
 
+The protocol decoder stays provider-neutral. It returns migration evidence only; the observer later attaches the actual `TransactionProvider` identity and durable signal timing.
+
 Public verifier:
 
 ```rust
 pub fn classify_pump_migration_transaction(
     body: &str,
     signature: &str,
-    slot: u64,
-    detected_at_unix_ms: i64,
 ) -> Result<PumpMigrationVerification, ProviderError>
+```
+
+Protocol evidence:
+
+```rust
+pub struct PumpMigrationEvidence {
+    pub mint: String,
+    pub quote_mint: String,
+    pub pool_address: String,
+    pub occurred_at_unix_ms: Option<i64>,
+}
 ```
 
 `PumpMigrationVerification` has:
 
 - `Pending` — RPC `result: null`; retry later;
-- `Verified(Vec<TokenLifecycleEvent>)` — one or more verified Pump migration instructions;
+- `Verified(Vec<PumpMigrationEvidence>)` — one or more verified Pump migration instructions;
 - `Rejected(String)` — fetched transaction is terminally not a valid migration.
 
 Verification requirements for each accepted instruction:
@@ -148,6 +160,8 @@ Verification requirements for each accepted instruction:
 8. duplicate `(mint, quote_mint, pool)` evidence inside one transaction is deduplicated deterministically.
 
 Both top-level and inner instructions are inspected because protocol calls may appear through CPI/wrapper paths.
+
+Transaction `blockTime` is converted from seconds to milliseconds when present and valid. `null` block time is allowed and produces `None`; malformed, negative, or overflowing numeric block time is an invalid provider response rather than a fabricated timestamp.
 
 A fetched successful transaction with no valid migration instruction is `Rejected`, not `Pending`.
 
@@ -175,16 +189,17 @@ pub struct TokenLifecycleEvent {
 }
 ```
 
-For B4a verified events:
+For B4a verified events, the observer constructs:
 
 - kind = `PumpGraduation`
-- provider = `Helius`
+- provider = the actual transaction adapter’s `ProviderId`
 - from venue = `PumpFunBondingCurve`
 - to venue = `PumpSwap`
+- signature/slot = durable migration signal identity
 - `detected_at_unix_ms` = first locally persisted realtime migration-log observation
-- `occurred_at_unix_ms` = transaction `blockTime * 1000` when present and valid; otherwise `None`
+- `occurred_at_unix_ms` = verified transaction block time when available
 
-`detected_at_unix_ms` is the decision-safe timing field. Later strategies must not replace it with a verification time that occurred after the fact.
+`detected_at_unix_ms` is the decision-safe timing field. Later strategies must not replace it with verification time that occurred after the fact.
 
 ## 8. Durable Storage
 
@@ -255,7 +270,13 @@ Realtime wake-ups remain durable-write-only:
 
 Confirmed transaction fetches still happen in normal observer cycles. This preserves current free-tier pacing and avoids an unbudgeted realtime RPC burst.
 
-To avoid doubling Helius transaction pressure, one full cycle processes at most the existing bounded Pump verification budget. B4a allocates capacity across launch and migration work so neither class can permanently starve the other. Migration work may be prioritized within the bounded budget because graduation timing is more strategy-sensitive, but creation replay must retain guaranteed capacity.
+The existing maximum of 32 Pump transaction verifications per full cycle remains unchanged. Scheduling is deterministic:
+
+1. reserve up to 8 of the 32 slots for pending migration verification when migration work exists;
+2. use the remaining slots for pending creation verification;
+3. if creation work does not consume the remaining budget, use spare slots for additional migration verification.
+
+This guarantees migration progress without doubling transaction traffic and allows creation work to use the full budget when no migration backlog exists.
 
 Provider failures leave migration signals pending and increment operational failure telemetry; they never become false rejections.
 
@@ -279,7 +300,7 @@ This avoids silently changing the semantics of historical `pump_signals_*` telem
 B4a adds no paid service and no hidden paid fallback.
 
 - one existing Helius standard websocket remains the realtime source;
-- confirmed transaction verification reuses the existing Helius transaction provider and pacing lane;
+- confirmed transaction verification reuses the existing transaction provider and pacing lane;
 - `result: null`, rate limits, timeouts, and provider outages remain retryable/pending;
 - malformed successful responses are provider failures, not fabricated lifecycle events.
 
