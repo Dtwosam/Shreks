@@ -44,113 +44,25 @@
   - `GraduationBreakoutPolicy`
   - `GraduationBreakoutAssessment`
 
-- [ ] **Step 1: Write the failing model tests**
+- [x] **Step 1: Write the failing model tests**
 
-Create tests that import the seven B4b symbols above from `shreks_brain.setups.models` and prove:
+The tests pin the canonical setup name and confirmation count, reason-code order, immutable lifecycle context, full-width Solana slot support, policy validation, assessment validation, and the absence of execution/future-outcome fields.
 
-```python
-assert GRADUATION_BREAKOUT_SETUP_NAME == "graduation_breakout"
-assert GRADUATION_BREAKOUT_CONFIRMATIONS_REQUIRED == 8
-assert GraduationBreakoutReasonCode.GRADUATION_NOT_VERIFIED.value == "GRADUATION_NOT_VERIFIED"
-assert GraduationBreakoutReasonCode.ALL_CONFIRMATIONS_PASSED.value == "ALL_CONFIRMATIONS_PASSED"
-```
+- [x] **Step 2: Verify RED**
 
-Use a canonical `GraduationContext` fixture:
+Authoritative PR CI fails in Python only because B4b model symbols do not yet exist; Rust and repository safety remain green.
 
-```python
-GraduationContext(
-    event_type="pump_graduation",
-    provider="helius",
-    mint="mint-a",
-    quote_mint="So11111111111111111111111111111111111111112",
-    from_venue="pump_fun_bonding_curve",
-    to_venue="pump_swap",
-    pool_address="pool-a",
-    signature="sig-a",
-    slot=2**64 - 1,
-    detected_at_unix_ms=1_000_000,
-    occurred_at_unix_ms=999_000,
-)
-```
+- [x] **Step 3: Implement minimal immutable models**
 
-Prove every identity string rejects `""` and whitespace-only values; slot rejects negative, float, and bool; timestamps reject negative/float/bool; `occurred_at_unix_ms=None` is valid. Prove context, policy, finding, and assessment are frozen.
+Models are added alongside the existing B3 types without changing B3 semantics. Shared numeric validators are reused and a non-empty-string validator is added for lifecycle identity fields.
 
-Use an explicit policy fixture with:
+- [x] **Step 4: Verify GREEN**
 
-```python
-GraduationBreakoutPolicy(
-    version="graduation-v1-test",
-    min_seconds_since_graduation=30.0,
-    max_seconds_since_graduation=900.0,
-    max_source_age_ms=30_000,
-    min_liquidity_usd=50_000.0,
-    max_exit_price_impact_pct=5.0,
-    min_tx_count_m5=50,
-    min_volume_velocity_ratio=1.2,
-    min_buy_fraction_m5=0.60,
-    min_buy_pressure_acceleration=0.05,
-    min_return_1m_pct=1.0,
-    max_return_1m_pct=40.0,
-    min_liquidity_change_5m_pct=0.0,
-    min_distance_from_local_high_pct=-15.0,
-    min_range_position_pct=60.0,
-)
-```
+Full repository CI passes.
 
-Prove version non-empty, numeric finiteness, non-negative fields, source-age/tx-count integer validation, bounded buy fraction/range position, non-positive distance-from-high threshold, `max_seconds_since_graduation > min_seconds_since_graduation`, and `max_return_1m_pct >= min_return_1m_pct`.
+- [x] **Step 5: Commit**
 
-Prove assessment validation: exact setup name; non-empty policy/schema versions; non-negative `as_of_unix_ms`; optional non-negative graduation timestamp; optional finite non-negative `seconds_since_graduation`; confirmation counts bounded by required; score in `[0,100]`. Assert assessment fields contain no execution/future-outcome names (`trade_intent`, `side`, `notional`, `position_size`, `wallet`, `order`, `fill`, `signer`, `transaction`, `realized_pnl`, `mfe_pct`, `mae_pct`).
-
-- [ ] **Step 2: Verify RED**
-
-Run full CI via the branch push. Expected: Python fails only because B4b model symbols do not yet exist; Rust and repository safety remain green.
-
-- [ ] **Step 3: Implement minimal immutable models**
-
-Append the constants, enum, and dataclasses to `setups/models.py`. Reuse existing `_require_finite`, `_require_non_negative_finite`, `_require_non_negative_int`, and `_require_bounded_finite`. Add only a tiny `_require_non_empty_string(name, value)` helper if it reduces repeated validation; do not alter B3 semantics.
-
-`GraduationBreakoutReasonCode` must include, in spec order:
-
-```text
-SAFETY_NOT_PASS
-GRADUATION_NOT_VERIFIED
-GRADUATION_EVENT_NOT_PUMP
-GRADUATION_VENUE_TRANSITION_INVALID
-GRADUATION_AFTER_AS_OF
-POST_GRADUATION_WINDOW_EXPIRED
-SOURCE_DATA_TOO_OLD
-LIQUIDITY_BELOW_MINIMUM
-EXIT_PRICE_IMPACT_TOO_HIGH
-MOVE_TOO_EXTENDED
-GRADUATION_TOO_RECENT
-LIQUIDITY_UNKNOWN
-EXIT_PRICE_IMPACT_UNKNOWN
-TX_COUNT_M5_UNKNOWN
-TX_COUNT_M5_BELOW_MINIMUM
-VOLUME_VELOCITY_UNKNOWN
-VOLUME_VELOCITY_BELOW_MINIMUM
-BUY_FRACTION_M5_UNKNOWN
-BUY_FRACTION_M5_BELOW_MINIMUM
-BUY_PRESSURE_ACCELERATION_UNKNOWN
-BUY_PRESSURE_ACCELERATION_BELOW_MINIMUM
-RETURN_1M_UNKNOWN
-RETURN_1M_BELOW_MINIMUM
-LIQUIDITY_CHANGE_5M_UNKNOWN
-LIQUIDITY_CHANGE_5M_BELOW_MINIMUM
-DISTANCE_FROM_LOCAL_HIGH_UNKNOWN
-TOO_FAR_BELOW_LOCAL_HIGH
-RANGE_POSITION_UNKNOWN
-RANGE_POSITION_BELOW_MINIMUM
-ALL_CONFIRMATIONS_PASSED
-```
-
-- [ ] **Step 4: Verify GREEN**
-
-Run full repository CI. Expected: all jobs green.
-
-- [ ] **Step 5: Commit**
-
-Commit model tests and implementation as one coherent GREEN commit.
+The model contract is committed as a coherent GREEN change.
 
 ---
 
@@ -173,34 +85,17 @@ def assess_graduation_breakout(
     ...
 ```
 
-- [ ] **Step 1: Write failing evaluator tests**
+- [x] **Step 1: Write failing evaluator tests**
 
-Build a canonical `FeatureVector` fixture with strong but non-extended values and explicit `b2-v1`, plus canonical context/policy fixtures. Prove:
+The evaluator suite proves lifecycle identity, safety precedence, decision-safe graduation timing, post-graduation age boundaries, freshness/executability/anti-chase gates, all eight confirmation boundaries, missing-data behavior, deterministic finding order, blocked-candidate research scoring, repeatability, and explicit exclusion of cross-regime 5-minute momentum from positive evidence.
 
-1. all eight confirmations with valid context -> `READY`, `8/8`, `100.0`, final `ALL_CONFIRMATIONS_PASSED`;
-2. `graduation=None` -> `BLOCKED / GRADUATION_NOT_VERIFIED` while feature confirmations still score;
-3. wrong event -> `GRADUATION_EVENT_NOT_PUMP`;
-4. wrong from/to venue -> `GRADUATION_VENUE_TRANSITION_INVALID`;
-5. local detection after `as_of_unix_ms` -> `GRADUATION_AFTER_AS_OF` and no negative age exposed;
-6. changing only `occurred_at_unix_ms` never changes state/age/score;
-7. `SafetyDecision.REJECT` and `INCOMPLETE` -> `SAFETY_NOT_PASS` even with 8/8 confirmations;
-8. equality at min/max graduation ages passes timing gates; below min -> `GRADUATION_TOO_RECENT`; above max -> `POST_GRADUATION_WINDOW_EXPIRED`;
-9. stale source, low liquidity, excessive exit impact, or return above anti-chase ceiling -> corresponding hard blocker;
-10. missing liquidity or exit impact -> `WATCH` when no hard blocker;
-11. each of the eight confirmation fields independently below threshold -> `WATCH`, `7/8`, matching reason;
-12. each confirmation `None` -> `WATCH`, matching `UNKNOWN` reason;
-13. equality at every confirmation threshold passes;
-14. deterministic multi-finding order follows the spec;
-15. repeated calls with equal inputs return equal assessments;
-16. no test uses `return_5m_pct` or `momentum_acceleration_1m_vs_5m` as a positive graduation confirmation.
+- [x] **Step 2: Verify RED**
 
-- [ ] **Step 2: Verify RED**
+Full CI fails in Python only because the `graduation_breakout` evaluator module does not yet exist.
 
-Run full CI. Expected: Python fails only on missing `graduation_breakout` evaluator; Rust/safety green.
+- [x] **Step 3: Implement minimal evaluator**
 
-- [ ] **Step 3: Implement minimal evaluator**
-
-Implementation order must be exact:
+Implementation order is exact:
 
 ```text
 hard lifecycle/safety gates
@@ -212,17 +107,15 @@ state resolution
 READY marker
 ```
 
-Do not short-circuit feature confirmation calculation for blocked candidates. Compute `seconds_since_graduation` only when context exists and detection is not in the future; otherwise expose `None` for contradictory future context. Use no wall clock.
+The evaluator has no wall-clock, storage, provider, wallet, quote, or execution dependency and does not short-circuit confirmation research for blocked candidates.
 
-Use a private `_confirm_minimum` helper analogous to B3 but typed to B4b reason codes/findings.
+- [x] **Step 4: Verify GREEN**
 
-- [ ] **Step 4: Verify GREEN**
+Full repository CI passes with all existing B3 tests unchanged.
 
-Run full repository CI. Expected: all jobs green and B3 tests unchanged.
+- [x] **Step 5: Commit**
 
-- [ ] **Step 5: Commit**
-
-Commit evaluator tests and implementation as one coherent GREEN commit.
+The evaluator is committed as a coherent GREEN change.
 
 ---
 
@@ -237,61 +130,51 @@ Commit evaluator tests and implementation as one coherent GREEN commit.
 **Interfaces:**
 - Produces stable imports from `shreks_brain.setups` for all B4b constants/types and `assess_graduation_breakout`.
 
-- [ ] **Step 1: Write failing public API tests**
+- [x] **Step 1: Write failing public API tests**
 
-Import from `shreks_brain.setups`:
+The public API test constructs a READY Graduation/Breakout assessment entirely from package-level imports, preserves the existing Fresh Launch entry point, and proves the result exposes no execution authority.
 
-```python
-GRADUATION_BREAKOUT_CONFIRMATIONS_REQUIRED
-GRADUATION_BREAKOUT_SETUP_NAME
-GraduationBreakoutAssessment
-GraduationBreakoutFinding
-GraduationBreakoutPolicy
-GraduationBreakoutReasonCode
-GraduationContext
-SetupState
-assess_graduation_breakout
-```
+- [x] **Step 2: Verify RED**
 
-Construct a ready public assessment and prove no execution fields exist. Also retain existing B3 public API test unchanged.
+Full CI fails in Python only because B4b symbols are not exported from the package root.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 3: Export stable API**
 
-Run full CI. Expected: Python fails only because B4b symbols are not exported at package level.
+All B4b constants, types, and evaluator are exported without removing or renaming any B3 symbol.
 
-- [ ] **Step 3: Export stable API**
+- [x] **Step 4: Verify package GREEN**
 
-Update `setups/__init__.py` without removing or renaming any B3 export. Import evaluator from `.graduation_breakout` and models from `.models`; update `__all__` deterministically.
+Full repository CI passes.
 
-- [ ] **Step 4: Verify package GREEN**
+- [x] **Step 5: Document B4b**
 
-Run full repository CI.
-
-- [ ] **Step 5: Document B4b**
-
-Add README section explaining:
-
-- protocol-verified B4a graduation context is required;
-- local detection time is the decision clock;
-- B2 remains `b2-v1`;
-- 8 confirmations measure evidence completeness, not profit probability;
-- no production threshold defaults;
-- READY is not an order/trade instruction;
-- no paper/live execution is enabled.
+README documents the verified-lifecycle requirement, local detection-time decision clock, unchanged B2 schema, eight-confirmation evidence score, no production defaults, cross-regime momentum exclusion, and no-execution guarantee.
 
 - [ ] **Step 6: Run exact-head full CI**
 
-Record the final exact head and CI run ID only after Rust, Python, workspace validation, and repository safety are all green.
+Run after this verification-record commit and record the final exact head only after Rust, Python, workspace validation, and repository safety are all green.
 
-- [ ] **Step 7: Open stacked draft PR**
+- [ ] **Step 7: Keep stacked draft PR sealed and unmerged**
 
-Create draft PR against `feat/phase-b4a-graduation-lifecycle`. Include design/spec path, RED/GREEN commits and CI runs, final head, unchanged B2 schema, 8-confirmation contract, local detection-time rule, no-production-default rule, and explicit no-execution scope. Keep unmerged.
+Update draft PR #7 against `feat/phase-b4a-graduation-lifecycle` with exact RED/GREEN/final evidence, unchanged B2 schema, eight-confirmation contract, local detection-time rule, no-production-default rule, and explicit no-execution scope.
+
+## Verification Record
+
+- Task 1 RED test introduced: `356f70a00ac9f51278b2e9acdb438796397e1a6f`.
+- Task 1 authoritative RED CI head: `c9b597dd4b18c1780231a20aa7ac5971c6735cb4`; CI `32664732934` failed in Python on missing B4b model exports while repository safety remained green.
+- Task 1 GREEN: `79641dcda9264fa534aaa61413ea9fe52a0ada73`; CI `32664786888` passed Rust, Python, workspace metadata, and repository safety.
+- Task 2 RED: `2ce69efd0004e972ce1880cb73e82838633244dd`; CI `32664888831` failed in Python only because `shreks_brain.setups.graduation_breakout` did not yet exist.
+- Task 2 GREEN: `6b94a0a2f9177879fb2770134ddf93944e471eab`; CI `32664936611` passed Rust, Python, workspace metadata, and repository safety.
+- Task 3 RED: `e45230bfe74d82caeee51a5b53d0457c85c57b48`; CI `32665007991` failed in Python only because B4b package-level exports did not yet exist.
+- Task 3 package GREEN: `d92e214cca3a7938ec4109ce18494875281e838e`; CI `32665067816` passed Rust, Python, workspace metadata, and repository safety.
+- Documentation commit: `fc3789503adc2d768142ec5eec725a9ec0f6b43a`.
+- Final exact-head CI: pending this record commit.
 
 ## Self-Review
 
 - Every spec requirement maps to Task 1, 2, or 3.
 - No placeholder/TODO steps remain.
 - Type names and signatures are consistent across all tasks.
-- No Rust/B2/storage changes are required.
-- The plan does not permit live trading or claim profitability.
-- The plan preserves blocked-candidate confirmation scoring for later filter-value research.
+- No Rust/B2/storage change was made.
+- The implementation does not permit live trading or claim profitability.
+- Blocked-candidate confirmation scoring is preserved for later filter-value research.
