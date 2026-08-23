@@ -1,5 +1,11 @@
 //! Operational SQLite storage for Shreks.
 
+mod outcomes;
+pub use outcomes::{
+    DueOutcomeCheckpoint, OutcomeCheckpointRecord, OutcomeCheckpointStatus,
+    OUTCOME_HORIZONS_SECONDS,
+};
+
 use std::{
     error::Error,
     fmt, fs,
@@ -36,6 +42,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "pump_launch_signals",
         sql: include_str!("../migrations/0003_pump_launch_signals.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "candidate_outcome_checkpoints",
+        sql: include_str!("../migrations/0004_candidate_outcome_checkpoints.sql"),
     },
 ];
 
