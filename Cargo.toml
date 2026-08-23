@@ -1,0 +1,3 @@
+[workspace]
+members = ["crates/shreks-core"]
+resolver = "2"
