@@ -274,6 +274,22 @@ Slippage is side-aware: higher execution prices are adverse for BUYs and lower e
 
 C1+C2 ships **no production paper-fill policy defaults**. The layer deliberately does not own positions, balances, weighted entry price, realized/unrealized PnL, exit rules, autonomous looping, persistence, wallet/signing, transaction construction/submission, or live execution. Those responsibilities begin with the later Phase C accounting and exit layers.
 
+## Authoritative paper position ledger
+
+Phase C3 adds the authoritative in-memory paper accounting layer under `shreks_brain.paper`. It is a pure, replayable reducer over C1 terminal execution results: every terminal booking appends an immutable journal entry and derives immutable position snapshots, while `DEFERRED` results remain true no-ops that neither consume idempotency nor move accounting time.
+
+Position accounting is intentionally cost-aware. Execution-weighted entry price excludes explicit fees so price evidence stays interpretable, while `open_cost_basis_usd` includes filled BUY notional plus already-incurred BUY swap/network fees. On a SELL, realized PnL is the net sale cash flow minus the proportional all-in open cost basis. Entry and exit costs are therefore counted exactly once; `accumulated_costs_usd` is an audit total and must not be subtracted from PnL again.
+
+Failed post-submission attempts remain economically visible even when no tokens move. Their network fee reduces simulated cash and realized PnL, and a failed exit attempt is linked to the current open lifecycle so strategy-level paper expectancy cannot silently ignore execution failures.
+
+Open positions carry quantity, weighted entry, all-in open basis, realized PnL, accumulated costs, lifecycle timestamps, and fill counts. A partial exit releases basis proportionally. A full exit closes the lifecycle without erasing its historical entry evidence. If the same mint is bought again later, C3 appends a new deterministic lifecycle instead of mutating the closed one.
+
+Point-in-time marks compute `quantity * mark_price - open_cost_basis`. This includes incurred entry costs but deliberately excludes hypothetical future SELL fees, slippage, price impact, and liquidity constraints because a mark is not an executable quote. Marked unrealized PnL is therefore accounting evidence, not guaranteed realizable PnL. If any open position lacks a current mark, aggregate unrealized PnL remains unknown rather than treating the missing position as zero.
+
+Every ledger snapshot self-reconciles cash, realized PnL, accumulated costs, processed terminal keys, journal sequence, and per-position linked economics. C3 models no leverage: any terminal cash flow that would make simulated cash negative is rejected instead of creating impossible paper capital.
+
+C3 supplies **no production starting capital**, persistence/restart wiring, stop loss, take profit, trailing stop, maximum hold, emergency exit rule, autonomous paper loop, wallet/signing, transaction construction/submission, or live-money path. Exit decisions begin in C4; realistic SELL execution continues to use the same C1 adapter and C3 books only what that adapter actually fills.
+
 ## Local setup
 
 ### Rust
