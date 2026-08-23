@@ -625,6 +625,9 @@ impl Observer {
                 }
             }
         }
+
+        self.db
+            .finalize_due_outcome_checkpoints(candidate_id, unix_time_ms()?)?;
         Ok(())
     }
 
