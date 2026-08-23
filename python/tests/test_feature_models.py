@@ -18,7 +18,7 @@ from shreks_brain.features.models import (
 )
 
 
-AS_OF = 1_000_000
+AS_OF = 2_000_000
 
 
 def clean_safety(*, as_of_unix_ms: int = AS_OF) -> SafetyAssessment:
@@ -30,7 +30,7 @@ def clean_safety(*, as_of_unix_ms: int = AS_OF) -> SafetyAssessment:
     )
 
 
-def point(*, observed_at_unix_ms: int = 990_000, **overrides) -> MarketFeaturePoint:
+def point(*, observed_at_unix_ms: int = AS_OF - 10_000, **overrides) -> MarketFeaturePoint:
     values = {
         "observed_at_unix_ms": observed_at_unix_ms,
         "price_usd": 1.0,
@@ -53,7 +53,7 @@ def inputs(**overrides) -> FeatureInputs:
         "one_minute_ago": None,
         "five_minutes_ago": None,
         "fifteen_minutes_ago": None,
-        "pair_created_at_unix_ms": 500_000,
+        "pair_created_at_unix_ms": AS_OF - 500_000,
         "local_high_price_usd": 1.2,
         "local_low_price_usd": 0.8,
         "exit_price_impact_pct": 2.5,
@@ -92,12 +92,12 @@ def test_market_feature_point_is_frozen():
 def test_feature_inputs_and_vector_are_frozen():
     bundle = inputs()
     with pytest.raises(FrozenInstanceError):
-        bundle.as_of_unix_ms = 2_000_000
+        bundle.as_of_unix_ms = AS_OF + 1
 
     vector = FeatureVector(
         schema_version="b2-v1",
         as_of_unix_ms=AS_OF,
-        source_observed_at_unix_ms=990_000,
+        source_observed_at_unix_ms=AS_OF - 10_000,
         source_age_ms=10_000,
         safety_policy_version="safety-v1",
         safety_decision=SafetyDecision.PASS,
@@ -186,7 +186,7 @@ def test_anchor_outside_versioned_timing_band_is_rejected(field, age_ms):
 
 def test_pair_creation_must_not_follow_current_observation():
     with pytest.raises(ValueError):
-        inputs(pair_created_at_unix_ms=990_001)
+        inputs(pair_created_at_unix_ms=point().observed_at_unix_ms + 1)
 
 
 @pytest.mark.parametrize("field", ["local_high_price_usd", "local_low_price_usd"])
