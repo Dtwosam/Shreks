@@ -152,6 +152,16 @@ class PaperFill:
         _require_non_negative_finite("unfilled_notional_usd", self.unfilled_notional_usd)
         if self.unfilled_notional_usd >= self.requested_notional_usd:
             raise ValueError("unfilled_notional_usd must be below requested_notional_usd")
+        if self.state is PaperExecutionState.FILLED:
+            if not math.isclose(
+                self.unfilled_notional_usd,
+                0.0,
+                rel_tol=_ARITH_REL_TOL,
+                abs_tol=_ARITH_ABS_TOL,
+            ):
+                raise ValueError("FILLED requires zero unfilled_notional_usd")
+        elif self.unfilled_notional_usd <= 0.0:
+            raise ValueError("PARTIAL requires positive unfilled_notional_usd")
         _require_positive_finite("quantity", self.quantity)
         _require_positive_finite("reference_price_usd", self.reference_price_usd)
         _require_positive_finite("execution_price_usd", self.execution_price_usd)
@@ -179,17 +189,6 @@ class PaperFill:
             self.explicit_cost_usd,
             self.swap_fee_usd + self.network_fee_usd,
         )
-
-        if self.state is PaperExecutionState.FILLED:
-            if not math.isclose(
-                self.unfilled_notional_usd,
-                0.0,
-                rel_tol=_ARITH_REL_TOL,
-                abs_tol=_ARITH_ABS_TOL,
-            ):
-                raise ValueError("FILLED requires zero unfilled_notional_usd")
-        elif self.unfilled_notional_usd <= 0.0:
-            raise ValueError("PARTIAL requires positive unfilled_notional_usd")
 
         if self.side is TradeSide.BUY:
             expected_cash = -(self.filled_notional_usd + self.explicit_cost_usd)
