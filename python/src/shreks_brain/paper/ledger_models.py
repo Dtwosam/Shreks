@@ -97,6 +97,8 @@ class PaperPosition:
         _require_non_negative_int("updated_at_unix_ms", self.updated_at_unix_ms)
         if self.updated_at_unix_ms < self.opened_at_unix_ms:
             raise ValueError("updated_at_unix_ms must not precede opened_at_unix_ms")
+        if self.state is PaperPositionState.OPEN and self.closed_at_unix_ms is not None:
+            raise ValueError("OPEN position cannot have closed_at_unix_ms")
         if self.closed_at_unix_ms is not None:
             _require_non_negative_int("closed_at_unix_ms", self.closed_at_unix_ms)
             if self.closed_at_unix_ms < self.opened_at_unix_ms:
@@ -124,8 +126,6 @@ class PaperPosition:
                 raise ValueError("OPEN position requires strictly positive quantity")
             if self.open_cost_basis_usd <= 0.0:
                 raise ValueError("OPEN position requires strictly positive open_cost_basis_usd")
-            if self.closed_at_unix_ms is not None:
-                raise ValueError("OPEN position cannot have closed_at_unix_ms")
             if not mark_price_present:
                 if self.unrealized_pnl_usd is not None:
                     raise ValueError("unrealized_pnl_usd requires current last_mark evidence")
