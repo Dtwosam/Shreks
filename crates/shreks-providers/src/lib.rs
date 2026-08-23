@@ -15,6 +15,7 @@ use shreks_core::{
     DiscoveredToken, PairMarketData, ProviderHealthState, ProviderId, QuoteRequest, QuoteSnapshot,
     TokenMintState,
 };
+use tokio::sync::mpsc;
 
 /// Stable error categories used by every provider adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,6 +142,25 @@ pub trait PumpSignalSource: Send {
 impl PumpSignalSource for pump::PumpLogStream {
     async fn next_pump_signal(&mut self) -> Result<pump::PumpCreationSignal, ProviderError> {
         self.next_signal().await
+    }
+}
+
+/// Forward normalized Pump launch signals into a bounded consumer channel.
+///
+/// The forwarding task never touches storage. Backpressure is provided by the
+/// bounded channel; if the observer side disappears, forwarding exits cleanly.
+pub async fn forward_pump_signals<S>(
+    mut source: S,
+    sender: mpsc::Sender<pump::PumpCreationSignal>,
+) -> Result<(), ProviderError>
+where
+    S: PumpSignalSource,
+{
+    loop {
+        let signal = source.next_pump_signal().await?;
+        if sender.send(signal).await.is_err() {
+            return Ok(());
+        }
     }
 }
 
