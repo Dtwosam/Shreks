@@ -83,6 +83,22 @@ When sufficient point-in-time evidence exists, Shreks records return, MFE, MAE, 
 
 Phase A9 is observation and dataset infrastructure only. It does not enable transaction signing, transaction submission, paper execution, or live trading.
 
+## Deterministic safety assessment
+
+Phase B1 introduces a dependency-free, point-in-time Python safety core under `shreks_brain.safety`. It consumes already-proven candidate facts and a versioned `SafetyPolicy`; it does not read SQLite or provider payloads directly.
+
+The safety decision is one of:
+
+- `PASS` — no hard blocker exists and all policy-required critical facts are usable;
+- `REJECT` — at least one proven hard blocker exists;
+- `INCOMPLETE` — no hard blocker is proven, but required critical evidence is missing, stale, future-dated, or contradictory.
+
+Decision precedence is `REJECT > INCOMPLETE > PASS`. Only `PASS` is eligible for later entry consideration. Later strategy scoring is not allowed to reinterpret a hard rejection as a soft penalty, and incomplete critical evidence fails closed rather than being guessed.
+
+Hard/soft thresholds live in explicit `SafetyPolicy` configuration. Findings use stable reason codes and deterministic ordering so later research can measure which rules help or hurt. Soft findings are recorded for later scoring/research but never independently turn a result into `REJECT` or `INCOMPLETE`.
+
+B1 accepts no future outcome checkpoints, realized PnL, future returns, MFE, or MAE. A critical-data timestamp after the assessment time is treated as contradictory evidence rather than fresh data. B1 adds no wallet secrets, signer, swap execution, paper-fill engine, or live-trading path.
+
 ## Local setup
 
 ### Rust
