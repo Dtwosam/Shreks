@@ -80,6 +80,7 @@ pub enum ProviderId {
     DexScreener,
     Helius,
     Jupiter,
+    Meteora,
 }
 
 impl ProviderId {
@@ -88,11 +89,43 @@ impl ProviderId {
             Self::DexScreener => "dexscreener",
             Self::Helius => "helius",
             Self::Jupiter => "jupiter",
+            Self::Meteora => "meteora",
         }
     }
 }
 
 impl fmt::Display for ProviderId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Economic venue where a token/pool/trade is occurring.
+///
+/// This is deliberately separate from `ProviderId`: DEX Screener may provide
+/// an observation about a PumpSwap pair, while the venue remains PumpSwap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum VenueId {
+    PumpFunBondingCurve,
+    PumpSwap,
+    MeteoraDlmm,
+    MeteoraDammV2,
+    OtherSolana,
+}
+
+impl VenueId {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PumpFunBondingCurve => "pump_fun_bonding_curve",
+            Self::PumpSwap => "pump_swap",
+            Self::MeteoraDlmm => "meteora_dlmm",
+            Self::MeteoraDammV2 => "meteora_damm_v2",
+            Self::OtherSolana => "other_solana",
+        }
+    }
+}
+
+impl fmt::Display for VenueId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(self.as_str())
     }
@@ -124,6 +157,7 @@ pub struct DiscoveredToken {
     pub mint: String,
     pub pair_address: Option<String>,
     pub dex_id: Option<String>,
+    pub venue: Option<VenueId>,
     pub discovered_at_unix_ms: i64,
     pub source: ProviderId,
 }
@@ -140,6 +174,7 @@ pub struct TransactionWindow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PairMarketData {
     pub provider: ProviderId,
+    pub venue: VenueId,
     pub chain_id: String,
     pub dex_id: String,
     pub pair_address: String,
