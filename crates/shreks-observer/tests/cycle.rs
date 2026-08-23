@@ -260,8 +260,8 @@ async fn successful_chain_observation_persists_mint_state_and_marks_provider_hea
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn durable_discovery_candidate_gets_exactly_seven_outcome_checkpoints_once() {
-    let root = unique_test_dir("outcome-schedule");
+async fn durable_discovery_candidate_gets_outcome_and_adaptive_schedules_exactly_once() {
+    let root = unique_test_dir("outcome-path-schedule");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     let discovery = Arc::new(FakeDiscovery {
@@ -285,7 +285,15 @@ async fn durable_discovery_candidate_gets_exactly_seven_outcome_checkpoints_once
             |row| row.get(0),
         )
         .unwrap();
+    let path_schedule_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM candidate_path_sampling WHERE candidate_id = ?1",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(checkpoint_count, 7);
+    assert_eq!(path_schedule_count, 1);
 
     cleanup_dir(&root);
 }
