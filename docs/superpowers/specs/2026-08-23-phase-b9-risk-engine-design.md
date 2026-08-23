@@ -6,7 +6,7 @@ Approved for autonomous implementation under the standing Shreks project instruc
 
 ## Goal
 
-Add the source build-order B7 Risk Engine capability as repository Phase B9: a pure, versioned, fail-closed Python risk layer that accepts only a B8 `ENTER` decision, evaluates point-in-time portfolio/health/executability guardrails, deterministically sizes an entry, and either rejects it or returns the stable `TradeIntent` interface that Phase C paper trading and future live execution will share.
+Add the source build-order B7 Risk Engine capability as repository Phase B9: a pure, versioned, fail-closed Python layer that accepts only a B8 `ENTER` decision, evaluates point-in-time portfolio/health/executability guardrails, deterministically sizes an entry, and either rejects it or returns the stable `TradeIntent` interface that Phase C paper trading and future live execution will share.
 
 B9 completes the Phase-B requirement that Shreks can create or reject a trade intent without touching money.
 
@@ -14,15 +14,15 @@ B9 completes the Phase-B requirement that Shreks can create or reject a trade in
 
 Base: verified B8 head `38f1d1b1f7de80a7504d92904c0314df22ce94f7`.
 
-Create a new `shreks_brain.risk` package. Existing safety, feature, setup, regime, scoring, decision, Rust, storage, and provider behavior stays unchanged.
+Create `shreks_brain.risk`. Existing runtime, safety, feature, setup, regime, scoring, decision, Rust, storage, and provider behavior stays unchanged.
 
-B9 does not read SQLite, providers, balances, or wall clock directly. The caller supplies one immutable point-in-time `RiskContext`; this keeps the function replayable and prevents hidden future/state leakage.
+B9 performs no I/O. It never reads SQLite, providers, balances, or wall clock directly. The caller supplies one immutable point-in-time `RiskContext` so historical replay and live evaluation use the same deterministic risk function.
 
 B9 creates no paper fill, position ledger, exit engine, signer, route request, transaction, transaction submission, or live-money path.
 
-## Source requirements implemented
+## Required guardrails
 
-The risk layer must support:
+B9 supports all source requirements:
 
 - maximum notional per position;
 - maximum percentage of trading capital per position;
@@ -35,16 +35,12 @@ The risk layer must support:
 - maximum expected price impact;
 - maximum slippage;
 - duplicate-intent protection;
-- health-based entry pause;
+- health-based new-entry pause;
 - global kill switch.
 
 Uncertainty about a critical guardrail means no new entry.
 
-## Architecture
-
-### Pure boundary
-
-Public function:
+## Public boundary
 
 ```python
 def assess_entry_risk(
@@ -56,36 +52,34 @@ def assess_entry_risk(
     ...
 ```
 
-The function is deterministic for equal inputs and performs no I/O.
+Equal inputs return equal outputs.
 
-### Stable intent boundary
+A successful assessment returns the stable `TradeIntent` domain object that Phase C paper execution and future live execution will consume.
 
-A successful risk assessment returns a `TradeIntent`. Paper and future live execution consume this exact domain type; only execution adapters differ.
+B9 may create intents only for `RuntimeMode.PAPER` or `RuntimeMode.SHADOW`.
 
-B9 may construct intents only for `RuntimeMode.PAPER` or `RuntimeMode.SHADOW`.
+- `OBSERVE`: no intent.
+- `HALTED`: no intent.
+- `LIVE`: hard-disabled in B9 even if every other guardrail passes.
 
-- `OBSERVE` never creates an intent.
-- `HALTED` never creates an intent.
-- `LIVE` is hard-disabled in B9 even if all other risk controls pass. Live authorization remains a future proof-gated phase.
+No policy can enable live intent creation in Phase B.
 
-This prevents the Phase-B risk engine from accidentally creating a live-money path while still establishing the stable future execution interface.
-
-## Domain models
-
-All models are `@dataclass(frozen=True, slots=True)` unless an enum.
+## Domain enums
 
 ### `TradeSide`
 
-Exact public vocabulary:
+Exact order:
 
 ```text
 BUY
 SELL
 ```
 
-B9 entry risk emits only `BUY`. `SELL` exists so the same `TradeIntent` type can later represent reductions/exits without interface replacement.
+B9 entry assessment emits only `BUY`. `SELL` exists so later exits can reuse the same intent type.
 
 ### `RiskState`
+
+Exact order:
 
 ```text
 REJECTED
@@ -94,7 +88,7 @@ APPROVED
 
 ### `RiskReasonCode`
 
-Exact deterministic order:
+Exact order:
 
 ```text
 DECISION_POLICY_MISMATCH
@@ -130,15 +124,20 @@ LOSS_COOLDOWN_ACTIVE
 LIQUIDITY_UNKNOWN
 LIQUIDITY_BELOW_MINIMUM
 PRICE_IMPACT_UNKNOWN
+PRICE_IMPACT_NOTIONAL_UNKNOWN
+PRICE_IMPACT_NOTIONAL_TOO_SMALL
 PRICE_IMPACT_TOO_HIGH
 MARKET_DATA_AGE_UNKNOWN
 MARKET_DATA_TOO_OLD
 DUPLICATE_ACTIVE_INTENT
-NO_ENTRY_CAPACITY
 RISK_APPROVED
 ```
 
-One terminal reason is returned for a rejected assessment. An approved assessment has exactly `RISK_APPROVED`.
+A rejected assessment has exactly one terminal reason. An approved assessment has exactly `RISK_APPROVED`.
+
+## Immutable models
+
+All dataclasses are frozen and slotted.
 
 ### `RiskFinding`
 
@@ -147,7 +146,7 @@ code: RiskReasonCode
 message: str
 ```
 
-Message must be non-empty.
+Message is non-empty.
 
 ### `RiskPolicy`
 
@@ -175,11 +174,10 @@ max_market_data_age_ms: int
 Validation:
 
 - version/schema-policy strings non-empty;
-- target and maximum per-position notionals finite and strictly positive;
+- target and maximum notionals finite and strictly positive;
 - capital fraction finite in `(0, 1]`;
 - max simultaneous positions >= 1;
-- aggregate risk limit finite and strictly positive;
-- daily loss limit finite and strictly positive;
+- aggregate-risk and daily-loss limits finite and strictly positive;
 - max rolling drawdown finite in `(0, 100]`;
 - consecutive-loss threshold >= 1;
 - cooldown seconds >= 0;
@@ -188,7 +186,7 @@ Validation:
 - max slippage bps integer in `[0, 10_000]`;
 - max market-data age >= 0.
 
-There is no production default policy instance.
+There is no production default policy.
 
 ### `RiskContext`
 
@@ -205,6 +203,7 @@ consecutive_losses: int | None
 last_loss_at_unix_ms: int | None
 liquidity_usd: float | None
 expected_price_impact_pct: float | None
+price_impact_notional_usd: float | None
 market_data_age_ms: int | None
 data_healthy: bool | None
 execution_healthy: bool | None
@@ -215,16 +214,18 @@ active_intent_keys: frozenset[str]
 Validation:
 
 - timestamps non-negative;
-- present capital/liquidity/open-risk/impact values finite and non-negative;
+- present capital/liquidity/open-risk/impact-notional/impact values finite and non-negative;
 - present daily realized PnL finite and may be negative or positive;
 - present rolling drawdown finite in `[0, 100]`;
 - present counts non-negative integers;
-- market data age non-negative;
-- health fields are bool or `None`;
-- kill-switch field is bool;
-- active intent keys are a frozenset of non-empty strings.
+- present market-data age non-negative;
+- health values bool or `None`;
+- kill switch bool;
+- active keys a frozenset of non-empty strings.
 
-Missing critical values remain `None`; they are never guessed or zero-filled.
+Missing critical evidence remains `None`; it is never zero-filled or guessed.
+
+`price_impact_notional_usd` explicitly states the entry notional covered by `expected_price_impact_pct`. This prevents using an impact estimate calculated for a smaller trade to approve a larger trade.
 
 ### `TradeIntent`
 
@@ -248,15 +249,15 @@ as_of_unix_ms: int
 
 Validation:
 
-- all names/versions/reason/idempotency key non-empty;
-- requested notional finite and strictly positive;
+- names/versions/reason/key non-empty;
+- requested notional finite and > 0;
 - max slippage bps in `[0, 10_000]`;
-- execution mode must be a `RuntimeMode`;
+- execution mode is a `RuntimeMode`;
 - timestamp non-negative.
 
-The type contains no route, quote, fill, transaction, signature, private key, wallet secret, or realized outcome field.
+`strategy_name` is the setup name; `strategy_version` is the setup policy version. Score, decision, and risk policy versions are carried separately for full auditability.
 
-`strategy_name` is the B8 setup name. `strategy_version` is the setup policy version. Score, decision, and risk policy versions are carried separately so one paper/live intent can be audited back through the exact decision path.
+The intent contains no route, quote, fill, transaction, signature, private key, wallet secret, or realized outcome field.
 
 ### `RiskAssessment`
 
@@ -277,35 +278,33 @@ intent: TradeIntent | None
 
 Invariants:
 
-- `REJECTED` => no intent and no requested notional;
-- `APPROVED` => positive requested notional, non-empty idempotency key, and non-None intent;
-- approved assessment intent mint/as-of/mode/notional/key match the assessment.
+- `REJECTED`: requested notional, idempotency key, and intent are all `None`;
+- `APPROVED`: requested notional is positive, key is non-empty, intent is present;
+- approved intent mint/as-of/mode/notional/key exactly match assessment.
 
 ## Defensive upstream rechecks
 
-Risk does not trust `DecisionAction.ENTER` as sufficient proof by itself. Before portfolio sizing it independently requires:
+Risk independently requires, in order:
 
-- decision policy version matches `RiskPolicy.required_decision_policy_version`;
-- feature schema matches `RiskPolicy.required_feature_schema_version`;
-- decision action is `ENTER`;
-- safety is `PASS`;
-- setup state is `READY`;
-- market regime is not `DEAD`;
-- total score is available;
-- risk context timestamp equals decision timestamp.
+1. decision policy version matches `required_decision_policy_version`;
+2. feature schema matches `required_feature_schema_version`;
+3. decision action is `ENTER`;
+4. safety decision is `PASS`;
+5. setup state is `READY`;
+6. regime is not `DEAD`;
+7. total score is not `None`;
+8. context as-of equals decision as-of.
 
-This is defense in depth; B8 normally guarantees these conditions, but manually constructed or stale objects must fail closed.
+B8 normally guarantees these, but risk fails closed on manually constructed or stale inconsistent inputs.
 
-## Runtime-mode gate
+## Runtime gate
 
-After upstream compatibility:
+After compatibility:
 
-1. `OBSERVE` -> reject `OBSERVE_MODE_NO_INTENTS`.
-2. `HALTED` -> reject `HALTED_MODE`.
-3. `LIVE` -> reject `LIVE_MODE_DISABLED`.
-4. `PAPER` and `SHADOW` continue.
-
-No policy can override the B9 live-mode prohibition.
+1. `OBSERVE` -> `OBSERVE_MODE_NO_INTENTS`;
+2. `HALTED` -> `HALTED_MODE`;
+3. `LIVE` -> `LIVE_MODE_DISABLED`;
+4. `PAPER` or `SHADOW` continue.
 
 ## Global and health gates
 
@@ -315,76 +314,34 @@ Order:
 2. data health;
 3. execution health.
 
-`None` health is uncertainty and rejects. False health rejects.
+Unknown health rejects. False health rejects.
 
-This intentionally happens before capital sizing.
+## Portfolio/loss gates
 
-## Portfolio and loss gates
-
-Order:
+Order and boundary semantics:
 
 1. trading capital required and > 0;
-2. open-position count required and below maximum;
-3. aggregate open risk required and below maximum;
-4. daily realized PnL required and above the negative daily-loss boundary;
-5. rolling drawdown required and strictly below the maximum;
+2. position count required; `>= max_simultaneous_positions` rejects;
+3. aggregate open risk required; `>= max_aggregate_open_risk_usd` rejects;
+4. daily realized PnL required; `<= -max_daily_realized_loss_usd` rejects;
+5. rolling drawdown required; `>= max_rolling_drawdown_pct` rejects;
 6. consecutive-loss count required;
-7. loss cooldown if threshold reached.
+7. cooldown logic.
 
-Boundary semantics:
+### Cooldown
 
-- `open_position_count >= max_simultaneous_positions` rejects;
-- `aggregate_open_risk_usd >= max_aggregate_open_risk_usd` rejects;
-- `daily_realized_pnl_usd <= -max_daily_realized_loss_usd` rejects;
-- `rolling_drawdown_pct >= max_rolling_drawdown_pct` rejects.
+If `cooldown_seconds == 0`, count is still validated but no time gate is applied.
 
-### Consecutive-loss cooldown
+Otherwise, if consecutive losses reach the configured threshold:
 
-If `cooldown_seconds == 0`, the cooldown is effectively disabled after count validation.
-
-Otherwise, when `consecutive_losses >= cooldown_after_consecutive_losses`:
-
-- `last_loss_at_unix_ms` is required;
-- future last-loss timestamps reject as contradictory;
+- last-loss timestamp is required;
+- future last-loss timestamp rejects;
 - elapsed time `< cooldown_seconds` rejects;
 - equality at the cooldown boundary passes.
 
-## Market/executability gates
-
-Order:
-
-1. liquidity required and `>= min_liquidity_usd`;
-2. expected price impact required and `<= max_expected_price_impact_pct`;
-3. market-data age required and `<= max_market_data_age_ms`.
-
-Equality at each allowed boundary passes.
-
-B9 does not fetch a route or quote. Phase C/F execution adapters later use the intent's `max_slippage_bps` and contemporaneous execution evidence to recheck market conditions.
-
-## Idempotency
-
-B9 derives one deterministic entry idempotency key using SHA-256 over canonical UTF-8 fields:
-
-```text
-entry-v1
-execution_mode
-mint
-decision.as_of_unix_ms
-setup_name
-setup_policy_version
-score_policy_version
-decision_policy_version
-```
-
-The risk-policy version is deliberately excluded. Re-evaluating the same entry decision under a changed risk policy must not create a second active intent for the same idea.
-
-If the derived key is already present in `RiskContext.active_intent_keys`, reject with `DUPLICATE_ACTIVE_INTENT`.
-
-Equal inputs always derive equal keys.
-
 ## Deterministic sizing
 
-For an otherwise eligible entry, calculate:
+After portfolio/loss gates, calculate:
 
 ```python
 capital_fraction_cap = (
@@ -401,39 +358,74 @@ requested_notional_usd = min(
 )
 ```
 
-If the result is not strictly positive, reject `NO_ENTRY_CAPACITY`.
+Every term is strictly positive after the preceding validated gates, so the result is strictly positive. There is no unreachable synthetic "no capacity" state.
 
 No score/confidence multiplier is applied. Risk sizing is independent of strategy confidence.
 
 ### Conservative aggregate-risk interpretation
 
-B9 has no authoritative stop/position/exit state yet. Therefore the full requested entry notional is treated as the incremental open-risk amount for aggregate-risk capacity.
+Until Phase C has authoritative stop/position/exit state, the full requested entry notional is treated as the incremental open-risk amount. This is deliberately conservative. A later version may replace it with a proven loss-at-risk model only after position/exit state exists.
 
-This is intentionally conservative and point-in-time safe. A future version may use stop-distance or other loss-at-risk estimates only after Phase C has authoritative position/exit state and tests proving that model.
+## Market/executability gates
 
-## Approval and intent construction
+After sizing, require in order:
+
+1. liquidity present and `>= min_liquidity_usd`;
+2. expected price impact present;
+3. price-impact notional present;
+4. `price_impact_notional_usd >= requested_notional_usd`;
+5. expected price impact `<= max_expected_price_impact_pct`;
+6. market-data age present and `<= max_market_data_age_ms`.
+
+Equality at each allowed boundary passes.
+
+Accepting an impact estimate for a larger notional is conservative; an estimate for a smaller notional is insufficient evidence and rejects.
+
+B9 does not obtain a route or quote. Phase C/F execution adapters later recheck contemporaneous conditions and enforce the intent's slippage ceiling.
+
+## Idempotency
+
+After all risk/executability gates, derive one SHA-256 key from canonical UTF-8 fields:
+
+```text
+entry-v1
+execution_mode
+mint
+decision.as_of_unix_ms
+setup_name
+setup_policy_version
+score_policy_version
+decision_policy_version
+```
+
+Risk policy version is deliberately excluded. Re-evaluating the same entry idea under a changed risk policy must not create another active intent.
+
+If the key already exists in `active_intent_keys`, reject `DUPLICATE_ACTIVE_INTENT`.
+
+Equal inputs derive equal keys.
+
+## Approval
 
 On approval:
 
-- state = `APPROVED`;
-- one finding = `RISK_APPROVED`;
-- side = `BUY`;
-- requested notional is the deterministic risk-sized amount;
-- intent slippage ceiling equals policy `max_slippage_bps`;
-- strategy name/version come from B8 setup name/setup policy version;
-- reason is `ENTRY_APPROVED` from the upstream decision path;
-- execution mode is PAPER or SHADOW;
-- the deterministic idempotency key is copied into both assessment and intent.
+- state `APPROVED`;
+- finding `RISK_APPROVED`;
+- side `BUY`;
+- requested notional from deterministic sizing;
+- max slippage from `RiskPolicy.max_slippage_bps`;
+- strategy name/version from B8 setup name/setup policy version;
+- score/decision/risk policy versions copied into intent;
+- reason = `ENTRY_APPROVED`;
+- mode = PAPER or SHADOW;
+- deterministic idempotency key copied into assessment and intent.
 
 The risk layer never calls an execution adapter.
 
-## Fixed evaluation precedence
-
-`assess_entry_risk()` uses immediate terminal returns in this order:
+## Fixed precedence
 
 ```text
-decision-policy compatibility
-feature-schema compatibility
+decision policy compatibility
+feature schema compatibility
 ENTER action
 safety PASS
 setup READY
@@ -450,52 +442,38 @@ aggregate open risk
 daily realized loss
 rolling drawdown
 consecutive losses / cooldown
+deterministic sizing
 liquidity
 expected price impact
-market data age
-derive idempotency key / duplicate check
-deterministic sizing
+price-impact notional coverage
+market-data age
+idempotency duplicate check
 approval
 ```
 
-This ordering is test-pinned.
+Every rejection is an immediate terminal return. Tests pin this ordering.
 
 ## Missing-data semantics
 
-Every critical portfolio, health, and market guardrail is fail-closed. `None` never becomes zero, healthy, or permissive.
-
-A rejection does not fabricate a requested size or intent.
+Critical uncertainty always rejects. `None` never becomes zero, healthy, or permissive. Rejected assessments never fabricate size, key, or intent.
 
 ## No production defaults
 
-B9 exports no production `RiskPolicy` instance. Test fixtures may use numeric examples, but repository behavior remains disabled until a caller explicitly supplies a versioned policy.
+B9 exports no default `RiskPolicy`. Numeric values in tests are fixtures only and make no profitability claim.
 
-## Testing strategy
+## TDD plan
 
-Strict TDD in three tasks.
+### Task 1 — models
 
-### Task 1 — domain/policy models
+Write RED tests for enum/reason order, policy/context validation, stable `TradeIntent`, `RiskAssessment` invariants, frozen dataclasses, and absence of execution/secret/outcome authority. Expected RED: `shreks_brain.risk` missing.
 
-Write tests first for:
+### Task 2 — evaluator
 
-- enum/reason-code order;
-- policy validation and frozen dataclasses;
-- context validation and missing critical evidence representation;
-- `TradeIntent` stable interface;
-- `RiskAssessment` approved/rejected invariants;
-- absence of signer/transaction/fill/wallet-secret/outcome authority fields.
+Write RED tests for every precedence gate, equality boundaries, hard live disable, deterministic sizing, impact-notional coverage, deterministic idempotency, duplicate rejection, and repeated-input equality. Expected RED: `shreks_brain.risk.engine` missing.
 
-Expected RED: `shreks_brain.risk` missing.
+### Task 3 — public API and seal
 
-### Task 2 — pure risk evaluator
-
-Write tests first for every precedence gate, every equality boundary, live-mode hard disable, deterministic idempotency, duplicate protection, conservative sizing arithmetic, aggregate-risk capping, and repeated-input determinism.
-
-Expected RED: `shreks_brain.risk.engine` missing.
-
-### Task 3 — stable package API and Phase-B seal
-
-Write package-level import tests first, then export:
+Write package RED tests, then export:
 
 ```text
 RiskAssessment
@@ -509,19 +487,18 @@ TradeSide
 assess_entry_risk
 ```
 
-Also prove existing runtime/safety/features/setups/regime/scoring/decision APIs remain importable.
-
-Update README with the risk and stable-intent semantics, record RED/GREEN evidence, run fresh exact-head CI, audit B8->B9 diff, and leave the stacked PR draft/unmerged.
+Prove existing runtime/safety/features/setups/regime/scoring/decision APIs remain importable. Update README, record RED/GREEN evidence, run exact-head full CI, audit the B8->B9 diff, and leave the stacked PR draft/unmerged.
 
 ## Completion criteria
 
 B9 is complete only when:
 
-- all required risk guardrails above are represented and test-pinned;
-- a valid PAPER or SHADOW B8 `ENTER` can deterministically produce one risk-sized `TradeIntent`;
-- critical uncertainty, duplicate state, kill switch, health failure, portfolio/loss limit, liquidity/impact failure, and stale market evidence all reject;
-- LIVE cannot produce an intent;
+- every required risk guardrail is represented and test-pinned;
+- an eligible PAPER/SHADOW B8 `ENTER` deterministically produces one risk-sized `TradeIntent`;
+- critical uncertainty, duplicate state, kill switch, health failure, portfolio/loss limits, liquidity/impact failures, and stale market evidence reject;
+- price-impact evidence cannot approve a larger notional than it covers;
+- LIVE cannot create an intent;
 - no money is touched;
-- exact final branch head has fresh green Rust, Python, workspace metadata, and repository-safety CI;
+- final exact branch head has fresh green Rust, Python, workspace metadata, and repository-safety CI;
 - final diff contains only intended B9 files;
 - draft PR remains unmerged.
