@@ -2,21 +2,27 @@
 //!
 //! This crate is intentionally incapable of creating or executing trade
 //! intents. Its only responsibilities are provider orchestration, normalized
-//! persistence, and operational provider-health tracking.
+//! persistence, pacing, and operational provider-health tracking.
 
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
     sync::Arc,
-    time::{SystemTime, SystemTimeError, UNIX_EPOCH},
+    time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
 use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId};
 use shreks_providers::{
-    ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
+    config::ProviderConfig, ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError,
+    ProviderErrorKind,
 };
 use shreks_storage::{ShreksDb, StorageError};
+use tokio::time::{sleep_until, Instant};
+
+const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
+const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
+const DEXSCREENER_DISCOVERY_RPS: u32 = 1;
 
 /// Summary of one finite observer pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -35,6 +41,11 @@ pub enum ObserverError {
     Storage(StorageError),
     Clock(SystemTimeError),
     ClockOverflow,
+    InvalidCheckpoint {
+        provider: ProviderId,
+        stream: &'static str,
+        value: String,
+    },
 }
 
 impl fmt::Display for ObserverError {
@@ -43,6 +54,14 @@ impl fmt::Display for ObserverError {
             Self::Storage(error) => write!(formatter, "observer storage error: {error}"),
             Self::Clock(error) => write!(formatter, "observer clock error: {error}"),
             Self::ClockOverflow => formatter.write_str("observer clock exceeds i64 milliseconds"),
+            Self::InvalidCheckpoint {
+                provider,
+                stream,
+                value,
+            } => write!(
+                formatter,
+                "observer checkpoint {provider}/{stream} contained invalid value '{value}'"
+            ),
         }
     }
 }
@@ -52,7 +71,7 @@ impl Error for ObserverError {
         match self {
             Self::Storage(error) => Some(error),
             Self::Clock(error) => Some(error),
-            Self::ClockOverflow => None,
+            Self::ClockOverflow | Self::InvalidCheckpoint { .. } => None,
         }
     }
 }
@@ -71,21 +90,84 @@ struct CycleHealth {
 }
 
 impl CycleHealth {
-    fn healthy() -> Self {
+    fn healthy_with_failure_streak(failures: u64) -> Self {
         Self {
             state: ProviderHealthState::Healthy,
-            failures: 0,
+            failures,
             detail: None,
         }
     }
 
+    fn record_success(&mut self) {
+        self.state = ProviderHealthState::Healthy;
+        self.failures = 0;
+        self.detail = None;
+    }
+
     fn record_failure(&mut self, error: &ProviderError) {
         self.failures = self.failures.saturating_add(1);
-        let next = error.health_state();
-        if health_severity(next) >= health_severity(self.state) {
-            self.state = next;
-            self.detail = Some(truncate_detail(&error.message));
+        self.state = error.health_state();
+        self.detail = Some(truncate_detail(&error.message));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum PacingLane {
+    Discovery(ProviderId),
+    Market(ProviderId),
+    Chain(ProviderId),
+}
+
+struct RequestPacer {
+    intervals: HashMap<PacingLane, Duration>,
+    next_allowed: HashMap<PacingLane, Instant>,
+}
+
+impl RequestPacer {
+    fn free_tier_defaults() -> Self {
+        let config = ProviderConfig::from_lookup(|_| None);
+        let mut intervals = HashMap::new();
+
+        insert_rps_interval(
+            &mut intervals,
+            PacingLane::Discovery(ProviderId::DexScreener),
+            DEXSCREENER_DISCOVERY_RPS,
+        );
+        insert_rps_interval(
+            &mut intervals,
+            PacingLane::Market(ProviderId::DexScreener),
+            config.dexscreener_market_rps,
+        );
+        insert_rps_interval(
+            &mut intervals,
+            PacingLane::Market(ProviderId::Meteora),
+            config.meteora_market_rps,
+        );
+        insert_rps_interval(
+            &mut intervals,
+            PacingLane::Chain(ProviderId::Helius),
+            config.helius_rpc_rps,
+        );
+
+        Self {
+            intervals,
+            next_allowed: HashMap::new(),
         }
+    }
+
+    async fn wait(&mut self, lane: PacingLane) {
+        let Some(interval) = self.intervals.get(&lane).copied() else {
+            return;
+        };
+
+        let now = Instant::now();
+        if let Some(next_allowed) = self.next_allowed.get(&lane).copied() {
+            if next_allowed > now {
+                sleep_until(next_allowed).await;
+            }
+        }
+
+        self.next_allowed.insert(lane, Instant::now() + interval);
     }
 }
 
@@ -96,6 +178,7 @@ pub struct Observer {
     discovery_providers: Vec<Arc<dyn DiscoveryProvider>>,
     market_providers: Vec<Arc<dyn MarketDataProvider>>,
     chain_providers: Vec<Arc<dyn ChainDataProvider>>,
+    pacer: RequestPacer,
 }
 
 impl Observer {
@@ -105,6 +188,7 @@ impl Observer {
             discovery_providers: Vec::new(),
             market_providers: Vec::new(),
             chain_providers: Vec::new(),
+            pacer: RequestPacer::free_tier_defaults(),
         }
     }
 
@@ -134,13 +218,23 @@ impl Observer {
         let mut candidates = Vec::new();
         let mut seen_candidate_ids = HashSet::new();
 
-        for provider in &self.discovery_providers {
+        for provider in self.discovery_providers.clone() {
             let provider_id = provider.provider_id();
+            self.ensure_health(&mut health, provider_id)?;
+            self.pacer
+                .wait(PacingLane::Discovery(provider_id))
+                .await;
+
             match provider.discover().await {
                 Ok(items) => {
-                    health.entry(provider_id).or_insert_with(CycleHealth::healthy);
-                    report.discovery_items_seen = report.discovery_items_seen.saturating_add(items.len());
+                    health
+                        .get_mut(&provider_id)
+                        .expect("health initialized before provider call")
+                        .record_success();
+                    report.discovery_items_seen =
+                        report.discovery_items_seen.saturating_add(items.len());
 
+                    let mut successful_watermark = None;
                     for candidate in items {
                         if candidate.source != provider_id {
                             report.provider_failures = report.provider_failures.saturating_add(1);
@@ -155,15 +249,26 @@ impl Observer {
                             continue;
                         }
 
+                        successful_watermark = Some(
+                            successful_watermark
+                                .map_or(candidate.discovered_at_unix_ms, |current: i64| {
+                                    current.max(candidate.discovered_at_unix_ms)
+                                }),
+                        );
+
                         let candidate_id = self.db.upsert_candidate(&candidate)?;
                         if seen_candidate_ids.insert(candidate_id) {
                             candidates.push((candidate_id, candidate));
                         }
                     }
+
+                    if let Some(watermark) = successful_watermark {
+                        self.persist_monotonic_discovery_watermark(provider_id, watermark)?;
+                    }
                 }
                 Err(error) => {
                     report.provider_failures = report.provider_failures.saturating_add(1);
-                    record_failure(&mut health, &error);
+                    record_adapter_failure(&mut health, provider_id, &error);
                 }
             }
         }
@@ -189,6 +294,12 @@ impl Observer {
 
         let observed_at = unix_time_ms()?;
         for (provider, state) in health {
+            let failure_streak = state.failures.to_string();
+            self.db.set_ingestion_checkpoint(
+                provider,
+                FAILURE_STREAK_STREAM,
+                Some(&failure_streak),
+            )?;
             self.db.upsert_provider_health(
                 provider,
                 state.state,
@@ -203,17 +314,23 @@ impl Observer {
     }
 
     async fn observe_market_data(
-        &self,
+        &mut self,
         candidate_id: i64,
         candidate: &DiscoveredToken,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
     ) -> Result<(), ObserverError> {
-        for provider in &self.market_providers {
+        for provider in self.market_providers.clone() {
             let provider_id = provider.provider_id();
+            self.ensure_health(health, provider_id)?;
+            self.pacer.wait(PacingLane::Market(provider_id)).await;
+
             match provider.token_pairs(&candidate.mint).await {
                 Ok(snapshots) => {
-                    health.entry(provider_id).or_insert_with(CycleHealth::healthy);
+                    health
+                        .get_mut(&provider_id)
+                        .expect("health initialized before provider call")
+                        .record_success();
                     for snapshot in snapshots {
                         if snapshot.provider != provider_id {
                             report.provider_failures = report.provider_failures.saturating_add(1);
@@ -249,7 +366,7 @@ impl Observer {
                 }
                 Err(error) => {
                     report.provider_failures = report.provider_failures.saturating_add(1);
-                    record_failure(health, &error);
+                    record_adapter_failure(health, provider_id, &error);
                 }
             }
         }
@@ -257,17 +374,23 @@ impl Observer {
     }
 
     async fn observe_chain_data(
-        &self,
+        &mut self,
         candidate_id: i64,
         candidate: &DiscoveredToken,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
     ) -> Result<(), ObserverError> {
-        for provider in &self.chain_providers {
+        for provider in self.chain_providers.clone() {
             let provider_id = provider.provider_id();
+            self.ensure_health(health, provider_id)?;
+            self.pacer.wait(PacingLane::Chain(provider_id)).await;
+
             match provider.token_mint_state(&candidate.mint).await {
                 Ok(state) => {
-                    health.entry(provider_id).or_insert_with(CycleHealth::healthy);
+                    health
+                        .get_mut(&provider_id)
+                        .expect("health initialized before provider call")
+                        .record_success();
                     if state.provider != provider_id || state.mint != candidate.mint {
                         report.provider_failures = report.provider_failures.saturating_add(1);
                         record_synthetic_failure(
@@ -286,19 +409,111 @@ impl Observer {
                 }
                 Err(error) => {
                     report.provider_failures = report.provider_failures.saturating_add(1);
-                    record_failure(health, &error);
+                    record_adapter_failure(health, provider_id, &error);
                 }
             }
         }
         Ok(())
     }
+
+    fn ensure_health(
+        &self,
+        health: &mut HashMap<ProviderId, CycleHealth>,
+        provider: ProviderId,
+    ) -> Result<(), ObserverError> {
+        if health.contains_key(&provider) {
+            return Ok(());
+        }
+
+        let failures = self.load_failure_streak(provider)?;
+        health.insert(
+            provider,
+            CycleHealth::healthy_with_failure_streak(failures),
+        );
+        Ok(())
+    }
+
+    fn load_failure_streak(&self, provider: ProviderId) -> Result<u64, ObserverError> {
+        let Some(value) = self
+            .db
+            .ingestion_checkpoint(provider, FAILURE_STREAK_STREAM)?
+        else {
+            return Ok(0);
+        };
+
+        value
+            .parse::<u64>()
+            .map_err(|_| ObserverError::InvalidCheckpoint {
+                provider,
+                stream: FAILURE_STREAK_STREAM,
+                value,
+            })
+    }
+
+    fn persist_monotonic_discovery_watermark(
+        &self,
+        provider: ProviderId,
+        observed_watermark: i64,
+    ) -> Result<(), ObserverError> {
+        let current = self
+            .db
+            .ingestion_checkpoint(provider, DISCOVERY_WATERMARK_STREAM)?;
+        let current = match current {
+            Some(value) => Some(value.parse::<i64>().map_err(|_| {
+                ObserverError::InvalidCheckpoint {
+                    provider,
+                    stream: DISCOVERY_WATERMARK_STREAM,
+                    value,
+                }
+            })?),
+            None => None,
+        };
+        let next = current.map_or(observed_watermark, |value| value.max(observed_watermark));
+        let next = next.to_string();
+        self.db.set_ingestion_checkpoint(
+            provider,
+            DISCOVERY_WATERMARK_STREAM,
+            Some(&next),
+        )?;
+        Ok(())
+    }
 }
 
-fn record_failure(health: &mut HashMap<ProviderId, CycleHealth>, error: &ProviderError) {
-    health
-        .entry(error.provider)
-        .or_insert_with(CycleHealth::healthy)
-        .record_failure(error);
+fn insert_rps_interval(
+    intervals: &mut HashMap<PacingLane, Duration>,
+    lane: PacingLane,
+    requests_per_second: u32,
+) {
+    if requests_per_second == 0 {
+        return;
+    }
+    intervals.insert(
+        lane,
+        Duration::from_secs_f64(1.0 / f64::from(requests_per_second)),
+    );
+}
+
+fn record_adapter_failure(
+    health: &mut HashMap<ProviderId, CycleHealth>,
+    adapter_provider: ProviderId,
+    error: &ProviderError,
+) {
+    if error.provider == adapter_provider {
+        health
+            .get_mut(&adapter_provider)
+            .expect("health initialized before provider call")
+            .record_failure(error);
+        return;
+    }
+
+    record_synthetic_failure(
+        health,
+        adapter_provider,
+        format!(
+            "adapter {} returned an error attributed to {}",
+            adapter_provider, error.provider
+        ),
+    );
 }
 
 fn record_synthetic_failure(
@@ -307,16 +522,10 @@ fn record_synthetic_failure(
     message: String,
 ) {
     let error = ProviderError::new(provider, ProviderErrorKind::InvalidResponse, message);
-    record_failure(health, &error);
-}
-
-fn health_severity(state: ProviderHealthState) -> u8 {
-    match state {
-        ProviderHealthState::Healthy => 0,
-        ProviderHealthState::Degraded => 1,
-        ProviderHealthState::RateLimited => 2,
-        ProviderHealthState::Unavailable => 3,
-    }
+    health
+        .get_mut(&provider)
+        .expect("health initialized before provider call")
+        .record_failure(&error);
 }
 
 fn truncate_detail(message: &str) -> String {
