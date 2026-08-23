@@ -17,6 +17,7 @@ fn runtime_defaults_are_safe_and_observe_only() {
         vec![ProviderId::DexScreener, ProviderId::Meteora]
     );
     assert!(plan.chain.is_empty());
+    assert!(plan.transactions.is_empty());
     assert!(
         !plan.all_providers().contains(&ProviderId::Jupiter),
         "Jupiter must not be part of the observe-only runtime"
@@ -24,24 +25,32 @@ fn runtime_defaults_are_safe_and_observe_only() {
 }
 
 #[test]
-fn helius_is_enabled_only_when_a_non_blank_free_tier_key_is_present() {
+fn helius_is_enabled_for_chain_and_pump_verification_only_with_non_blank_key() {
     let without_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("   ".to_owned()),
         _ => None,
     })
     .unwrap();
-    assert!(free_observe_provider_plan(&without_key.providers)
-        .chain
-        .is_empty());
+    let without_key_plan = free_observe_provider_plan(&without_key.providers);
+    assert!(without_key_plan.chain.is_empty());
+    assert!(without_key_plan.transactions.is_empty());
 
     let with_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         _ => None,
     })
     .unwrap();
+    let with_key_plan = free_observe_provider_plan(&with_key.providers);
+    assert_eq!(with_key_plan.chain, vec![ProviderId::Helius]);
+    assert_eq!(with_key_plan.transactions, vec![ProviderId::Helius]);
     assert_eq!(
-        free_observe_provider_plan(&with_key.providers).chain,
-        vec![ProviderId::Helius]
+        with_key_plan
+            .all_providers()
+            .iter()
+            .filter(|provider| **provider == ProviderId::Helius)
+            .count(),
+        1,
+        "Helius should be deduplicated across chain and transaction roles"
     );
 }
 
