@@ -137,3 +137,115 @@ fn first_due_timestamp_overflow_is_rejected_without_partial_schedule() {
 
     cleanup_dir(&root);
 }
+
+#[test]
+fn delayed_sample_advances_from_actual_sample_time_without_catch_up() {
+    let root = unique_test_dir("no-catch-up");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("mint-late", 0)).unwrap();
+    db.ensure_path_sampling(candidate_id, 0).unwrap();
+
+    // The first target was +30s, but the real successful sample arrives at +40s.
+    db.advance_path_sampling(candidate_id, 40_000).unwrap();
+    let schedule = db.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(schedule.last_sample_at_unix_ms, Some(40_000));
+    assert_eq!(schedule.next_due_at_unix_ms, Some(70_000));
+    assert_eq!(schedule.sample_count, 1);
+    assert_eq!(schedule.status, PathSamplingStatus::Active);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn advancement_uses_age_band_at_the_real_sample_time_and_survives_restart() {
+    let root = unique_test_dir("age-band-restart");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("mint-six-min", 0)).unwrap();
+    db.ensure_path_sampling(candidate_id, 0).unwrap();
+
+    db.advance_path_sampling(candidate_id, 360_000).unwrap();
+    let schedule = db.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(schedule.next_due_at_unix_ms, Some(420_000));
+    assert_eq!(schedule.sample_count, 1);
+    drop(db);
+
+    let reopened = ShreksDb::open(&db_path).unwrap();
+    let schedule = reopened.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(schedule.last_sample_at_unix_ms, Some(360_000));
+    assert_eq!(schedule.next_due_at_unix_ms, Some(420_000));
+    assert_eq!(schedule.sample_count, 1);
+
+    reopened.advance_path_sampling(candidate_id, 420_000).unwrap();
+    let schedule = reopened.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(schedule.next_due_at_unix_ms, Some(480_000));
+    assert_eq!(schedule.sample_count, 2);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn schedule_completes_when_next_interval_would_reach_or_cross_twenty_four_hours() {
+    let root = unique_test_dir("lifecycle-end");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("mint-old", 0)).unwrap();
+    db.ensure_path_sampling(candidate_id, 0).unwrap();
+
+    // At 22h the next one-hour target is still within the lifecycle.
+    db.advance_path_sampling(candidate_id, 79_200_000).unwrap();
+    let active = db.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(active.status, PathSamplingStatus::Active);
+    assert_eq!(active.next_due_at_unix_ms, Some(82_800_000));
+    assert_eq!(active.sample_count, 1);
+
+    // At 23h the next one-hour target would land exactly at the 24h stop.
+    db.advance_path_sampling(candidate_id, 82_800_000).unwrap();
+    let completed = db.path_sampling(candidate_id).unwrap().unwrap();
+    assert_eq!(completed.status, PathSamplingStatus::Completed);
+    assert_eq!(completed.next_due_at_unix_ms, None);
+    assert_eq!(completed.last_sample_at_unix_ms, Some(82_800_000));
+    assert_eq!(completed.sample_count, 2);
+    assert!(db.due_path_samples(i64::MAX, 10).unwrap().is_empty());
+
+    // Idempotent scheduling cannot resurrect terminal state.
+    db.ensure_path_sampling(candidate_id, 0).unwrap();
+    assert_eq!(
+        db.path_sampling(candidate_id).unwrap().unwrap().status,
+        PathSamplingStatus::Completed
+    );
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn advancement_rejects_time_before_discovery_and_terminal_rows_cannot_advance() {
+    let root = unique_test_dir("invalid-advance");
+    let db_path = root.join("shreks.db");
+    let discovered_at = 1_000_000_i64;
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db
+        .upsert_candidate(&candidate("mint-invalid", discovered_at))
+        .unwrap();
+    db.ensure_path_sampling(candidate_id, discovered_at).unwrap();
+
+    let error = db
+        .advance_path_sampling(candidate_id, discovered_at - 1)
+        .unwrap_err();
+    assert!(error.to_string().contains("before discovery"));
+    assert_eq!(db.path_sampling(candidate_id).unwrap().unwrap().sample_count, 0);
+
+    db.advance_path_sampling(candidate_id, discovered_at + 86_400_000)
+        .unwrap();
+    assert_eq!(
+        db.path_sampling(candidate_id).unwrap().unwrap().status,
+        PathSamplingStatus::Completed
+    );
+    let error = db
+        .advance_path_sampling(candidate_id, discovered_at + 86_500_000)
+        .unwrap_err();
+    assert!(error.to_string().contains("completed"));
+
+    cleanup_dir(&root);
+}
