@@ -29,42 +29,12 @@
 - Create: `python/src/shreks_brain/safety/models.py`
 - Create: `python/tests/test_safety_models.py`
 
-**Interfaces:**
-- Produces `SafetyDecision`, `SafetySeverity`, `SafetyReasonCode`, `SafetyFinding`, `SafetyInputs`, `SafetyPolicy`, and `SafetyAssessment`.
-- Later tasks import these exact names from `shreks_brain.safety.models`.
+**Interfaces:** Produces `SafetyDecision`, `SafetySeverity`, `SafetyReasonCode`, `SafetyFinding`, `SafetyInputs`, `SafetyPolicy`, and `SafetyAssessment`.
 
-- [ ] **Step 1: Write failing model tests**
-
-Tests must assert exact enum values, frozen dataclass behavior, valid construction, rejection of empty policy versions, negative/non-finite numeric values, percentage values outside `[0, 100]`, inconsistent hard/soft thresholds, negative timestamps, and the absence of future-outcome fields such as `return_pct`, `mfe_pct`, and `mae_pct` from `SafetyInputs`.
-
-Representative assertions:
-
-```python
-assert SafetyDecision.PASS.value == "PASS"
-assert SafetySeverity.HARD.value == "HARD"
-assert SafetyReasonCode.GLOBAL_RISK_HALT.value == "GLOBAL_RISK_HALT"
-assert "return_pct" not in SafetyInputs.__dataclass_fields__
-```
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected: Python fails importing `shreks_brain.safety.models`; Rust and repository-safety jobs remain unchanged.
-
-- [ ] **Step 3: Implement minimal validated immutable models**
-
-Use `StrEnum` and `@dataclass(frozen=True, slots=True)`. Put validation in `__post_init__` with small private helpers:
-
-```python
-def _require_non_negative_finite(name: str, value: float | None) -> None: ...
-def _require_percentage(name: str, value: float | None) -> None: ...
-def _require_non_negative_int(name: str, value: int | None) -> None: ...
-```
-
-`SafetyAssessment` convenience properties return tuples filtered by severity while preserving canonical finding order.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: model tests pass and existing repository tests remain green.
+- [x] **Step 1: Write failing model tests** — exact enum values, frozen dataclasses, policy/input validation, percentage bounds, threshold consistency, and absence of future-outcome fields.
+- [x] **Step 2: Run CI and verify RED** — Python failed on missing `shreks_brain.safety`; Rust and repository safety were unaffected.
+- [x] **Step 3: Implement minimal validated immutable models** — `StrEnum`, frozen/slotted dataclasses, and focused validation helpers.
+- [x] **Step 4: Run full CI and verify GREEN** — complete repository gate passed.
 
 ---
 
@@ -74,64 +44,28 @@ Expected: model tests pass and existing repository tests remain green.
 - Create: `python/src/shreks_brain/safety/evaluator.py`
 - Create: `python/tests/test_safety_evaluator.py`
 
-**Interfaces:**
-- Consumes model types from Task 1.
-- Produces:
+**Interface:**
 
 ```python
 def assess_safety(inputs: SafetyInputs, policy: SafetyPolicy) -> SafetyAssessment:
     ...
 ```
 
-- [ ] **Step 1: Write failing evaluator tests**
+- [x] **Step 1: Write failing evaluator tests** — clean pass, every hard veto, required/optional unknowns, freshness, future/contradictory data, soft findings, threshold boundaries, ordering, and repeatability.
+- [x] **Step 2: Run CI and verify RED** — Python failed only on missing evaluator module.
+- [x] **Step 3: Implement the pure evaluator** — findings are built in hard → data-quality → soft passes, then decision precedence is applied as `REJECT > INCOMPLETE > PASS`.
+- [x] **Step 4: Run full CI and verify GREEN** — complete repository gate passed.
 
-Use a reusable clean fixture and table-driven cases. Tests must prove:
+Freshness semantics implemented:
 
-- clean facts produce `PASS` with no findings;
-- each hard reason independently produces `REJECT` and the exact code;
-- hard rejection wins when missing/stale facts also exist;
-- required unknown authority/liquidity/concentration/exit facts produce `INCOMPLETE`;
-- disabled `require_*` flags suppress only their matching unknown-field finding, not global freshness checks;
-- missing/stale critical timestamp produces `CRITICAL_DATA_STALE`;
-- future timestamp or `critical_data_contradictory=True` produces `CRITICAL_DATA_CONTRADICTORY`;
-- soft liquidity/concentration/creator/price-impact findings remain `PASS` when no blocker exists;
-- hard/soft threshold boundaries use the exact strict/inclusive semantics from the spec;
-- multiple findings appear in the fixed spec order;
-- repeated calls return equal assessments.
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected: Python fails importing `assess_safety` while model tests remain green.
-
-- [ ] **Step 3: Implement the pure evaluator**
-
-Build findings in exactly three ordered passes: hard, data-quality, soft. Use stable message templates and populate observed/threshold values where meaningful. Compute decision only after all findings are collected:
-
-```python
-if any(f.severity is SafetySeverity.HARD for f in findings):
-    decision = SafetyDecision.REJECT
-elif any(f.severity is SafetySeverity.DATA_QUALITY for f in findings):
-    decision = SafetyDecision.INCOMPLETE
-else:
-    decision = SafetyDecision.PASS
+```text
+missing critical timestamp -> CRITICAL_DATA_STALE
+future critical timestamp -> CRITICAL_DATA_CONTRADICTORY
+age > configured maximum -> CRITICAL_DATA_STALE
+explicit contradiction -> CRITICAL_DATA_CONTRADICTORY
 ```
 
-Freshness rules:
-
-```python
-if observed_at is None:
-    CRITICAL_DATA_STALE
-elif observed_at > inputs.as_of_unix_ms:
-    CRITICAL_DATA_CONTRADICTORY
-elif inputs.as_of_unix_ms - observed_at > policy.max_critical_data_age_ms:
-    CRITICAL_DATA_STALE
-```
-
-Do not create a stale finding for a future timestamp in addition to contradiction; use contradiction only for that case.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: evaluator tests and all existing checks pass.
+A future timestamp produces contradiction rather than a duplicate stale finding.
 
 ---
 
@@ -143,8 +77,7 @@ Expected: evaluator tests and all existing checks pass.
 - Modify: `docs/superpowers/plans/2026-08-23-phase-b1-safety.md`
 - Create: `python/tests/test_safety_public_api.py`
 
-**Interfaces:**
-- Public imports are available from `shreks_brain.safety`:
+**Public API:**
 
 ```python
 from shreks_brain.safety import (
@@ -159,31 +92,27 @@ from shreks_brain.safety import (
 )
 ```
 
-- [ ] **Step 1: Write failing public-API tests**
-
-Tests import every public symbol from `shreks_brain.safety`, run one clean assessment through only that API, and assert deterministic structured output. Also inspect `SafetyInputs.__dataclass_fields__` to reconfirm there are no future-outcome fields in the public model.
-
-- [ ] **Step 2: Verify RED**
-
-Expected: package-level imports are absent until `__init__.py` is created.
-
-- [ ] **Step 3: Export the stable API and update README**
-
-README operator notes must state that B1 is pure point-in-time analysis, only `PASS` is eligible for later entry consideration, `REJECT` and `INCOMPLETE` fail closed, thresholds are policy configuration, and no trading/execution behavior is enabled.
-
-- [ ] **Step 4: Run final full CI**
-
-Expected: Rust workspace tests, Python tests, workspace metadata validation, and repository secret-safety all pass.
-
-- [ ] **Step 5: Record the final CI commit/run in this plan**
-
-Update this checklist only after fresh final-head verification.
+- [x] **Step 1: Write failing public-API tests** — all public symbols import from the package root, a clean case evaluates through only that API, and future-outcome fields remain absent.
+- [x] **Step 2: Verify RED** — package-level imports failed exactly as intended before `__init__.py` existed.
+- [x] **Step 3: Export the stable API and update README** — operator notes document fail-closed semantics, policy configuration, point-in-time inputs, and the non-trading boundary.
+- [x] **Step 4: Run final full CI** — Rust workspace tests, Python tests, workspace metadata validation, and repository secret-safety passed.
+- [x] **Step 5: Record the final CI commit/run in this plan** — recorded below after fresh verification.
 
 ---
 
+## Verification record
+
+- **Task 1 RED:** commit `d62ba2da8b3a62702d2fda00a14a02ece278074d`, CI `32656608967`; Python failed on missing `shreks_brain.safety`.
+- **Task 1 GREEN:** commit `0ac0dc3364fb1932160706ae3cce006170dac3af`, CI `32656677139`; Rust, Python, metadata validation, and repository safety all passed.
+- **Task 2 RED:** commit `3a706fdd1a4b6e4785ec8b62d30d84117e879b18`, CI `32656768963`; Python failed on missing `shreks_brain.safety.evaluator`.
+- **Task 2 GREEN:** commit `edf8d10de28eda5543d49b1fe421420e37d7dcf1`, CI `32656827013`; complete repository gate passed.
+- **Task 3 RED:** commit `247c9614179daad9a63149e5abe95442fce0bb6a`, CI `32656898249`; package-level public imports failed exactly as intended.
+- **Code/documentation GREEN:** commit `53895d63ef035b2ed562af18d84ca8fd541a5419`, CI `32656985541`; complete repository gate passed.
+- A final exact-head CI run is required after this verification-record-only commit before the branch is declared complete.
+
 ## Self-review
 
-- **Spec coverage:** all approved B1 domain types, validation, hard rules, critical-data rules, soft rules, deterministic precedence/order, audit fields, point-in-time boundary, and non-trading guarantee are mapped to Tasks 1–3.
+- **Spec coverage:** all approved B1 domain types, validation, hard rules, critical-data rules, soft rules, deterministic precedence/order, audit fields, point-in-time boundary, and non-trading guarantee are implemented.
 - **Placeholder scan:** no implementation-critical TBD/TODO placeholders.
-- **Type consistency:** Task 2 and Task 3 consume the exact model names produced by Task 1.
-- **Scope:** no assembler, persistence, strategy score, paper execution, or live execution is introduced.
+- **Type consistency:** evaluator and public API consume the exact model names produced by the model layer.
+- **Scope:** no assembler, persistence, strategy score, paper execution, or live execution was introduced.
