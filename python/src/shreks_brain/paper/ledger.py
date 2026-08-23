@@ -133,6 +133,53 @@ def apply_paper_execution(
     )
 
 
+def mark_paper_position(
+    ledger: PaperLedger,
+    mark: PaperPositionMark,
+) -> PaperLedgerUpdate:
+    """Apply one point-in-time accounting mark without fabricating exit economics."""
+
+    if mark.observed_at_unix_ms < ledger.as_of_unix_ms:
+        return _rejected(ledger, PaperLedgerReasonCode.MARK_TIME_BEFORE_LEDGER)
+
+    position_index, position = _find_position(ledger, mark.position_id)
+    if position is None or position_index is None:
+        return _rejected(ledger, PaperLedgerReasonCode.MARK_POSITION_NOT_FOUND)
+    if position.mint != mark.mint:
+        return _rejected(ledger, PaperLedgerReasonCode.MARK_MINT_MISMATCH)
+    if position.state is PaperPositionState.CLOSED:
+        return _rejected(ledger, PaperLedgerReasonCode.MARK_POSITION_CLOSED)
+
+    unrealized = position.quantity * mark.mark_price_usd - position.open_cost_basis_usd
+    marked = replace(
+        position,
+        unrealized_pnl_usd=unrealized,
+        updated_at_unix_ms=mark.observed_at_unix_ms,
+        last_mark_price_usd=mark.mark_price_usd,
+        last_mark_at_unix_ms=mark.observed_at_unix_ms,
+    )
+    positions = _replace_position(ledger.positions, position_index, marked)
+    new_ledger = PaperLedger(
+        starting_cash_usd=ledger.starting_cash_usd,
+        cash_balance_usd=ledger.cash_balance_usd,
+        realized_pnl_usd=ledger.realized_pnl_usd,
+        unrealized_pnl_usd=_aggregate_unrealized(positions),
+        accumulated_costs_usd=ledger.accumulated_costs_usd,
+        as_of_unix_ms=mark.observed_at_unix_ms,
+        positions=positions,
+        entries=ledger.entries,
+        processed_intent_keys=ledger.processed_intent_keys,
+    )
+    return _applied(
+        new_ledger,
+        PaperLedgerReasonCode.POSITION_MARKED,
+        position.position_id,
+        0.0,
+        0.0,
+        0.0,
+    )
+
+
 def _book_failed(
     ledger: PaperLedger,
     intent: TradeIntent,
@@ -424,6 +471,16 @@ def _execution_reason_matches_state(execution: PaperExecutionResult) -> bool:
     if execution.state is PaperExecutionState.FILLED:
         return reason is PaperExecutionReasonCode.FILL_COMPLETE
     return reason not in _DEFERRED_REASONS and reason not in _FILL_REASONS
+
+
+def _find_position(
+    ledger: PaperLedger,
+    position_id: str,
+) -> tuple[int | None, PaperPosition | None]:
+    for index, position in enumerate(ledger.positions):
+        if position.position_id == position_id:
+            return index, position
+    return None, None
 
 
 def _find_open_position(
