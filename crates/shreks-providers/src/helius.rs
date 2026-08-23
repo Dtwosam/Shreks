@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use shreks_core::{ProviderId, TokenMintState};
 
 use crate::{
@@ -15,6 +15,32 @@ const MAINNET_RPC_BASE: &str = "https://mainnet.helius-rpc.com/?api-key=";
 
 pub fn helius_rpc_url(api_key: &str) -> String {
     format!("{MAINNET_RPC_BASE}{api_key}")
+}
+
+/// Build the current object-form Solana `getTransaction` request used to
+/// verify a cheap websocket launch signal before it can become a candidate.
+pub fn get_transaction_request(signature: &str) -> Result<Value, ProviderError> {
+    if signature.trim().is_empty() {
+        return Err(ProviderError::new(
+            ProviderId::Helius,
+            ProviderErrorKind::InvalidRequest,
+            "transaction signature must not be empty",
+        ));
+    }
+
+    Ok(json!({
+        "jsonrpc": "2.0",
+        "id": "shreks-pump-transaction",
+        "method": "getTransaction",
+        "params": [
+            signature,
+            {
+                "commitment": "confirmed",
+                "encoding": "jsonParsed",
+                "maxSupportedTransactionVersion": 0
+            }
+        ]
+    }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +176,7 @@ pub fn parse_mint_account_response(
     })
 }
 
+#[derive(Clone)]
 pub struct HeliusProvider {
     api_key: String,
     client: reqwest::Client,
@@ -170,6 +197,42 @@ impl HeliusProvider {
             api_key,
             client: reqwest::Client::new(),
         })
+    }
+
+    /// Fetch a confirmed transaction as raw JSON for a protocol-specific
+    /// verifier such as the Pump creation parser. The Helius API key never
+    /// appears in returned transport errors.
+    pub async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
+        let payload = get_transaction_request(signature)?;
+        self.post_rpc(&payload).await
+    }
+
+    async fn post_rpc(&self, payload: &Value) -> Result<String, ProviderError> {
+        let response = self
+            .client
+            .post(helius_rpc_url(&self.api_key))
+            .json(payload)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = response.text().await.map_err(map_reqwest_error)?;
+
+        if !status.is_success() {
+            return Err(classify_http_failure(
+                ProviderId::Helius,
+                status.as_u16(),
+                retry_after.as_deref(),
+                &body,
+            ));
+        }
+
+        Ok(body)
     }
 }
 
@@ -201,30 +264,7 @@ impl ChainDataProvider for HeliusProvider {
             ]
         });
 
-        let response = self
-            .client
-            .post(helius_rpc_url(&self.api_key))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(map_reqwest_error)?;
-        let status = response.status();
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_owned);
-        let body = response.text().await.map_err(map_reqwest_error)?;
-
-        if !status.is_success() {
-            return Err(classify_http_failure(
-                ProviderId::Helius,
-                status.as_u16(),
-                retry_after.as_deref(),
-                &body,
-            ));
-        }
-
+        let body = self.post_rpc(&payload).await?;
         parse_mint_account_response(&body, token_mint, unix_time_ms()?)
     }
 }
