@@ -1,3 +1,6 @@
 [workspace]
-members = ["crates/shreks-core"]
+members = [
+    "crates/shreks-core",
+    "crates/shreks-storage",
+]
 resolver = "2"
