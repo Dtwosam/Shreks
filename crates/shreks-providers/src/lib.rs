@@ -62,10 +62,6 @@ impl ProviderError {
         self.kind.is_retryable()
     }
 
-    /// Convert transport/protocol failures into operational provider health.
-    ///
-    /// This mapping deliberately says nothing about market direction or token
-    /// quality. Provider failures are infrastructure state only.
     pub const fn health_state(&self) -> ProviderHealthState {
         match self.kind {
             ProviderErrorKind::RateLimited => ProviderHealthState::RateLimited,
@@ -119,8 +115,6 @@ pub trait ChainDataProvider: Send + Sync {
 }
 
 /// Raw confirmed-transaction boundary used by protocol-specific verification.
-/// Implementations return provider JSON without interpreting Pump or any other
-/// protocol so the verifier remains independently testable.
 #[async_trait]
 pub trait TransactionProvider: Send + Sync {
     fn provider_id(&self) -> ProviderId;
@@ -128,30 +122,25 @@ pub trait TransactionProvider: Send + Sync {
     async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError>;
 }
 
-/// Sequential realtime Pump signal boundary.
-///
-/// The source owns its reconnect/subscription behavior. Consumers only see
-/// normalized cheap launch signals or a terminal provider error, which keeps
-/// transport details out of the observer runtime.
+/// Sequential realtime Pump lifecycle signal boundary.
 #[async_trait]
 pub trait PumpSignalSource: Send {
-    async fn next_pump_signal(&mut self) -> Result<pump::PumpCreationSignal, ProviderError>;
+    async fn next_pump_signal(&mut self) -> Result<pump::PumpLifecycleSignal, ProviderError>;
 }
 
 #[async_trait]
 impl PumpSignalSource for pump::PumpLogStream {
-    async fn next_pump_signal(&mut self) -> Result<pump::PumpCreationSignal, ProviderError> {
-        self.next_signal().await
+    async fn next_pump_signal(&mut self) -> Result<pump::PumpLifecycleSignal, ProviderError> {
+        self.next_lifecycle_signal().await
     }
 }
 
-/// Forward normalized Pump launch signals into a bounded consumer channel.
-///
-/// The forwarding task never touches storage. Backpressure is provided by the
-/// bounded channel; if the observer side disappears, forwarding exits cleanly.
+/// Forward normalized Pump creation/migration signals into a bounded consumer
+/// channel. The forwarding task remains storage-free; observer backpressure is
+/// provided by the bounded channel.
 pub async fn forward_pump_signals<S>(
     mut source: S,
-    sender: mpsc::Sender<pump::PumpCreationSignal>,
+    sender: mpsc::Sender<pump::PumpLifecycleSignal>,
 ) -> Result<(), ProviderError>
 where
     S: PumpSignalSource,
