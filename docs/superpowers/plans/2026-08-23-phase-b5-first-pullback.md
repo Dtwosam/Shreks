@@ -112,7 +112,7 @@ def assess_first_pullback(
 - [x] **Verify package GREEN:** Full repository CI passed.
 - [x] **Document:** README explains explicit chronology, broken-trough invalidation, 9-confirmation contract, no production defaults, evidence-score semantics, and no execution.
 - [x] **Verification record:** Fresh documentation-head CI passed and is recorded below.
-- [x] **Final seal:** This metadata-only commit is the candidate final seal; a fresh exact-head CI and draft-PR evidence update are required externally before claiming completion.
+- [x] **Final seal:** Candidate seal head `2bcece407ef164da7443e8961de2d39cdc25e188` passed fresh exact-head CI `32666577331`; final diff audit contained only the nine intended B5 files.
 
 ## Verification Evidence
 
@@ -124,6 +124,7 @@ def assess_first_pullback(
 - Task 3 package GREEN: `69b13218d6f9252fe85c5d848151346f7fc8783d` / CI `32666385342` — full GREEN.
 - README documentation commit: `f3b57fe9d4616b983e16bedc23b06107c1532423`.
 - Documentation/verification head: `902386846ce74a42944e899cf417ae9825da3656` / CI `32666494775` — Rust, Python, workspace metadata, and repository safety all GREEN.
+- Final verified implementation head before this evidence-only record: `2bcece407ef164da7443e8961de2d39cdc25e188` / CI `32666577331` — Rust, Python, workspace metadata, and repository safety all GREEN.
 
 ## Self-Review
 
