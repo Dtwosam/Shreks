@@ -6,3 +6,4 @@ publish = false
 
 [dependencies]
 rusqlite = { version = "0.40.2", features = ["bundled"] }
+shreks-core = { path = "../shreks-core" }
