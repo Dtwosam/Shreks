@@ -362,6 +362,10 @@ impl Observer {
                             candidate_id,
                             candidate.discovered_at_unix_ms,
                         )?;
+                        self.db.ensure_path_sampling(
+                            candidate_id,
+                            candidate.discovered_at_unix_ms,
+                        )?;
                         if seen_candidate_ids.insert(candidate_id) {
                             candidates.push((candidate_id, candidate));
                         }
@@ -541,6 +545,10 @@ impl Observer {
                         .record_pump_launch_attempt(&signal.signature, attempted_at, None)?;
                     let candidate_id = self.db.upsert_candidate(&candidate)?;
                     self.db.ensure_outcome_checkpoints(
+                        candidate_id,
+                        candidate.discovered_at_unix_ms,
+                    )?;
+                    self.db.ensure_path_sampling(
                         candidate_id,
                         candidate.discovered_at_unix_ms,
                     )?;
