@@ -28,7 +28,7 @@ use shreks_providers::{
     ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
     TransactionProvider,
 };
-use shreks_storage::{ShreksDb, StorageError};
+use shreks_storage::{ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS};
 use tokio::{
     sync::mpsc,
     time::{sleep_until, Instant},
@@ -38,6 +38,9 @@ const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
 const DEXSCREENER_DISCOVERY_RPS: u32 = 1;
 const PUMP_PENDING_BATCH_LIMIT: usize = 32;
+const OUTCOME_DUE_CANDIDATE_LIMIT: usize = 16;
+const OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT: usize =
+    OUTCOME_DUE_CANDIDATE_LIMIT * OUTCOME_HORIZONS_SECONDS.len();
 const PUMP_TRANSACTION_NOT_AVAILABLE: &str = "confirmed Pump transaction not available yet";
 
 /// Summary of one finite observer pass.
@@ -302,6 +305,7 @@ impl Observer {
     pub async fn run_cycle(&mut self) -> Result<ObserverCycleReport, ObserverError> {
         let mut report = ObserverCycleReport::default();
         self.drain_pump_signal_queue(&mut report)?;
+        let due_outcome_candidates = self.due_outcome_candidates()?;
 
         let mut health: HashMap<ProviderId, CycleHealth> = HashMap::new();
         let mut candidates = Vec::new();
@@ -379,7 +383,7 @@ impl Observer {
         for (candidate_id, candidate) in &candidates {
             self.observe_market_data(
                 *candidate_id,
-                candidate,
+                &candidate.mint,
                 &mut report,
                 &mut health,
             )
@@ -391,6 +395,14 @@ impl Observer {
                 &mut health,
             )
             .await?;
+        }
+
+        for (candidate_id, mint) in due_outcome_candidates {
+            if seen_candidate_ids.contains(&candidate_id) {
+                continue;
+            }
+            self.observe_market_data(candidate_id, &mint, &mut report, &mut health)
+                .await?;
         }
 
         let observed_at = unix_time_ms()?;
@@ -561,7 +573,7 @@ impl Observer {
     async fn observe_market_data(
         &mut self,
         candidate_id: i64,
-        candidate: &DiscoveredToken,
+        token_mint: &str,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
     ) -> Result<(), ObserverError> {
@@ -570,7 +582,7 @@ impl Observer {
             self.ensure_health(health, provider_id)?;
             self.pacer.wait(PacingLane::Market(provider_id)).await;
 
-            match provider.token_pairs(&candidate.mint).await {
+            match provider.token_pairs(token_mint).await {
                 Ok(snapshots) => {
                     health
                         .get_mut(&provider_id)
@@ -589,16 +601,14 @@ impl Observer {
                             );
                             continue;
                         }
-                        if snapshot.base_mint != candidate.mint
-                            && snapshot.quote_mint != candidate.mint
-                        {
+                        if snapshot.base_mint != token_mint && snapshot.quote_mint != token_mint {
                             report.provider_failures = report.provider_failures.saturating_add(1);
                             record_synthetic_failure(
                                 health,
                                 provider_id,
                                 format!(
                                     "market snapshot pair {} did not contain requested mint {}",
-                                    snapshot.pair_address, candidate.mint
+                                    snapshot.pair_address, token_mint
                                 ),
                             );
                             continue;
@@ -659,6 +669,27 @@ impl Observer {
             }
         }
         Ok(())
+    }
+
+    fn due_outcome_candidates(&self) -> Result<Vec<(i64, String)>, ObserverError> {
+        let due = self.db.due_outcome_checkpoints(
+            unix_time_ms()?,
+            OUTCOME_DUE_CHECKPOINT_SCAN_LIMIT,
+        )?;
+        let mut seen_candidate_ids = HashSet::new();
+        let mut candidates = Vec::new();
+
+        for checkpoint in due {
+            if !seen_candidate_ids.insert(checkpoint.candidate_id) {
+                continue;
+            }
+            candidates.push((checkpoint.candidate_id, checkpoint.mint));
+            if candidates.len() == OUTCOME_DUE_CANDIDATE_LIMIT {
+                break;
+            }
+        }
+
+        Ok(candidates)
     }
 
     fn ensure_health(
