@@ -2,17 +2,13 @@ use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
-use shreks_providers::pump::{PumpLogStream, PumpLogStreamConfig, PUMP_PROGRAM_ID};
-use tokio::net::{TcpListener, TcpStream};
-use tokio_tungstenite::{
-    accept_async,
-    tungstenite::Message,
-    WebSocketStream,
+use shreks_providers::pump::{
+    PumpLifecycleSignal, PumpLogStream, PumpLogStreamConfig, PUMP_PROGRAM_ID,
 };
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::{accept_async, tungstenite::Message, WebSocketStream};
 
-async fn accept_pump_subscription(
-    listener: &TcpListener,
-) -> WebSocketStream<TcpStream> {
+async fn accept_pump_subscription(listener: &TcpListener) -> WebSocketStream<TcpStream> {
     let (stream, _) = listener.accept().await.expect("accept local socket");
     let mut socket = accept_async(stream).await.expect("websocket handshake");
 
@@ -100,6 +96,45 @@ async fn reconnects_resubscribes_and_returns_next_verified_creation_signal() {
 }
 
 #[tokio::test]
+async fn reconnecting_lifecycle_stream_delivers_migration_from_same_subscription() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind local websocket server");
+    let address = listener.local_addr().expect("local address");
+
+    let server = tokio::spawn(async move {
+        let mut first = accept_pump_subscription(&listener).await;
+        first.close(None).await.expect("close first connection");
+
+        let mut second = accept_pump_subscription(&listener).await;
+        second
+            .send(Message::Text(
+                notification("migration-77", 77, "MigrateV2").into(),
+            ))
+            .await
+            .expect("send migration log");
+    });
+
+    let config = PumpLogStreamConfig::for_endpoint(format!("ws://{address}"))
+        .expect("valid local endpoint")
+        .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+        .with_heartbeat_interval(Duration::from_secs(60));
+    let mut stream = PumpLogStream::new(config);
+
+    let signal = tokio::time::timeout(Duration::from_secs(2), stream.next_lifecycle_signal())
+        .await
+        .expect("client should recover before timeout")
+        .expect("stream should recover from one disconnect");
+
+    let PumpLifecycleSignal::Migration(signal) = signal else {
+        panic!("expected migration signal");
+    };
+    assert_eq!(signal.signature, "migration-77");
+    assert_eq!(signal.slot, 77);
+    server.await.expect("server task");
+}
+
+#[tokio::test]
 async fn sends_heartbeat_ping_when_subscription_is_idle() {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -116,7 +151,9 @@ async fn sends_heartbeat_ping_when_subscription_is_idle() {
         assert!(matches!(frame, Message::Ping(_)));
 
         socket
-            .send(Message::Text(notification("launch-heartbeat", 99, "Create").into()))
+            .send(Message::Text(
+                notification("launch-heartbeat", 99, "Create").into(),
+            ))
             .await
             .expect("send creation after heartbeat");
     });
