@@ -11,14 +11,17 @@ use std::{
 
 use async_trait::async_trait;
 use rusqlite::Connection;
-use shreks_core::{DiscoveredToken, PairMarketData, ProviderId};
+use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, VenueId};
 use shreks_observer::Observer;
 use shreks_providers::{
     pump::PumpCreationSignal, DiscoveryProvider, MarketDataProvider, ProviderError,
     ProviderErrorKind,
 };
-use shreks_storage::ShreksDb;
-use tokio::{sync::{mpsc, oneshot}, time::Instant};
+use shreks_storage::{OutcomeCheckpointStatus, ShreksDb};
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::Instant,
+};
 
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 
@@ -45,6 +48,34 @@ fn candidate_at(mint: &str, discovered_at_unix_ms: i64) -> DiscoveredToken {
         venue: None,
         discovered_at_unix_ms,
         source: ProviderId::DexScreener,
+    }
+}
+
+fn market_snapshot(mint: &str, price_usd: &str, observed_at_unix_ms: i64) -> PairMarketData {
+    PairMarketData {
+        provider: ProviderId::DexScreener,
+        venue: VenueId::OtherSolana,
+        chain_id: "solana".to_owned(),
+        dex_id: "fixture-dex".to_owned(),
+        pair_address: format!("fixture-pair-{mint}"),
+        base_mint: mint.to_owned(),
+        base_name: None,
+        base_symbol: None,
+        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        quote_name: None,
+        quote_symbol: None,
+        price_native: None,
+        price_usd: Some(price_usd.to_owned()),
+        liquidity_usd: Some(1_000.0),
+        volume_5m: Some(100.0),
+        volume_1h: None,
+        volume_6h: None,
+        volume_24h: None,
+        transactions: Vec::new(),
+        fdv_usd: None,
+        market_cap_usd: None,
+        pair_created_at_unix_ms: None,
+        observed_at_unix_ms,
     }
 }
 
@@ -92,6 +123,21 @@ impl MarketDataProvider for TimedMarket {
     async fn token_pairs(&self, _token_mint: &str) -> Result<Vec<PairMarketData>, ProviderError> {
         self.calls.lock().unwrap().push(Instant::now());
         Ok(Vec::new())
+    }
+}
+
+struct FixedMarket {
+    snapshots: Vec<PairMarketData>,
+}
+
+#[async_trait]
+impl MarketDataProvider for FixedMarket {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::DexScreener
+    }
+
+    async fn token_pairs(&self, _token_mint: &str) -> Result<Vec<PairMarketData>, ProviderError> {
+        Ok(self.snapshots.clone())
     }
 }
 
@@ -221,6 +267,78 @@ async fn dexscreener_market_calls_respect_the_conservative_four_rps_budget() {
 
     drop(calls);
     drop(observer);
+    cleanup_dir(&root);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn pending_outcome_checkpoint_survives_restart_and_completes_without_duplicate_schedule() {
+    let root = unique_test_dir("outcome-restart");
+    let db_path = root.join("shreks.db");
+    let mint = "mint-outcome-restart";
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate = candidate_at(mint, 0);
+    let candidate_id = db.upsert_candidate(&candidate).unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, candidate.discovered_at_unix_ms)
+        .unwrap();
+    db.insert_market_snapshot(candidate_id, &market_snapshot(mint, "1.0", 1_000))
+        .unwrap();
+
+    let before = db.outcome_checkpoints(candidate_id).unwrap();
+    assert_eq!(before.len(), 7);
+    let before_60s = before
+        .iter()
+        .find(|checkpoint| checkpoint.horizon_seconds == 60)
+        .unwrap();
+    assert_eq!(before_60s.status, OutcomeCheckpointStatus::Pending);
+    let original_checkpoint_id = before_60s.id;
+    drop(db);
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, candidate.discovered_at_unix_ms)
+        .unwrap();
+    let after_reopen = db.outcome_checkpoints(candidate_id).unwrap();
+    assert_eq!(after_reopen.len(), 7, "restart must not duplicate the schedule");
+    assert_eq!(
+        after_reopen
+            .iter()
+            .find(|checkpoint| checkpoint.horizon_seconds == 60)
+            .unwrap()
+            .id,
+        original_checkpoint_id,
+        "restart must preserve the original durable checkpoint row"
+    );
+
+    let market = Arc::new(FixedMarket {
+        snapshots: vec![market_snapshot(mint, "1.5", 61_000)],
+    });
+    let mut observer = Observer::new(db).with_market_provider(market);
+    observer.run_cycle().await.unwrap();
+    drop(observer);
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let completed = db.outcome_checkpoints(candidate_id).unwrap();
+    assert_eq!(completed.len(), 7);
+    assert_eq!(
+        completed
+            .iter()
+            .filter(|checkpoint| checkpoint.horizon_seconds == 60)
+            .count(),
+        1,
+        "the 60-second horizon must still have exactly one durable row"
+    );
+    let completed_60s = completed
+        .iter()
+        .find(|checkpoint| checkpoint.horizon_seconds == 60)
+        .unwrap();
+    assert_eq!(completed_60s.id, original_checkpoint_id);
+    assert_eq!(completed_60s.status, OutcomeCheckpointStatus::Completed);
+    assert!(
+        (completed_60s.return_pct.unwrap() - 50.0).abs() < 1e-9,
+        "1.0 -> 1.5 should complete the original checkpoint at +50%"
+    );
+
+    drop(db);
     cleanup_dir(&root);
 }
 
