@@ -1,4 +1,5 @@
 use rusqlite::{params, OptionalExtension};
+use shreks_core::PairMarketData;
 
 use super::{ShreksDb, StorageError};
 
@@ -67,6 +68,18 @@ pub const fn path_sampling_interval_seconds(age_ms: i64) -> Option<u32> {
 }
 
 impl ShreksDb {
+    /// Insert one normalized market snapshot and report whether SQLite created
+    /// a new durable row. This distinguishes fresh adaptive evidence from an
+    /// idempotent duplicate that `INSERT OR IGNORE` intentionally discards.
+    pub fn insert_market_snapshot_if_new(
+        &self,
+        candidate_id: i64,
+        snapshot: &PairMarketData,
+    ) -> Result<bool, StorageError> {
+        self.insert_market_snapshot(candidate_id, snapshot)?;
+        Ok(self.connection.changes() == 1)
+    }
+
     /// Create the one lifecycle-v0 adaptive schedule for a candidate.
     /// Repeated calls are idempotent and never move an existing schedule.
     pub fn ensure_path_sampling(
