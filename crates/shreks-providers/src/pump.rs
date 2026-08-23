@@ -10,12 +10,12 @@ use std::{fmt, time::Duration};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use shreks_core::{DiscoveredToken, ProviderId, VenueId};
-use tokio::{net::TcpStream, time::{sleep, timeout}};
+use tokio::{
+    net::TcpStream,
+    time::{sleep, timeout},
+};
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-    MaybeTlsStream,
-    WebSocketStream,
+    connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
 };
 
 use crate::{helius::helius_ws_url, ProviderError, ProviderErrorKind};
@@ -35,6 +35,19 @@ const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct PumpCreationSignal {
     pub signature: String,
     pub slot: u64,
+}
+
+/// Result of verifying a cheap Pump websocket launch signal against the
+/// confirmed transaction body.
+///
+/// `Pending` means the RPC endpoint has not exposed the confirmed transaction
+/// yet and the durable inbox must retry later. `Rejected` is reserved for a
+/// transaction that was actually fetched but is not a valid Pump creation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PumpCreationVerification {
+    Pending,
+    Verified(DiscoveredToken),
+    Rejected(String),
 }
 
 /// Runtime configuration for the standard Pump log stream.
@@ -233,9 +246,7 @@ impl PumpLogStream {
                     socket
                         .send(Message::Pong(payload))
                         .await
-                        .map_err(|_| {
-                            websocket_unavailable("Helius Pump websocket pong failed")
-                        })?;
+                        .map_err(|_| websocket_unavailable("Helius Pump websocket pong failed"))?;
                 }
                 Some(Ok(Message::Pong(_)))
                 | Some(Ok(Message::Binary(_)))
@@ -377,14 +388,18 @@ pub fn parse_pump_log_notification(
     }))
 }
 
-/// Verify a fetched Solana transaction contains an actual Pump Create/CreateV2
-/// instruction and normalize account #1 (the instruction's first account) as
-/// the newly created mint.
-pub fn parse_pump_creation_transaction(
+/// Classify a fetched Solana transaction for a durable Pump launch signal.
+///
+/// A JSON-RPC `result: null` is not evidence that the launch signal was bad;
+/// confirmed transaction availability can lag the log notification, so it is
+/// explicitly returned as `Pending`. A non-null transaction that fails onchain
+/// or contains no verified Pump Create/CreateV2 instruction is terminally
+/// rejected. Malformed/provider-level responses remain `ProviderError`s.
+pub fn classify_pump_creation_transaction(
     body: &str,
     signature: &str,
     discovered_at_unix_ms: i64,
-) -> Result<DiscoveredToken, ProviderError> {
+) -> Result<PumpCreationVerification, ProviderError> {
     let value: Value = serde_json::from_str(body).map_err(|error| {
         invalid_response(format!(
             "invalid Pump transaction JSON for {signature}: {error}"
@@ -397,38 +412,59 @@ pub fn parse_pump_creation_transaction(
         )));
     }
 
-    let result = value
-        .get("result")
-        .filter(|result| !result.is_null())
-        .ok_or_else(|| {
-            invalid_response(format!(
-                "Solana RPC returned no transaction for Pump signature {signature}"
-            ))
-        })?;
+    let result = value.get("result").ok_or_else(|| {
+        invalid_response(format!(
+            "Solana RPC response missing result for Pump signature {signature}"
+        ))
+    })?;
+
+    if result.is_null() {
+        return Ok(PumpCreationVerification::Pending);
+    }
 
     if result
         .pointer("/meta/err")
         .is_some_and(|error| !error.is_null())
     {
-        return Err(invalid_response(format!(
+        return Ok(PumpCreationVerification::Rejected(format!(
             "Pump signature {signature} failed onchain"
         )));
     }
 
     if let Some(mint) = find_creation_mint(result) {
-        return Ok(DiscoveredToken {
+        return Ok(PumpCreationVerification::Verified(DiscoveredToken {
             mint,
             pair_address: None,
             dex_id: Some("pumpfun".to_owned()),
             venue: Some(VenueId::PumpFunBondingCurve),
             discovered_at_unix_ms,
             source: ProviderId::Helius,
-        });
+        }));
     }
 
-    Err(invalid_response(format!(
+    Ok(PumpCreationVerification::Rejected(format!(
         "Pump signature {signature} contained no verified Create/CreateV2 instruction"
     )))
+}
+
+/// Verify a fetched Solana transaction contains an actual Pump Create/CreateV2
+/// instruction and normalize account #1 (the instruction's first account) as
+/// the newly created mint.
+///
+/// This compatibility API keeps the pre-classification behavior for existing
+/// callers. New durable-inbox code should use `classify_pump_creation_transaction`.
+pub fn parse_pump_creation_transaction(
+    body: &str,
+    signature: &str,
+    discovered_at_unix_ms: i64,
+) -> Result<DiscoveredToken, ProviderError> {
+    match classify_pump_creation_transaction(body, signature, discovered_at_unix_ms)? {
+        PumpCreationVerification::Pending => Err(invalid_response(format!(
+            "Solana RPC returned no transaction for Pump signature {signature}"
+        ))),
+        PumpCreationVerification::Verified(candidate) => Ok(candidate),
+        PumpCreationVerification::Rejected(reason) => Err(invalid_response(reason)),
+    }
 }
 
 fn find_creation_mint(result: &Value) -> Option<String> {
