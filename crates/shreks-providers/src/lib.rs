@@ -1,5 +1,6 @@
 //! External data-provider boundaries for Shreks.
 
+pub mod dexscreener;
 pub mod http;
 
 use std::{error::Error, fmt};
