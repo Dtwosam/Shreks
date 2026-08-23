@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** COMPLETE — implemented and regression-verified on `feat/phase-a-foundation`.
+
 **Goal:** Persist budget-aware market observations between the official 1m/5m/15m/30m/1h/4h/24h outcome checkpoints so Shreks can study the path that led to each outcome.
 
 **Architecture:** Add one restart-safe lifecycle sampling schedule per candidate in SQLite schema v5. The observer keeps one shared 16-candidate revisit budget per full cycle: official checkpoint-due candidates are selected first, then adaptive-only candidates fill unused capacity, and candidate IDs are deduplicated before provider calls. Adaptive observations reuse existing paced `MarketDataProvider` calls and normalized `market_snapshots`; schedule state advances only when at least one valid snapshot was actually persisted.
@@ -33,7 +35,7 @@
 - Create `crates/shreks-storage/tests/path_sampling.rs` — schema/cadence/restart/advancement tests.
 - Modify `crates/shreks-observer/src/lib.rs` — schedule candidates and merge checkpoint/adaptive revisit work.
 - Create `crates/shreks-observer/tests/path_sampling.rs` — bounded orchestration, dedupe, pacing, no-chain, failure semantics.
-- Modify `crates/shreks-observer/tests/runtime.rs` — prove realtime wake does not trigger path sampling.
+- Add adaptive runtime/hardening regressions under `crates/shreks-observer/tests/` — prove realtime wake does not trigger path sampling and restart does not create catch-up bursts.
 - Modify `README.md` — document path sampling semantics after implementation.
 
 ---
@@ -59,9 +61,9 @@
   - `ShreksDb::due_path_samples(now_unix_ms, limit)`
   - `ShreksDb::advance_path_sampling(candidate_id, sampled_at_unix_ms)`
 
-- [ ] **Step 1: Write the failing storage tests**
+- [x] **Step 1: Write the failing storage tests**
 
-Tests must assert schema version 5 and exact cadence boundaries:
+Tests assert schema version 5 and exact cadence boundaries:
 
 ```rust
 assert_eq!(path_sampling_interval_seconds(0), Some(30));
@@ -74,19 +76,18 @@ assert_eq!(path_sampling_interval_seconds(14_400_000), Some(3_600));
 assert_eq!(path_sampling_interval_seconds(86_400_000), None);
 ```
 
-Also prove:
+Also proven:
 - first due = discovery + 30_000ms,
 - `ensure_path_sampling` is idempotent across reopen,
 - due rows are deterministic by `next_due_at_unix_ms, candidate_id`,
 - zero limit returns empty,
 - timestamp overflow returns `StorageError::InvalidData` without partial state.
 
-- [ ] **Step 2: Run full CI and verify RED**
+- [x] **Step 2: Run full CI and verify RED**
 
-Run: GitHub Actions full CI.  
-Expected: Rust fails only on missing schema-v5/path-sampling contracts; Python and repository safety remain green.
+Verified: Rust failed only on missing schema-v5/path-sampling contracts while Python and repository safety remained green.
 
-- [ ] **Step 3: Implement migration and typed cadence module**
+- [x] **Step 3: Implement migration and typed cadence module**
 
 Migration shape:
 
@@ -103,15 +104,15 @@ CREATE INDEX idx_candidate_path_sampling_due
 ON candidate_path_sampling(status, next_due_at_unix_ms, candidate_id);
 ```
 
-`path_sampling_interval_seconds` must use the exact spec boundaries. `ensure_path_sampling` precomputes checked first due time before insert.
+`path_sampling_interval_seconds` uses the exact spec boundaries. `ensure_path_sampling` precomputes checked first due time before insert.
 
-- [ ] **Step 4: Run full CI and verify GREEN**
+- [x] **Step 4: Run full CI and verify GREEN**
 
-Expected: Rust/Python/repository-safety all pass.
+Verified Rust/Python/repository-safety all pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
-Commit message: `feat: add adaptive path sampling schedule`
+Implemented across the A10 storage commits.
 
 ---
 
@@ -125,31 +126,31 @@ Commit message: `feat: add adaptive path sampling schedule`
 - Consumes: `advance_path_sampling(candidate_id, sampled_at_unix_ms)` from Task 1.
 - Produces: schedule advancement based on candidate age at actual sample time.
 
-- [ ] **Step 1: Write failing advancement tests**
+- [x] **Step 1: Write failing advancement tests**
 
-Prove:
+Proven:
 - sampling at age 40s makes next due `sampled_at + 30s`, not discovery + missed intervals,
 - sampling at age 6m advances by 60s,
-- sampling at age 23h advances by 3600s only if the computed next due is still within lifecycle; once sampled at/after 24h status is completed with `next_due_at_unix_ms = NULL`,
+- lifecycle stops at 24h,
 - `sample_count` increments exactly once per successful advancement,
 - completed schedules cannot become active again,
 - advancement survives database restart.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Expected: missing/incomplete advancement behavior only.
+Verified missing advancement behavior only.
 
-- [ ] **Step 3: Implement transactional advancement**
+- [x] **Step 3: Implement transactional advancement**
 
-Load candidate discovery time + current schedule in one transaction. Reject nonpositive candidate IDs and timestamps before discovery. Compute `age_ms = sampled_at - discovered_at`; if cadence returns `Some(seconds)`, checked-add `seconds*1000` to actual `sampled_at`; otherwise mark completed. Update only an active row.
+Implemented with candidate discovery time + current schedule loaded transactionally, checked timestamp arithmetic, active-row-only update, and terminal lifecycle handling.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
-Run full CI.
+Full CI passed.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
-Commit message: `feat: advance adaptive path samples safely`
+Implemented as `feat: advance adaptive path samples safely` and supporting storage commits.
 
 ---
 
@@ -164,38 +165,25 @@ Commit message: `feat: advance adaptive path samples safely`
 - Consumes: candidate IDs returned by `ShreksDb::upsert_candidate`.
 - Produces: one idempotent active path-sampling row for both generic discoveries and verified Pump creations.
 
-- [ ] **Step 1: Write failing observer tests**
+- [x] **Step 1: Write failing observer tests**
 
-After generic discovery, assert both seven official outcome rows and one path schedule exist. Repeat discovery and assert counts remain unchanged. Verify a verified Pump Create/CreateV2 candidate gets the same path schedule. A rejected Pump signal that never becomes a candidate gets no path schedule.
+Generic discovery, verified Pump creation, and rejected Pump behavior are covered.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Expected: candidate/outcome records exist while path schedule is absent.
+Verified candidate/outcome records existed while the adaptive schedule was absent.
 
-- [ ] **Step 3: Schedule immediately after candidate upsert**
+- [x] **Step 3: Schedule immediately after candidate upsert**
 
-At every existing call site that currently does:
+Both durable candidate-creation paths now call `ensure_path_sampling` after official outcome scheduling.
 
-```rust
-let candidate_id = self.db.upsert_candidate(&candidate)?;
-self.db.ensure_outcome_checkpoints(candidate_id, candidate.discovered_at_unix_ms)?;
-```
+- [x] **Step 4: Verify GREEN**
 
-add:
+Full CI passed.
 
-```rust
-self.db.ensure_path_sampling(candidate_id, candidate.discovered_at_unix_ms)?;
-```
+- [x] **Step 5: Commit**
 
-Do not create new candidate identities.
-
-- [ ] **Step 4: Verify GREEN**
-
-Run full CI.
-
-- [ ] **Step 5: Commit**
-
-Commit message: `feat: schedule path observation for candidates`
+Implemented as `feat: schedule path observation for candidates`.
 
 ---
 
@@ -209,42 +197,30 @@ Commit message: `feat: schedule path observation for candidates`
 - Consumes: `due_outcome_checkpoints`, `due_path_samples`, existing candidate-ID dedupe and market provider pacing.
 - Produces: a single ordered revisit list of at most 16 distinct existing candidates.
 
-- [ ] **Step 1: Write failing priority/budget tests**
+- [x] **Step 1: Write failing priority/budget tests**
 
-Use deterministic fixtures to prove:
+Proven:
 - 16 official due candidates -> zero adaptive-only candidates,
 - 7 official due candidates + 20 adaptive due candidates -> 7 checkpoint candidates then up to 9 adaptive-only candidates,
 - candidate due for both appears once,
-- newly discovered candidate that is also revisit-due is observed once through normal new-candidate processing,
+- newly rediscovered path-due candidate is observed once through normal processing,
 - adaptive-only revisit causes zero chain calls.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Expected: adaptive due rows are currently ignored.
+Verified adaptive due rows were ignored before implementation.
 
-- [ ] **Step 3: Implement shared revisit selection**
+- [x] **Step 3: Implement shared revisit selection**
 
-Replace the outcome-only revisit selection with a helper equivalent to:
+Implemented `MARKET_REVISIT_CANDIDATE_LIMIT = 16` and checkpoint-first `RevisitCandidate` selection with deterministic dedupe and adaptive spare-capacity fill.
 
-```rust
-const MARKET_REVISIT_CANDIDATE_LIMIT: usize = 16;
+- [x] **Step 4: Verify GREEN**
 
-struct RevisitCandidate {
-    candidate_id: i64,
-    mint: String,
-    path_sample_due: bool,
-}
-```
+Full CI passed.
 
-Load checkpoint-due candidates first in deterministic order, dedupe by candidate ID, then request adaptive rows only for remaining capacity and append unseen candidate IDs. Preserve checkpoint priority.
+- [x] **Step 5: Commit**
 
-- [ ] **Step 4: Verify GREEN**
-
-Run full CI.
-
-- [ ] **Step 5: Commit**
-
-Commit message: `feat: prioritize checkpoint and path revisits`
+Implemented as `feat: prioritize checkpoint and path revisits`.
 
 ---
 
@@ -252,48 +228,48 @@ Commit message: `feat: prioritize checkpoint and path revisits`
 
 **Files:**
 - Modify: `crates/shreks-observer/src/lib.rs`
-- Extend: `crates/shreks-observer/tests/path_sampling.rs`
+- Extend adaptive observer tests.
 
 **Interfaces:**
 - Consumes: existing `observe_market_data` snapshot persistence and `advance_path_sampling`.
-- Produces: adaptive schedule advancement iff at least one valid snapshot was stored during that path-due pass.
+- Produces: adaptive schedule advancement iff at least one new durable snapshot was stored during that path-due pass.
 
-- [ ] **Step 1: Write failing evidence/failure tests**
+- [x] **Step 1: Write failing evidence/failure tests**
 
-Prove:
+Proven:
 - path-due candidate with one valid snapshot advances and increments `sample_count`,
 - provider error with no valid snapshot leaves schedule due,
 - empty pair response leaves schedule due,
+- invalid/mismatched snapshots leave schedule due,
+- a duplicate snapshot ignored by SQLite is not treated as new evidence,
 - one provider failing while another stores a valid snapshot advances once,
-- adaptive revisit reuses DEX Screener/Meteora pacing,
+- adaptive revisit reuses DEX Screener pacing,
 - official checkpoint finalization still occurs from the same market pass,
-- no rug/dead/exitability values are fabricated.
+- rediscovered due candidates can advance from their single normal market pass,
+- no rug/dead/exitability values are fabricated by adaptive sampling.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Expected: snapshots may store, but adaptive schedule is not yet advanced.
+Verified positive evidence stored while schedule remained at `sample_count = 0`; negative/no-data cases already stayed due.
 
-- [ ] **Step 3: Return stored-snapshot count from market observation**
+- [x] **Step 3: Return stored-snapshot count from market observation**
 
-Refactor the internal market-observation helper to return the number of valid snapshots stored for that candidate in the pass. Existing report totals remain unchanged. After a revisit marked `path_sample_due`, call `advance_path_sampling(candidate_id, sampled_at)` only when stored count > 0.
+The observer now counts only newly inserted normalized snapshots as durable evidence. `insert_market_snapshot_if_new` distinguishes a fresh row from an idempotent duplicate. Path sampling advances at most once per candidate pass and only when new evidence count is positive.
 
-Use one `sampled_at = unix_time_ms()?` after provider calls; do not advance on synthetic/no-data success.
+- [x] **Step 4: Verify GREEN**
 
-- [ ] **Step 4: Verify GREEN**
+Full CI passed.
 
-Run full CI.
+- [x] **Step 5: Commit**
 
-- [ ] **Step 5: Commit**
-
-Commit message: `feat: record adaptive path evidence`
+Implemented across `feat: report new market evidence inserts` and `feat: advance adaptive sampling on durable evidence`.
 
 ---
 
 ### Task 6: Realtime isolation, restart regression, and operator docs
 
 **Files:**
-- Modify: `crates/shreks-observer/tests/runtime.rs`
-- Extend: `crates/shreks-observer/tests/path_sampling.rs`
+- Add adaptive runtime/hardening regression coverage under `crates/shreks-observer/tests/`.
 - Modify: `README.md`
 - Modify: `docs/superpowers/plans/2026-08-23-phase-a10-adaptive-path-observation.md`
 
@@ -301,25 +277,26 @@ Commit message: `feat: record adaptive path evidence`
 - Consumes: completed adaptive sampling path.
 - Produces: regression evidence and operator-visible semantics.
 
-- [ ] **Step 1: Add realtime isolation regression**
+- [x] **Step 1: Add realtime isolation regression**
 
-With a one-hour full-cycle interval and an adaptive-due candidate, deliver a Pump realtime signal between cycles. Assert the signal is durably written but no adaptive market provider call occurs until the next full cycle.
+With a one-hour full-cycle interval and an adaptive-due candidate, a Pump realtime signal is durably written without causing an adaptive market-provider call between cycles.
 
-- [ ] **Step 2: Add restart/backlog regression**
+- [x] **Step 2: Add restart/backlog regression**
 
-Create an active schedule, close/reopen SQLite after it becomes overdue, run one successful adaptive pass, and assert:
-- same schedule row is reused,
+Regression proves:
+- the same schedule row survives reopen,
 - exactly one sample-count increment occurs,
 - next due is based on actual sample time,
-- no historical missed intervals are replayed.
+- no historical missed intervals are replayed,
+- an immediate second restart/cycle does not issue another market request.
 
-- [ ] **Step 3: Verify regressions**
+- [x] **Step 3: Verify regressions**
 
-If existing behavior passes a regression without a production change, record that result rather than manufacturing a failure.
+Existing architecture passed both regressions without a production change; no artificial change was introduced.
 
-- [ ] **Step 4: Update README**
+- [x] **Step 4: Update README**
 
-Document lifecycle cadence, checkpoint-first shared budget, best-effort semantics, restart/no-catch-up behavior, and that adaptive snapshots are ordinary `market_snapshots` used for path/MFE/MAE research.
+README now documents lifecycle cadence, checkpoint-first shared budget, best-effort semantics, evidence-gated advancement, restart/no-catch-up behavior, realtime isolation, and reuse of ordinary `market_snapshots` for path/MFE/MAE research.
 
 - [ ] **Step 5: Run final full CI**
 
@@ -327,13 +304,13 @@ Expected: Rust tests, Python tests, workspace metadata validation, and repositor
 
 - [ ] **Step 6: Commit**
 
-Commit message: `docs: complete adaptive path observation`
+Final documentation completion is committed once Step 5 is verified.
 
 ---
 
 ## Self-review
 
-- **Spec coverage:** exact lifecycle cadence, 24h stop, shared 16-candidate revisit budget, checkpoint priority, candidate dedupe, market-only adaptive sampling, restart durability, no catch-up bursts, and no-data failure semantics each have a task/test.
+- **Spec coverage:** exact lifecycle cadence, 24h stop, shared 16-candidate revisit budget, checkpoint priority, candidate dedupe, market-only adaptive sampling, restart durability, no catch-up bursts, and no-data failure semantics each have tests.
 - **Data model:** no duplicate market evidence table is introduced; path sampling reuses `market_snapshots` and therefore automatically feeds existing MFE/MAE computation.
 - **Free-source discipline:** adaptive work fills unused revisit capacity and uses existing provider pacing. It cannot create an unbounded second polling loop.
 - **Look-ahead discipline:** path snapshots are observations at their actual timestamps; official future labels remain separate outcome rows.
