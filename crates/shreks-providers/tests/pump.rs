@@ -3,10 +3,10 @@ use std::time::Duration;
 use shreks_core::{ProviderId, VenueId};
 use shreks_providers::{
     pump::{
-        parse_pump_creation_transaction, parse_pump_log_notification,
-        parse_pump_subscription_ack, pump_logs_subscribe_request, pump_reconnect_delay,
-        PUMP_AMM_PROGRAM_ID, PUMP_CREATE_DISCRIMINATOR, PUMP_CREATE_V2_DISCRIMINATOR,
-        PUMP_PROGRAM_ID,
+        classify_pump_creation_transaction, parse_pump_creation_transaction,
+        parse_pump_log_notification, parse_pump_subscription_ack, pump_logs_subscribe_request,
+        pump_reconnect_delay, PumpCreationVerification, PUMP_AMM_PROGRAM_ID,
+        PUMP_CREATE_DISCRIMINATOR, PUMP_CREATE_V2_DISCRIMINATOR, PUMP_PROGRAM_ID,
     },
     ProviderErrorKind,
 };
@@ -118,10 +118,44 @@ fn create_v2_log_notification_emits_only_successful_creation_signals() {
 }
 
 #[test]
+fn transaction_not_available_yet_is_pending_instead_of_rejected() {
+    let body = r#"{"jsonrpc":"2.0","result":null,"id":"shreks-pump-transaction"}"#;
+    let outcome = classify_pump_creation_transaction(&body, "launch-signature", 123).unwrap();
+    assert_eq!(outcome, PumpCreationVerification::Pending);
+}
+
+#[test]
+fn fetched_non_creation_transaction_is_terminally_rejected() {
+    let spoofed = transaction_body(PUMP_AMM_PROGRAM_ID, PUMP_CREATE_V2_DISCRIMINATOR);
+    let outcome = classify_pump_creation_transaction(&spoofed, "spoof", 123).unwrap();
+
+    match outcome {
+        PumpCreationVerification::Rejected(reason) => {
+            assert!(reason.contains("no verified Create/CreateV2"));
+        }
+        other => panic!("expected rejected outcome, got {other:?}"),
+    }
+}
+
+#[test]
+fn malformed_transaction_response_is_provider_error_not_token_rejection() {
+    let error = classify_pump_creation_transaction("not-json", "launch-signature", 123)
+        .unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+}
+
+#[test]
 fn create_v2_transaction_extracts_first_pump_account_as_new_mint() {
     let body = transaction_body(PUMP_PROGRAM_ID, PUMP_CREATE_V2_DISCRIMINATOR);
-    let candidate =
-        parse_pump_creation_transaction(&body, "launch-signature", 1_770_000_000_123).unwrap();
+    let outcome = classify_pump_creation_transaction(
+        &body,
+        "launch-signature",
+        1_770_000_000_123,
+    )
+    .unwrap();
+    let PumpCreationVerification::Verified(candidate) = outcome else {
+        panic!("expected verified Pump creation");
+    };
 
     assert_eq!(candidate.mint, MINT);
     assert_eq!(candidate.source, ProviderId::Helius);
@@ -129,6 +163,10 @@ fn create_v2_transaction_extracts_first_pump_account_as_new_mint() {
     assert_eq!(candidate.dex_id.as_deref(), Some("pumpfun"));
     assert_eq!(candidate.pair_address, None);
     assert_eq!(candidate.discovered_at_unix_ms, 1_770_000_000_123);
+
+    let legacy_api =
+        parse_pump_creation_transaction(&body, "launch-signature", 1_770_000_000_123).unwrap();
+    assert_eq!(legacy_api.mint, MINT);
 }
 
 #[test]
