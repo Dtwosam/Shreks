@@ -65,11 +65,11 @@ class FirstPullbackFinding: ...
 class FirstPullbackAssessment: ...
 ```
 
-- [ ] **RED:** Prove exact setup/confirmation constants and exact reason-code order; strict timestamp chronology; positive finite prices; peak >= start and peak > trough; optional non-negative finite liquidity; trough buy fraction in `[0,1]`; sample count integer >=3; policy finiteness/range/order validation; frozen dataclasses; assessment derived-metric validation; and absence of execution/future-outcome fields.
-- [ ] **Verify RED:** Full PR CI must fail in Python only because B5 model symbols do not exist.
-- [ ] **GREEN:** Add only the B5 model contract and small reusable validation helpers if required. Preserve B3/B4b semantics.
-- [ ] **Verify GREEN:** Full repository CI.
-- [ ] **Commit:** coherent model GREEN.
+- [x] **RED:** Prove exact setup/confirmation constants and exact reason-code order; strict timestamp chronology; positive finite prices; peak >= start and peak > trough; optional non-negative finite liquidity; trough buy fraction in `[0,1]`; sample count integer >=3; policy finiteness/range/order validation; frozen dataclasses; assessment derived-metric validation; and absence of execution/future-outcome fields.
+- [x] **Verify RED:** Full PR CI failed in Python only because B5 model symbols did not exist.
+- [x] **GREEN:** Added only the B5 model contract and reusable validation required by that contract. B3/B4b semantics preserved.
+- [x] **Verify GREEN:** Full repository CI passed.
+- [x] **Commit:** coherent model GREEN.
 
 ---
 
@@ -90,33 +90,11 @@ def assess_first_pullback(
     ...
 ```
 
-- [ ] **RED:** Build explicit fixtures and prove:
-  - canonical structure + 9 confirmations => READY / 100;
-  - no context => WATCH with structural metrics `None`;
-  - safety REJECT/INCOMPLETE => BLOCKED;
-  - future trough => BLOCKED;
-  - trough later than current market source => BLOCKED and no future-derived recovery metrics;
-  - insufficient sample count => WATCH;
-  - min/max trough-age equality passes; too recent => WATCH; expired => BLOCKED;
-  - weak impulse => BLOCKED;
-  - shallow pullback => WATCH;
-  - max pullback-depth equality passes; deeper => BLOCKED;
-  - current price below trough => BLOCKED;
-  - excessive current-vs-peak breakout => BLOCKED;
-  - stale source, low liquidity, excessive exit impact, excessive 1m move => BLOCKED;
-  - missing current price/liquidity/exit impact => WATCH;
-  - missing peak/trough liquidity or zero peak liquidity => retention unknown, never infinity;
-  - missing trough buy fraction => absorption unknown;
-  - each of the 9 confirmations independently below threshold => WATCH, 8/9;
-  - each missing confirmation => corresponding UNKNOWN reason;
-  - equality at every confirmation threshold passes;
-  - seller-absorption improvement is current buy fraction minus trough buy fraction;
-  - blocked candidates retain computable confirmation counts;
-  - deterministic multi-finding order and repeatability.
-- [ ] **Verify RED:** Full PR CI must fail only on missing `first_pullback` evaluator.
-- [ ] **GREEN:** Implement exact staged evaluation from the spec with no wall clock/storage/provider dependency and no short-circuiting of computable research evidence.
-- [ ] **Verify GREEN:** Full repository CI, including unchanged B3/B4b tests.
-- [ ] **Commit:** coherent evaluator GREEN.
+- [x] **RED:** Built explicit fixtures covering READY, missing context, safety veto, decision-time contradictions, sample count, trough-age boundaries, impulse strength, pullback depth, broken trough, anti-chase gates, missing evidence, all nine confirmation failures/unknowns, threshold equality, seller-absorption calculation, blocked-candidate research evidence, finding order, and repeatability.
+- [x] **Verify RED:** Full PR CI failed only on missing `first_pullback` evaluator.
+- [x] **GREEN:** Implemented exact staged evaluation with no wall clock/storage/provider dependency and no short-circuiting of computable research evidence.
+- [x] **Verify GREEN:** Full repository CI passed, including unchanged B3/B4b tests.
+- [x] **Commit:** coherent evaluator GREEN.
 
 ---
 
@@ -128,13 +106,23 @@ def assess_first_pullback(
 - Modify: `README.md`
 - Modify: this plan with verification evidence
 
-- [ ] **RED:** Public API test imports all stable B5 symbols from `shreks_brain.setups`, constructs a READY assessment, verifies B3/B4b entry points remain importable, and proves the assessment has no execution authority.
-- [ ] **Verify RED:** Full CI fails only because B5 package exports are absent.
-- [ ] **GREEN:** Export B5 constants/types/evaluator without removing or renaming B3/B4b exports.
-- [ ] **Verify package GREEN:** Full repository CI.
-- [ ] **Document:** README explains explicit chronology, broken-trough invalidation, 9-confirmation contract, no production defaults, evidence-score semantics, and no execution.
-- [ ] **Verification record:** Record task RED/GREEN evidence and run a fresh full CI on a documentation head.
+- [x] **RED:** Public API test imports all stable B5 symbols from `shreks_brain.setups`, constructs a READY assessment, verifies B3/B4b entry points remain importable, and proves the assessment has no execution authority.
+- [x] **Verify RED:** Full CI failed only because B5 package exports were absent.
+- [x] **GREEN:** Exported B5 constants/types/evaluator without removing or renaming B3/B4b exports.
+- [x] **Verify package GREEN:** Full repository CI passed.
+- [x] **Document:** README explains explicit chronology, broken-trough invalidation, 9-confirmation contract, no production defaults, evidence-score semantics, and no execution.
+- [ ] **Verification record:** Run fresh full CI on the documentation head and record it below.
 - [ ] **Final seal:** Make metadata-only completion commit, run fresh exact-head CI, update stacked draft PR against B4b with immutable final head/run, and keep it unmerged.
+
+## Verification Evidence
+
+- Task 1 RED: `53dffdc85f6e4f6cd6dc1e15f2272f7d00a3ba1c` / CI `32665629841` — Python failed only on missing B5 model symbols; repository safety passed.
+- Task 1 GREEN: `5a7abfb76168acab8cf86913a2a667a623c08b07` / CI `32665715647` — Rust, Python, workspace metadata, and repository safety all GREEN.
+- Task 2 RED: `6dd4e32a1c22bd4ad57d8e7916d015ff5e2cb923` / CI `32665844442` — Rust and repository safety GREEN; Python failed only on missing `shreks_brain.setups.first_pullback`.
+- Task 2 GREEN: `2b34ab3ae6720d4509c93a1f68896eec3a7574c0` / CI `32666274853` — full GREEN.
+- Task 3 RED: `eb561f497b93d44b2ba23c78926c573a6b8f1b77` / CI `32666353695` — Python failed only because B5 package exports were absent; repository safety GREEN.
+- Task 3 package GREEN: `69b13218d6f9252fe85c5d848151346f7fc8783d` / CI `32666385342` — full GREEN.
+- README documentation commit: `f3b57fe9d4616b983e16bedc23b06107c1532423`.
 
 ## Self-Review
 
