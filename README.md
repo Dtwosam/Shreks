@@ -202,7 +202,7 @@ Phase B6 repairs an ordering gap in the repository by adding the explainable mar
 
 The regime engine lives under `shreks_brain.regime` and leaves the shared feature schema exactly at `b2-v1`. It produces one timestamped, versioned global market assessment with the labels `HOT`, `NORMAL`, `WEAK`, or `DEAD`; it does not widen individual token features or call setup evaluators.
 
-The base regime is intentionally transparent rather than a weighted black-box score. It uses four aggregate market dimensions: candidate opportunity rate, executable-candidate breadth, median liquidity, and median five-minute volume. A candidate rate or executable fraction at the configured DEAD ceiling makes the base regime `DEAD`; otherwise any dimension below its WEAK minimum makes the base regime `WEAK`; all four at or above HOT minima make it `HOT`; a healthy mixed market is `NORMAL`.
+The base regime is intentionally transparent rather than a weighted black-box score. It uses four aggregate market dimensions: candidate opportunity rate, executable-candidate breadth, median liquidity, and median five-minute volume. A candidate rate or executable fraction at the configured DEAD ceiling makes the base regime `DEAD`; otherwise any dimension below its WEAK minimum makes it `WEAK`; all four at or above HOT minima make it `HOT`; a healthy mixed market is `NORMAL`.
 
 Critical evidence quality fails closed. Future-dated or stale market source data, an undersized/too-short market window, no candidates, or missing critical liquidity/volume medians classify the base regime as `DEAD` with stable reason codes. This means Shreks pauses entry eligibility rather than guessing that incomplete global evidence is healthy.
 
@@ -243,6 +243,22 @@ Each setup has its own optional HOT/NORMAL/WEAK threshold in `DecisionPolicy`. T
 B8 ships **no production decision policy or score thresholds**. Those values remain research hypotheses for calibration on unseen point-in-time and later realistic paper results.
 
 `ENTER` is not an order. It means only that the candidate may be forwarded to the independent Risk Engine. B8 adds no requested notional, capital percentage, position size, slippage allowance, idempotency key, `TradeIntent`, paper fill, wallet/signing, transaction construction/submission, or live-money path.
+
+## Fail-closed risk engine and stable TradeIntent
+
+Phase B9 adds the source build-order Risk Engine under `shreks_brain.risk`. It accepts only a B8 `ENTER` decision plus an immutable point-in-time `RiskContext` and explicit versioned `RiskPolicy`; it performs no provider, storage, balance, or wall-clock reads itself.
+
+The risk engine independently rechecks upstream decision-policy/schema compatibility, safety `PASS`, setup `READY`, non-DEAD regime, score availability, and timestamp alignment before evaluating portfolio risk. It then enforces runtime mode, global kill switch, data/execution health, trading capital, simultaneous-position count, aggregate open risk, daily realized loss, rolling drawdown, consecutive-loss cooldown, minimum liquidity, expected price impact, price-impact quote size, market-data freshness, and duplicate-active-intent protection. Any unknown critical guardrail fails closed rather than becoming zero or healthy by assumption.
+
+Entry size is deterministic and independent of strategy score: it is the minimum of target position notional, maximum per-position notional, configured capital-per-position fraction, and remaining aggregate-risk capacity. Until Phase C has authoritative stop/position/exit state, the full requested entry notional counts as incremental aggregate risk; B9 does not pretend an unimplemented stop reduces capital at risk.
+
+Price-impact evidence is explicitly size-aware. The context records the notional covered by the impact estimate, and that notional must be at least the final risk-sized entry. An impact quote for a smaller trade cannot authorize a larger `TradeIntent`, even if its percentage looks attractive.
+
+Approved intents use deterministic SHA-256 idempotency over the entry identity. Re-evaluating the same entry idea under a changed risk-policy version does not create a second active idea, and an already-active key is rejected before intent construction.
+
+`TradeIntent` is now the stable boundary that Phase C paper execution and future live execution are designed to share. It carries mint, BUY/SELL side vocabulary, requested notional, slippage ceiling, strategy/setup version, score/decision/risk policy versions, reason, idempotency key, execution mode, and point-in-time timestamp. It deliberately carries no route, quote, fill, transaction, signature, wallet secret, or realized outcome.
+
+B9 may produce intents only for `paper` and `shadow`. `observe` and `halted` cannot produce intents, and `live` is hard-disabled regardless of policy. B9 ships **no production risk-policy defaults** and touches no money; it creates only a validated domain intent for the next paper-trading phase.
 
 ## Local setup
 
