@@ -298,13 +298,13 @@ Existing architecture passed both regressions without a production change; no ar
 
 README now documents lifecycle cadence, checkpoint-first shared budget, best-effort semantics, evidence-gated advancement, restart/no-catch-up behavior, realtime isolation, and reuse of ordinary `market_snapshots` for path/MFE/MAE research.
 
-- [ ] **Step 5: Run final full CI**
+- [x] **Step 5: Run final full CI**
 
-Expected: Rust tests, Python tests, workspace metadata validation, and repository safety all pass.
+GitHub Actions run `32654568545` passed Rust tests, Python tests, workspace metadata validation, and repository safety.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
-Final documentation completion is committed once Step 5 is verified.
+Final documentation completion is committed after the verified full-CI gate.
 
 ---
 
