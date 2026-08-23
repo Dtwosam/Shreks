@@ -1,8 +1,12 @@
+use std::time::Duration;
+
 use shreks_core::{ProviderId, VenueId};
 use shreks_providers::{
     pump::{
-        parse_pump_creation_transaction, parse_pump_log_notification, PUMP_AMM_PROGRAM_ID,
-        PUMP_CREATE_DISCRIMINATOR, PUMP_CREATE_V2_DISCRIMINATOR, PUMP_PROGRAM_ID,
+        parse_pump_creation_transaction, parse_pump_log_notification,
+        parse_pump_subscription_ack, pump_logs_subscribe_request, pump_reconnect_delay,
+        PUMP_AMM_PROGRAM_ID, PUMP_CREATE_DISCRIMINATOR, PUMP_CREATE_V2_DISCRIMINATOR,
+        PUMP_PROGRAM_ID,
     },
     ProviderErrorKind,
 };
@@ -45,6 +49,41 @@ fn official_pump_program_ids_are_stable() {
         PUMP_AMM_PROGRAM_ID,
         "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
     );
+}
+
+#[test]
+fn standard_logs_subscription_mentions_only_pump_at_confirmed_commitment() {
+    let request = pump_logs_subscribe_request();
+
+    assert_eq!(request["jsonrpc"], "2.0");
+    assert_eq!(request["id"], 1);
+    assert_eq!(request["method"], "logsSubscribe");
+    assert_eq!(request["params"][0]["mentions"][0], PUMP_PROGRAM_ID);
+    assert_eq!(request["params"][0]["mentions"].as_array().unwrap().len(), 1);
+    assert_eq!(request["params"][1]["commitment"], "confirmed");
+}
+
+#[test]
+fn subscription_ack_is_parsed_without_confusing_notifications_for_acks() {
+    let ack = r#"{"jsonrpc":"2.0","result":24040,"id":1}"#;
+    assert_eq!(parse_pump_subscription_ack(ack).unwrap(), Some(24040));
+
+    let notification = r#"{"jsonrpc":"2.0","method":"logsNotification","params":{}}"#;
+    assert_eq!(parse_pump_subscription_ack(notification).unwrap(), None);
+
+    let rejected = r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params"},"id":1}"#;
+    let error = parse_pump_subscription_ack(rejected).unwrap_err();
+    assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
+}
+
+#[test]
+fn reconnect_backoff_is_exponential_but_capped() {
+    assert_eq!(pump_reconnect_delay(0), Duration::from_secs(1));
+    assert_eq!(pump_reconnect_delay(1), Duration::from_secs(2));
+    assert_eq!(pump_reconnect_delay(2), Duration::from_secs(4));
+    assert_eq!(pump_reconnect_delay(4), Duration::from_secs(16));
+    assert_eq!(pump_reconnect_delay(5), Duration::from_secs(30));
+    assert_eq!(pump_reconnect_delay(12), Duration::from_secs(30));
 }
 
 #[test]
