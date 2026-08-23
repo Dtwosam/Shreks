@@ -8,6 +8,7 @@ publish = false
 shreks-core = { path = "../shreks-core" }
 shreks-providers = { path = "../shreks-providers" }
 shreks-storage = { path = "../shreks-storage" }
+tokio = { version = "1", features = ["time"] }
 
 [dev-dependencies]
 async-trait = "0.1"
