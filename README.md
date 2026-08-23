@@ -4,7 +4,7 @@ Shreks is an autonomous Solana memecoin trading system under active development.
 
 The target system will watch the market, reject unsafe or untradeable tokens, identify explicit setups, size risk, execute entries and exits automatically, record outcomes, and learn from a growing point-in-time dataset.
 
-**Current phase:** Phase A — Foundation + Observation  
+**Current phase:** Phase B — UNDERSTAND  
 **Current live-money status:** Disabled
 
 ## Architecture
@@ -99,6 +99,29 @@ Hard/soft thresholds live in explicit `SafetyPolicy` configuration. Findings use
 
 B1 accepts no future outcome checkpoints, realized PnL, future returns, MFE, or MAE. A critical-data timestamp after the assessment time is treated as contradictory evidence rather than fresh data. B1 adds no wallet secrets, signer, swap execution, paper-fill engine, or live-trading path.
 
+## Deterministic feature engine
+
+Phase B2 adds a dependency-light, point-in-time feature engine under `shreks_brain.features`. It converts normalized market observations plus the same-timestamp B1 `SafetyAssessment` into a versioned `FeatureVector`.
+
+B2 is deliberately **not** a trade score. It exposes reproducible raw/derived evidence so later setup logic can be calibrated against Shreks' own post-cost outcome dataset instead of baking assumptions into one opaque formula.
+
+The first schema, `b2-v1`, includes:
+
+- market quality: token age, price, liquidity, 5-minute liquidity change, exit price impact;
+- participation: 5-minute/hourly volume, volume velocity, transaction counts;
+- flow: buy fractions, buy/sell ratios, buy-pressure acceleration;
+- momentum: 1m/5m/15m returns and short-vs-medium momentum acceleration;
+- structure: distance from local high and position inside the observed local range;
+- safety research flags copied from B1 soft findings.
+
+Named return horizons use versioned timing bands, so a feature called `return_1m_pct` cannot silently use a much newer or older observation. The feature vector also records current source age.
+
+Missing market evidence remains `None`; it is never converted to zero. Zero denominators also produce `None` rather than infinity or artificial extreme signals. Every vector carries a deterministic `missing_features` list so later strategies can require the evidence they actually need.
+
+B1 remains the hard safety gate. B2 computes feature vectors for `PASS`, `REJECT`, and `INCOMPLETE` candidates because rejected candidates are still valuable research data and reduce selection bias; later entry logic must independently require safety `PASS`.
+
+B2 accepts no future outcome checkpoint or realized trade-result fields and does not read SQLite or call providers directly. It adds no setup score, trade intent, paper fill, signer, swap submission, or live-trading path.
+
 ## Local setup
 
 ### Rust
@@ -137,7 +160,7 @@ Never commit:
 - real `.env` files,
 - production API secrets.
 
-The repository intentionally does not contain a live-wallet secret variable during Phase A.
+The repository intentionally does not contain a live-wallet secret variable during the current pre-live phases.
 
 ## Build discipline
 
@@ -149,4 +172,4 @@ OBSERVE -> UNDERSTAND -> PAPER TRADE -> EVALUATE -> LEARN -> PROVE -> LIVE TRADE
 
 Live execution is not an early demo milestone. Paper and live modes will share the same decision and risk path; only the execution adapter changes.
 
-See `docs/superpowers/specs/2026-08-23-shreks-master-design.md` for the approved architecture. Phase A1 and A2 implementation plans are under `docs/superpowers/plans/`.
+See `docs/superpowers/specs/2026-08-23-shreks-master-design.md` for the approved architecture. Design and implementation plans are under `docs/superpowers/`.
