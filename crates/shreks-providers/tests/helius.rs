@@ -1,7 +1,7 @@
 use shreks_core::ProviderId;
 use shreks_providers::{
     helius::{
-        get_transaction_request, helius_rpc_url, parse_mint_account_response,
+        get_transaction_request, helius_rpc_url, helius_ws_url, parse_mint_account_response,
     },
     ProviderErrorKind,
 };
@@ -11,6 +11,14 @@ fn builds_mainnet_rpc_url_without_mutating_key() {
     assert_eq!(
         helius_rpc_url("test-key"),
         "https://mainnet.helius-rpc.com/?api-key=test-key"
+    );
+}
+
+#[test]
+fn builds_standard_mainnet_websocket_url_without_mutating_key() {
+    assert_eq!(
+        helius_ws_url("test-key"),
+        "wss://mainnet.helius-rpc.com/?api-key=test-key"
     );
 }
 
