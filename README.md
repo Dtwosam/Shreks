@@ -196,6 +196,22 @@ Seller absorption is represented only by the auditable proxy `current 5m buy fra
 
 `READY` is **not** an order or trading instruction. B5 adds no `TradeIntent`, sizing, paper fill, wallet, signer, swap request, transaction construction/submission, or live-money path.
 
+## Explainable market regime
+
+Phase B6 repairs an ordering gap in the repository by adding the explainable market-regime layer required by the source-of-truth build sequence before deterministic scoring. The branch is called B6 only to preserve repository chronology; functionally this is the planned regime-engine capability.
+
+The regime engine lives under `shreks_brain.regime` and leaves the shared feature schema exactly at `b2-v1`. It produces one timestamped, versioned global market assessment with the labels `HOT`, `NORMAL`, `WEAK`, or `DEAD`; it does not widen individual token features or call setup evaluators.
+
+The base regime is intentionally transparent rather than a weighted black-box score. It uses four aggregate market dimensions: candidate opportunity rate, executable-candidate breadth, median liquidity, and median five-minute volume. A candidate rate or executable fraction at the configured DEAD ceiling makes the base regime `DEAD`; otherwise any dimension below its WEAK minimum makes the base regime `WEAK`; all four at or above HOT minima make it `HOT`; a healthy mixed market is `NORMAL`.
+
+Critical evidence quality fails closed. Future-dated or stale market source data, an undersized/too-short market window, no candidates, or missing critical liquidity/volume medians classify the base regime as `DEAD` with stable reason codes. This means Shreks pauses entry eligibility rather than guessing that incomplete global evidence is healthy.
+
+Optional recent strategy performance is deliberately asymmetric. Once there is a configured minimum sample of closed trades, poor **after-cost** expectancy may downgrade the market regime to `WEAK` or `DEAD`; strong recent performance can never upgrade a weaker base market into `HOT`. This prevents a recent winning streak from creating a self-reinforcing pro-risk label. Future-dated performance is also rejected fail-closed.
+
+Every numerical threshold belongs to an explicit, versioned `RegimePolicy`; B6 ships **no production default regime thresholds**. Those values remain research hypotheses to be calibrated on unseen point-in-time data and later paper results after realistic costs.
+
+A regime label is **not** a trade instruction, expected-return forecast, confidence score, or sizing command. B6 adds no wallet intelligence, deterministic trade score, `TradeDecision`, `TradeIntent`, position sizing, paper fill, signer, swap request, transaction submission, or live-money path.
+
 ## Local setup
 
 ### Rust
