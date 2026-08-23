@@ -5,7 +5,7 @@ use std::{collections::{BTreeMap, HashSet}, time::{SystemTime, UNIX_EPOCH}};
 use async_trait::async_trait;
 use serde::Deserialize;
 use shreks_core::{
-    DiscoveredToken, PairMarketData, ProviderId, TransactionWindow,
+    DiscoveredToken, PairMarketData, ProviderId, TransactionWindow, VenueId,
 };
 
 use crate::{
@@ -19,6 +19,16 @@ const LATEST_BOOSTS_URL: &str = "https://api.dexscreener.com/token-boosts/latest
 
 pub fn token_pairs_url(token_mint: &str) -> String {
     format!("{BASE_URL}/token-pairs/v1/solana/{token_mint}")
+}
+
+pub fn classify_dex_venue(dex_id: &str) -> VenueId {
+    match dex_id.to_ascii_lowercase().as_str() {
+        "pumpfun" | "pump.fun" => VenueId::PumpFunBondingCurve,
+        "pumpswap" | "pump-swap" => VenueId::PumpSwap,
+        // DEX Screener's generic Meteora label does not prove which Meteora
+        // pool family is involved. The direct Meteora adapter supplies that.
+        _ => VenueId::OtherSolana,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +105,7 @@ pub fn parse_discovery_json(
             mint,
             pair_address: None,
             dex_id: None,
+            venue: None,
             discovered_at_unix_ms,
             source: ProviderId::DexScreener,
         });
@@ -130,9 +141,11 @@ pub fn parse_token_pairs_json(
                 })
                 .collect();
             let volume = pair.volume.unwrap_or_default();
+            let venue = classify_dex_venue(&pair.dex_id);
 
             PairMarketData {
                 provider: ProviderId::DexScreener,
+                venue,
                 chain_id: pair.chain_id,
                 dex_id: pair.dex_id,
                 pair_address: pair.pair_address,
