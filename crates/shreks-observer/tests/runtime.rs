@@ -14,8 +14,8 @@ use rusqlite::Connection;
 use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, VenueId};
 use shreks_observer::Observer;
 use shreks_providers::{
-    pump::PumpCreationSignal, DiscoveryProvider, MarketDataProvider, ProviderError,
-    ProviderErrorKind,
+    pump::{PumpCreationSignal, PumpLifecycleSignal},
+    DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
 };
 use shreks_storage::{OutcomeCheckpointStatus, ShreksDb};
 use tokio::{
@@ -400,10 +400,10 @@ async fn pump_signal_wakes_sleep_for_durable_write_without_forcing_full_cycle() 
     let signal = async move {
         tokio::task::yield_now().await;
         pump_tx
-            .send(PumpCreationSignal {
+            .send(PumpLifecycleSignal::Creation(PumpCreationSignal {
                 signature: "wake-signature".to_owned(),
                 slot: 999,
-            })
+            }))
             .await
             .unwrap();
 
