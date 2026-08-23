@@ -4,7 +4,7 @@ Shreks is an autonomous Solana memecoin trading system under active development.
 
 The target system will watch the market, reject unsafe or untradeable tokens, identify explicit setups, size risk, execute entries and exits automatically, record outcomes, and learn from a growing point-in-time dataset.
 
-**Current phase:** Phase B — UNDERSTAND  
+**Current phase:** Phase C — PAPER TRADE  
 **Current live-money status:** Disabled
 
 ## Architecture
@@ -202,7 +202,7 @@ Phase B6 repairs an ordering gap in the repository by adding the explainable mar
 
 The regime engine lives under `shreks_brain.regime` and leaves the shared feature schema exactly at `b2-v1`. It produces one timestamped, versioned global market assessment with the labels `HOT`, `NORMAL`, `WEAK`, or `DEAD`; it does not widen individual token features or call setup evaluators.
 
-The base regime is intentionally transparent rather than a weighted black-box score. It uses four aggregate market dimensions: candidate opportunity rate, executable-candidate breadth, median liquidity, and median five-minute volume. A candidate rate or executable fraction at the configured DEAD ceiling makes the base regime `DEAD`; otherwise any dimension below its WEAK minimum makes it `WEAK`; all four at or above HOT minima make it `HOT`; a healthy mixed market is `NORMAL`.
+The base regime is intentionally transparent rather than a weighted black-box score. It uses four aggregate market dimensions: candidate opportunity rate, executable-candidate breadth, median liquidity, and median five-minute volume. A candidate rate or executable fraction at the configured DEAD ceiling makes the base regime `DEAD`; otherwise any dimension below its WEAK minimum makes the base regime `WEAK`; all four at or above HOT minima make it `HOT`; a healthy mixed market is `NORMAL`.
 
 Critical evidence quality fails closed. Future-dated or stale market source data, an undersized/too-short market window, no candidates, or missing critical liquidity/volume medians classify the base regime as `DEAD` with stable reason codes. This means Shreks pauses entry eligibility rather than guessing that incomplete global evidence is healthy.
 
@@ -259,6 +259,20 @@ Approved intents use deterministic SHA-256 idempotency over the entry identity. 
 `TradeIntent` is now the stable boundary that Phase C paper execution and future live execution are designed to share. It carries mint, BUY/SELL side vocabulary, requested notional, slippage ceiling, strategy/setup version, score/decision/risk policy versions, reason, idempotency key, execution mode, and point-in-time timestamp. It deliberately carries no route, quote, fill, transaction, signature, wallet secret, or realized outcome.
 
 B9 may produce intents only for `paper` and `shadow`. `observe` and `halted` cannot produce intents, and `live` is hard-disabled regardless of policy. B9 ships **no production risk-policy defaults** and touches no money; it creates only a validated domain intent for the next paper-trading phase.
+
+## Realistic paper execution
+
+Phase C1+C2 adds the first paper-trading execution boundary under `shreks_brain.paper`. It consumes the exact B9 `TradeIntent` interface and immutable caller-supplied execution evidence; the simulator performs no storage, provider, balance, wall-clock, or random-number reads itself.
+
+Paper execution is deterministic and point-in-time safe. An explicit latency delay defines when an intent first becomes executable, and a bounded quote window defines how long matching evidence remains acceptable. A quote observed after the evaluation timestamp is rejected as future evidence, quotes before the latency boundary are deferred while the window remains open, and quotes after the deadline fail rather than being silently backfilled.
+
+The simulator never extrapolates a quote beyond the size it actually covers. Filled notional is the minimum of requested notional, quoted notional, and evidenced available notional. That same rule applies to BUY and SELL, so future exit logic cannot assume a perfect liquidation when the market only evidences capacity for a partial exit. Partial fills are policy-controlled and must meet an explicit minimum fraction.
+
+Paper outcomes are `DEFERRED`, `FAILED`, `PARTIAL`, or `FILLED`. Route-unavailable evidence fails with no invented fill or cost. A supplied failed-after-submission state records no fill but still charges the configured network cost, preserving an expense that a toy simulator would otherwise hide.
+
+Slippage is side-aware: higher execution prices are adverse for BUYs and lower execution prices are adverse for SELLs. Slippage is represented by the execution price plus signed audit fields; it is not charged again as a separate fee. Explicit costs are only the configured swap fee and network fee. BUY cash flow is filled notional plus explicit costs leaving the account; SELL cash flow is proceeds less explicit costs entering the account.
+
+C1+C2 ships **no production paper-fill policy defaults**. The layer deliberately does not own positions, balances, weighted entry price, realized/unrealized PnL, exit rules, autonomous looping, persistence, wallet/signing, transaction construction/submission, or live execution. Those responsibilities begin with the later Phase C accounting and exit layers.
 
 ## Local setup
 
