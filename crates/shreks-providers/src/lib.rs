@@ -11,7 +11,8 @@ use std::{error::Error, fmt};
 
 use async_trait::async_trait;
 use shreks_core::{
-    DiscoveredToken, PairMarketData, ProviderId, QuoteRequest, QuoteSnapshot, TokenMintState,
+    DiscoveredToken, PairMarketData, ProviderHealthState, ProviderId, QuoteRequest, QuoteSnapshot,
+    TokenMintState,
 };
 
 /// Stable error categories used by every provider adapter.
@@ -57,6 +58,23 @@ impl ProviderError {
 
     pub const fn is_retryable(&self) -> bool {
         self.kind.is_retryable()
+    }
+
+    /// Convert transport/protocol failures into operational provider health.
+    ///
+    /// This mapping deliberately says nothing about market direction or token
+    /// quality. Provider failures are infrastructure state only.
+    pub const fn health_state(&self) -> ProviderHealthState {
+        match self.kind {
+            ProviderErrorKind::RateLimited => ProviderHealthState::RateLimited,
+            ProviderErrorKind::Timeout | ProviderErrorKind::Unavailable => {
+                ProviderHealthState::Unavailable
+            }
+            ProviderErrorKind::Unauthorized
+            | ProviderErrorKind::NotFound
+            | ProviderErrorKind::InvalidRequest
+            | ProviderErrorKind::InvalidResponse => ProviderHealthState::Degraded,
+        }
     }
 
     pub const fn with_retry_after_ms(mut self, retry_after_ms: u64) -> Self {
