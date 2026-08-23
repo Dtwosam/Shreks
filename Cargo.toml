@@ -2,5 +2,6 @@
 members = [
     "crates/shreks-core",
     "crates/shreks-storage",
+    "crates/shreks-providers",
 ]
 resolver = "2"
