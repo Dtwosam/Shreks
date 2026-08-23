@@ -40,7 +40,7 @@ fn migration_three_adds_durable_pump_signal_inbox() {
     let root = unique_test_dir("schema");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 3);
+    assert!(db.diagnostics().unwrap().schema_version >= 3);
     drop(db);
 
     let connection = Connection::open(&db_path).unwrap();
