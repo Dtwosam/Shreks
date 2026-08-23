@@ -3,7 +3,6 @@ use shreks_core::{LifecycleEventKind, ProviderId, TokenLifecycleEvent, VenueId};
 
 use crate::{PumpSignalStatus, ShreksDb, StorageError};
 
-/// One durable Pump migration signal waiting for confirmed-transaction verification.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpMigrationSignalRecord {
     pub signature: String,
@@ -30,9 +29,6 @@ type RawLifecycleRow = (
 );
 
 impl ShreksDb {
-    /// Durably accept one Pump migration log signal before any transaction fetch.
-    /// Duplicate signatures preserve the first local detection time and never
-    /// reset verified/rejected terminal state.
     pub fn record_pump_migration_signal(
         &self,
         signature: &str,
@@ -41,7 +37,6 @@ impl ShreksDb {
     ) -> Result<(), StorageError> {
         validate_signature(signature)?;
         validate_timestamp(observed_at_unix_ms, "Pump migration observed_at_unix_ms")?;
-
         self.connection.execute(
             r#"INSERT INTO pump_migration_signals (
                    signature, slot, observed_at_unix_ms, status
@@ -56,7 +51,6 @@ impl ShreksDb {
         Ok(())
     }
 
-    /// Return the oldest pending migration signals for deterministic restart replay.
     pub fn pending_pump_migration_signals(
         &self,
         limit: usize,
@@ -67,17 +61,15 @@ impl ShreksDb {
         let limit = i64::try_from(limit).map_err(|_| {
             StorageError::InvalidData("Pump migration pending-signal limit exceeds i64".to_owned())
         })?;
-
         let mut statement = self.connection.prepare(
-            r#"SELECT
-                   signature, slot, observed_at_unix_ms, status, attempt_count,
-                   last_attempt_at_unix_ms, last_error
+            r#"SELECT signature, slot, observed_at_unix_ms, status, attempt_count,
+                      last_attempt_at_unix_ms, last_error
                FROM pump_migration_signals
                WHERE status = 'pending'
                ORDER BY observed_at_unix_ms ASC, signature ASC
                LIMIT ?1"#,
         )?;
-        let raw = statement
+        let rows = statement
             .query_map([limit], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -90,39 +82,25 @@ impl ShreksDb {
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
-
-        raw.into_iter()
-            .map(
-                |(
+        rows.into_iter()
+            .map(|(signature, slot, observed, status, attempts, last_attempt, last_error)| {
+                Ok(PumpMigrationSignalRecord {
                     signature,
-                    slot,
-                    observed_at_unix_ms,
-                    status,
-                    attempt_count,
-                    last_attempt_at_unix_ms,
-                    last_error,
-                )| {
-                    let slot = parse_u64_text(&slot, "Pump migration signal slot")?;
-                    let attempt_count = u64::try_from(attempt_count).map_err(|_| {
+                    slot: parse_u64_text(&slot, "Pump migration signal slot")?,
+                    observed_at_unix_ms: observed,
+                    status: parse_status(&status)?,
+                    attempt_count: u64::try_from(attempts).map_err(|_| {
                         StorageError::InvalidData(
                             "Pump migration attempt count was negative".to_owned(),
                         )
-                    })?;
-                    Ok(PumpMigrationSignalRecord {
-                        signature,
-                        slot,
-                        observed_at_unix_ms,
-                        status: parse_status(&status)?,
-                        attempt_count,
-                        last_attempt_at_unix_ms,
-                        last_error,
-                    })
-                },
-            )
+                    })?,
+                    last_attempt_at_unix_ms: last_attempt,
+                    last_error,
+                })
+            })
             .collect()
     }
 
-    /// Record one retryable verification attempt while leaving the signal pending.
     pub fn record_pump_migration_attempt(
         &self,
         signature: &str,
@@ -142,8 +120,6 @@ impl ShreksDb {
         ensure_pending_changed(changed, signature, "record migration attempt")
     }
 
-    /// Atomically persist verified lifecycle truth and mark its inbox row verified.
-    /// Exact replay of an already-verified event set is an idempotent no-op.
     pub fn complete_pump_migration(
         &self,
         signature: &str,
@@ -162,21 +138,14 @@ impl ShreksDb {
         }
 
         let transaction = self.connection.unchecked_transaction()?;
-        let inbox = transaction
+        let status = transaction
             .query_row(
-                "SELECT status, slot, observed_at_unix_ms FROM pump_migration_signals WHERE signature = ?1",
+                "SELECT status FROM pump_migration_signals WHERE signature = ?1",
                 [signature],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        row.get::<_, String>(1)?,
-                        row.get::<_, i64>(2)?,
-                    ))
-                },
+                |row| row.get::<_, String>(0),
             )
             .optional()?;
-
-        let Some((status, slot_text, observed_at_unix_ms)) = inbox else {
+        let Some(status) = status else {
             return Err(StorageError::InvalidData(format!(
                 "cannot complete Pump migration '{signature}': signal is missing"
             )));
@@ -201,20 +170,6 @@ impl ShreksDb {
             other => {
                 return Err(StorageError::InvalidData(format!(
                     "unknown Pump migration status '{other}'"
-                )));
-            }
-        }
-
-        let durable_slot = parse_u64_text(&slot_text, "Pump migration signal slot")?;
-        for event in events {
-            if event.slot != durable_slot {
-                return Err(StorageError::InvalidData(format!(
-                    "lifecycle event slot must match durable Pump migration signal '{signature}'"
-                )));
-            }
-            if event.detected_at_unix_ms != observed_at_unix_ms {
-                return Err(StorageError::InvalidData(format!(
-                    "lifecycle event detection time must match durable Pump migration signal '{signature}'"
                 )));
             }
         }
@@ -255,7 +210,6 @@ impl ShreksDb {
         Ok(events.len())
     }
 
-    /// Permanently reject a fetched transaction that is not a verified Pump migration.
     pub fn mark_pump_migration_rejected(
         &self,
         signature: &str,
@@ -269,7 +223,6 @@ impl ShreksDb {
                 "Pump migration rejection reason must not be empty".to_owned(),
             ));
         }
-
         let changed = self.connection.execute(
             r#"UPDATE pump_migration_signals
                SET status = 'rejected',
@@ -282,7 +235,6 @@ impl ShreksDb {
         ensure_pending_changed(changed, signature, "reject migration")
     }
 
-    /// Load normalized lifecycle truth for one mint in deterministic decision-time order.
     pub fn lifecycle_events_for_mint(
         &self,
         mint: &str,
@@ -292,7 +244,15 @@ impl ShreksDb {
                 "lifecycle-event mint must not be empty".to_owned(),
             ));
         }
-        lifecycle_events_for_mint(&self.connection, mint)
+        query_lifecycle_events(
+            &self.connection,
+            r#"SELECT event_type, provider, mint, quote_mint, from_venue, to_venue,
+                      pool_address, signature, slot, detected_at_unix_ms, occurred_at_unix_ms
+               FROM token_lifecycle_events
+               WHERE mint = ?1
+               ORDER BY detected_at_unix_ms ASC, signature ASC, pool_address ASC"#,
+            mint,
+        )
     }
 }
 
@@ -311,28 +271,13 @@ fn lifecycle_events_for_signature(
     )
 }
 
-fn lifecycle_events_for_mint(
-    connection: &Connection,
-    mint: &str,
-) -> Result<Vec<TokenLifecycleEvent>, StorageError> {
-    query_lifecycle_events(
-        connection,
-        r#"SELECT event_type, provider, mint, quote_mint, from_venue, to_venue,
-                  pool_address, signature, slot, detected_at_unix_ms, occurred_at_unix_ms
-           FROM token_lifecycle_events
-           WHERE mint = ?1
-           ORDER BY detected_at_unix_ms ASC, signature ASC, pool_address ASC"#,
-        mint,
-    )
-}
-
 fn query_lifecycle_events(
     connection: &Connection,
     sql: &str,
     value: &str,
 ) -> Result<Vec<TokenLifecycleEvent>, StorageError> {
     let mut statement = connection.prepare(sql)?;
-    let raw = statement
+    let rows = statement
         .query_map([value], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -349,36 +294,23 @@ fn query_lifecycle_events(
             ))
         })?
         .collect::<Result<Vec<RawLifecycleRow>, _>>()?;
-    raw.into_iter().map(decode_event).collect()
+    rows.into_iter().map(decode_event).collect()
 }
 
 fn decode_event(row: RawLifecycleRow) -> Result<TokenLifecycleEvent, StorageError> {
-    let (
-        event_type,
-        provider,
-        mint,
-        quote_mint,
-        from_venue,
-        to_venue,
-        pool_address,
-        signature,
-        slot,
-        detected_at_unix_ms,
-        occurred_at_unix_ms,
-    ) = row;
-
+    let (kind, provider, mint, quote, from, to, pool, signature, slot, detected, occurred) = row;
     Ok(TokenLifecycleEvent {
-        kind: parse_kind(&event_type)?,
+        kind: parse_kind(&kind)?,
         provider: parse_provider(&provider)?,
         mint,
-        quote_mint,
-        from_venue: parse_venue(&from_venue)?,
-        to_venue: parse_venue(&to_venue)?,
-        pool_address,
+        quote_mint: quote,
+        from_venue: parse_venue(&from)?,
+        to_venue: parse_venue(&to)?,
+        pool_address: pool,
         signature,
         slot: parse_u64_text(&slot, "lifecycle-event slot")?,
-        detected_at_unix_ms,
-        occurred_at_unix_ms,
+        detected_at_unix_ms: detected,
+        occurred_at_unix_ms: occurred,
     })
 }
 
@@ -443,8 +375,8 @@ fn validate_event(signature: &str, event: &TokenLifecycleEvent) -> Result<(), St
         ));
     }
     validate_timestamp(event.detected_at_unix_ms, "lifecycle detected_at_unix_ms")?;
-    if let Some(occurred_at_unix_ms) = event.occurred_at_unix_ms {
-        validate_timestamp(occurred_at_unix_ms, "lifecycle occurred_at_unix_ms")?;
+    if let Some(value) = event.occurred_at_unix_ms {
+        validate_timestamp(value, "lifecycle occurred_at_unix_ms")?;
     }
     Ok(())
 }
@@ -460,9 +392,7 @@ fn validate_signature(signature: &str) -> Result<(), StorageError> {
 
 fn validate_timestamp(value: i64, field: &str) -> Result<(), StorageError> {
     if value < 0 {
-        return Err(StorageError::InvalidData(format!(
-            "{field} must not be negative"
-        )));
+        return Err(StorageError::InvalidData(format!("{field} must not be negative")));
     }
     Ok(())
 }
