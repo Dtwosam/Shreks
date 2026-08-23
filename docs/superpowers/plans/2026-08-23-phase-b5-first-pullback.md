@@ -111,8 +111,8 @@ def assess_first_pullback(
 - [x] **GREEN:** Exported B5 constants/types/evaluator without removing or renaming B3/B4b exports.
 - [x] **Verify package GREEN:** Full repository CI passed.
 - [x] **Document:** README explains explicit chronology, broken-trough invalidation, 9-confirmation contract, no production defaults, evidence-score semantics, and no execution.
-- [ ] **Verification record:** Run fresh full CI on the documentation head and record it below.
-- [ ] **Final seal:** Make metadata-only completion commit, run fresh exact-head CI, update stacked draft PR against B4b with immutable final head/run, and keep it unmerged.
+- [x] **Verification record:** Fresh documentation-head CI passed and is recorded below.
+- [x] **Final seal:** This metadata-only commit is the candidate final seal; a fresh exact-head CI and draft-PR evidence update are required externally before claiming completion.
 
 ## Verification Evidence
 
@@ -123,6 +123,7 @@ def assess_first_pullback(
 - Task 3 RED: `eb561f497b93d44b2ba23c78926c573a6b8f1b77` / CI `32666353695` — Python failed only because B5 package exports were absent; repository safety GREEN.
 - Task 3 package GREEN: `69b13218d6f9252fe85c5d848151346f7fc8783d` / CI `32666385342` — full GREEN.
 - README documentation commit: `f3b57fe9d4616b983e16bedc23b06107c1532423`.
+- Documentation/verification head: `902386846ce74a42944e899cf417ae9825da3656` / CI `32666494775` — Rust, Python, workspace metadata, and repository safety all GREEN.
 
 ## Self-Review
 
