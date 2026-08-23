@@ -31,29 +31,21 @@
 
 **Produces:** `SetupState`, `FreshLaunchReasonCode`, `SetupFinding`, `FreshLaunchPolicy`, `FreshLaunchAssessment`, and constants `FRESH_LAUNCH_SETUP_NAME = "fresh_launch_continuation"`, `FRESH_LAUNCH_CONFIRMATIONS_REQUIRED = 9`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
-Test exact enum/reason strings, constants, frozen dataclasses, policy validation, and absence of future/trading fields. Validation tests must cover empty version; NaN/inf; negative ages/source age/liquidity/exit impact/max return/tx count/volume velocity; `max_age_seconds <= min_age_seconds`; buy fraction outside `[0,1]`; range position outside `[0,100]`; positive `min_distance_from_local_high_pct`; and `max_return_5m_pct < min_return_5m_pct`.
+Test exact enum/reason strings, constants, frozen dataclasses, policy validation, and absence of future/trading fields. Validation tests cover empty version; NaN/inf; negative ages/source age/liquidity/exit impact/max return/tx count/volume velocity; `max_age_seconds <= min_age_seconds`; buy fraction outside `[0,1]`; range position outside `[0,100]`; positive `min_distance_from_local_high_pct`; and `max_return_5m_pct < min_return_5m_pct`.
 
-Representative assertions:
+- [x] **Step 2: Verify RED in CI**
 
-```python
-assert SetupState.BLOCKED.value == "BLOCKED"
-assert FreshLaunchReasonCode.MOVE_TOO_EXTENDED.value == "MOVE_TOO_EXTENDED"
-assert FRESH_LAUNCH_CONFIRMATIONS_REQUIRED == 9
-```
+Observed: commit `00384f2995d1bb907dcd75f1e3bd1376e7790eb3`, CI `32658868362`; Python failed because `shreks_brain.setups` did not exist while repository-safety remained green.
 
-- [ ] **Step 2: Verify RED in CI**
+- [x] **Step 3: Implement immutable models and validation**
 
-Expected: Python fails because `shreks_brain.setups` does not exist.
+Implemented with `StrEnum`, frozen/slotted dataclasses, finite/int/range helpers, and no production default policy.
 
-- [ ] **Step 3: Implement immutable models and validation**
+- [x] **Step 4: Run full CI and verify GREEN**
 
-Use `StrEnum`, frozen/slotted dataclasses, and small finite/int/range helpers. Do not provide a production default policy.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: model tests plus all existing checks pass.
+Observed: commit `fd870d72c1e6ce277c12e2eb2e48202e9c7358b4`, CI `32658923308`; Rust, Python, metadata, and repository-safety all passed.
 
 ---
 
@@ -73,48 +65,21 @@ def assess_fresh_launch(
     ...
 ```
 
-- [ ] **Step 1: Write failing evaluator tests**
+- [x] **Step 1: Write failing evaluator tests**
 
-Use one explicit policy fixture and one hand-built B2 vector that passes all gates/confirmations.
+Tests prove READY behavior, every independent hard blocker, safety precedence, too-young/unknown evidence WATCH behavior, every confirmation failure/unknown path, equality boundaries, research scoring on blocked candidates, deterministic reason ordering, and deterministic repeated calls.
 
-Tests must prove:
+- [x] **Step 2: Verify RED in CI**
 
-- all confirmations pass -> `READY`, 9/9, score `100.0`, final `ALL_CONFIRMATIONS_PASSED` marker;
-- each hard blocker independently yields `BLOCKED`: safety, expired age, stale source, low liquidity, high exit impact, excessive 5m return;
-- safety `REJECT` and `INCOMPLETE` remain blocked even with 9/9 confirmations;
-- unknown/too-young age yields `WATCH`;
-- missing liquidity or exit impact yields `WATCH`;
-- each of the nine confirmation conditions independently failing yields `WATCH`, 8/9, and the exact reason code;
-- each missing confirmation produces its exact `_UNKNOWN` reason and does not pass;
-- equality at every threshold passes;
-- hard-blocked candidates still calculate confirmation count/score for research;
-- multiple findings are in fixed spec order;
-- repeated calls return equal assessments.
+Observed: commit `bd95bb412fdb0b2ff6652fbdd8825822be3f9782`, CI `32659018401`; Python failed only because `shreks_brain.setups.fresh_launch` was absent.
 
-- [ ] **Step 2: Verify RED in CI**
+- [x] **Step 3: Implement ordered evaluator**
 
-Expected: Python fails because `setups.fresh_launch` / `assess_fresh_launch` is absent; Task 1 remains green.
+Implemented in four visible stages: hard gates, age/executability watch evidence, nine confirmation checks, then state resolution and optional ready marker. Hard blockers do not short-circuit confirmation research.
 
-- [ ] **Step 3: Implement ordered evaluator**
+- [x] **Step 4: Run full CI and verify GREEN**
 
-Perform evaluation in four visible stages:
-
-1. hard gates;
-2. age/executability watch evidence;
-3. nine confirmation checks;
-4. state resolution and optional ready marker.
-
-Use one helper per generic comparison shape, but keep the reason-code order explicit. Score is always:
-
-```python
-confirmations_passed / FRESH_LAUNCH_CONFIRMATIONS_REQUIRED * 100.0
-```
-
-Do not short-circuit after a hard blocker; confirmations must still be evaluated for research.
-
-- [ ] **Step 4: Run full CI and verify GREEN**
-
-Expected: evaluator tests and complete repository gate pass.
+Observed: commit `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`; complete repository gate passed.
 
 ---
 
@@ -141,40 +106,44 @@ from shreks_brain.setups import (
 )
 ```
 
-- [ ] **Step 1: Write failing public-API tests**
+- [x] **Step 1: Write failing public-API tests**
 
-Import only from `shreks_brain.setups`, construct one explicit policy/vector, and prove a ready assessment. Recheck that `READY` is a setup state only and no trade-intent/execution field exists in `FreshLaunchAssessment`.
+The public-API test imports only from `shreks_brain.setups`, constructs an explicit policy/vector, proves a ready assessment, and confirms `FreshLaunchAssessment` contains no trade-intent/execution fields.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
-Expected: package-level imports fail before `__init__.py` exists.
+Observed: commit `9fb9cdc83ba74e80c79cde403e3e931035d3395a`, CI `32659150856`; Rust and repository-safety passed, and Python failed only because package-level setup exports were absent.
 
-- [ ] **Step 3: Export API and document operator semantics**
+- [x] **Step 3: Export API and document operator semantics**
 
-README must state:
+Exports added at commit `142d2b56c9847d5679b74c9fcb948147d25085ba`. README documentation completed at commit `78a2e5188e096e1fc25d80cede20de2ef4eac186`, covering blind-snipe avoidance, hypothesis-only thresholds, state meanings, safety precedence, anti-chase ceiling, confirmation-score semantics, absence of production defaults, and the non-trading boundary.
 
-- Fresh Launch Continuation avoids first-second blind sniping;
-- setup policy thresholds are hypotheses, not profitability claims;
-- `BLOCKED / WATCH / READY` meaning;
-- safety `PASS` is mandatory;
-- 5m chase ceiling exists;
-- score is confirmation completeness, not expected return;
-- no production default thresholds exist until calibration;
-- no paper/live trade execution is enabled.
+- [x] **Step 4: Run final full CI**
 
-- [ ] **Step 4: Run final full CI**
+Code/docs head `78a2e5188e096e1fc25d80cede20de2ef4eac186` passed full CI `32659708880`.
 
-Expected: Rust, Python, metadata, repository safety all pass.
+- [x] **Step 5: Record exact RED/GREEN commits and CI run IDs**
 
-- [ ] **Step 5: Record exact RED/GREEN commits and CI run IDs**
-
-Only close B3 after a fresh exact-head verification following the documentation-only record commit.
+Recorded above. This documentation-only verification-record commit must itself pass a fresh exact-head CI before B3 is considered sealed.
 
 ---
 
 ## Self-review
 
-- **Spec coverage:** all setup states, reason codes, policy validations, hard gates, missing-evidence semantics, nine confirmations, anti-chase rule, safety precedence, research scoring, public API, and non-trading boundary are mapped to Tasks 1–3.
+- **Spec coverage:** all setup states, reason codes, policy validations, hard gates, missing-evidence semantics, nine confirmations, anti-chase rule, safety precedence, research scoring, public API, and non-trading boundary are implemented and tested.
 - **Placeholder scan:** no implementation-critical TBD/TODO placeholders.
 - **Type consistency:** evaluator/public API consume exact Task 1 type names.
-- **Scope:** no storage, setup calibration, final trade score, position sizing, paper execution, or live execution is introduced.
+- **Scope:** no storage, setup calibration, final trade score, position sizing, paper execution, or live execution was introduced.
+
+## Verification record
+
+TDD sequence:
+
+- Task 1 RED — `00384f2995d1bb907dcd75f1e3bd1376e7790eb3`, CI `32658868362`
+- Task 1 GREEN — `fd870d72c1e6ce277c12e2eb2e48202e9c7358b4`, CI `32658923308`
+- Task 2 RED — `bd95bb412fdb0b2ff6652fbdd8825822be3f9782`, CI `32659018401`
+- Task 2 GREEN — `ad0230f1a7d5047afffdce5203cd3fbcb2b44e5d`, CI `32659077747`
+- Task 3 RED — `9fb9cdc83ba74e80c79cde403e3e931035d3395a`, CI `32659150856`
+- Task 3 code/docs GREEN — `78a2e5188e096e1fc25d80cede20de2ef4eac186`, CI `32659708880`
+
+The next CI run on this documentation-only record commit is the exact-head completion gate.
