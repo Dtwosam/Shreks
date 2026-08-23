@@ -3,5 +3,6 @@ members = [
     "crates/shreks-core",
     "crates/shreks-storage",
     "crates/shreks-providers",
+    "crates/shreks-observer",
 ]
 resolver = "2"
