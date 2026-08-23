@@ -22,12 +22,17 @@ use std::{
 use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId};
 use shreks_providers::{
     config::ProviderConfig,
-    pump::{classify_pump_creation_transaction, PumpCreationVerification},
+    pump::{
+        classify_pump_creation_transaction, PumpCreationSignal, PumpCreationVerification,
+    },
     ChainDataProvider, DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
     TransactionProvider,
 };
 use shreks_storage::{ShreksDb, StorageError};
-use tokio::time::{sleep, sleep_until, Instant};
+use tokio::{
+    sync::mpsc,
+    time::{sleep, sleep_until, Instant},
+};
 
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
@@ -43,6 +48,7 @@ pub struct ObserverCycleReport {
     pub market_snapshots_stored: usize,
     pub mint_states_stored: usize,
     pub provider_failures: usize,
+    pub pump_signals_received: usize,
     pub pump_signals_processed: usize,
     pub pump_signals_pending: usize,
     pub pump_signals_verified: usize,
@@ -194,6 +200,7 @@ pub struct Observer {
     market_providers: Vec<Arc<dyn MarketDataProvider>>,
     chain_providers: Vec<Arc<dyn ChainDataProvider>>,
     transaction_providers: Vec<Arc<dyn TransactionProvider>>,
+    pump_signal_receiver: Option<mpsc::Receiver<PumpCreationSignal>>,
     pacer: RequestPacer,
 }
 
@@ -205,6 +212,7 @@ impl Observer {
             market_providers: Vec::new(),
             chain_providers: Vec::new(),
             transaction_providers: Vec::new(),
+            pump_signal_receiver: None,
             pacer: RequestPacer::free_tier_defaults(),
         }
     }
@@ -226,6 +234,17 @@ impl Observer {
 
     pub fn with_transaction_provider(mut self, provider: Arc<dyn TransactionProvider>) -> Self {
         self.transaction_providers.push(provider);
+        self
+    }
+
+    /// Attach the receiving end of the realtime Pump stream. The producer is
+    /// intentionally unable to access SQLite; only this observer drains and
+    /// persists signals, preserving the single-writer storage contract.
+    pub fn with_pump_signal_receiver(
+        mut self,
+        receiver: mpsc::Receiver<PumpCreationSignal>,
+    ) -> Self {
+        self.pump_signal_receiver = Some(receiver);
         self
     }
 
@@ -264,6 +283,8 @@ impl Observer {
     /// restart guarantees.
     pub async fn run_cycle(&mut self) -> Result<ObserverCycleReport, ObserverError> {
         let mut report = ObserverCycleReport::default();
+        self.drain_pump_signal_queue(&mut report)?;
+
         let mut health: HashMap<ProviderId, CycleHealth> = HashMap::new();
         let mut candidates = Vec::new();
         let mut seen_candidate_ids = HashSet::new();
@@ -369,6 +390,33 @@ impl Observer {
         }
 
         Ok(report)
+    }
+
+    fn drain_pump_signal_queue(
+        &mut self,
+        report: &mut ObserverCycleReport,
+    ) -> Result<(), ObserverError> {
+        loop {
+            let signal = match self.pump_signal_receiver.as_mut() {
+                Some(receiver) => match receiver.try_recv() {
+                    Ok(signal) => signal,
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.pump_signal_receiver = None;
+                        break;
+                    }
+                },
+                None => break,
+            };
+
+            self.db.record_pump_launch_signal(
+                &signal.signature,
+                signal.slot,
+                unix_time_ms()?,
+            )?;
+            report.pump_signals_received = report.pump_signals_received.saturating_add(1);
+        }
+        Ok(())
     }
 
     async fn process_pending_pump_signals(
