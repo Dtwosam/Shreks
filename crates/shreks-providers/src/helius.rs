@@ -12,9 +12,18 @@ use crate::{
 };
 
 const MAINNET_RPC_BASE: &str = "https://mainnet.helius-rpc.com/?api-key=";
+const MAINNET_WS_BASE: &str = "wss://mainnet.helius-rpc.com/?api-key=";
 
 pub fn helius_rpc_url(api_key: &str) -> String {
     format!("{MAINNET_RPC_BASE}{api_key}")
+}
+
+/// Build Helius' standard Solana mainnet PubSub endpoint.
+///
+/// Callers must never log or expose the returned URL because it contains the
+/// API key as a query parameter.
+pub fn helius_ws_url(api_key: &str) -> String {
+    format!("{MAINNET_WS_BASE}{api_key}")
 }
 
 /// Build the current object-form Solana `getTransaction` request used to
