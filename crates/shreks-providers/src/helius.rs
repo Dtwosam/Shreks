@@ -83,7 +83,7 @@ pub fn parse_mint_account_response(
 
     if let Some(error) = response.error {
         let kind = match error.code {
-            -32600..=-32602 => ProviderErrorKind::InvalidRequest,
+            -32602..=-32600 => ProviderErrorKind::InvalidRequest,
             _ => ProviderErrorKind::Unavailable,
         };
         return Err(ProviderError::new(
