@@ -1,5 +1,8 @@
 //! Shared domain primitives for Shreks.
 
+mod lifecycle;
+pub use lifecycle::{LifecycleEventKind, TokenLifecycleEvent};
+
 use std::{error::Error, fmt, str::FromStr};
 
 /// Operating mode for the Shreks runtime.
