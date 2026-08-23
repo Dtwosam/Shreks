@@ -178,6 +178,24 @@ B4b-v1 uses exactly eight equal-weight confirmations: five-minute transaction pa
 
 `READY` is **not** an order or trading instruction. B4b creates no `TradeIntent`, position size, paper fill, wallet, signer, Jupiter execution request, transaction construction, submission, or live-money path.
 
+## First Pullback setup
+
+Phase B5 introduces the third explicit setup family under `shreks_brain.setups`: `first_pullback`.
+
+First Pullback is not inferred from a single momentum snapshot. It requires explicit point-in-time chronology for `impulse start -> peak -> trough`, then evaluates the current B2 `b2-v1` market observation as the recovery state. Structural evidence later than the current market source observation is rejected so a historical decision cannot borrow a newer trough.
+
+The evaluator derives the initial impulse return, peak-to-trough pullback depth, recovery from the trough, current position versus the prior peak, liquidity retention through the retracement, and the improvement in five-minute buy fraction versus the trough. A current price below the recorded trough invalidates that pullback context instead of being relabeled as a bargain or recovery.
+
+Every numerical threshold belongs to an explicit, versioned `FirstPullbackPolicy`; B5 ships **no production default trading thresholds**. Policy values remain research hypotheses for later unseen, point-in-time, post-cost calibration.
+
+B5-v1 uses exactly nine equal-weight confirmations: recovery from the trough, current price versus the prior impulse peak, liquidity retention, five-minute transaction participation, volume velocity, current five-minute buy fraction, buy-fraction improvement versus the trough, buy-pressure acceleration, and one-minute return. Missing evidence never becomes zero and never passes a confirmation.
+
+Seller absorption is represented only by the auditable proxy `current 5m buy fraction - trough 5m buy fraction`; B5 does not claim to observe hidden order-book absorption. If either side of that comparison is unavailable, the absorption evidence remains unknown.
+
+`confirmation_score` is checklist completeness: `confirmations_passed / 9 * 100`. It is not win probability, confidence, expected return, position size, or a final trade score. Hard-blocked candidates keep all computable structural metrics and confirmation evidence so later research can measure the opportunity cost and value of filters rather than hiding rejected recoveries.
+
+`READY` is **not** an order or trading instruction. B5 adds no `TradeIntent`, sizing, paper fill, wallet, signer, swap request, transaction construction/submission, or live-money path.
+
 ## Local setup
 
 ### Rust
