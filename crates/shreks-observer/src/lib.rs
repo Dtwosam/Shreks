@@ -14,7 +14,7 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
-    future::Future,
+    future::{pending, Future},
     sync::Arc,
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
@@ -31,7 +31,7 @@ use shreks_providers::{
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::{
     sync::mpsc,
-    time::{sleep, sleep_until, Instant},
+    time::{sleep_until, Instant},
 };
 
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
@@ -250,9 +250,10 @@ impl Observer {
 
     /// Run observation cycles until shutdown is signaled.
     ///
-    /// A cycle always starts immediately. Shutdown is observed between cycles
-    /// and can interrupt a long inter-cycle sleep without waiting for the next
-    /// scheduled cycle. In-flight provider calls are allowed to finish so a
+    /// A full provider cycle starts immediately and then follows the configured
+    /// interval. Between cycles, realtime Pump signals can wake the observer
+    /// solely for a durable inbox write; they do not force extra discovery or
+    /// market-data calls. In-flight provider calls are allowed to finish so a
     /// cycle's durable state is not left half-written.
     pub async fn run_until_shutdown<F>(
         &mut self,
@@ -265,14 +266,31 @@ impl Observer {
         tokio::pin!(shutdown);
         let mut completed_cycles = 0usize;
 
+        self.run_cycle().await?;
+        completed_cycles = completed_cycles.saturating_add(1);
+
         loop {
+            let next_cycle = Instant::now() + cycle_interval;
+
+            loop {
+                tokio::select! {
+                    _ = sleep_until(next_cycle) => break,
+                    _ = &mut shutdown => return Ok(completed_cycles),
+                    signal = self.next_pump_signal() => {
+                        match signal {
+                            Some(signal) => {
+                                self.persist_pump_signal(&signal)?;
+                                let mut realtime_report = ObserverCycleReport::default();
+                                self.drain_pump_signal_queue(&mut realtime_report)?;
+                            }
+                            None => self.pump_signal_receiver = None,
+                        }
+                    }
+                }
+            }
+
             self.run_cycle().await?;
             completed_cycles = completed_cycles.saturating_add(1);
-
-            tokio::select! {
-                _ = sleep(cycle_interval) => {}
-                _ = &mut shutdown => return Ok(completed_cycles),
-            }
         }
     }
 
@@ -392,6 +410,22 @@ impl Observer {
         Ok(report)
     }
 
+    async fn next_pump_signal(&mut self) -> Option<PumpCreationSignal> {
+        match self.pump_signal_receiver.as_mut() {
+            Some(receiver) => receiver.recv().await,
+            None => pending().await,
+        }
+    }
+
+    fn persist_pump_signal(&self, signal: &PumpCreationSignal) -> Result<(), ObserverError> {
+        self.db.record_pump_launch_signal(
+            &signal.signature,
+            signal.slot,
+            unix_time_ms()?,
+        )?;
+        Ok(())
+    }
+
     fn drain_pump_signal_queue(
         &mut self,
         report: &mut ObserverCycleReport,
@@ -409,11 +443,7 @@ impl Observer {
                 None => break,
             };
 
-            self.db.record_pump_launch_signal(
-                &signal.signature,
-                signal.slot,
-                unix_time_ms()?,
-            )?;
+            self.persist_pump_signal(&signal)?;
             report.pump_signals_received = report.pump_signals_received.saturating_add(1);
         }
         Ok(())
