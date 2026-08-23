@@ -117,6 +117,16 @@ pub trait ChainDataProvider: Send + Sync {
     async fn token_mint_state(&self, token_mint: &str) -> Result<TokenMintState, ProviderError>;
 }
 
+/// Raw confirmed-transaction boundary used by protocol-specific verification.
+/// Implementations return provider JSON without interpreting Pump or any other
+/// protocol so the verifier remains independently testable.
+#[async_trait]
+pub trait TransactionProvider: Send + Sync {
+    fn provider_id(&self) -> ProviderId;
+
+    async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError>;
+}
+
 #[async_trait]
 pub trait QuoteProvider: Send + Sync {
     fn provider_id(&self) -> ProviderId;
