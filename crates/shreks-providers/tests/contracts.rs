@@ -6,6 +6,7 @@ fn provider_identifiers_are_stable() {
     assert_eq!(ProviderId::DexScreener.as_str(), "dexscreener");
     assert_eq!(ProviderId::Helius.as_str(), "helius");
     assert_eq!(ProviderId::Jupiter.as_str(), "jupiter");
+    assert_eq!(ProviderId::Meteora.as_str(), "meteora");
 }
 
 #[test]
@@ -49,6 +50,24 @@ fn provider_error_preserves_retry_after() {
     assert_eq!(error.kind, ProviderErrorKind::RateLimited);
     assert_eq!(error.retry_after_ms, Some(2_000));
     assert!(error.is_retryable());
+}
+
+#[test]
+fn provider_errors_map_to_operational_health_without_becoming_market_signals() {
+    let cases = [
+        (ProviderErrorKind::RateLimited, ProviderHealthState::RateLimited),
+        (ProviderErrorKind::Timeout, ProviderHealthState::Unavailable),
+        (ProviderErrorKind::Unavailable, ProviderHealthState::Unavailable),
+        (ProviderErrorKind::Unauthorized, ProviderHealthState::Degraded),
+        (ProviderErrorKind::NotFound, ProviderHealthState::Degraded),
+        (ProviderErrorKind::InvalidRequest, ProviderHealthState::Degraded),
+        (ProviderErrorKind::InvalidResponse, ProviderHealthState::Degraded),
+    ];
+
+    for (kind, expected) in cases {
+        let error = ProviderError::new(ProviderId::Meteora, kind, "fixture failure");
+        assert_eq!(error.health_state(), expected, "wrong health mapping for {kind:?}");
+    }
 }
 
 #[test]
