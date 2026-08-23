@@ -1,6 +1,8 @@
 use shreks_core::ProviderId;
 use shreks_providers::{
-    helius::{helius_rpc_url, parse_mint_account_response},
+    helius::{
+        get_transaction_request, helius_rpc_url, parse_mint_account_response,
+    },
     ProviderErrorKind,
 };
 
@@ -10,6 +12,24 @@ fn builds_mainnet_rpc_url_without_mutating_key() {
         helius_rpc_url("test-key"),
         "https://mainnet.helius-rpc.com/?api-key=test-key"
     );
+}
+
+#[test]
+fn get_transaction_request_uses_current_object_form_and_json_parsed_encoding() {
+    let request = get_transaction_request("signature111").expect("valid signature");
+
+    assert_eq!(request["jsonrpc"], "2.0");
+    assert_eq!(request["method"], "getTransaction");
+    assert_eq!(request["params"][0], "signature111");
+    assert_eq!(request["params"][1]["commitment"], "confirmed");
+    assert_eq!(request["params"][1]["encoding"], "jsonParsed");
+    assert_eq!(request["params"][1]["maxSupportedTransactionVersion"], 0);
+}
+
+#[test]
+fn get_transaction_request_rejects_blank_signature() {
+    let error = get_transaction_request("   ").expect_err("blank signature must fail");
+    assert_eq!(error.kind, ProviderErrorKind::InvalidRequest);
 }
 
 #[test]
