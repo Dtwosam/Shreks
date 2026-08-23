@@ -2,8 +2,8 @@
 
 mod outcomes;
 pub use outcomes::{
-    DueOutcomeCheckpoint, OutcomeCheckpointRecord, OutcomeCheckpointStatus,
-    OUTCOME_HORIZONS_SECONDS,
+    DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
+    OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
 };
 
 use std::{
