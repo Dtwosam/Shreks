@@ -18,6 +18,7 @@ fn runtime_defaults_are_safe_and_observe_only() {
     );
     assert!(plan.chain.is_empty());
     assert!(plan.transactions.is_empty());
+    assert!(plan.realtime.is_empty());
     assert!(
         !plan.all_providers().contains(&ProviderId::Jupiter),
         "Jupiter must not be part of the observe-only runtime"
@@ -25,7 +26,7 @@ fn runtime_defaults_are_safe_and_observe_only() {
 }
 
 #[test]
-fn helius_is_enabled_for_chain_and_pump_verification_only_with_non_blank_key() {
+fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blank_key() {
     let without_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("   ".to_owned()),
         _ => None,
@@ -34,6 +35,7 @@ fn helius_is_enabled_for_chain_and_pump_verification_only_with_non_blank_key() {
     let without_key_plan = free_observe_provider_plan(&without_key.providers);
     assert!(without_key_plan.chain.is_empty());
     assert!(without_key_plan.transactions.is_empty());
+    assert!(without_key_plan.realtime.is_empty());
 
     let with_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
@@ -43,6 +45,7 @@ fn helius_is_enabled_for_chain_and_pump_verification_only_with_non_blank_key() {
     let with_key_plan = free_observe_provider_plan(&with_key.providers);
     assert_eq!(with_key_plan.chain, vec![ProviderId::Helius]);
     assert_eq!(with_key_plan.transactions, vec![ProviderId::Helius]);
+    assert_eq!(with_key_plan.realtime, vec![ProviderId::Helius]);
     assert_eq!(
         with_key_plan
             .all_providers()
@@ -50,7 +53,7 @@ fn helius_is_enabled_for_chain_and_pump_verification_only_with_non_blank_key() {
             .filter(|provider| **provider == ProviderId::Helius)
             .count(),
         1,
-        "Helius should be deduplicated across chain and transaction roles"
+        "Helius should be deduplicated across chain, transaction, and realtime roles"
     );
 }
 
