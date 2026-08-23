@@ -8,6 +8,7 @@ use std::{
     collections::{HashMap, HashSet},
     error::Error,
     fmt,
+    future::Future,
     sync::Arc,
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
@@ -18,7 +19,7 @@ use shreks_providers::{
     ProviderErrorKind,
 };
 use shreks_storage::{ShreksDb, StorageError};
-use tokio::time::{sleep_until, Instant};
+use tokio::time::{sleep, sleep_until, Instant};
 
 const DISCOVERY_WATERMARK_STREAM: &str = "discovery_watermark_unix_ms";
 const FAILURE_STREAK_STREAM: &str = "provider_consecutive_failures";
@@ -205,6 +206,34 @@ impl Observer {
     pub fn with_chain_provider(mut self, provider: Arc<dyn ChainDataProvider>) -> Self {
         self.chain_providers.push(provider);
         self
+    }
+
+    /// Run observation cycles until shutdown is signaled.
+    ///
+    /// A cycle always starts immediately. Shutdown is observed between cycles
+    /// and can interrupt a long inter-cycle sleep without waiting for the next
+    /// scheduled cycle. In-flight provider calls are allowed to finish so a
+    /// cycle's durable state is not left half-written.
+    pub async fn run_until_shutdown<F>(
+        &mut self,
+        cycle_interval: Duration,
+        shutdown: F,
+    ) -> Result<usize, ObserverError>
+    where
+        F: Future<Output = ()>,
+    {
+        tokio::pin!(shutdown);
+        let mut completed_cycles = 0usize;
+
+        loop {
+            self.run_cycle().await?;
+            completed_cycles = completed_cycles.saturating_add(1);
+
+            tokio::select! {
+                _ = sleep(cycle_interval) => {}
+                _ = &mut shutdown => return Ok(completed_cycles),
+            }
+        }
     }
 
     /// Run exactly one observation pass.
