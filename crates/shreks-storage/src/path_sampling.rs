@@ -4,6 +4,7 @@ use super::{ShreksDb, StorageError};
 
 pub const PATH_CADENCE_VERSION: &str = "lifecycle_v0";
 const FIRST_SAMPLE_OFFSET_MS: i64 = 30_000;
+const PATH_LIFECYCLE_MS: i64 = 86_400_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathSamplingStatus {
@@ -58,7 +59,7 @@ pub const fn path_sampling_interval_seconds(age_ms: i64) -> Option<u32> {
         Some(300)
     } else if age_ms < 14_400_000 {
         Some(900)
-    } else if age_ms < 86_400_000 {
+    } else if age_ms < PATH_LIFECYCLE_MS {
         Some(3_600)
     } else {
         None
@@ -190,5 +191,110 @@ impl ShreksDb {
             })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Advance one active adaptive schedule after a real market observation.
+    ///
+    /// The next target is always computed from the actual successful sample
+    /// timestamp. Missed historical intervals are never replayed. When the
+    /// next target would reach or cross the 24-hour lifecycle boundary, the
+    /// schedule becomes terminal instead of scheduling another request.
+    pub fn advance_path_sampling(
+        &self,
+        candidate_id: i64,
+        sampled_at_unix_ms: i64,
+    ) -> Result<(), StorageError> {
+        if candidate_id <= 0 {
+            return Err(StorageError::InvalidData(
+                "path sampling candidate_id must be positive".to_owned(),
+            ));
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let current = transaction
+            .query_row(
+                r#"SELECT c.discovered_at_unix_ms, p.status
+                   FROM candidate_path_sampling p
+                   JOIN token_candidates c ON c.id = p.candidate_id
+                   WHERE p.candidate_id = ?1"#,
+                [candidate_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+
+        let Some((discovered_at_unix_ms, status)) = current else {
+            return Err(StorageError::InvalidData(format!(
+                "path sampling schedule missing for candidate {candidate_id}"
+            )));
+        };
+        if status == "completed" {
+            return Err(StorageError::InvalidData(format!(
+                "path sampling schedule for candidate {candidate_id} is already completed"
+            )));
+        }
+        if status != "active" {
+            return Err(StorageError::InvalidData(format!(
+                "unknown path sampling status '{status}'"
+            )));
+        }
+        if sampled_at_unix_ms < discovered_at_unix_ms {
+            return Err(StorageError::InvalidData(
+                "path sample timestamp is before discovery".to_owned(),
+            ));
+        }
+
+        let age_ms = sampled_at_unix_ms
+            .checked_sub(discovered_at_unix_ms)
+            .ok_or_else(|| {
+                StorageError::InvalidData("path sampling age calculation overflow".to_owned())
+            })?;
+        let lifecycle_end = discovered_at_unix_ms
+            .checked_add(PATH_LIFECYCLE_MS)
+            .ok_or_else(|| {
+                StorageError::InvalidData("path sampling lifecycle timestamp overflow".to_owned())
+            })?;
+
+        let next_due = path_sampling_interval_seconds(age_ms)
+            .map(|seconds| {
+                sampled_at_unix_ms
+                    .checked_add(i64::from(seconds) * 1_000)
+                    .ok_or_else(|| {
+                        StorageError::InvalidData(
+                            "path sampling next due timestamp overflow".to_owned(),
+                        )
+                    })
+            })
+            .transpose()?;
+
+        let should_complete = next_due.is_none_or(|next_due| next_due >= lifecycle_end);
+        let changed = if should_complete {
+            transaction.execute(
+                r#"UPDATE candidate_path_sampling
+                   SET next_due_at_unix_ms = NULL,
+                       last_sample_at_unix_ms = ?2,
+                       sample_count = sample_count + 1,
+                       status = 'completed'
+                   WHERE candidate_id = ?1 AND status = 'active'"#,
+                params![candidate_id, sampled_at_unix_ms],
+            )?
+        } else {
+            transaction.execute(
+                r#"UPDATE candidate_path_sampling
+                   SET next_due_at_unix_ms = ?2,
+                       last_sample_at_unix_ms = ?3,
+                       sample_count = sample_count + 1
+                   WHERE candidate_id = ?1 AND status = 'active'"#,
+                params![candidate_id, next_due, sampled_at_unix_ms],
+            )?
+        };
+
+        if changed != 1 {
+            return Err(StorageError::InvalidData(format!(
+                "cannot advance path sampling for candidate {candidate_id}: schedule is no longer active"
+            )));
+        }
+
+        transaction.commit()?;
+        Ok(())
     }
 }
