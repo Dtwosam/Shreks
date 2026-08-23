@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError, fields, replace
+from dataclasses import FrozenInstanceError, fields
 import math
 
 import pytest
@@ -207,6 +207,11 @@ def test_score_assessment_is_frozen_and_accepts_missing_family_scores() -> None:
         assessment.total_score = 1.0  # type: ignore[misc]
 
 
+def test_score_assessment_preserves_future_source_for_evaluator_audit() -> None:
+    assessment = _assessment(source_observed_at_unix_ms=1_000_001, total_score=None)
+    assert assessment.source_observed_at_unix_ms > assessment.as_of_unix_ms
+
+
 @pytest.mark.parametrize(
     "field_name,bad_value",
     [
@@ -217,7 +222,6 @@ def test_score_assessment_is_frozen_and_accepts_missing_family_scores() -> None:
         ("regime_policy_version", ""),
         ("as_of_unix_ms", -1),
         ("source_observed_at_unix_ms", -1),
-        ("source_observed_at_unix_ms", 1_000_001),
         ("safety_quality_score", -0.01),
         ("money_flow_score", 100.01),
         ("setup_quality_score", math.inf),
