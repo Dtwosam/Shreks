@@ -10,6 +10,13 @@ from .models import (
     WalletTradeReconstruction,
 )
 from .reconstruction import reconstruct_wallet_trades
+from .profile_models import (
+    WalletEpisodeProfileContext,
+    WalletProfile,
+    WalletProfilePolicy,
+    WalletRegimeProfile,
+)
+from .profiles import build_wallet_profile
 
 __all__ = (
     "WalletActionKind",
@@ -22,4 +29,9 @@ __all__ = (
     "WalletTradeFindingCode",
     "WalletTradeReconstruction",
     "reconstruct_wallet_trades",
+    "WalletEpisodeProfileContext",
+    "WalletProfile",
+    "WalletProfilePolicy",
+    "WalletRegimeProfile",
+    "build_wallet_profile",
 )
