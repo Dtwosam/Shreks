@@ -6,6 +6,7 @@ from .models import (
     ShadowEvidenceLedger,
     ShadowReasonCode,
 )
+from .store import ShadowEvidenceStore
 
 __all__ = (
     "SHADOW_CHALLENGER_SCHEMA_VERSION",
@@ -13,5 +14,6 @@ __all__ = (
     "ShadowReasonCode",
     "ShadowDecisionRecord",
     "ShadowEvidenceLedger",
+    "ShadowEvidenceStore",
     "evaluate_shadow_challenger",
 )
