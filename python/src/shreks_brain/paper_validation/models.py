@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+import math
+
+
+class AccountingValidationStatus(StrEnum):
+    RECONCILED = "RECONCILED"
+    INCOMPLETE = "INCOMPLETE"
+    INVALID = "INVALID"
+
+
+class AccountingFindingCode(StrEnum):
+    JOURNAL_SEQUENCE_MISMATCH = "JOURNAL_SEQUENCE_MISMATCH"
+    PROCESSED_INTENT_KEYS_MISMATCH = "PROCESSED_INTENT_KEYS_MISMATCH"
+    CASH_BALANCE_MISMATCH = "CASH_BALANCE_MISMATCH"
+    REALIZED_PNL_MISMATCH = "REALIZED_PNL_MISMATCH"
+    ACCUMULATED_COSTS_MISMATCH = "ACCUMULATED_COSTS_MISMATCH"
+    POSITION_REALIZED_PNL_MISMATCH = "POSITION_REALIZED_PNL_MISMATCH"
+    POSITION_ACCUMULATED_COSTS_MISMATCH = "POSITION_ACCUMULATED_COSTS_MISMATCH"
+    POSITION_QUANTITY_MISMATCH = "POSITION_QUANTITY_MISMATCH"
+    POSITION_UNREALIZED_PNL_MISMATCH = "POSITION_UNREALIZED_PNL_MISMATCH"
+    UNREALIZED_PNL_MISMATCH = "UNREALIZED_PNL_MISMATCH"
+    UNMARKED_OPEN_POSITION = "UNMARKED_OPEN_POSITION"
+    EQUITY_PNL_MISMATCH = "EQUITY_PNL_MISMATCH"
+
+
+@dataclass(frozen=True, slots=True)
+class AccountingFinding:
+    code: AccountingFindingCode
+    message: str
+    position_id: str | None = None
+    observed_value: float | int | None = None
+    expected_value: float | int | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, AccountingFindingCode):
+            raise ValueError("code must be an AccountingFindingCode")
+        if not isinstance(self.message, str) or not self.message.strip():
+            raise ValueError("message must be a non-empty string")
+        if self.position_id is not None and (
+            not isinstance(self.position_id, str) or not self.position_id.strip()
+        ):
+            raise ValueError("position_id must be a non-empty string or None")
+        for name in ("observed_value", "expected_value"):
+            value = getattr(self, name)
+            if value is not None:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"{name} must be numeric or None")
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError(f"{name} must be finite")
+
+
+@dataclass(frozen=True, slots=True)
+class AccountingValidationReport:
+    status: AccountingValidationStatus
+    as_of_unix_ms: int
+    starting_cash_usd: float
+    cash_balance_usd: float
+    expected_cash_balance_usd: float
+    realized_pnl_usd: float
+    expected_realized_pnl_usd: float
+    unrealized_pnl_usd: float | None
+    expected_unrealized_pnl_usd: float | None
+    accumulated_costs_usd: float
+    expected_accumulated_costs_usd: float
+    open_market_value_usd: float | None
+    equity_usd: float | None
+    net_pnl_usd: float | None
+    expected_net_pnl_usd: float | None
+    journal_entry_count: int
+    terminal_failure_count: int
+    lifecycle_count: int
+    open_position_count: int
+    closed_position_count: int
+    partial_reduction_count: int
+    winning_closed_count: int
+    losing_closed_count: int
+    flat_closed_count: int
+    findings: tuple[AccountingFinding, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, AccountingValidationStatus):
+            raise ValueError("status must be an AccountingValidationStatus")
+        if (
+            isinstance(self.as_of_unix_ms, bool)
+            or not isinstance(self.as_of_unix_ms, int)
+            or self.as_of_unix_ms < 0
+        ):
+            raise ValueError("as_of_unix_ms must be a non-negative integer")
+        for name in (
+            "starting_cash_usd",
+            "cash_balance_usd",
+            "expected_cash_balance_usd",
+            "realized_pnl_usd",
+            "expected_realized_pnl_usd",
+            "accumulated_costs_usd",
+            "expected_accumulated_costs_usd",
+        ):
+            _require_finite(name, getattr(self, name))
+        for name in (
+            "unrealized_pnl_usd",
+            "expected_unrealized_pnl_usd",
+            "open_market_value_usd",
+            "equity_usd",
+            "net_pnl_usd",
+            "expected_net_pnl_usd",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _require_finite(name, value)
+        for name in (
+            "journal_entry_count",
+            "terminal_failure_count",
+            "lifecycle_count",
+            "open_position_count",
+            "closed_position_count",
+            "partial_reduction_count",
+            "winning_closed_count",
+            "losing_closed_count",
+            "flat_closed_count",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a non-negative integer")
+        if not isinstance(self.findings, tuple) or not all(
+            isinstance(finding, AccountingFinding) for finding in self.findings
+        ):
+            raise ValueError("findings must be a tuple of AccountingFinding values")
+        if self.status is AccountingValidationStatus.RECONCILED and self.findings:
+            raise ValueError("RECONCILED report cannot contain findings")
+        if self.status is AccountingValidationStatus.INCOMPLETE:
+            if not self.findings or any(
+                finding.code is not AccountingFindingCode.UNMARKED_OPEN_POSITION
+                for finding in self.findings
+            ):
+                raise ValueError("INCOMPLETE report requires only unmarked-position findings")
+        if self.status is AccountingValidationStatus.INVALID and not self.findings:
+            raise ValueError("INVALID report requires findings")
+
+
+def _require_finite(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be finite")
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite")

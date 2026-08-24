@@ -55,6 +55,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "pump_graduation_lifecycle",
         sql: include_str!("../migrations/0005_pump_graduation_lifecycle.sql"),
     },
+    Migration {
+        version: 6,
+        name: "paper_loop_checkpoints",
+        sql: include_str!("../migrations/0006_paper_loop_checkpoints.sql"),
+    },
 ];
 
 /// Read-only operational diagnostics for a Shreks database connection.
