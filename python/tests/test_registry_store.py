@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -45,10 +44,15 @@ def empty_report(candidate_version: str) -> TradingEvaluationReport:
     )
 
 
-def candidate(version: str, registered_at: int = 100):
+def candidate(
+    version: str,
+    registered_at: int = 100,
+    *,
+    strategy_version: str | None = None,
+):
     return build_registry_candidate(
         candidate_version=version,
-        strategy_version=f"strategy-{version}",
+        strategy_version=strategy_version or f"strategy-{version}",
         feature_schema_version="d6-research-v1",
         feature_columns=("feature_a",),
         evaluation_report=empty_report(version),
@@ -109,11 +113,11 @@ def test_conflicting_candidate_identity_fails_closed(tmp_path: Path) -> None:
     item = candidate("candidate-v1")
     store.register(item)
 
-    conflict = replace(
-        item,
+    conflict = candidate(
+        "candidate-v1",
         strategy_version="different-strategy",
-        candidate_fingerprint_sha256="f" * 64,
     )
+    assert conflict.candidate_fingerprint_sha256 != item.candidate_fingerprint_sha256
     with pytest.raises(ValueError, match="candidate version"):
         store.register(conflict)
 
