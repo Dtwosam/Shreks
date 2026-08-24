@@ -11,7 +11,8 @@ dependencies = []
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
-dev = ["pytest>=8,<9", "pyarrow==25.0.*"]
+learning = ["scikit-learn>=1.7,<2"]
+dev = ["pytest>=8,<9", "pyarrow==25.0.*", "scikit-learn>=1.7,<2"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
