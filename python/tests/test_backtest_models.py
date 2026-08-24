@@ -299,8 +299,8 @@ def test_replay_decision_input_rejects_cross_domain_mismatch() -> None:
         _decision_input(regime=_regime(as_of=AS_OF + 1))
     with pytest.raises(ValueError, match="market feature schema"):
         _decision_input(market_features=_market(schema="other"))
-    with pytest.raises(ValueError, match="wallet feature schema"):
-        _decision_input(wallet_features=_wallet(schema="other"))
+    with pytest.raises(ValueError, match="d5-wallet-v1"):
+        _wallet(schema="other")
 
 
 def test_replay_decision_input_rejects_future_or_incoherent_source_data() -> None:
