@@ -18,6 +18,8 @@ from shreks_brain.features import FeatureVector
 from shreks_brain.paper import PaperPosition, PaperPositionState
 
 
+_COMPARE_ABS_TOL = 1e-12
+
 _TRIGGER_PRECEDENCE = (
     ExitReasonCode.GLOBAL_HALT_EXIT,
     ExitReasonCode.MAX_HOLD_EXIT,
@@ -35,7 +37,7 @@ _TRIGGER_PRECEDENCE = (
 
 
 def create_exit_state(position: PaperPosition, policy: ExitPolicy) -> ExitState:
-    """Initialize one immutable C4 state from already-authoritative C3 evidence."""
+    """Initialize immutable C4 state from authoritative C3 position evidence."""
 
     if position.state is not PaperPositionState.OPEN:
         raise ValueError("create_exit_state requires an OPEN position")
@@ -94,7 +96,7 @@ def assess_exit(
         )
     if (
         policy.max_hold_seconds is not None
-        and position_age_seconds >= policy.max_hold_seconds
+        and _at_least(position_age_seconds, float(policy.max_hold_seconds))
     ):
         forced[ExitReasonCode.MAX_HOLD_EXIT] = _finding(
             ExitReasonCode.MAX_HOLD_EXIT,
@@ -107,7 +109,6 @@ def assess_exit(
         if forced:
             findings = _ordered_findings(forced)
             primary = findings[0].code
-            findings = _mark_primary(findings, primary)
             return _assessment(
                 position=position,
                 features=features,
@@ -115,7 +116,7 @@ def assess_exit(
                 state=_advance_time(state, as_of),
                 action=DecisionAction.EXIT,
                 primary=primary,
-                findings=findings,
+                findings=_mark_primary(findings, primary),
                 target_fraction=1.0,
                 target_quantity=position.quantity,
                 position_age_seconds=position_age_seconds,
@@ -166,7 +167,7 @@ def assess_exit(
     if (
         policy.min_liquidity_usd is not None
         and features.liquidity_usd is not None
-        and features.liquidity_usd <= policy.min_liquidity_usd
+        and _at_most(features.liquidity_usd, policy.min_liquidity_usd)
     ):
         triggers[ExitReasonCode.LIQUIDITY_BELOW_MINIMUM] = _finding(
             ExitReasonCode.LIQUIDITY_BELOW_MINIMUM,
@@ -177,7 +178,10 @@ def assess_exit(
     if (
         policy.max_exit_price_impact_pct is not None
         and context.expected_exit_price_impact_pct is not None
-        and context.expected_exit_price_impact_pct >= policy.max_exit_price_impact_pct
+        and _at_least(
+            context.expected_exit_price_impact_pct,
+            policy.max_exit_price_impact_pct,
+        )
     ):
         triggers[ExitReasonCode.EXIT_PRICE_IMPACT_TOO_HIGH] = _finding(
             ExitReasonCode.EXIT_PRICE_IMPACT_TOO_HIGH,
@@ -188,7 +192,7 @@ def assess_exit(
     if (
         policy.min_exit_capacity_fraction is not None
         and capacity_fraction is not None
-        and capacity_fraction <= policy.min_exit_capacity_fraction
+        and _at_most(capacity_fraction, policy.min_exit_capacity_fraction)
     ):
         triggers[ExitReasonCode.EXIT_CAPACITY_TOO_LOW] = _finding(
             ExitReasonCode.EXIT_CAPACITY_TOO_LOW,
@@ -198,7 +202,7 @@ def assess_exit(
 
     if (
         policy.hard_stop_loss_pct is not None
-        and price_return_pct <= -policy.hard_stop_loss_pct
+        and _at_most(price_return_pct, -policy.hard_stop_loss_pct)
     ):
         triggers[ExitReasonCode.HARD_STOP_TRIGGERED] = _finding(
             ExitReasonCode.HARD_STOP_TRIGGERED,
@@ -214,8 +218,8 @@ def assess_exit(
             next_state.high_water_price_usd / position.weighted_entry_price_usd - 1.0
         ) * 100.0
         if (
-            high_water_return_pct >= policy.trailing_activation_return_pct
-            and drawdown_pct <= -policy.trailing_stop_drawdown_pct
+            _at_least(high_water_return_pct, policy.trailing_activation_return_pct)
+            and _at_most(drawdown_pct, -policy.trailing_stop_drawdown_pct)
         ):
             triggers[ExitReasonCode.TRAILING_STOP_TRIGGERED] = _finding(
                 ExitReasonCode.TRAILING_STOP_TRIGGERED,
@@ -234,9 +238,14 @@ def assess_exit(
         and policy.flow_exit_max_buy_pressure_acceleration is not None
         and features.buy_fraction_m5 is not None
         and features.buy_pressure_acceleration is not None
-        and features.buy_fraction_m5 <= policy.flow_exit_max_buy_fraction_m5
-        and features.buy_pressure_acceleration
-        <= policy.flow_exit_max_buy_pressure_acceleration
+        and _at_most(
+            features.buy_fraction_m5,
+            policy.flow_exit_max_buy_fraction_m5,
+        )
+        and _at_most(
+            features.buy_pressure_acceleration,
+            policy.flow_exit_max_buy_pressure_acceleration,
+        )
     ):
         triggers[ExitReasonCode.FLOW_DETERIORATION_TRIGGERED] = _finding(
             ExitReasonCode.FLOW_DETERIORATION_TRIGGERED,
@@ -249,8 +258,14 @@ def assess_exit(
         and policy.momentum_exit_max_return_5m_pct is not None
         and features.return_1m_pct is not None
         and features.return_5m_pct is not None
-        and features.return_1m_pct <= policy.momentum_exit_max_return_1m_pct
-        and features.return_5m_pct <= policy.momentum_exit_max_return_5m_pct
+        and _at_most(
+            features.return_1m_pct,
+            policy.momentum_exit_max_return_1m_pct,
+        )
+        and _at_most(
+            features.return_5m_pct,
+            policy.momentum_exit_max_return_5m_pct,
+        )
     ):
         triggers[ExitReasonCode.MOMENTUM_DETERIORATION_TRIGGERED] = _finding(
             ExitReasonCode.MOMENTUM_DETERIORATION_TRIGGERED,
@@ -271,7 +286,6 @@ def assess_exit(
         )
 
     if not triggers:
-        finding = _finding(ExitReasonCode.NO_EXIT_TRIGGERED, primary=True)
         return _assessment(
             position=position,
             features=features,
@@ -279,7 +293,7 @@ def assess_exit(
             state=next_state,
             action=DecisionAction.HOLD,
             primary=ExitReasonCode.NO_EXIT_TRIGGERED,
-            findings=(finding,),
+            findings=(_finding(ExitReasonCode.NO_EXIT_TRIGGERED, primary=True),),
             target_fraction=0.0,
             target_quantity=0.0,
             position_age_seconds=position_age_seconds,
@@ -343,14 +357,10 @@ def _structural_gate(
         return ExitReasonCode.STATE_POLICY_MISMATCH, _position_age(features, position)
     if features.as_of_unix_ms != context.as_of_unix_ms:
         return ExitReasonCode.AS_OF_MISMATCH, _position_age(features, position)
-
     as_of = features.as_of_unix_ms
     if as_of < position.opened_at_unix_ms or as_of < state.initialized_at_unix_ms:
         return ExitReasonCode.CONTEXT_BEFORE_POSITION, None
-    if (
-        state.last_evaluated_at_unix_ms > as_of
-        or state.high_water_at_unix_ms > as_of
-    ):
+    if state.last_evaluated_at_unix_ms > as_of or state.high_water_at_unix_ms > as_of:
         return ExitReasonCode.STATE_AFTER_AS_OF, _position_age(features, position)
     return None
 
@@ -384,9 +394,7 @@ def _capacity_fraction(
     available_exit_notional_usd: float | None,
     current_market_value_usd: float,
 ) -> float | None:
-    if available_exit_notional_usd is None:
-        return None
-    if current_market_value_usd <= 0.0:
+    if available_exit_notional_usd is None or current_market_value_usd <= 0.0:
         return None
     return min(1.0, available_exit_notional_usd / current_market_value_usd)
 
@@ -399,7 +407,7 @@ def _triggered_take_profit(
     for level in levels:
         if level.name in completed:
             continue
-        if price_return_pct >= level.trigger_return_pct:
+        if _at_least(price_return_pct, level.trigger_return_pct):
             return level
         break
     return None
@@ -505,4 +513,12 @@ def _mark_primary(
 
 
 def _close(left: float, right: float) -> bool:
-    return math.isclose(left, right, rel_tol=0.0, abs_tol=1e-12)
+    return math.isclose(left, right, rel_tol=0.0, abs_tol=_COMPARE_ABS_TOL)
+
+
+def _at_most(value: float, threshold: float) -> bool:
+    return value < threshold or _close(value, threshold)
+
+
+def _at_least(value: float, threshold: float) -> bool:
+    return value > threshold or _close(value, threshold)
