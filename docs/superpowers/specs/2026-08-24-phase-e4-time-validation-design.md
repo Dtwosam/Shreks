@@ -344,7 +344,7 @@ Tests must prove all of these separately:
 2. Completion exactly at validation start is eligible.
 3. A pending selected label cannot train the fold.
 4. Changing any non-target future label cannot change a fold artifact or prediction.
-5. Changing validation target/future labels cannot change any fold model or prediction.
+5. Changing target/future-label values for rows in a fold's validation interval cannot change that same fold's model, predictions, validation membership, or fingerprint; those rows may affect only a later fold after the selected target has matured by that later fold's validation start.
 6. Validation label availability cannot change validation population membership.
 7. A row validated in an earlier fold may train a later fold only after label maturity.
 8. Random/input ordering cannot change folds, artifacts, predictions, or run fingerprint.
