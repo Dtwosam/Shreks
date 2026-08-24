@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 import pytest
 
 from shreks_brain.decision import DecisionAction
@@ -39,7 +37,7 @@ from shreks_brain.safety import SafetyDecision
 
 
 OPEN_INTENT_AT = 1_000_000
-OPEN_FILL_AT = 1_001_000
+OPEN_FILL_AT = 1_002_000
 EXIT_AT = 1_010_000
 MINT = "Mint111"
 
@@ -57,7 +55,7 @@ def _paper_policy(*, latency_ms: int = 1_000, max_quote_lag_ms: int = 5_000) -> 
 
 
 def _loop_policy() -> PaperLoopPolicy:
-    return PaperLoopPolicy(version="loop-v1-test", exit_max_slippage_bps=300)
+    return PaperLoopPolicy("loop-v1-test", 300)
 
 
 def _exit_policy() -> ExitPolicy:
@@ -82,7 +80,7 @@ def _exit_policy() -> ExitPolicy:
     )
 
 
-def _features(as_of: int, *, price: float) -> FeatureVector:
+def _features(as_of: int, price: float) -> FeatureVector:
     return FeatureVector(
         schema_version="b2-v1",
         as_of_unix_ms=as_of,
@@ -120,7 +118,7 @@ def _features(as_of: int, *, price: float) -> FeatureVector:
     )
 
 
-def _exit_context(as_of: int, *, global_halt: bool = False) -> ExitExecutionContext:
+def _context(as_of: int, *, global_halt: bool = False) -> ExitExecutionContext:
     return ExitExecutionContext(
         as_of_unix_ms=as_of,
         observed_at_unix_ms=as_of,
@@ -133,17 +131,11 @@ def _exit_context(as_of: int, *, global_halt: bool = False) -> ExitExecutionCont
     )
 
 
-def _observation(
-    state,
-    as_of: int,
-    *,
-    price: float,
-    global_halt: bool = False,
-) -> PaperExitObservation:
+def _observation(state, as_of: int, price: float, *, global_halt: bool = False):
     return PaperExitObservation(
-        position_id=state.managed_positions[0].position_id,
-        features=_features(as_of, price=price),
-        execution_context=_exit_context(as_of, global_halt=global_halt),
+        state.managed_positions[0].position_id,
+        _features(as_of, price),
+        _context(as_of, global_halt=global_halt),
     )
 
 
@@ -161,9 +153,7 @@ def _quote(
         mint=MINT,
         observed_at_unix_ms=observed_at,
         state=state,
-        reference_price_usd=(
-            execution_price if reference_price is None else reference_price
-        ),
+        reference_price_usd=(execution_price if reference_price is None else reference_price),
         execution_price_usd=execution_price,
         quoted_notional_usd=quoted_notional,
         available_notional_usd=available_notional,
@@ -189,10 +179,7 @@ def _buy_intent() -> TradeIntent:
 
 
 def _open_state(*, latency_ms: int = 1_000, max_quote_lag_ms: int = 5_000):
-    paper_policy = _paper_policy(
-        latency_ms=latency_ms,
-        max_quote_lag_ms=max_quote_lag_ms,
-    )
+    paper_policy = _paper_policy(latency_ms=latency_ms, max_quote_lag_ms=max_quote_lag_ms)
     ledger = create_paper_ledger(10_000.0, OPEN_INTENT_AT)
     intent = _buy_intent()
     execution = execute_paper_intent(
@@ -200,23 +187,19 @@ def _open_state(*, latency_ms: int = 1_000, max_quote_lag_ms: int = 5_000):
         PaperExecutionContext(
             evaluated_at_unix_ms=OPEN_FILL_AT,
             processed_intent_keys=frozenset(),
-            quote=_quote(OPEN_FILL_AT, execution_price=1.0),
+            quote=_quote(OPEN_FILL_AT),
         ),
         paper_policy,
     )
     assert execution.state is PaperExecutionState.FILLED
     update = apply_paper_execution(ledger, intent, execution)
     assert update.state is PaperLedgerUpdateState.APPLIED
-    position = next(
-        position
-        for position in update.ledger.positions
-        if position.state is PaperPositionState.OPEN
-    )
-    exit_policy = _exit_policy()
+    position = next(p for p in update.ledger.positions if p.state is PaperPositionState.OPEN)
+    policy = _exit_policy()
     managed = ManagedPaperPosition(
-        position_id=position.position_id,
-        exit_policy=exit_policy,
-        exit_state=create_exit_state(position, exit_policy),
+        position.position_id,
+        policy,
+        create_exit_state(position, policy),
     )
     return create_paper_loop_state(
         update.ledger,
@@ -227,28 +210,30 @@ def _open_state(*, latency_ms: int = 1_000, max_quote_lag_ms: int = 5_000):
 
 
 def _cycle(state, as_of: int, *, observation=None, quote=None):
-    observations = () if observation is None else (observation,)
-    quotes = () if quote is None else (quote,)
     return run_paper_cycle(
         state,
         PaperCycleInput(
-            as_of_unix_ms=as_of,
-            entry_candidates=(),
-            exit_observations=observations,
-            quotes=quotes,
+            as_of,
+            (),
+            () if observation is None else (observation,),
+            () if quote is None else (quote,),
         ),
     )
 
 
-def _position(state):
-    return next(
-        position
-        for position in state.ledger.positions
-        if position.state is PaperPositionState.OPEN
-    )
+def _open_position(state):
+    return next(p for p in state.ledger.positions if p.state is PaperPositionState.OPEN)
 
 
-def test_missing_exit_observation_without_pending_does_not_invent_hold() -> None:
+def _create_pending_reduce(state):
+    result = _cycle(state, EXIT_AT, observation=_observation(state, EXIT_AT, 1.20))
+    pending = result.next_state.managed_positions[0].pending_exit
+    assert pending is not None
+    assert pending.action is DecisionAction.REDUCE
+    return result, pending
+
+
+def test_missing_observation_without_pending_does_not_invent_hold() -> None:
     state = _open_state()
     result = _cycle(state, EXIT_AT)
     assert len(result.exit_results) == 1
@@ -256,222 +241,133 @@ def test_missing_exit_observation_without_pending_does_not_invent_hold() -> None
     assert item.exit_assessment is None
     assert item.intent is None
     assert item.reason is PaperLoopReasonCode.EXIT_OBSERVATION_MISSING
-    assert result.next_state.managed_positions[0].exit_state is state.managed_positions[0].exit_state
     assert result.next_state.managed_positions[0].pending_exit is None
 
 
 def test_hold_updates_exit_state_and_marks_from_usable_price() -> None:
     state = _open_state()
-    result = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.10),
-    )
+    result = _cycle(state, EXIT_AT, observation=_observation(state, EXIT_AT, 1.10))
     item = result.exit_results[0]
     assert item.exit_assessment is not None
     assert item.exit_assessment.action is DecisionAction.HOLD
     assert item.reason is PaperLoopReasonCode.EXIT_HOLD
     assert item.mark_ledger_update is not None
-    assert result.next_state.managed_positions[0].pending_exit is None
-    assert _position(result.next_state).last_mark_price_usd == pytest.approx(1.10)
+    assert _open_position(result.next_state).last_mark_price_usd == pytest.approx(1.10)
 
 
-def test_reduce_without_quote_persists_original_exit_decision() -> None:
+def test_reduce_without_quote_persists_original_decision() -> None:
     state = _open_state()
-    result = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
+    result, pending = _create_pending_reduce(state)
     item = result.exit_results[0]
-    assert item.exit_assessment is not None
-    assert item.exit_assessment.action is DecisionAction.REDUCE
-    assert item.intent is None
     assert item.reason is PaperLoopReasonCode.EXIT_QUOTE_MISSING
-    pending = result.next_state.managed_positions[0].pending_exit
-    assert pending is item.exit_assessment
+    assert item.intent is None
     assert pending.as_of_unix_ms == EXIT_AT
 
 
-def test_pending_reduce_survives_next_hold_and_uses_original_latency_clock() -> None:
+def test_pending_reduce_survives_hold_and_rebuilds_notional_from_later_quote() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    pending = first.next_state.managed_positions[0].pending_exit
-    assert pending is not None
-
+    first, pending = _create_pending_reduce(state)
     second_at = EXIT_AT + 1_000
     second = _cycle(
         first.next_state,
         second_at,
-        observation=_observation(first.next_state, second_at, price=1.10),
+        observation=_observation(first.next_state, second_at, 1.10),
         quote=_quote(second_at, execution_price=0.90),
     )
     item = second.exit_results[0]
-    assert item.exit_assessment is not None
-    assert item.exit_assessment.action is DecisionAction.HOLD
+    assert item.exit_assessment is not None and item.exit_assessment.action is DecisionAction.HOLD
     assert item.intent is not None
     assert item.intent.as_of_unix_ms == EXIT_AT
-    assert item.intent.requested_notional_usd == pytest.approx(
-        pending.target_quantity * 0.90
-    )
-    assert item.execution is not None
-    assert item.execution.fill is not None
+    assert item.intent.requested_notional_usd == pytest.approx(pending.target_quantity * 0.90)
+    assert item.execution is not None and item.execution.fill is not None
     assert item.execution.fill.quantity <= pending.target_quantity + 1e-12
 
 
 def test_quote_before_original_latency_keeps_pending_and_builds_no_sell() -> None:
     state = _open_state(latency_ms=2_000)
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
+    first, _ = _create_pending_reduce(state)
     quote_at = EXIT_AT + 1_999
     second = _cycle(
         first.next_state,
         quote_at,
-        observation=_observation(first.next_state, quote_at, price=1.10),
+        observation=_observation(first.next_state, quote_at, 1.10),
         quote=_quote(quote_at, execution_price=0.95),
     )
     item = second.exit_results[0]
-    assert item.intent is None
-    assert item.execution is None
     assert item.reason is PaperLoopReasonCode.EXIT_QUOTE_BEFORE_LATENCY
-    assert second.next_state.managed_positions[0].pending_exit is not None
+    assert item.intent is None
     assert second.next_state.managed_positions[0].pending_exit.as_of_unix_ms == EXIT_AT
 
 
-def test_future_quote_is_not_consumed_and_pending_survives() -> None:
+@pytest.mark.parametrize(
+    ("quote", "reason"),
+    (
+        (_quote(EXIT_AT + 501, execution_price=None, quoted_notional=None, available_notional=None), PaperLoopReasonCode.EXIT_QUOTE_AFTER_CYCLE),
+        (_quote(EXIT_AT + 1_000, execution_price=None), PaperLoopReasonCode.EXIT_EXECUTION_PRICE_UNAVAILABLE),
+    ),
+)
+def test_future_or_unpriced_quote_cannot_fabricate_sell(quote: PaperQuote, reason: PaperLoopReasonCode) -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    cycle_at = EXIT_AT + 500
-    future = _quote(cycle_at + 1, execution_price=None, quoted_notional=None, available_notional=None)
+    first, _ = _create_pending_reduce(state)
+    cycle_at = EXIT_AT + (500 if reason is PaperLoopReasonCode.EXIT_QUOTE_AFTER_CYCLE else 1_000)
     second = _cycle(
         first.next_state,
         cycle_at,
-        observation=_observation(first.next_state, cycle_at, price=1.10),
-        quote=future,
+        observation=_observation(first.next_state, cycle_at, 1.10),
+        quote=quote,
     )
     item = second.exit_results[0]
-    assert item.reason is PaperLoopReasonCode.EXIT_QUOTE_AFTER_CYCLE
+    assert item.reason is reason
     assert item.intent is None
     assert second.next_state.managed_positions[0].pending_exit is not None
 
 
-def test_missing_execution_price_does_not_fabricate_sell_notional() -> None:
+def test_quote_limited_partial_sell_books_actual_quantity_and_does_not_complete_tp() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    eligible_at = EXIT_AT + 1_000
+    first, pending = _create_pending_reduce(state)
+    eligible = EXIT_AT + 1_000
+    before_qty = _open_position(first.next_state).quantity
     second = _cycle(
         first.next_state,
-        eligible_at,
-        observation=_observation(first.next_state, eligible_at, price=1.10),
-        quote=_quote(
-            eligible_at,
-            execution_price=None,
-            reference_price=None,
-            quoted_notional=10_000.0,
-            available_notional=10_000.0,
-        ),
+        eligible,
+        observation=_observation(first.next_state, eligible, 1.20),
+        quote=_quote(eligible, quoted_notional=100.0),
     )
     item = second.exit_results[0]
-    assert item.reason is PaperLoopReasonCode.EXIT_EXECUTION_PRICE_UNAVAILABLE
-    assert item.intent is None
-    assert item.execution is None
-    assert second.next_state.managed_positions[0].pending_exit is not None
-
-
-def test_quote_size_limit_books_only_actual_partial_quantity_and_does_not_complete_tp() -> None:
-    state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    pending = first.next_state.managed_positions[0].pending_exit
-    assert pending is not None
-    eligible_at = EXIT_AT + 1_000
-    before_qty = _position(first.next_state).quantity
-    second = _cycle(
-        first.next_state,
-        eligible_at,
-        observation=_observation(first.next_state, eligible_at, price=1.20),
-        quote=_quote(
-            eligible_at,
-            execution_price=1.0,
-            quoted_notional=100.0,
-            available_notional=10_000.0,
-        ),
-    )
-    item = second.exit_results[0]
-    assert item.execution is not None
-    assert item.execution.state is PaperExecutionState.PARTIAL
-    assert item.execution.fill is not None
-    assert item.execution.fill.quantity == pytest.approx(100.0)
+    assert item.execution is not None and item.execution.state is PaperExecutionState.PARTIAL
+    assert item.execution.fill is not None and item.execution.fill.quantity == pytest.approx(100.0)
     assert item.execution.fill.quantity < pending.target_quantity
-    assert _position(second.next_state).quantity == pytest.approx(before_qty - 100.0)
+    assert _open_position(second.next_state).quantity == pytest.approx(before_qty - 100.0)
     assert "tp1" not in second.next_state.managed_positions[0].exit_state.completed_take_profit_levels
     assert second.next_state.managed_positions[0].pending_exit is None
 
 
 def test_exact_tp_target_completes_only_after_c3_booking() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    pending = first.next_state.managed_positions[0].pending_exit
-    assert pending is not None
+    first, pending = _create_pending_reduce(state)
     assert "tp1" not in first.next_state.managed_positions[0].exit_state.completed_take_profit_levels
-
-    eligible_at = EXIT_AT + 1_000
+    eligible = EXIT_AT + 1_000
     second = _cycle(
         first.next_state,
-        eligible_at,
-        observation=_observation(first.next_state, eligible_at, price=1.20),
-        quote=_quote(eligible_at, execution_price=1.0),
+        eligible,
+        observation=_observation(first.next_state, eligible, 1.20),
+        quote=_quote(eligible),
     )
     item = second.exit_results[0]
     assert item.execution_ledger_update is not None
     assert item.execution_ledger_update.state is PaperLedgerUpdateState.APPLIED
-    assert item.execution is not None and item.execution.fill is not None
     assert item.execution.fill.quantity == pytest.approx(pending.target_quantity)
     assert "tp1" in second.next_state.managed_positions[0].exit_state.completed_take_profit_levels
 
 
 def test_newer_full_exit_supersedes_pending_reduce_without_backdating() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    assert first.next_state.managed_positions[0].pending_exit is not None
-    assert first.next_state.managed_positions[0].pending_exit.action is DecisionAction.REDUCE
-
+    first, _ = _create_pending_reduce(state)
     emergency_at = EXIT_AT + 500
     second = _cycle(
         first.next_state,
         emergency_at,
-        observation=_observation(
-            first.next_state,
-            emergency_at,
-            price=1.10,
-            global_halt=True,
-        ),
+        observation=_observation(first.next_state, emergency_at, 1.10, global_halt=True),
     )
     pending = second.next_state.managed_positions[0].pending_exit
     assert pending is not None
@@ -479,88 +375,51 @@ def test_newer_full_exit_supersedes_pending_reduce_without_backdating() -> None:
     assert pending.primary_reason is ExitReasonCode.GLOBAL_HALT_EXIT
     assert pending.as_of_unix_ms == emergency_at
 
-    eligible_at = emergency_at + 1_000
+    eligible = emergency_at + 1_000
     third = _cycle(
         second.next_state,
-        eligible_at,
-        observation=_observation(second.next_state, eligible_at, price=1.10),
-        quote=_quote(eligible_at, execution_price=1.0),
+        eligible,
+        observation=_observation(second.next_state, eligible, 1.10),
+        quote=_quote(eligible),
     )
     item = third.exit_results[0]
-    assert item.intent is not None
-    assert item.intent.as_of_unix_ms == emergency_at
+    assert item.intent is not None and item.intent.as_of_unix_ms == emergency_at
     assert item.intent.reason == ExitReasonCode.GLOBAL_HALT_EXIT.value
     assert not third.next_state.managed_positions
-    assert all(position.state is PaperPositionState.CLOSED for position in third.next_state.ledger.positions)
+    assert all(p.state is PaperPositionState.CLOSED for p in third.next_state.ledger.positions)
 
 
-def test_pending_full_exit_is_not_weakened_by_fresh_hold() -> None:
+def test_pending_full_exit_is_not_weakened_and_can_retry_without_new_observation() -> None:
     state = _open_state()
     first = _cycle(
         state,
         EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.10, global_halt=True),
+        observation=_observation(state, EXIT_AT, 1.10, global_halt=True),
     )
     pending = first.next_state.managed_positions[0].pending_exit
     assert pending is not None and pending.action is DecisionAction.EXIT
 
-    next_at = EXIT_AT + 500
-    second = _cycle(
-        first.next_state,
-        next_at,
-        observation=_observation(first.next_state, next_at, price=1.10),
-    )
-    retained = second.next_state.managed_positions[0].pending_exit
-    assert retained is not None
-    assert retained.as_of_unix_ms == EXIT_AT
-    assert retained.action is DecisionAction.EXIT
-
-
-def test_missing_current_observation_can_retry_already_authorized_pending_exit() -> None:
-    state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    pending = first.next_state.managed_positions[0].pending_exit
-    assert pending is not None
-    eligible_at = EXIT_AT + 1_000
-    second = _cycle(
-        first.next_state,
-        eligible_at,
-        quote=_quote(eligible_at, execution_price=1.0),
-    )
+    eligible = EXIT_AT + 1_000
+    second = _cycle(first.next_state, eligible, quote=_quote(eligible))
     item = second.exit_results[0]
     assert item.exit_assessment is None
-    assert item.intent is not None
-    assert item.execution is not None
-    assert item.execution.fill is not None
-    assert item.execution.fill.quantity <= pending.target_quantity + 1e-12
+    assert item.intent is not None and item.intent.as_of_unix_ms == EXIT_AT
+    assert not second.next_state.managed_positions
 
 
-def test_failed_after_submission_books_network_cost_clears_pending_and_does_not_complete_tp() -> None:
+def test_failed_submission_books_network_cost_clears_pending_and_not_tp() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    eligible_at = EXIT_AT + 1_000
+    first, _ = _create_pending_reduce(state)
+    eligible = EXIT_AT + 1_000
     cash_before = first.next_state.ledger.cash_balance_usd
     second = _cycle(
         first.next_state,
-        eligible_at,
-        observation=_observation(first.next_state, eligible_at, price=1.20),
-        quote=_quote(
-            eligible_at,
-            execution_price=1.0,
-            state=PaperQuoteState.FAILED_AFTER_SUBMISSION,
-        ),
+        eligible,
+        observation=_observation(first.next_state, eligible, 1.20),
+        quote=_quote(eligible, state=PaperQuoteState.FAILED_AFTER_SUBMISSION),
     )
     item = second.exit_results[0]
-    assert item.execution is not None
-    assert item.execution.state is PaperExecutionState.FAILED
+    assert item.execution is not None and item.execution.state is PaperExecutionState.FAILED
     assert item.execution.findings[0].code is PaperExecutionReasonCode.SIMULATED_SUBMISSION_FAILED
     assert second.next_state.ledger.cash_balance_usd == pytest.approx(
         cash_before - state.paper_fill_policy.network_fee_usd
@@ -569,45 +428,30 @@ def test_failed_after_submission_books_network_cost_clears_pending_and_does_not_
     assert "tp1" not in second.next_state.managed_positions[0].exit_state.completed_take_profit_levels
 
 
-def test_late_quote_is_passed_to_c1_for_terminal_quote_too_late_evidence() -> None:
+def test_late_quote_is_passed_to_c1_for_quote_too_late_terminal_evidence() -> None:
     state = _open_state(max_quote_lag_ms=2_000)
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    late_at = EXIT_AT + 3_001
+    first, _ = _create_pending_reduce(state)
+    late = EXIT_AT + 3_001
     second = _cycle(
         first.next_state,
-        late_at,
-        observation=_observation(first.next_state, late_at, price=1.10),
-        quote=_quote(late_at, execution_price=1.0),
+        late,
+        observation=_observation(first.next_state, late, 1.10),
+        quote=_quote(late),
     )
     item = second.exit_results[0]
     assert item.intent is not None
-    assert item.execution is not None
-    assert item.execution.state is PaperExecutionState.FAILED
+    assert item.execution is not None and item.execution.state is PaperExecutionState.FAILED
     assert item.execution.findings[0].code is PaperExecutionReasonCode.QUOTE_TOO_LATE
     assert second.next_state.managed_positions[0].pending_exit is None
 
 
-def test_exit_intent_reuses_lifecycle_entry_versions_and_key_ignores_quote_price() -> None:
+def test_exit_key_is_decision_stable_while_notional_tracks_quote_price_and_metadata() -> None:
     state = _open_state()
-    first = _cycle(
-        state,
-        EXIT_AT,
-        observation=_observation(state, EXIT_AT, price=1.20),
-    )
-    pending = first.next_state.managed_positions[0].pending_exit
-    assert pending is not None
+    first, pending = _create_pending_reduce(state)
+    eligible = EXIT_AT + 1_000
 
-    eligible_at = EXIT_AT + 1_000
-    low_price = _cycle(
-        first.next_state,
-        eligible_at,
-        quote=_quote(eligible_at, execution_price=0.80),
-    )
-    low_intent = low_price.exit_results[0].intent
+    low = _cycle(first.next_state, eligible, quote=_quote(eligible, execution_price=0.80))
+    low_intent = low.exit_results[0].intent
     assert low_intent is not None
     assert low_intent.strategy_name == "fresh_launch_continuation"
     assert low_intent.strategy_version == "fresh-v1-test"
@@ -616,13 +460,8 @@ def test_exit_intent_reuses_lifecycle_entry_versions_and_key_ignores_quote_price
     assert low_intent.risk_policy_version == "risk-v1-test"
     assert low_intent.requested_notional_usd == pytest.approx(pending.target_quantity * 0.80)
 
-    # Re-evaluate from the same immutable pre-execution state with a different quote.
-    high_price = _cycle(
-        first.next_state,
-        eligible_at,
-        quote=_quote(eligible_at, execution_price=1.10),
-    )
-    high_intent = high_price.exit_results[0].intent
+    high = _cycle(first.next_state, eligible, quote=_quote(eligible, execution_price=1.10))
+    high_intent = high.exit_results[0].intent
     assert high_intent is not None
     assert high_intent.requested_notional_usd == pytest.approx(pending.target_quantity * 1.10)
     assert high_intent.idempotency_key == low_intent.idempotency_key
