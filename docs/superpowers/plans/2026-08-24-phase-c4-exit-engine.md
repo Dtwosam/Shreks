@@ -1,283 +1,48 @@
-# Phase C4 Exit Engine Implementation Plan
+# Phase C4 Exit Engine Verification Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Predecessor:** verified C3 head `7393575e6b54033b335becaa484cf4a992857bc9`.
 
-**Goal:** Build a deterministic, point-in-time C4 exit engine that emits HOLD/REDUCE/EXIT with exact target quantity, structured reasons, trailing/take-profit state, and no execution authority.
+**Goal:** add a deterministic, point-in-time position exit layer that emits `HOLD / REDUCE / EXIT` with exact target quantity, structured reasons, high-water/take-profit state, and no execution authority.
 
-**Architecture:** Add a standalone `shreks_brain.exits` package. Reuse B2 `FeatureVector` for market/flow/momentum evidence and C3 `PaperPosition` for position truth; add only size-aware exit execution evidence and immutable C4 state. Keep SELL intent construction out of C4 because the current USD-notional TradeIntent cannot safely guarantee a quantity reduction across price movement.
+## Architecture
 
-**Tech Stack:** Python 3.12+, stdlib dataclasses/enums/math only, pytest, existing Shreks B2/B8/C3 domain models.
+- New pure Python package: `shreks_brain.exits`.
+- Reuses unchanged B2 `b2-v1` `FeatureVector` for price/liquidity/flow/momentum evidence.
+- Reuses C3 `PaperPosition` as authoritative position quantity, weighted entry, lifecycle, and booked holdings truth.
+- Adds only immutable, size-aware exit execution evidence (`route_state`, available exit notional, impact percentage + covered notional, optional wallet-distribution evidence, global halt).
+- Uses existing `DecisionAction.HOLD / REDUCE / EXIT`; B8 entry behavior is unchanged.
+- No production `ExitPolicy` defaults or production thresholds.
+- No provider/storage/wall-clock/RNG reads inside exit logic.
+- No SELL `TradeIntent` construction in C4. The shared intent is USD-notional based, so converting an exact quantity reduction into a fixed decision-time notional could oversell after price movement. C5 owns quote-aware wiring through the existing `TradeIntent -> C1 realistic execution -> C3 accounting` path.
+- No C1 execution change, C3 accounting change, wallet reconstruction, persistence, signer, transaction construction/submission, or live-money path.
 
-**Spec:** `docs/superpowers/specs/2026-08-24-phase-c4-exit-engine-design.md`
+## Deterministic behavior
 
-## Global Constraints
-
-- Base exactly on verified C3 head `7393575e6b54033b335becaa484cf4a992857bc9`.
-- Reuse `DecisionAction.HOLD / REDUCE / EXIT`; do not widen or alter B8 entry decision behavior.
-- Reuse unchanged B2 `b2-v1` FeatureVector; no feature-schema widening.
-- Reuse C3 PaperPosition as authoritative quantity/entry/lifecycle state; no accounting duplication.
-- No production exit thresholds or default ExitPolicy instance.
-- No provider/storage/wall-clock/RNG reads in exit logic.
-- No SELL TradeIntent construction, C1 fill changes, C3 accounting changes, autonomous loop, persistence, wallet reconstruction, signer, transaction, or live-money path.
-- Missing evidence stays unknown; no silent zero/healthy conversion.
-- Every exit has exactly one primary reason plus auditable supporting findings.
-- Strict RED -> expected failure -> minimal GREEN for every task.
-
----
-
-### Task 1: Immutable Exit Domain and State Initialization
-
-**Files:**
-- Create: `python/tests/test_exit_models.py`
-- Create: `python/src/shreks_brain/exits/models.py`
-
-**Interfaces:**
-- Produces: `ExitRouteState`, `ExitReasonCode`, `TakeProfitLevel`, `ExitPolicy`, `ExitExecutionContext`, `ExitState`, `ExitFinding`, `ExitAssessment`.
-- Later engine consumes these directly.
-
-- [ ] **Step 1: Write failing model-contract tests**
-
-Pin:
-
-```python
-assert [member.value for member in ExitRouteState] == [
-    "AVAILABLE", "UNAVAILABLE", "UNKNOWN"
-]
-assert DecisionAction.HOLD.value == "HOLD"
-assert DecisionAction.REDUCE.value == "REDUCE"
-assert DecisionAction.EXIT.value == "EXIT"
-```
-
-Validate:
-
-- no default `ExitPolicy`,
-- non-empty version/schema strings,
-- optional rule semantics and paired-threshold validation,
-- strictly increasing unique take-profit levels,
-- fractions in `(0,1]`,
-- size-aware impact percentage/notional pairing,
-- optional wallet signal remains tri-state,
-- `ExitState` policy/position identity and high-water chronology,
-- assessment action/target invariants,
-- exactly one primary finding matching `primary_reason`,
-- assessment contains no TradeIntent/fill/signer/transaction/live fields.
-
-- [ ] **Step 2: Commit RED and require CI collection failure**
-
-Expected Python failure:
+Structural/schema/state/time contradictions fail closed to `HOLD`. Once structurally coherent, global halt and maximum hold may demand a full `EXIT` even when current price/market/execution evidence is stale or missing. With usable evidence, fixed primary precedence is:
 
 ```text
-ModuleNotFoundError: No module named 'shreks_brain.exits'
+liquidity route unavailable
+liquidity below minimum
+exit price impact too high
+exit capacity too low
+hard stop
+trailing stop
+explicit wallet distribution
+flow deterioration
+momentum deterioration
+take profit
+no exit -> HOLD
 ```
 
-Prior Rust/workspace/safety layers must remain healthy.
+Every assessment has exactly one primary reason and retains simultaneous lower-priority proven triggers as supporting findings. Equality at configured boundaries triggers deterministically with a fixed arithmetic tolerance.
 
-- [ ] **Step 3: Implement minimal immutable models**
+High-water state never decreases and advances only on usable point-in-time evidence. The earliest incomplete take-profit level is the only profit-taking level eligible to fire. `acknowledge_exit_fill` marks a level complete only when authoritative C3 before/after quantity evidence proves the booked reduction reached the decision target (or the position fully closed); failed/no-fill/undersized partial outcomes do not advance the ladder.
 
-Required model shapes:
+Wallet-distribution evidence stays tri-state. Unknown is never converted to false or treated as a trigger. C4 does not fabricate Phase D wallet intelligence.
 
-```python
-class ExitRouteState(StrEnum):
-    AVAILABLE = "AVAILABLE"
-    UNAVAILABLE = "UNAVAILABLE"
-    UNKNOWN = "UNKNOWN"
+## Stable public API
 
-@dataclass(frozen=True, slots=True)
-class TakeProfitLevel:
-    name: str
-    trigger_return_pct: float
-    reduce_fraction_of_current_quantity: float
-
-@dataclass(frozen=True, slots=True)
-class ExitPolicy:
-    version: str
-    required_feature_schema_version: str
-    max_market_data_age_ms: int
-    max_execution_evidence_age_ms: int
-    hard_stop_loss_pct: float | None
-    take_profit_levels: tuple[TakeProfitLevel, ...]
-    trailing_activation_return_pct: float | None
-    trailing_stop_drawdown_pct: float | None
-    max_hold_seconds: int | None
-    flow_exit_max_buy_fraction_m5: float | None
-    flow_exit_max_buy_pressure_acceleration: float | None
-    momentum_exit_max_return_1m_pct: float | None
-    momentum_exit_max_return_5m_pct: float | None
-    min_liquidity_usd: float | None
-    max_exit_price_impact_pct: float | None
-    min_exit_capacity_fraction: float | None
-    wallet_distribution_enabled: bool
-
-@dataclass(frozen=True, slots=True)
-class ExitExecutionContext:
-    as_of_unix_ms: int
-    observed_at_unix_ms: int
-    route_state: ExitRouteState
-    available_exit_notional_usd: float | None
-    expected_exit_price_impact_pct: float | None
-    price_impact_notional_usd: float | None
-    wallet_distribution_detected: bool | None
-    global_halt_active: bool
-
-@dataclass(frozen=True, slots=True)
-class ExitState:
-    policy_version: str
-    position_id: str
-    mint: str
-    initialized_at_unix_ms: int
-    last_evaluated_at_unix_ms: int
-    high_water_price_usd: float
-    high_water_at_unix_ms: int
-    completed_take_profit_levels: frozenset[str]
-```
-
-`ExitAssessment` must carry the exact fields defined by the design, with `next_state` and findings.
-
-- [ ] **Step 4: Run full CI and require GREEN**
-
----
-
-### Task 2: Deterministic Exit Assessment Engine
-
-**Files:**
-- Create: `python/tests/test_exit_engine.py`
-- Create: `python/src/shreks_brain/exits/engine.py`
-
-**Interfaces:**
-- Produces:
-
-```python
-def create_exit_state(position: PaperPosition, policy: ExitPolicy) -> ExitState: ...
-
-def assess_exit(
-    position: PaperPosition,
-    features: FeatureVector,
-    execution: ExitExecutionContext,
-    state: ExitState,
-    policy: ExitPolicy,
-) -> ExitAssessment: ...
-```
-
-- [ ] **Step 1: Write failing behavioral tests**
-
-Use canonical C3 OPEN positions and B2 FeatureVectors to pin exact precedence and equality boundaries.
-
-Required cases:
-
-1. feature schema mismatch -> HOLD.
-2. CLOSED position -> HOLD.
-3. state identity mismatch -> HOLD.
-4. state policy mismatch -> HOLD.
-5. feature/context `as_of` mismatch -> HOLD.
-6. chronology before position/state -> HOLD.
-7. global halt -> full EXIT even with stale/missing price.
-8. max hold equality -> full EXIT even with stale/missing price.
-9. future/stale market data -> HOLD and no high-water advance.
-10. future/stale execution evidence -> HOLD and no market triggers.
-11. missing/non-positive current price -> HOLD.
-12. route UNAVAILABLE -> full EXIT.
-13. liquidity equality at minimum -> full EXIT.
-14. size-aware impact equality at maximum -> full EXIT.
-15. capacity equality at minimum fraction -> full EXIT.
-16. hard-stop equality -> full EXIT.
-17. trailing remains inactive below activation.
-18. trailing activation equality passes; drawdown equality -> full EXIT.
-19. explicit wallet distribution True + enabled -> full EXIT; None/False cannot trigger.
-20. flow deterioration requires both configured known signals.
-21. momentum deterioration requires both configured known signals.
-22. earliest incomplete take-profit level only; fraction <1 -> REDUCE.
-23. take-profit fraction 1 -> EXIT.
-24. completed take-profit level is skipped.
-25. emergency/full-exit reason outranks simultaneous take profit.
-26. normal fresh evidence -> HOLD.
-27. high-water update is `max(previous, current)` and never decreases.
-28. findings contain exactly one primary and simultaneously triggered lower-priority conditions as supporting.
-
-- [ ] **Step 2: Commit RED and require expected missing-engine failure**
-
-Expected:
-
-```text
-ModuleNotFoundError: No module named 'shreks_brain.exits.engine'
-```
-
-- [ ] **Step 3: Implement minimal pure engine**
-
-Fixed primary precedence must exactly follow the design. Use immediate compatibility/data-quality HOLDs; for usable evidence compute all trigger conditions, select the first by precedence, then attach lower-priority proven triggers as supporting findings.
-
-Price-derived formulas:
-
-```python
-position_age_seconds = (as_of - position.opened_at_unix_ms) / 1000.0
-price_return_pct = (price / position.weighted_entry_price_usd - 1.0) * 100.0
-market_value = position.quantity * price
-high_water = max(state.high_water_price_usd, price)
-drawdown_pct = (price / high_water - 1.0) * 100.0
-```
-
-Capacity when known:
-
-```python
-capacity_fraction = min(1.0, available_exit_notional_usd / market_value)
-```
-
-- [ ] **Step 4: Run full CI and require GREEN**
-
----
-
-### Task 3: Fill-Confirmed Take-Profit State Advancement
-
-**Files:**
-- Create: `python/tests/test_exit_acknowledgement.py`
-- Modify: `python/src/shreks_brain/exits/engine.py`
-
-**Interfaces:**
-- Produces:
-
-```python
-def acknowledge_exit_fill(
-    state: ExitState,
-    decision: ExitAssessment,
-    before_position: PaperPosition,
-    after_position: PaperPosition,
-) -> ExitState: ...
-```
-
-- [ ] **Step 1: Write failing acknowledgement tests**
-
-Pin:
-
-- HOLD cannot complete a take-profit level.
-- non-take-profit EXIT/REDUCE cannot complete a take-profit level.
-- mismatched state/decision/position IDs reject.
-- quantity increase rejects.
-- failed/no-fill (same quantity) leaves level incomplete.
-- partial fill below decision target leaves level incomplete.
-- exact target equality completes the triggered level.
-- reduction beyond target completes the level.
-- full close completes a take-profit level when the decision was take-profit driven.
-- completed level set is immutable and idempotent.
-- high-water evidence is preserved.
-
-- [ ] **Step 2: Commit RED and require missing-function failure**
-
-- [ ] **Step 3: Implement minimal acknowledgement helper**
-
-Only actual C3 before/after quantity evidence may advance `completed_take_profit_levels`. Do not infer completion from a C1 decision or requested quantity alone.
-
-- [ ] **Step 4: Run full CI and require GREEN**
-
----
-
-### Task 4: Stable Public Exit API and Documentation
-
-**Files:**
-- Create: `python/tests/test_exit_public_api.py`
-- Create: `python/src/shreks_brain/exits/__init__.py`
-- Modify: `README.md`
-- Replace this tracked plan with a concise verification record after package GREEN.
-
-**Public API:**
+`shreks_brain.exits` exports exactly:
 
 ```text
 ExitAssessment
@@ -293,48 +58,26 @@ assess_exit
 create_exit_state
 ```
 
-- [ ] **Step 1: Write package-level RED test**
+The public surface carries no `TradeIntent`, quote/fill authority, signer, wallet secret, transaction, provider, persistence, or live-execution authority.
 
-Require exactly the eleven symbols above from `shreks_brain.exits`, plus a real create-state -> assess -> acknowledgement flow.
+## TDD evidence
 
-Assert public models/functions expose no `TradeIntent`, quote/fill, wallet secret, signer, transaction, live execution, persistence, or provider authority.
+- Domain RED: `747fc80036e499826cc41c0fedc2306d5c7b115a` / CI `32675150122` — expected missing `shreks_brain.exits` failure.
+- Domain GREEN: `8fa1e20edd820ae70066dd4211448dd34354e057` / CI `32675207813` — Rust, Python, workspace metadata, repository safety green.
+- Exit-engine RED: `4ddfefaf8bb63c8af130cba64b82b14aa289fc11` / CI `32675346042` — expected missing `shreks_brain.exits.engine` failure.
+- Chronology representation correction: `7d883a7f114756ac8c6de11c5d2b235f6d123f30` — invalid pre-position chronology preserves unknown position age instead of fabricating zero.
+- Initial engine GREEN diagnostic: `3d9c5bb48964b1f1b23b8b1fe67a9904ac116af8` / CI `32710551377` — 1,342 tests passed; five C4 failures exposed structural-mismatch output representation plus floating-point equality semantics.
+- Structural contradiction representation fix: `4662839983eab38c45fd639634ae99cebe3e9369`.
+- Exit-engine final GREEN: `57adf45971e188e3aafa81af4a0389bb37f11bbf` / CI `32710816118` — all checks green with fixed `1e-12` threshold-comparison tolerance.
+- Fill-acknowledgement RED: `81c59ec4c36745702ded75c795a8bc3141311daf` / CI `32711003373` — expected missing `acknowledge_exit_fill` failure.
+- Fill-acknowledgement GREEN: `dcf1225a67232973bdae548f4a075bd1c0ec899b` / CI `32711283434` — all checks green.
+- Public-API RED: `98dbe5d62099c50c101c256d3ab33a1b2ac487e6` / CI `32711438463` — expected package-level export failure.
+- Public-API GREEN: `d3268d0649ff6d50725fb114f66b2022bf9c973d` / CI `32711500520` — all checks green.
+- README semantics commit: `50fa55e5f160110525c07f9327adb012e648dbb0`.
 
-- [ ] **Step 2: Commit RED and require package-import failure**
+## Intended C3 -> C4 diff
 
-- [ ] **Step 3: Add exact exports; run full CI GREEN**
-
-- [ ] **Step 4: Document C4 semantics in README**
-
-Document:
-
-- first-class HOLD/REDUCE/EXIT decisions,
-- exact precedence and emergency-over-profit behavior,
-- no production thresholds,
-- B2/C3 evidence reuse,
-- size-aware exitability evidence,
-- wallet evidence remains optional/unfabricated,
-- take-profit completion only after actual booked reduction,
-- mark/price is not an executable quote,
-- C4 outputs quantity, not SELL TradeIntent,
-- C5 owns safe quote-aware loop wiring.
-
-- [ ] **Step 5: Replace plan with verification record and freeze branch**
-
-The tracked verification record must contain predecessor SHA, architecture, RED/GREEN commits/runs, public API, and scope boundaries, but **not** final branch SHA/run.
-
-After that commit, no further C4 branch writes.
-
-- [ ] **Step 6: Exact-head seal**
-
-On the frozen head:
-
-1. run/fetch fresh full CI and require Rust/Python/workspace/safety green,
-2. compare against final C3 head `7393575e6b54033b335becaa484cf4a992857bc9`,
-3. require only intended C4 docs/package/tests/README files,
-4. update stacked draft PR metadata only with final head/run/evidence,
-5. leave PR draft and unmerged.
-
-## Expected C4 diff
+Exactly these files are allowed:
 
 ```text
 README.md
@@ -349,4 +92,6 @@ python/tests/test_exit_acknowledgement.py
 python/tests/test_exit_public_api.py
 ```
 
-No B2, B8, risk, C1 execution, C3 accounting, Rust/storage/provider, signer, transaction, or live-execution implementation file should change.
+No B2, B8, risk, C1 execution, C3 accounting, Rust/storage/provider, signer, transaction, or live-execution implementation file may change.
+
+This record intentionally does not contain the final C4 branch SHA or final CI run. After this record commit, the branch must be frozen; the immutable final head/run belongs only in PR metadata after exact-head CI and diff verification.
