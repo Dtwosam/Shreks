@@ -459,3 +459,11 @@ Dataset rows are deterministically sorted and receive a logical SHA-256 fingerpr
 Parquet output uses an explicit schema, Zstandard compression, and metadata carrying the D6/B2/D5 schema versions, horizon set, row count, and logical digest. PyArrow is lazy-loaded and isolated behind the optional `shreks-brain[research]` extra; importing or building logical D6 research rows does not require it.
 
 D6 does **not** read SQLite, replay history, generate missing labels, train or promote a model, change strategy/score/decision/risk behavior, create a `TradeIntent`, size capital, sign or submit transactions, or enable live trading. Phase E must use chronological replay and unseen post-cost evaluation to determine whether the wallet/market research evidence actually improves expectancy.
+
+## Historical decision replay
+
+Phase E1 adds a pure Python historical replay boundary under `shreks_brain.backtest` with schema `e1-replay-v1`. It recomputes the existing Fresh Launch, Graduation/Breakout, and First Pullback setup assessments from point-in-time decision evidence, then reuses B7 scoring and B8 entry decision logic under explicit caller-supplied policies.
+
+Future D6 outcome labels are not part of replay decision inputs. They enter through a separate identity-matched bundle and are attached only after setup, score, and decision have been recomputed for the exact `(candidate_mint, as_of_unix_ms)`. Rejected and watched candidates remain in the replay output alongside entries, and D5 wallet features are preserved for research segmentation without being injected into the current B7/B8 decision path.
+
+E1 performs no SQLite, provider, filesystem, network, PyArrow, or wall-clock reads and computes no profitability metric. It adds no risk sizing, paper/live execution, model training or promotion, signer, transaction submission, or live-money authority. Later chronological splitting, baselines, model training, and post-cost evaluation remain separate Phase E work.
