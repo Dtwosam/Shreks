@@ -290,6 +290,22 @@ Every ledger snapshot self-reconciles cash, realized PnL, accumulated costs, pro
 
 C3 supplies **no production starting capital**, persistence/restart wiring, stop loss, take profit, trailing stop, maximum hold, emergency exit rule, autonomous paper loop, wallet/signing, transaction construction/submission, or live-money path. Exit decisions begin in C4; realistic SELL execution continues to use the same C1 adapter and C3 books only what that adapter actually fills.
 
+## Deterministic paper exit engine
+
+Phase C4 adds the first position-aware exit decision layer under `shreks_brain.exits`. It reuses the unchanged B2 `b2-v1` `FeatureVector` for price, liquidity, flow, and momentum evidence and the C3 `PaperPosition` for authoritative entry price, quantity, lifecycle, and booked holdings. The exit evaluator itself performs no provider, storage, wall-clock, balance, or random-number reads.
+
+C4 makes `HOLD`, `REDUCE`, and `EXIT` first-class deterministic decisions. Structural contradictions and unusable point-in-time evidence fail closed to `HOLD` rather than inventing an executable exit. Global halt and maximum-hold rules are the deliberate exceptions: once structurally coherent, they may demand a full `EXIT` even when current market/quote evidence is stale or the current price is unavailable. With usable evidence, liquidity emergencies outrank hard stops, trailing stops, explicit wallet-distribution evidence, flow/momentum deterioration, and staged take profits. Every assessment has exactly one primary reason while retaining simultaneously proven lower-priority triggers as supporting findings for research.
+
+Every numerical threshold belongs to an explicit, versioned `ExitPolicy`; C4 ships **no production exit thresholds or default policy**. Equality at a configured boundary triggers deterministically using a fixed arithmetic tolerance. The thresholds are hypotheses that must be calibrated on unseen, point-in-time paper outcomes after actual costs and exitability constraints rather than treated as claims of profitability.
+
+Exitability evidence is explicitly size-aware. `ExitExecutionContext` carries route state, available exit notional, expected price impact, and the notional covered by that impact estimate. Missing route/capacity/impact evidence stays unknown. The B2 size-unknown impact field and a C3 mark are not treated as proof that the full position can actually be liquidated at that price.
+
+C4 maintains immutable high-water and take-profit state per position lifecycle and exit-policy version. High water can only increase on usable current evidence. The earliest incomplete take-profit level is the only profit-taking level eligible to fire on a decision. Crucially, a take-profit decision does **not** mark that level complete: `acknowledge_exit_fill` advances the level only after authoritative C3 before/after position quantities prove that at least the targeted reduction was actually booked. Failed, no-fill, or undersized partial exits leave the level incomplete so the strategy cannot claim profits it did not realize.
+
+Wallet distribution remains an optional tri-state input. `None` means unknown and cannot trigger an exit; C4 does not fabricate the Phase D wallet-history, clustering, or independence evidence that has not yet been built.
+
+C4 outputs an exact target reduction fraction and token quantity, but deliberately does **not** create a SELL `TradeIntent`. The existing shared intent boundary is USD-notional based; converting a quantity target into a fixed notional at decision-time price could oversell the C3 position if execution price moves before the fill. C5 owns safe quote-aware wiring from C4 quantity targets into the existing `TradeIntent -> C1 realistic execution -> C3 accounting` path. C4 adds no autonomous loop, persistence, signer, transaction construction/submission, or live-money path.
+
 ## Local setup
 
 ### Rust
