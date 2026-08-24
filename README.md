@@ -306,6 +306,22 @@ Wallet distribution remains an optional tri-state input. `None` means unknown an
 
 C4 outputs an exact target reduction fraction and token quantity, but deliberately does **not** create a SELL `TradeIntent`. The existing shared intent boundary is USD-notional based; converting a quantity target into a fixed notional at decision-time price could oversell the C3 position if execution price moves before the fill. C5 owns safe quote-aware wiring from C4 quantity targets into the existing `TradeIntent -> C1 realistic execution -> C3 accounting` path. C4 adds no autonomous loop, persistence, signer, transaction construction/submission, or live-money path.
 
+## Autonomous paper loop
+
+Phase C5 adds deterministic repeated PAPER orchestration under `shreks_brain.paper_loop`. It does not replace any earlier trading logic: the loop composes the existing setup evaluators, B7 score, B8 decision, B9 risk, C1 realistic execution, C3 accounting, and C4 exits into one immutable cycle state machine.
+
+C5 permits at most one approved new BUY attempt per cycle and carries at most one deferred BUY. This is a correctness rule, not a profitability claim: multiple B9 approvals from point-in-time risk snapshots captured before the first fill could reuse stale capital or aggregate-risk capacity. A mint already OPEN in C3 is not pyramided by C5-v1. A lifecycle opened during a cycle begins C4 monitoring only on the next cycle so pre-entry evidence cannot be reused as post-fill exit evidence.
+
+C4 authorizes exits in token quantity while the stable `TradeIntent` boundary is USD-notional. C5 therefore persists an unexecuted C4 `ExitAssessment`/quantity target across latency, **not** a fixed SELL intent or stale USD notional. When execution becomes eligible, C5 computes `requested_notional_usd = authorized_target_quantity * current_quote_execution_price` using the exact quote C1 will consume. Because C1 caps filled notional by requested/quoted/available size and derives quantity from that same execution price, simulated filled quantity cannot exceed the C4-authorized token quantity.
+
+Pending exit precedence is intentionally fail-safe. A newer full `EXIT` may supersede a pending `REDUCE`, but HOLD or a weaker reduction cannot cancel an already-authorized full exit. The newer stronger exit keeps its own timestamp; C5 never backdates later evidence merely to satisfy latency. A terminal SELL attempt clears the pending exit, and a still-open lifecycle needs a fresh C4 decision before another attempt.
+
+Every SELL still follows exactly `TradeIntent -> C1 execute_paper_intent -> C3 apply_paper_execution`. C5 does not implement a second fill or PnL formula. Partial fills, route failures, quote-window expiry, adverse slippage, swap/network costs, and failed-after-submission costs therefore remain economically visible. Take-profit progress is advanced only by C4 `acknowledge_exit_fill` after authoritative C3 before/after quantities prove the target reduction was actually booked.
+
+Every position OPEN at cycle start is independently monitored when evidence is supplied. Missing exit observations do not invent a C4 HOLD. Still-open positions are marked only when the fresh C4 assessment exposes usable current price evidence. The loop returns immutable per-cycle entry/exit results plus next state for audit/replay; C6 owns durable persistence and restart recovery.
+
+C5 ships **no production thresholds, starting capital, fill assumptions, or strategy ordering defaults**. It adds no provider/RPC/storage reads, wallet intelligence, signer, Solana transaction construction/submission, or live execution. `live` remains disabled.
+
 ## Local setup
 
 ### Rust
