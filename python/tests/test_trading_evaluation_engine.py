@@ -314,21 +314,21 @@ def test_engine_fails_closed_for_duplicate_identity_type_and_candidate_mismatch(
 def test_result_contract_has_no_winner_or_promotion_authority_fields() -> None:
     import shreks_brain.evaluation as evaluation
 
-    forbidden = (
+    forbidden = {
         "winner",
         "beat_baseline",
         "promotion",
         "promote",
         "shadow_authority",
         "live_authority",
-    )
+    }
     for cls in (
         evaluation.TradingPerformanceMetrics,
         evaluation.CalibrationReport,
         evaluation.TradingEvaluationReport,
     ):
         names = tuple(value.name for value in fields(cls))
-        assert not any(token in name for name in names for token in forbidden)
+        assert not any(name in forbidden for name in names)
 
 
 def test_import_and_production_source_keep_dependency_and_io_firewalls() -> None:
