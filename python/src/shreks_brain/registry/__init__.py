@@ -7,6 +7,7 @@ from .models import (
     RegistryStatus,
     RegistryStatusEvent,
 )
+from .store import RegistryStore
 
 __all__ = (
     "CHAMPION_CHALLENGER_REGISTRY_SCHEMA_VERSION",
@@ -15,5 +16,6 @@ __all__ = (
     "RegistryEvaluationEvidence",
     "RegistryStatus",
     "RegistryStatusEvent",
+    "RegistryStore",
     "build_registry_candidate",
 )
