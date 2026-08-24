@@ -338,6 +338,61 @@ def assess_exit(
     )
 
 
+def acknowledge_exit_fill(
+    state: ExitState,
+    decision: ExitAssessment,
+    before_position: PaperPosition,
+    after_position: PaperPosition,
+) -> ExitState:
+    """Advance a take-profit level only after C3 proves enough quantity was sold."""
+
+    if state.position_id != decision.position_id:
+        raise ValueError("state position_id must match decision")
+    if state.mint != decision.mint:
+        raise ValueError("state mint must match decision")
+    if state.policy_version != decision.policy_version:
+        raise ValueError("state policy_version must match decision policy")
+    if before_position.position_id != decision.position_id:
+        raise ValueError("before position_id must match decision")
+    if after_position.position_id != decision.position_id:
+        raise ValueError("after position_id must match decision")
+    if before_position.mint != decision.mint or after_position.mint != decision.mint:
+        raise ValueError("before/after mint must match decision mint")
+    if before_position.state is not PaperPositionState.OPEN:
+        raise ValueError("before position must be OPEN")
+    if after_position.quantity > before_position.quantity and not _close(
+        after_position.quantity, before_position.quantity
+    ):
+        raise ValueError("after quantity cannot increase during exit acknowledgement")
+
+    if (
+        decision.primary_reason is not ExitReasonCode.TAKE_PROFIT_TRIGGERED
+        or decision.action is DecisionAction.HOLD
+    ):
+        return state
+
+    level = decision.triggered_take_profit_level
+    if level is None:
+        raise ValueError("take-profit decision requires triggered_take_profit_level")
+    if level in state.completed_take_profit_levels:
+        return state
+
+    actual_reduction = before_position.quantity - after_position.quantity
+    completed = after_position.state is PaperPositionState.CLOSED or _at_least(
+        actual_reduction,
+        decision.target_quantity,
+    )
+    if not completed:
+        return state
+
+    return replace(
+        state,
+        completed_take_profit_levels=(
+            state.completed_take_profit_levels | frozenset({level})
+        ),
+    )
+
+
 def _structural_gate(
     position: PaperPosition,
     features: FeatureVector,
