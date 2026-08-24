@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from shreks_brain.decision import DecisionPolicy, TradeDecision
+from shreks_brain.decision import DecisionAction, DecisionPolicy, TradeDecision
 from shreks_brain.exits import (
     ExitAssessment,
     ExitExecutionContext,
@@ -170,6 +170,7 @@ class ManagedPaperPosition:
     position_id: str
     exit_policy: ExitPolicy
     exit_state: ExitState
+    pending_exit: ExitAssessment | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string("position_id", self.position_id)
@@ -181,6 +182,22 @@ class ManagedPaperPosition:
             raise ValueError("managed exit_state position_id must match position_id")
         if self.exit_state.policy_version != self.exit_policy.version:
             raise ValueError("managed exit_state policy version must match exit_policy")
+        if self.pending_exit is None:
+            return
+        if not isinstance(self.pending_exit, ExitAssessment):
+            raise ValueError("pending_exit must be an ExitAssessment or None")
+        if self.pending_exit.position_id != self.position_id:
+            raise ValueError("pending_exit position_id must match managed position")
+        if self.pending_exit.mint != self.exit_state.mint:
+            raise ValueError("pending_exit mint must match managed exit_state")
+        if self.pending_exit.policy_version != self.exit_policy.version:
+            raise ValueError("pending_exit policy version must match exit_policy")
+        if self.pending_exit.action not in (DecisionAction.REDUCE, DecisionAction.EXIT):
+            raise ValueError("pending_exit action must be REDUCE or EXIT")
+        if self.pending_exit.target_quantity <= 0.0:
+            raise ValueError("pending_exit target quantity must be positive")
+        if self.pending_exit.as_of_unix_ms > self.exit_state.last_evaluated_at_unix_ms:
+            raise ValueError("pending_exit cannot be later than managed exit_state")
 
 
 @dataclass(frozen=True, slots=True)
