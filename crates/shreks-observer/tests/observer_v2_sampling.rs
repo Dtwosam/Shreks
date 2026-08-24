@@ -116,7 +116,7 @@ fn repeated_total_provider_failure_backs_off_and_is_bounded() {
         candidate.schedule_after_failure(now, &policy);
     }
     assert!(candidate.next_due_at_unix_ms <= 24 * HOUR);
-    let final_gap = candidate.next_due_at_unix_ms - (candidate.last_schedule_anchor_unix_ms);
+    let final_gap = candidate.next_due_at_unix_ms - candidate.last_schedule_anchor_unix_ms;
     assert_eq!(final_gap, 300 * SECOND);
 }
 
@@ -205,7 +205,7 @@ fn due_order_is_deterministic_and_retention_has_24h_grace() {
     let policy = SamplingPolicy::default_v1();
     let mut registry = SamplingRegistry::default();
 
-    let mut late = TrackedCandidate::new(2, "mint-b".to_owned(), 10).unwrap();
+    let mut late = TrackedCandidate::new(2, "mint-b".to_owned(), 10 * SECOND).unwrap();
     late.next_due_at_unix_ms = 200;
     registry.register(late).unwrap();
 
@@ -224,8 +224,8 @@ fn due_order_is_deterministic_and_retention_has_24h_grace() {
 
     registry.expire(24 * HOUR + 9 * MINUTE, &policy);
     assert_eq!(registry.len(), 2);
-    registry.expire(24 * HOUR + 10 * MINUTE + 11, &policy);
+    registry.expire(24 * HOUR + 10 * MINUTE + 5 * SECOND, &policy);
     assert_eq!(registry.len(), 1);
-    registry.expire(24 * HOUR + 10 * MINUTE + 21, &policy);
+    registry.expire(24 * HOUR + 10 * MINUTE + 11 * SECOND, &policy);
     assert!(registry.is_empty());
 }
