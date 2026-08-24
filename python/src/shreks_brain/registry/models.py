@@ -101,6 +101,11 @@ class RegistryCandidate:
             raise ValueError("initial_status must be CHALLENGER")
         _require_sha256("candidate_fingerprint_sha256", self.candidate_fingerprint_sha256)
 
+        if (self.training_started_at_unix_ms is None) != (
+            self.training_ended_at_unix_ms is None
+        ):
+            raise ValueError("training timestamps must both be present or both be absent")
+
         model_fields = (
             self.model_version,
             self.model_training_schema_version,
