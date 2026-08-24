@@ -1,123 +1,114 @@
-# Phase E6 Champion / Challenger Registry — Implementation Plan
-
-**Goal:** Build a deterministic, durable Python registry that records evaluated strategy/model provenance and explicit challenger/champion/retired status history without deciding promotion eligibility.
+# Phase E6 Champion / Challenger Registry — Verification Record
 
 **Base:** sealed A10 `d36ec5fd3d650f0c8d55c56fd461f371e910d8f3`  
-**Spec:** `docs/superpowers/specs/2026-08-24-phase-e6-champion-challenger-registry-design.md`
+**Design:** `docs/superpowers/specs/2026-08-24-phase-e6-champion-challenger-registry-design.md`  
+**Schema:** `e6-registry-v1`
 
-## Global constraints
+## Verified boundary
 
-- E6 is registry/audit only.
-- E6 must not inspect metrics to decide whether a candidate should become champion.
-- E7 owns shadow/paper challenger operation.
-- E8 owns promotion criteria/decision logic.
-- Real money remains disabled.
-- Reuse E3/E4/E5 sealed schema objects and fingerprints; do not recompute model training, validation, or trading metrics.
-- No new external dependency.
-- No network, random source, or wall-clock timestamp generation.
-- Caller supplies all decision/registration timestamps.
-- Corrupt or contradictory persisted state fails closed.
+E6 is a Python registry/audit layer only. It durably records evaluated strategy/model provenance plus explicit `CHALLENGER`, `CHAMPION`, and `RETIRED` history. It does not decide whether performance is good enough for promotion, does not run a challenger, does not create trade intents, and does not enable live money. E7 owns shadow/paper challenger operation; E8 owns promotion rules.
 
----
+The registry reuses sealed E3/E4/E5 evidence instead of recomputing training, validation, or trading metrics. Model-backed candidates preserve E3 training identity/fingerprint/window, E4 chronological-validation identity/fingerprint, exact feature identity, and the E5 after-cost evaluation fingerprint/headline metrics. Strategy-only candidates are supported without inventing fake ML provenance.
 
-## Task 1 — Registry contract and evidence normalization
+## Task 1 — Contract and provenance normalization
 
-**Create:**
-- `python/src/shreks_brain/registry/models.py`
-- `python/src/shreks_brain/registry/builder.py`
-- `python/src/shreks_brain/registry/__init__.py`
-- `python/tests/test_registry_models.py`
-- `python/tests/test_registry_builder.py`
-- `python/tests/test_registry_public_api.py`
+Tests-only RED head: `940a32bd77c866d1ae8f7795b38e2bbbaf25686f`  
+RED CI: `32785340953`
 
-**Contract:**
-- `CHAMPION_CHALLENGER_REGISTRY_SCHEMA_VERSION = "e6-registry-v1"`
-- `RegistryStatus`: `CHALLENGER`, `CHAMPION`, `RETIRED`
-- immutable `RegistryEvaluationEvidence`
-- immutable `RegistryCandidate`
-- immutable `RegistryStatusEvent`
-- immutable `ChampionChallengerRegistry`
-- `build_registry_candidate(...)`
+Expected result: Python collection failed only because `shreks_brain.registry` did not yet exist; Rust/workspace and repository safety were unaffected/green.
 
-Tests first:
+Initial implementation head: `b5246de1f42fa637f1f54f6d15c5d67761b05d7b`  
+CI: `32785495169`
 
-- [ ] lock exact public API;
-- [ ] model-backed registration preserves E3 model/training fingerprint and training bounds;
-- [ ] E4 request/model feature alignment is enforced;
-- [ ] all E4 fold models align with the registered model identity/features;
-- [ ] E5 candidate version must match registry candidate version;
-- [ ] evaluation evidence snapshots required headline metrics and E5 fingerprint;
-- [ ] strategy-only registration requires both E3 and E4 provenance to be absent;
-- [ ] partial ML provenance fails closed;
-- [ ] candidate fingerprint is deterministic and changes when material provenance/evaluation changes;
-- [ ] registration starts `CHALLENGER` only;
-- [ ] no API performs metric-driven promotion.
+That run exposed one diagnostic-order defect: 1 test failed while 1827 passed because half-present training timestamps raised the generic partial-model-provenance error before the more precise training-timestamp error. The fail-closed rule itself was correct.
 
-Require a clean RED caused only by missing E6 package/surfaces, then implement the smallest pure dataclass/canonicalization layer and require full CI GREEN.
+Corrected GREEN head: `8083ae13560342f07c70e865e4ecca6c9b113c1f`  
+GREEN CI: `32785612761`
 
----
+Verified:
 
-## Task 2 — Durable canonical registry store
+- exact small public registry API;
+- immutable registry/evaluation/status models;
+- registration starts `CHALLENGER` only;
+- model-backed E3/E4/E5 provenance alignment;
+- strategy-only candidate support;
+- partial or mismatched provenance fails closed;
+- deterministic material candidate fingerprint;
+- no automatic promotion/live-authority surface.
 
-**Create:**
-- `python/src/shreks_brain/registry/store.py`
-- `python/tests/test_registry_store.py`
+## Task 2 — Durable canonical store
 
-**Contract:**
-- `RegistryStore(path)`
-- `load() -> ChampionChallengerRegistry`
-- `register(candidate) -> ChampionChallengerRegistry`
-- `record_status_event(event) -> ChampionChallengerRegistry`
+Tests-only RED head: `14fae23b9e0b216581a4f73953d353d727e6b79f`  
+RED CI: `32785755396`
 
-Behavior:
+Expected result: Python collection failed only because `RegistryStore` was intentionally absent.
 
-- [ ] missing file loads a valid empty registry;
-- [ ] canonical JSON round-trip preserves fingerprints/status/history exactly;
-- [ ] parent directory creation works;
-- [ ] write uses deterministic sibling temporary path + `os.replace`;
-- [ ] duplicate identical candidate registration is idempotent;
-- [ ] same candidate version with different fingerprint fails closed;
-- [ ] every persisted candidate/event fingerprint is revalidated on load;
-- [ ] registry fingerprint is recomputed and verified on load;
-- [ ] truncated/invalid JSON fails closed;
-- [ ] tampered material field fails closed;
-- [ ] unknown schema/status fails closed;
-- [ ] no delete/history-rewrite API exists.
+Initial store implementation head: `03fe5f4e1e8066c1fced75abacecaaa66104fb8c`  
+CI: `32785941007`
 
-Require clean RED then full CI GREEN before Task 3.
+That run had 1833 passing tests and one test-fixture failure. The fixture created a conflicting candidate with an invalid material fingerprint, so the production store correctly rejected tampering before reaching the later candidate-version conflict assertion. Production behavior was left unchanged.
 
----
+Fixture-corrected GREEN head: `7664ec180ff492523dc19488711ed83a11ea88b8`  
+GREEN CI: `32786108928`
 
-## Task 3 — Explicit status history and champion integrity
+Verified:
 
-**Extend tests/models/store only as needed.**
+- missing file -> deterministic empty registry;
+- canonical JSON persistence;
+- atomic sibling-temp-file + `os.replace` writes;
+- candidate registration idempotency;
+- conflicting candidate identity fails closed;
+- candidate and registry fingerprints are independently recomputed on load;
+- invalid/truncated/tampered documents fail closed;
+- restart reconstruction preserves exact state;
+- no deletion/history-rewrite API.
 
-Behavior:
+## Task 3 — Explicit status history
 
-- [ ] status event requires existing candidate;
-- [ ] `from_status` must equal reconstructed current status;
-- [ ] no-op transitions fail;
-- [ ] decision reference/reason must be non-empty;
-- [ ] event timestamp cannot precede candidate registration;
-- [ ] duplicate identical event is idempotent;
-- [ ] conflicting event identity fails closed;
-- [ ] at most one candidate may reconstruct to `CHAMPION`;
-- [ ] `current_champion()` returns zero or one candidate;
-- [ ] challengers are returned in deterministic candidate-version order;
-- [ ] status changes never inspect E5 metric thresholds;
-- [ ] retired-to-other transitions remain structurally possible for future explicit E8 rollback rules;
-- [ ] source firewall contains no execution/sign/submit/live authority.
+Tests-only RED head: `b691adf4ab6755847de232867dbd047a9c257319`  
+RED CI: `32786277333`
 
-Require full CI GREEN.
+Expected result: 6 new tests failed only because `RegistryStore.record_status` / `record_status_event` did not yet exist; 1834 existing Python tests passed, Rust/workspace passed, and repository safety passed.
 
----
+GREEN behavior head: `0a787fbe556b0599b604a3c0b95db3e141346a8d`  
+GREEN CI: `32786757663`  
+Python: **1840 passed in 5.67s**  
+Rust/workspace: GREEN  
+Repository safety: GREEN
 
-## Task 4 — Documentation and seal
+Verified:
 
-- [ ] audit cumulative diff from sealed A10; allowed scope is E6 docs, registry package/tests, plus build-order/readme status documentation only;
-- [ ] update `SHREKS_BUILD_ORDER.md` current position to mark E5 and A10 sealed and E6 active/complete as appropriate;
-- [ ] add concise README registry usage/boundary section if useful;
-- [ ] replace this plan with a verification record containing RED/GREEN SHAs and exact CI run IDs;
-- [ ] run final exact-head CI;
-- [ ] confirm PR #30 head equals final seal SHA;
-- [ ] freeze E6 and only then branch E7.
+- caller must explicitly supply candidate, requested status, decision reference, timestamp, and reason;
+- unknown candidate fails closed;
+- event cannot predate candidate registration;
+- no-op and mismatched prior-state transitions fail closed;
+- event material is content-addressed and revalidated;
+- duplicate identical event is idempotent;
+- conflicting reuse of the same decision identity fails closed;
+- at most one current champion is structurally permitted;
+- the registry never auto-demotes an incumbent to make room for another champion;
+- retirement/reactivation remains possible only through another explicit event;
+- status mutation source contains no E5 metric-threshold logic, trade intent, or live-enablement authority.
+
+## Cumulative scope audit
+
+Compared sealed A10 `d36ec5fd3d650f0c8d55c56fd461f371e910d8f3` to E6 behavior head `0a787fbe556b0599b604a3c0b95db3e141346a8d`.
+
+The behavior diff contains exactly 12 allowed files:
+
+- this E6 plan/verification path;
+- the E6 design spec;
+- five files under `python/src/shreks_brain/registry/`;
+- five E6 registry test files.
+
+No observer, provider, strategy/setup, risk, paper execution, model-training, E5 evaluation, signer, transaction-submission, or live-execution file changed.
+
+## Profitability and authority boundary
+
+E6 makes model/strategy evidence attributable and tamper-evident, which is necessary for disciplined profitable iteration. It does **not** establish that any candidate is profitable and does not translate good expectancy, profit factor, drawdown, calibration, or other E5 values into promotion.
+
+A `CHAMPION` status is an explicit governance record, not proof of profitability and not live-money authority. Real-money trading remains disabled.
+
+## Final seal procedure
+
+This verification record is the documentation seal candidate. After this docs-only commit, compare it to the behavior head to ensure no production/test behavior changed, run exact-head CI, confirm PR #30 still targets sealed A10 and its head equals the final seal SHA, then freeze E6. The exact final seal SHA/CI are recorded in PR #30 after that run so this tracked record does not require a self-referential follow-up commit.
