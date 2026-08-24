@@ -2,6 +2,8 @@
 
 mod lifecycle;
 pub use lifecycle::{LifecycleEventKind, TokenLifecycleEvent};
+mod wallet;
+pub use wallet::{WalletActionKind, WalletObservation, WalletObservationEvidence};
 
 use std::{error::Error, fmt, str::FromStr};
 

@@ -2,11 +2,13 @@
 
 mod lifecycle;
 mod outcomes;
+mod wallet;
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
 };
+pub use wallet::WalletObservationWrite;
 
 use std::{
     error::Error,
@@ -59,6 +61,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 6,
         name: "paper_loop_checkpoints",
         sql: include_str!("../migrations/0006_paper_loop_checkpoints.sql"),
+    },
+    Migration {
+        version: 7,
+        name: "wallet_observations",
+        sql: include_str!("../migrations/0007_wallet_observations.sql"),
     },
 ];
 
