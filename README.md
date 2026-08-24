@@ -399,3 +399,15 @@ OBSERVE -> UNDERSTAND -> PAPER TRADE -> EVALUATE -> LEARN -> PROVE -> LIVE TRADE
 Live execution is not an early demo milestone. Paper and live modes will share the same decision and risk path; only the execution adapter changes.
 
 See `docs/superpowers/specs/2026-08-23-shreks-master-design.md` for the approved architecture. Design and implementation plans are under `docs/superpowers/`.
+
+## Wallet trade reconstruction
+
+Phase D2 adds a pure Python point-in-time reconstruction layer under `shreks_brain.wallets`. It consumes caller-supplied normalized D1 `WalletObservation` evidence and performs no provider, RPC, or SQLite reads inside reconstruction.
+
+`observed_at_unix_ms` is the availability clock. Future local observations are rejected even when their optional chain time is older, so reconstruction cannot borrow evidence Shreks had not yet observed.
+
+D2 estimates a closed outcome only for a clean known-inventory BUY/SELL cycle that uses one counter asset and returns cumulative candidate-token inventory exactly to zero. Partial exits remain part of the same open episode until known inventory reaches zero; D2 does not invent proportional cost-basis allocations or realized PnL while inventory remains open.
+
+Missing economics, sign contradictions, a SELL without known starting inventory, an oversell, a counter-asset change, or a non-trade inventory change makes the history explicitly `UNRESOLVED` and halts later reconstruction for that wallet/mint instead of manufacturing continuity or PnL. Direct and inferred evidence remain distinguishable as `DIRECT`, `MIXED`, or `INFERRED`.
+
+D2 produces reconstruction evidence only. It adds **no wallet score, wallet profile, clustering/independence claim, smart-wallet feature, setup/decision/risk change, signer, transaction submission, or live-money authority**. D3 must build confidence-weighted wallet histories before wallet behavior can be evaluated as a trading signal.
