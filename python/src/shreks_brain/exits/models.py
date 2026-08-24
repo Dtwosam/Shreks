@@ -87,7 +87,6 @@ class ExitPolicy:
             "max_execution_evidence_age_ms", self.max_execution_evidence_age_ms
         )
         _require_optional_positive_finite("hard_stop_loss_pct", self.hard_stop_loss_pct)
-
         if not isinstance(self.take_profit_levels, tuple):
             raise ValueError("take_profit_levels must be a tuple")
         if not all(isinstance(level, TakeProfitLevel) for level in self.take_profit_levels):
@@ -100,7 +99,6 @@ class ExitPolicy:
             if previous_trigger is not None and level.trigger_return_pct <= previous_trigger:
                 raise ValueError("take_profit_levels triggers must be strictly increasing")
             previous_trigger = level.trigger_return_pct
-
         _require_optional_non_negative_finite(
             "trailing_activation_return_pct", self.trailing_activation_return_pct
         )
@@ -113,9 +111,7 @@ class ExitPolicy:
             "trailing_stop_drawdown_pct",
             self.trailing_stop_drawdown_pct,
         )
-
         _require_optional_positive_int("max_hold_seconds", self.max_hold_seconds)
-
         _require_optional_fraction_closed(
             "flow_exit_max_buy_fraction_m5", self.flow_exit_max_buy_fraction_m5
         )
@@ -129,7 +125,6 @@ class ExitPolicy:
             "flow_exit_max_buy_pressure_acceleration",
             self.flow_exit_max_buy_pressure_acceleration,
         )
-
         _require_optional_finite(
             "momentum_exit_max_return_1m_pct", self.momentum_exit_max_return_1m_pct
         )
@@ -142,7 +137,6 @@ class ExitPolicy:
             "momentum_exit_max_return_5m_pct",
             self.momentum_exit_max_return_5m_pct,
         )
-
         _require_optional_non_negative_finite("min_liquidity_usd", self.min_liquidity_usd)
         _require_optional_non_negative_finite(
             "max_exit_price_impact_pct", self.max_exit_price_impact_pct
@@ -315,13 +309,21 @@ class ExitAssessment:
             )
         if not isinstance(self.next_state, ExitState):
             raise ValueError("next_state must be an ExitState")
-        if self.next_state.position_id != self.position_id:
+        if (
+            self.next_state.position_id != self.position_id
+            and self.primary_reason is not ExitReasonCode.STATE_POSITION_MISMATCH
+        ):
             raise ValueError("next_state position_id must match assessment")
-        if self.next_state.mint != self.mint:
+        if (
+            self.next_state.mint != self.mint
+            and self.primary_reason is not ExitReasonCode.STATE_MINT_MISMATCH
+        ):
             raise ValueError("next_state mint must match assessment")
-        if self.next_state.policy_version != self.policy_version:
+        if (
+            self.next_state.policy_version != self.policy_version
+            and self.primary_reason is not ExitReasonCode.STATE_POLICY_MISMATCH
+        ):
             raise ValueError("next_state policy_version must match assessment")
-
         if self.action is DecisionAction.HOLD:
             if not _is_zero(self.target_reduction_fraction) or not _is_zero(
                 self.target_quantity
@@ -339,7 +341,6 @@ class ExitAssessment:
                 raise ValueError("EXIT requires target_reduction_fraction equal to 1")
             if self.target_quantity <= 0.0:
                 raise ValueError("EXIT requires positive target_quantity")
-
         if not isinstance(self.findings, tuple) or not self.findings:
             raise ValueError("findings must be a non-empty tuple")
         if not all(isinstance(finding, ExitFinding) for finding in self.findings):
