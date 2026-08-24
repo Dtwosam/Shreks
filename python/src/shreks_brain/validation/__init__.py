@@ -1,3 +1,4 @@
+from .engine import run_time_aware_validation
 from .models import (
     TIME_AWARE_VALIDATION_SCHEMA_VERSION,
     ChronologicalValidationFold,
@@ -13,4 +14,5 @@ __all__ = (
     "TimeAwareValidationPolicy",
     "ValidationFoldResult",
     "TimeAwareValidationRun",
+    "run_time_aware_validation",
 )
