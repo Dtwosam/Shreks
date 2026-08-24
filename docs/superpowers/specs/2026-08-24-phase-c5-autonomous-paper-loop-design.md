@@ -2,23 +2,11 @@
 
 ## Goal
 
-Implement the source build-order C5 Autonomous Loop as a deterministic, in-memory Python orchestration layer that repeatedly reuses the already-sealed Shreks decision path:
+Implement source build-order C5 as a deterministic in-memory Python orchestration layer for repeated PAPER cycles:
 
 `observe -> filter -> score -> decide -> size -> paper buy -> monitor -> paper sell -> record`
 
-C5 makes paper mode operationally autonomous without creating a second strategy, risk, execution, accounting, or exit path. It coordinates the existing B2/B3-B5/B6/B7/B8/B9/C1/C3/C4 contracts and returns complete immutable cycle evidence for later C6 persistence/restart/accounting validation.
-
-C5 does **not** enable live money.
-
-## Source requirements
-
-The build order requires C5 to operate unattended using:
-
-```text
-observe -> filter -> score -> decide -> size -> paper buy -> monitor -> paper sell -> record
-```
-
-The master source of truth additionally requires one decision path, realistic paper execution, complete position lifecycles, auditability, fail-closed evidence handling, and no live execution before proof.
+C5 coordinates already-sealed B2/B6/B7/B8/B9/C1/C3/C4 contracts. It does not create new strategy, risk, fill, accounting, or exit math and does not enable live money.
 
 ## Architectural boundary
 
@@ -31,7 +19,7 @@ python/src/shreks_brain/paper_loop/
   engine.py
 ```
 
-It is orchestration only. It calls stable earlier-domain functions unchanged:
+It may call only the existing pure domain functions needed for orchestration:
 
 ```python
 assess_fresh_launch(...)
@@ -48,13 +36,7 @@ assess_exit(...)
 acknowledge_exit_fill(...)
 ```
 
-C5 performs no provider/RPC/storage reads and does not reimplement calculations owned by those layers.
-
-## What "observe" means in C5
-
-Rust/A-phase ingestion and B1/B2 feature construction already exist. C5 therefore starts from caller-supplied, point-in-time B2 `FeatureVector` evidence plus the structural context required by one implemented setup family and a contemporaneous B6 regime assessment.
-
-C5 does not duplicate raw observation ingestion, safety calculation, feature engineering, or provider adapters.
+No provider/RPC/storage/wall-clock/RNG/signer/transaction reads or writes occur in C5.
 
 ## Supported setup families
 
@@ -64,33 +46,11 @@ C5-v1 supports exactly:
 2. Graduation/Breakout,
 3. First Pullback.
 
-Smart Wallet Cluster stays absent until Phase D wallet intelligence exists.
-
-## Setup input wrappers
-
-C5 avoids an optional-field bag by using one immutable setup wrapper:
-
-```python
-@dataclass(frozen=True, slots=True)
-class FreshLaunchSetupInput:
-    policy: FreshLaunchPolicy
-
-@dataclass(frozen=True, slots=True)
-class GraduationBreakoutSetupInput:
-    context: GraduationContext | None
-    policy: GraduationBreakoutPolicy
-
-@dataclass(frozen=True, slots=True)
-class FirstPullbackSetupInput:
-    context: PullbackContext | None
-    policy: FirstPullbackPolicy
-```
-
-`PaperEntryCandidate.setup` is their union. C5 dispatches only to the matching existing setup evaluator.
+Smart Wallet Cluster remains absent until Phase D has real wallet history/confidence/independence evidence.
 
 ## Entry candidate contract
 
-One candidate contains:
+`PaperEntryCandidate` carries:
 
 ```text
 mint
@@ -104,45 +64,34 @@ risk_policy
 exit_policy
 ```
 
-`exit_policy` is supplied before entry so C5 can initialize C4 state immediately after a real C3 BUY opens a new lifecycle. Delayed initialization would lose high-water evidence.
+The setup is one of three immutable wrappers:
 
-Candidate feature/regime/risk timestamps must refer to the cycle timestamp. Existing engines remain authoritative for deeper compatibility rules.
-
-## Deterministic candidate ordering and uniqueness
-
-`PaperCycleInput.entry_candidates` is an ordered tuple. Its order is the deterministic execution priority supplied to C5.
-
-Candidate mints must be unique inside a cycle. The repository has no approved cross-setup arbitration rule for one mint satisfying multiple setup families, so C5 does not invent one.
-
-## One new entry attempt per cycle
-
-C5-v1 permits at most one BUY intent/execution attempt per cycle.
-
-This is a correctness invariant, not a trading threshold. B9 `RiskContext` contains point-in-time portfolio capacity. Executing several entries from risk contexts all captured before the first fill could reuse stale capital/risk capacity.
-
-C5 therefore computes setup/score/decision in order, calls risk only while the slot is unused, and the first B9-approved intent consumes the slot. A pending BUY retry also consumes the slot for that cycle even if it terminates failed.
-
-A future version may widen this only when authoritative portfolio risk context can be refreshed after each terminal booking.
-
-## No same-mint pyramiding in C5-v1
-
-C3 can technically increase a position, but no approved rule defines how an add should alter C4 weighted-entry/high-water/trailing/take-profit treatment. C5-v1 therefore does not submit a new BUY for a mint that already has an OPEN C3 position.
-
-## Pinned run policies
-
-One autonomous state pins:
-
-- one `PaperLoopPolicy`,
-- one C1 `PaperFillPolicy`.
-
-`PaperLoopPolicy` contains only:
-
-```text
-version
-exit_max_slippage_bps
+```python
+FreshLaunchSetupInput(policy)
+GraduationBreakoutSetupInput(context, policy)
+FirstPullbackSetupInput(context, policy)
 ```
 
-There is no production default. Each OPEN position separately pins its own C4 `ExitPolicy`.
+Candidate feature/regime/risk timestamps equal the cycle timestamp. Existing domain engines remain authoritative for deeper compatibility and point-in-time checks.
+
+## Candidate ordering and one-entry invariant
+
+`PaperCycleInput.entry_candidates` is an ordered tuple and therefore the deterministic candidate priority for that cycle. Candidate mints are unique within a cycle.
+
+C5-v1 permits at most one approved BUY execution attempt per cycle. B9 risk contexts are point-in-time snapshots; allowing several approvals from contexts captured before the first fill could reuse stale capital/risk capacity. A pending BUY retry also consumes the cycle entry slot even if it terminates failed.
+
+No new BUY is submitted for a mint already OPEN in C3. C3 can technically increase a lifecycle, but no approved rule yet defines how pyramiding should alter C4 high-water/trailing/take-profit semantics.
+
+## Pinned policies
+
+One `PaperLoopState` pins:
+
+- one explicit `PaperLoopPolicy(version, exit_max_slippage_bps)`,
+- one explicit C1 `PaperFillPolicy`.
+
+Every OPEN lifecycle separately pins its C4 `ExitPolicy` in `ManagedPaperPosition`.
+
+There are no production defaults for capital, setup thresholds, score thresholds, risk thresholds, exit thresholds, paper-fill assumptions, or exit slippage.
 
 ## Loop state
 
@@ -157,34 +106,42 @@ pending_entry
 last_cycle_at_unix_ms
 ```
 
-### Managed position
-
-Every OPEN C3 position has exactly one `ManagedPaperPosition`:
+Every C3 OPEN position has exactly one `ManagedPaperPosition`:
 
 ```text
 position_id
 exit_policy
 exit_state
+pending_exit
 ```
 
-Its C3 position ID/mint, C4 state ID/mint, and exit-policy version must agree. The managed-position set must exactly equal the ledger's OPEN position IDs.
+`pending_exit` is `ExitAssessment | None`.
 
-### Pending BUY
+The C3 position ID/mint, C4 state ID/mint, and exit-policy version must agree. `managed_positions` must exactly cover the ledger's OPEN position IDs.
 
-C1 may return `DEFERRED`. C5 therefore retains exactly one `PendingPaperEntry`:
+### Why a pending exit assessment is required
 
-```text
-intent
-exit_policy
-```
+C1 latency is measured from `TradeIntent.as_of_unix_ms`. A C4 exit decision produced at time `T` cannot execute before `T + assumed_latency_ms`.
 
-The intent must be a PAPER BUY. Its exit policy travels with it so a later actual fill can initialize the lifecycle correctly. No second BUY intent is created while one is pending.
+If C5 discarded an unexecuted exit decision and generated a fresh decision every cycle, non-zero latency could reset forever. Persisting a SELL intent instead would be unsafe because its USD notional would be frozen even if the eventual execution price changed, potentially making C1 derive more token quantity than C4 authorized.
+
+C5 therefore persists the immutable **C4 exit assessment/quantity identity**, never a SELL intent and never a USD notional.
+
+A pending exit must:
+
+- belong to the managed position and mint,
+- use the managed exit-policy version,
+- have action `REDUCE` or `EXIT`,
+- have positive target quantity,
+- have `as_of_unix_ms <= exit_state.last_evaluated_at_unix_ms`.
+
+## Pending BUY
+
+C1 may return `DEFERRED`. C5 retains exactly one `PendingPaperEntry(intent, exit_policy)`. The intent must be a PAPER BUY. No second BUY intent is created while one is pending.
 
 ## State creation
 
-`create_paper_loop_state(...)` accepts an existing C3 `PaperLedger`, explicit loop/paper policies, and optional managed/pending state. It validates the exact OPEN-position coverage invariant.
-
-The initial `last_cycle_at_unix_ms` is the maximum of ledger time and managed C4 `last_evaluated_at_unix_ms` values. Empty-ledger runs therefore begin at the C3 ledger timestamp.
+`create_paper_loop_state(...)` accepts an existing C3 ledger, explicit loop/fill policies, optional managed positions, and optional pending BUY. It validates exact OPEN-position coverage. Initial `last_cycle_at_unix_ms` is the maximum of ledger time and managed C4 `last_evaluated_at_unix_ms` values.
 
 ## Cycle input
 
@@ -197,136 +154,113 @@ exit_observations
 quotes
 ```
 
-Entry candidate mints, quote mints, and exit-observation position IDs are each unique within their tuples.
+Candidate mints, quote mints, and exit-observation position IDs are each unique within their tuples.
 
-### Exit observation
+`PaperExitObservation(position_id, features, execution_context)` supplies current C4 evidence. C4 policy/state come from the managed position, preventing silent policy switching.
 
-`PaperExitObservation` contains:
+A cycle earlier than `state.last_cycle_at_unix_ms` returns `CYCLE_BEFORE_STATE` with the exact previous state object unchanged and processes nothing.
 
-```text
-position_id
-features
-execution_context
-```
+## Deterministic cycle order
 
-C4 policy/state come from `ManagedPaperPosition`, preventing silent policy switching.
+C5-v1 executes:
 
-## Cycle chronology
+1. snapshot positions OPEN at cycle start,
+2. retry one pending BUY,
+3. if the entry slot remains unused, evaluate new candidates and permit at most one approved BUY attempt,
+4. monitor only cycle-start OPEN positions,
+5. for each managed position, reconcile fresh C4 evidence with any pending exit, then attempt safe exit execution if eligible,
+6. mark still-open positions only from usable C4 current-price evidence,
+7. return immutable next state plus audit results.
 
-A cycle timestamp earlier than `state.last_cycle_at_unix_ms` returns a fail-closed `CYCLE_BEFORE_STATE` result with the **exact previous state object** unchanged.
+A position opened during the cycle starts C4 monitoring next cycle. Same-cycle pre-entry evidence is never reused as post-fill monitoring evidence.
 
-No candidate or quote from that cycle is processed.
+## BUY path
 
-## Cycle order
+For each candidate while the entry slot is free:
 
-C5-v1 executes deterministically:
+1. call the matching existing setup evaluator,
+2. call B7 `score_candidate`,
+3. call B8 `decide_entry`,
+4. if mint already OPEN, skip B9,
+5. require `risk_context.active_intent_keys == frozenset()` because C5 owns no active BUY when it may call B9,
+6. call B9 `assess_entry_risk(..., RuntimeMode.PAPER)`,
+7. continue after risk rejection,
+8. first approval consumes the entry slot,
+9. pass the exact B9 BUY `TradeIntent` unchanged to C1,
+10. book terminal C1 outcomes through C3,
+11. persist `DEFERRED` as `PendingPaperEntry`,
+12. initialize C4 only after C3 actually opens a lifecycle.
 
-1. snapshot the positions OPEN at cycle start,
-2. retry an existing pending BUY,
-3. if no pending remains and the entry slot is still unused, evaluate new candidates and permit at most one approved BUY attempt,
-4. monitor only the positions that were OPEN in the cycle-start snapshot,
-5. return the immutable next state and audit results.
-
-A newly opened position begins C4 monitoring next cycle. This avoids using the same evidence as both pre-entry decision evidence and post-fill monitoring evidence.
+C5 never resizes or rewrites a B9 BUY intent.
 
 ## Pending BUY retry
 
-C5 calls C1 with:
+A pending BUY is sent to C1 with current cycle evaluation time, current C3 terminal keys, and that mint's cycle quote if any.
 
-```text
-evaluated_at_unix_ms = cycle.as_of_unix_ms
-processed_intent_keys = current C3 terminal keys
-quote = cycle quote for pending mint, if any
-```
-
-Then:
-
-- `DEFERRED`: preserve exact pending intent,
+- `DEFERRED`: preserve the exact pending intent,
 - terminal `FAILED`: book through C3 and clear pending,
-- terminal `PARTIAL/FILLED`: book through C3, clear pending, and initialize C4 state if a new lifecycle opened.
+- terminal `PARTIAL/FILLED`: book through C3, clear pending, initialize C4 if a new lifecycle opened.
 
-The retry is represented by a dedicated `PaperPendingEntryResult`; it is not forced into a current candidate result that no longer has setup/score/decision objects.
+## Position monitoring and pending-exit reconciliation
 
-## New BUY path
+Every cycle-start OPEN position should have one exit observation. Missing observation does not manufacture a C4 HOLD.
 
-For each candidate while the entry slot is unused:
+If an observation exists, C5 calls C4 `assess_exit(...)` unchanged and adopts `assessment.next_state`.
 
-1. run its existing setup evaluator,
-2. run B7 `score_candidate`,
-3. run B8 `decide_entry`,
-4. if its mint is already OPEN, skip B9 and record `ENTRY_OPEN_POSITION_EXISTS`,
-5. require `risk_context.active_intent_keys == frozenset()` because C5 owns no active BUY when it is allowed to call B9,
-6. call B9 `assess_entry_risk(..., RuntimeMode.PAPER)`,
-7. if B9 rejects, continue,
-8. if B9 approves, its exact BUY `TradeIntent` consumes the cycle entry slot,
-9. send it unchanged to C1 with current cycle quote evidence,
-10. book terminal C1 outcomes through C3,
-11. preserve `DEFERRED` as `PendingPaperEntry`,
-12. initialize C4 only after an actual booked BUY opens a lifecycle.
+Pending-exit precedence is intentionally narrow:
 
-After the entry slot is consumed, later candidates still receive setup/score/decision results for auditability but no new B9 intent is created.
+- no pending exit + fresh `REDUCE`/`EXIT` -> persist fresh assessment,
+- existing pending `REDUCE` + fresh `EXIT` -> fresh EXIT supersedes pending REDUCE,
+- existing pending `EXIT` -> HOLD or REDUCE cannot weaken/cancel it,
+- existing pending `REDUCE` + fresh HOLD/REDUCE -> retain original pending REDUCE so its latency clock is not reset,
+- a superseding fresh EXIT uses its own later timestamp; C5 never backdates stronger future evidence.
 
-C5 never resizes or rewrites an approved B9 BUY intent.
+A terminal C1 SELL attempt clears the pending exit. If the position remains OPEN, the next cycle must obtain a fresh C4 decision before a new attempt is created. This makes every retry after a terminal failure/partial fill a new point-in-time decision and idempotency identity.
 
-## Position monitoring coverage
+A pending exit may still be attempted when the current cycle lacks a C4 observation, because the older C4 decision is already-authorized state. The missing observation is not converted into a new decision; only current quote evidence is used for execution economics.
 
-Every position OPEN at cycle start should have one exit observation.
+## Safe token quantity -> SELL TradeIntent translation
 
-If absent, C5 records `EXIT_OBSERVATION_MISSING`; it does **not** manufacture a C4 HOLD and does not mutate that position's C4 state.
+C4 outputs token quantity while stable `TradeIntent` requests USD notional. C5 must not convert with C4 market price, reference price, weighted entry, or any stale quote.
 
-With evidence, C5 calls C4 `assess_exit` unchanged and adopts `assessment.next_state`.
-
-## Position marks
-
-When C4 exposes usable `current_price_usd`, C5 applies a C3 `PaperPositionMark` at the cycle timestamp **after** any SELL execution/accounting attempt.
-
-This preserves current unrealized accounting without marking from stale/future evidence that C4 rejected. A fully closed position is not marked.
-
-Because an exit cycle can both book a terminal SELL attempt and then mark a still-open position, `PaperExitResult` has two distinct audit fields:
-
-```text
-execution_ledger_update
-mark_ledger_update
-```
-
-No evidence is overwritten by forcing both operations into one field.
-
-## Safe C4 quantity -> SELL TradeIntent translation
-
-C4 outputs token quantity while `TradeIntent` requests USD notional. Decision-price conversion is unsafe because a lower actual SELL price can cause C1 to derive more tokens than C4 targeted.
-
-C5 waits for the **same quote C1 will consume**. For target quantity `Q` and that quote's execution price `P`:
+For pending/fresh authorized target quantity `Q` and the **same quote execution price `P` that C1 will consume**:
 
 ```text
 requested_notional_usd = Q * P
 ```
 
-C1 computes:
+C1 then computes:
 
 ```text
 filled_notional = min(requested_notional, quoted_notional, available_notional)
 filled_quantity = filled_notional / P
 ```
 
-Therefore `filled_quantity <= Q` by construction.
+Therefore:
 
-C5 never uses decision price, reference price, weighted entry, or a different quote for this conversion.
+```text
+filled_quantity <= Q
+```
+
+by construction.
+
+The SELL `TradeIntent.as_of_unix_ms` remains the persisted C4 decision timestamp. This preserves the original latency clock even though notional is recomputed from a later eligible quote.
 
 ## Exit quote eligibility
 
-Let C4 decision time be `T`, C1 assumed latency be `L`, quote time be `Q`, and cycle time be `C`.
+Let pending C4 decision time be `T`, C1 latency be `L`, quote observation time be `Q`, and cycle time be `C`.
 
-- `Q > C`: `EXIT_QUOTE_AFTER_CYCLE`; no future quote fields are consumed.
-- no quote: `EXIT_QUOTE_MISSING`.
-- `Q < T + L`: `EXIT_QUOTE_BEFORE_LATENCY`; no SELL intent yet.
-- quote execution price missing/non-positive: `EXIT_EXECUTION_PRICE_UNAVAILABLE`; no requested notional is fabricated.
-- otherwise C5 may construct the SELL intent and lets C1 remain authoritative for quote-window expiry, mint mismatch, route state, partial-fill rules, slippage, and simulated submission failure.
+- no quote -> keep pending exit; `EXIT_QUOTE_MISSING`,
+- `Q > C` -> keep pending exit; `EXIT_QUOTE_AFTER_CYCLE`, and consume no future quote fields,
+- `Q < T + L` -> keep pending exit; `EXIT_QUOTE_BEFORE_LATENCY`,
+- missing execution price -> keep pending exit; `EXIT_EXECUTION_PRICE_UNAVAILABLE`,
+- otherwise construct a transient SELL intent and pass it with that exact quote to C1.
 
-A quote later than C1's maximum quote window is intentionally passed to C1 so C1 produces its existing terminal `QUOTE_TOO_LATE` evidence.
+A quote after C1's maximum quote window is intentionally passed to C1 so C1 remains authoritative and records `QUOTE_TOO_LATE`.
 
-## SELL intent metadata
+## SELL metadata and idempotency
 
-C5 finds the lifecycle's earliest linked BUY `PaperLedgerEntry` and reuses its:
+C5 finds the lifecycle's earliest linked BUY `PaperLedgerEntry` and reuses:
 
 ```text
 strategy_name
@@ -336,23 +270,22 @@ decision_policy_version
 risk_policy_version
 ```
 
-No fake exit placeholders are invented.
-
-The SELL intent has:
+The transient SELL intent has:
 
 ```text
 mint = position mint
 side = SELL
-requested_notional_usd = C4 target quantity * same quote execution price
-max_slippage_bps = pinned PaperLoopPolicy.exit_max_slippage_bps
-reason = C4 primary_reason.value
+requested_notional_usd = pending_exit.target_quantity * current quote execution price
+max_slippage_bps = loop_policy.exit_max_slippage_bps
+reason = pending_exit.primary_reason.value
 execution_mode = PAPER
-as_of_unix_ms = C4 decision as_of
+as_of_unix_ms = pending_exit.as_of_unix_ms
 ```
 
-Its idempotency key is deterministic SHA-256 over a versioned identity containing:
+Idempotency is SHA-256 of:
 
 ```text
+c5-exit-v1
 position_id
 exit_policy_version
 exit_decision_as_of
@@ -360,79 +293,51 @@ primary_exit_reason
 target_quantity.float.hex()
 ```
 
-Replaying the same decision creates the same key.
+Changing the quote price changes transient notional but **does not** change the exit decision identity/idempotency key. A later new C4 decision changes the key through its timestamp and/or target/reason.
 
 ## SELL execution and accounting
 
 Every SELL uses exactly:
 
-`SELL TradeIntent -> C1 execute_paper_intent -> C3 apply_paper_execution`
+`TradeIntent -> C1 execute_paper_intent -> C3 apply_paper_execution`
 
-C1 stays authoritative for latency, route, quote size, partial/failed fills, slippage, swap/network costs, and submission failure. C3 stays authoritative for quantity, cost-basis release, PnL, cash, journal/idempotency, and close state.
+C1 remains authoritative for latency, quote window, route availability, executable size, partial fills, slippage, swap/network costs, and simulated submission failure. C3 remains authoritative for quantity reduction, cost-basis release, cash, realized PnL, journal/idempotency, and close state.
 
-C5 adds no parallel fill or accounting calculation.
+No parallel fill or accounting calculation exists in C5.
 
 ## Fill-confirmed take-profit advancement
 
-After an APPLIED terminal SELL booking C5 calls C4 `acknowledge_exit_fill` with authoritative before/after C3 position snapshots.
+After an APPLIED terminal SELL booking, C5 calls C4 `acknowledge_exit_fill` with authoritative before/after C3 position snapshots and the latest managed `ExitState`.
 
-- no fill -> incomplete TP,
-- failed SELL -> incomplete TP,
-- undersized partial -> incomplete TP,
-- target reached -> complete TP,
-- full close -> complete when take-profit driven.
+- no fill / failed SELL -> TP incomplete,
+- undersized partial -> TP incomplete,
+- target reached -> TP complete,
+- full close -> TP complete when take-profit driven.
 
-C5 never advances a TP level from a decision or requested intent alone.
+C5 never advances TP from a decision, pending state, or requested intent alone.
 
-## No persistent pending exit order
+## Marks
 
-C5 persists evolving C4 `ExitState`, not a stale exit order.
+After exit processing, if the position remains OPEN and the current cycle's C4 assessment exposed usable `current_price_usd`, C5 applies `PaperPositionMark` at cycle time. It does not mark from missing/stale/future/unusable C4 evidence.
 
-If a REDUCE lacks an eligible quote, the next cycle reassesses fresh evidence. A later emergency EXIT can therefore supersede the earlier reduction through normal C4 precedence.
+`PaperExitResult` keeps separate `execution_ledger_update` and `mark_ledger_update` fields so booking and mark evidence are never overwritten.
 
-## Exit state lifecycle
+## Managed exit lifecycle
 
-After assessment, managed state adopts `assessment.next_state`. After an APPLIED SELL, acknowledgement may additionally change completed TP levels.
+After fresh assessment, managed `exit_state` adopts `assessment.next_state`. After an APPLIED SELL, acknowledgement may additionally advance completed TP levels.
 
-- still OPEN -> keep exactly one managed record,
-- CLOSED -> remove managed record,
-- no booked quantity change -> do not invent TP completion.
+- non-terminal/no execution: retain pending exit as described above,
+- terminal SELL attempt: clear pending exit,
+- still OPEN: keep one managed record,
+- CLOSED: remove managed record and skip mark.
 
 ## Cycle result contracts
 
-### `PaperPendingEntryResult`
+`PaperPendingEntryResult` preserves pending BUY execution/booking evidence.
 
-Preserves:
+`PaperEntryResult` preserves setup, score, decision, optional risk, selection, optional execution/booking, and one orchestration reason.
 
-```text
-intent_idempotency_key
-mint
-execution
-ledger_update
-reason
-```
-
-### `PaperEntryResult`
-
-Preserves:
-
-```text
-mint
-setup_assessment
-score_assessment
-decision
-risk_assessment | None
-selected_for_entry
-execution | None
-ledger_update | None
-reason
-```
-
-Setup/score/decision are always produced for a structurally valid candidate. Risk is `None` only when C5 intentionally skips B9 because the entry slot is unavailable, the mint is already OPEN, or active-intent evidence contradicts C5 state.
-
-### `PaperExitResult`
-
-Preserves:
+`PaperExitResult` preserves:
 
 ```text
 position_id
@@ -445,23 +350,9 @@ mark_ledger_update | None
 reason
 ```
 
-`exit_assessment` is `None` only when monitoring evidence is absent.
+`exit_assessment` may be `None` when current monitoring evidence is absent; execution may still refer to a previously persisted pending exit.
 
-### `PaperCycleResult`
-
-Contains:
-
-```text
-policy_version
-as_of_unix_ms
-next_state
-pending_entry_result | None
-entry_results
-exit_results
-findings
-```
-
-A normal cycle has one `CYCLE_APPLIED` finding. A chronology-rejected cycle has one `CYCLE_BEFORE_STATE` finding and exact previous state.
+`PaperCycleResult` contains policy version, cycle timestamp, immutable next state, optional pending BUY result, entry results, exit results, and exactly one cycle finding.
 
 ## Stable orchestration reasons
 
@@ -483,38 +374,38 @@ EXIT_QUOTE_AFTER_CYCLE
 EXIT_QUOTE_BEFORE_LATENCY
 EXIT_EXECUTION_PRICE_UNAVAILABLE
 EXIT_EXECUTION_TERMINAL
+EXIT_POSITION_MARKED
 EXIT_POSITION_CLOSED
 ```
 
-These describe orchestration only. Underlying setup/score/decision/risk/C1/C3/C4 reasons remain separately attached to results.
+These describe orchestration only; B/C-domain findings remain attached separately.
 
-## No production defaults
-
-C5 ships no starting capital, setup threshold, score threshold, risk threshold, exit threshold, paper-fill assumptions, or exit slippage default.
-
-The one-entry-attempt rule is a point-in-time risk-context invariant, not a claimed optimal trading cadence.
-
-## Point-in-time rules
+## Point-in-time and safety rules
 
 C5 must never:
 
-- process a cycle earlier than prior state,
-- use future quote evidence to construct a SELL,
-- use same-cycle pre-entry evidence as post-fill C4 monitoring for a newly opened lifecycle,
+- process a cycle earlier than prior loop state,
+- use future quote fields to construct a SELL,
+- reset an authorized exit's latency clock merely because a later cycle occurred,
+- backdate a newer stronger exit to an older decision time,
+- freeze a stale USD SELL notional across cycles,
+- allow C1 fill quantity to exceed C4-authorized token quantity,
+- use same-cycle pre-entry evidence to monitor a newly opened lifecycle,
 - mark from evidence C4 rejected as unusable,
 - create a new BUY while one is pending,
-- create more than one BUY attempt in one cycle,
-- use decision-time price to convert C4 quantity to SELL notional.
+- create more than one approved BUY attempt per cycle,
+- fabricate wallet-distribution evidence,
+- create LIVE intent/execution/signer/transaction authority.
 
 ## Error handling
 
-Expected trading outcomes remain domain results rather than exceptions: REJECT/WATCH/risk reject/execution fail/exit HOLD are ordinary data.
+Ordinary trading outcomes remain domain results rather than exceptions: setup WATCH/BLOCKED, decision REJECT/WATCH, risk rejection, execution failure, exit HOLD, and unavailable quote are expected data.
 
-Constructors raise `ValueError` for malformed immutable shapes such as duplicate candidate/quote/exit IDs, inconsistent managed-position identity, or a non-PAPER/non-BUY pending entry.
-
-Cycle chronology violation is a fail-closed result with no state mutation.
+Constructors raise `ValueError` for malformed immutable shapes such as duplicate cycle identities, unsupported setup wrappers, non-PAPER pending BUYs, managed/open-position mismatches, pending exit identity/policy mismatch, or pending HOLD assessments.
 
 ## Public C5 API
+
+The stable package is intended to expose:
 
 ```text
 FirstPullbackSetupInput
@@ -537,27 +428,14 @@ create_paper_loop_state
 run_paper_cycle
 ```
 
-No provider/RPC/storage/signer/transaction/live-execution object is public.
+No provider/RPC/storage/signer/transaction/live-execution type is public from C5.
 
 ## Explicit non-goals
 
-C5 does not add provider/RPC access, raw observation ingestion, B1/B2 changes, new setup families, Smart Wallet Cluster, score/decision/risk changes, C1 fill-model changes, C3 accounting formula changes, C4 exit-rule changes, durable restart persistence, Parquet export, wallet reconstruction, signer secrets, Solana transaction construction/submission, or live mode.
+C5 does not add provider/RPC calls, raw observation ingestion, B1/B2 changes, new setup families, wallet intelligence, scoring/decision/risk changes, C1 fill changes, C3 accounting changes, C4 exit-rule changes, durable restart persistence, Parquet export, transaction construction/submission, or live mode.
 
-C6 is next and will validate/persist/recover autonomous accounting across partial exits, multiple positions, wins/losses, failed fills, and restarts.
+C6 remains responsible for persistence/restart/accounting validation across partial exits, multiple positions, wins/losses, failed fills, and restarts.
 
 ## Success criterion
 
-C5 is complete when repeated immutable cycles can:
-
-- evaluate existing setups,
-- score/decide/risk-size through the existing path,
-- carry one deferred BUY until terminal,
-- book actual paper BUYs,
-- initialize C4 state at lifecycle open,
-- monitor every pre-existing OPEN position,
-- build quantity-safe quote-aware SELL intents,
-- route SELLs through C1/C3 only,
-- fill-confirm TP advancement,
-- keep marks current from usable evidence,
-- return reconstructable cycle evidence,
-- and keep live execution impossible.
+C5 is complete when repeated immutable PAPER cycles can evaluate existing setups; score/decide/risk-size through the existing path; carry a deferred BUY; book realistic BUYs; initialize C4 only after lifecycle open; monitor every cycle-start OPEN position; preserve and safely retry latency-delayed C4 exits without stale notional; route all SELLs through C1/C3; fill-confirm TP progress; maintain C3 marks from usable evidence; return auditable cycle results; and keep live execution structurally impossible.
