@@ -171,7 +171,7 @@ def test_regime_profile_requires_metrics_to_match_effective_sample() -> None:
 
 def test_wallet_profile_reconciles_episode_and_evidence_counts() -> None:
     with pytest.raises(ValueError, match="episode state counts"):
-        _empty_profile(episode_count=1, closed_episode_count=1)
+        _empty_profile(episode_count=2, closed_episode_count=1)
 
     with pytest.raises(ValueError, match="closed evidence counts"):
         _empty_profile(

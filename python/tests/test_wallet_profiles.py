@@ -112,10 +112,9 @@ def _reconstruction(
     *,
     as_of: int = AS_OF,
     halted: bool = False,
-    wallet: str = WALLET,
 ) -> WalletTradeReconstruction:
     return WalletTradeReconstruction(
-        wallet=wallet,
+        wallet=WALLET,
         candidate_mint=mint,
         as_of_unix_ms=as_of,
         episodes=(episode,),
@@ -272,12 +271,12 @@ def test_profile_requires_one_exact_as_of_reconstruction_per_candidate() -> None
 
 def test_profile_rejects_wrong_wallet_and_future_episode_evidence() -> None:
     episode = _closed("mint-a")
-    wrong_wallet = _reconstruction("mint-a", episode, wallet="wallet-b")
+    reconstruction = _reconstruction("mint-a", episode)
     with pytest.raises(ValueError, match="wallet"):
         build_wallet_profile(
-            wallet=WALLET,
+            wallet="wallet-b",
             as_of_unix_ms=AS_OF,
-            reconstructions=(wrong_wallet,),
+            reconstructions=(reconstruction,),
             contexts=(),
             policy=_policy(),
         )
