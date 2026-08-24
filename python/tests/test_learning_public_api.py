@@ -15,4 +15,6 @@ def test_learning_public_api_is_explicit() -> None:
         "FeatureTransform",
         "TrainedLogisticRegressionModel",
         "ModelPrediction",
+        "train_logistic_regression",
+        "predict_positive_probability",
     )
