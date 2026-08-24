@@ -69,4 +69,4 @@ def test_paper_loop_does_not_reexport_runtime_modes_or_trade_execution_primitive
         "assess_exit",
     ):
         assert not hasattr(paper_loop, name)
-    assert RuntimeMode.LIVE.value == "LIVE"
+    assert RuntimeMode.LIVE.value == "live"
