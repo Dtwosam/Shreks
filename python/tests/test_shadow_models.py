@@ -131,8 +131,7 @@ def test_shadow_ledger_requires_canonical_order_and_unique_decision_identity() -
 
     conflicting_identity = replace(
         first,
-        challenger_action=DecisionAction.WATCH,
-        reason=ShadowReasonCode.PROBABILITY_BELOW_ENTER_THRESHOLD,
+        strategy_version="different-strategy",
         record_fingerprint_sha256="d" * 64,
     )
     with pytest.raises(ValueError, match="decision identity"):
