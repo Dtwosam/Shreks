@@ -411,3 +411,13 @@ D2 estimates a closed outcome only for a clean known-inventory BUY/SELL cycle th
 Missing economics, sign contradictions, a SELL without known starting inventory, an oversell, a counter-asset change, or a non-trade inventory change makes the history explicitly `UNRESOLVED` and halts later reconstruction for that wallet/mint instead of manufacturing continuity or PnL. Direct and inferred evidence remain distinguishable as `DIRECT`, `MIXED`, or `INFERRED`.
 
 D2 produces reconstruction evidence only. It adds **no wallet score, wallet profile, clustering/independence claim, smart-wallet feature, setup/decision/risk change, signer, transaction submission, or live-money authority**. D3 must build confidence-weighted wallet histories before wallet behavior can be evaluated as a trading signal.
+
+## Confidence-weighted wallet profiles
+
+Phase D3 adds a pure Python profile layer under `shreks_brain.wallets`. It consumes only caller-supplied D2 reconstructions at the exact profile `as_of_unix_ms` plus optional caller-supplied versioned episode research context; it performs no provider, RPC, SQLite, wall-clock, price, FX, or token-decimal lookup.
+
+Only D2 `CLOSED` episodes contribute to return, win-rate, hold-time, raw-PnL, and optional context aggregates. `OPEN` and `UNRESOLVED` episodes stay explicit counts and never become zero-return trades. DIRECT, MIXED, and INFERRED closed evidence receive weights only from an explicit `WalletProfilePolicy`; effective sample size and `evidence_sample_confidence` measure evidence amount/quality only, not win probability, expected return, or wallet quality.
+
+Raw realized PnL is aggregated only when every closed episode uses the same counter-asset mint. D3 performs no cross-asset conversion. Optional entry quality, candidate-discovery-to-entry delay, drawdown, rug exposure, and regime history require explicit context observed no earlier than the target episode close and no later than the profile as-of time. Context semantic versions cannot be mixed, and unknown optional values remain unknown rather than becoming zero or false.
+
+D3 produces descriptive wallet-history evidence only. It adds **no wallet ranking, smart-wallet label, clustering/independence claim, D5 smart-wallet feature, setup/score/decision/risk change, signer, transaction submission, or live-money authority**. D4 must establish independence/clustering evidence before wallet-derived signals can be treated as multiple independent confirmations.
