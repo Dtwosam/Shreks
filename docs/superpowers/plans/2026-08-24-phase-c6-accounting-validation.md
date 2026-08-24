@@ -1,4 +1,4 @@
-# Phase C6 Accounting Validation and Restart Recovery Implementation Plan
+# Phase C6 Accounting Validation and Restart Recovery Verification Record
 
 **Goal:** Prove Phase C accounting and restart integrity without changing trading logic.
 
@@ -6,112 +6,49 @@
 
 **Design:** `docs/superpowers/specs/2026-08-24-phase-c6-accounting-validation-design.md`.
 
-## Global constraints
+## Completed contract
 
-- PAPER only; live remains disabled.
-- C1 fill, C3 ledger, C4 exits, and C5 orchestration stay authoritative and unchanged unless a proven predecessor defect is found.
-- Rust storage owns migration 0006; Python uses the shared SQLite checkpoint table.
-- No pickle/dynamic imports/eval/arbitrary deserialization.
-- No wall-clock reads; persistence timestamps are explicit inputs.
-- No provider/RPC/network/signer/transaction code.
-- No production trading defaults.
-- TDD RED -> exact failure -> GREEN.
-- Minimize CI churn: three major RED/GREEN gates, then one final exact-head seal.
+C6 adds independent validation and durable restart recovery around the already-sealed C1/C3/C4/C5 paper path.
 
----
+It:
 
-## Gate 1 — Operational schema + accounting validator
+- independently recomputes portfolio cash, realized PnL, accumulated costs, lifecycle-linked economics, running quantities, marked market value, equity, and net PnL from authoritative C3 evidence;
+- reports missing OPEN-position marks as `INCOMPLETE` rather than inventing zero unrealized PnL;
+- reports contradictory accounting as `INVALID` rather than repairing or silently accepting it;
+- records explicit evidence counts for partial reductions, terminal execution failures, total/open/closed lifecycles, and winning/losing/flat closed lifecycles;
+- adds Rust-owned SQLite migration 0006 with append-only `paper_loop_checkpoints` rows and a deterministic latest-checkpoint index;
+- keeps Python from creating or migrating the table itself; an unmigrated operational database fails closed;
+- serializes only an explicit allow-list of immutable C3/C4/C5/B9 state types and enums using canonical JSON, exact hexadecimal finite floats, deterministic tuples/frozensets, and SHA-256 integrity;
+- uses no pickle, eval, dynamic imports, arbitrary class paths, or executable deserialization;
+- rejects unknown tags, malformed field sets, checksum corruption, row/envelope metadata divergence, sequence collisions, and non-monotonic new checkpoints;
+- makes an identical run/sequence/payload save idempotent while preserving append-only history;
+- restores exact `PaperLoopState` from a fresh SQLite connection and validates state equality, canonical fingerprint equality, and accounting equality;
+- proves duplicate terminal C3 intent protection still holds after restore;
+- proves C5 can continue from restored state and independently advance multiple OPEN-position marks;
+- exposes an exact 13-symbol `shreks_brain.paper_validation` public API;
+- changes no C1 fill math, C3 accounting math, C4 exit rules, C5 trading decisions, provider logic, signer, transaction submission, or live-money authority.
 
-**Create/modify:**
-- `crates/shreks-storage/migrations/0006_paper_loop_checkpoints.sql`
-- `crates/shreks-storage/src/lib.rs`
-- `crates/shreks-storage/tests/database.rs`
-- `python/tests/test_paper_validation_accounting.py`
-- `python/src/shreks_brain/paper_validation/models.py`
-- `python/src/shreks_brain/paper_validation/accounting.py`
+## TDD and verification evidence
 
-### RED
+### Gate 1 — schema and independent accounting validator
 
-Tests must require:
+- RED `8192568b03846378dc5957d21139631a1fb23ee1` / CI `32720175022`: Python failed only because `shreks_brain.paper_validation` did not yet exist; Rust failed only because schema version 6 and `paper_loop_checkpoints` did not yet exist; repository safety was green.
+- Initial implementation `295f50a27211f9308e456394883f19831bfbadf9` / CI `32721151417` added migration 0006 and the validator. The run exposed test-side exact-float expectations plus legacy tests that hard-coded the previous latest schema version.
+- Accounting expectation correction `7c7c00fbec7bb81833b4a2b9255ec7f8fae13164` / CI `32721281364`: Python and repository safety green; the only Rust issue was a stale schema-version assertion.
+- Legacy schema assertions were aligned at `cd61342e2c6e87793f68af6cd76cdf90ee159260` and `d0c8595250b5e1b13d1d4b9cb1870072dcaa2076`. Migration 0006 itself was already passing.
 
-- storage schema version 6,
-- `paper_loop_checkpoints` table/index,
-- accounting status enum and deterministic finding vocabulary,
-- exact cash/realized/cost equations,
-- per-position linked realized/cost/quantity equations,
-- marked-equity identity `cash + market value - starting cash == realized + unrealized`,
-- unmarked OPEN lifecycle => `INCOMPLETE`, not zero,
-- counts for partial reductions, failures, wins, losses, flat closes, open/closed positions,
-- tampered in-memory ledger object => `INVALID` rather than silent success.
+### Gate 2 — canonical checkpoint codec and restart recovery
 
-Use real C1/C3 operations for economic fixtures.
+- RED `e6eb17d3d8999adc0611909c0009517ff78fa1fc` / CI `32721690322`: exact missing `PaperCheckpointError`/checkpoint API surface; repository safety green.
+- Checkpoint/restart models `f180465931ff56e0e88768fd746bb03c9de30c83` pinned schema `c6-paper-state-v1` and immutable checkpoint/restart reports.
+- GREEN implementation `6d8a4e73b5529048d6357ff61697c375a4e9429a` / CI `32722061243`: canonical allow-listed codec, SHA-256 verification, append-only SQLite save/load, collision/monotonicity protection, and restart-equivalence validation. Python and repository safety were green on that run; the later full-stack Gate 3 run proves the combined Rust/Python head.
 
-### GREEN
+### Gate 3 — source-required accounting/restart scenario and public API
 
-Implement migration 0006, update Rust migration registry/schema tests, and add pure Python accounting validator/models. Do not add persistence codec/store yet.
-
----
-
-## Gate 2 — Canonical checkpoint codec + SQLite persistence/restart
-
-**Create:**
-- `python/tests/test_paper_validation_checkpoint.py`
-- `python/src/shreks_brain/paper_validation/checkpoint.py`
-
-### RED
-
-Tests must require:
-
-- exact deterministic payload bytes for identical state,
-- exact float/frozenset round-trip,
-- only allow-listed dataclass/enum tags,
-- unknown/malformed type tags rejected,
-- checksum mismatch rejected before state decode,
-- envelope/row metadata mismatch rejected,
-- save fails if migration table missing,
-- first insert atomic,
-- same sequence + same payload idempotent,
-- same sequence + different state collision rejected,
-- lower new sequence rejected after a higher checkpoint,
-- latest sequence loads,
-- explicit checkpoint time cannot precede loop state,
-- file-backed close/reopen restores exact `PaperLoopState`,
-- restart equivalence report checks exact state/fingerprint/accounting metrics.
-
-### GREEN
-
-Implement canonical safe codec, checkpoint record/error, SQLite save/load, and restart equivalence. Use stdlib only.
-
----
-
-## Gate 3 — Source-required accounting scenarios + public API
-
-**Create:**
-- `python/tests/test_paper_validation_scenarios.py`
-- `python/tests/test_paper_validation_public_api.py`
-- `python/src/shreks_brain/paper_validation/__init__.py`
-
-**Modify only if required by a proven C6 defect:**
-- C6 package files from Gates 1/2.
-
-### Scenario coverage
-
-Use real C1/C3/C5 paths to prove one durable run containing:
-
-- multiple positions,
-- at least one winning closed lifecycle,
-- at least one losing closed lifecycle,
-- a partial lifecycle reduction,
-- failed-after-submission network cost,
-- marked equity while positions remain open,
-- checkpoint/reopen/restart,
-- post-restart continuation,
-- duplicate terminal intent protection,
-- final accounting reconciliation.
-
-### Public API
-
-Exact exports:
+- Scenario/API `8963b28a6ff438e28c00d47eb49fd9cfecca8db9` / CI `32722296257`: Python, Rust/workspace metadata, and repository safety all green.
+- The scenario contains four lifecycles in one authoritative history: a winning closed lifecycle with a genuine partial reduction, a losing closed lifecycle with a failed-after-submission network cost, and two simultaneous OPEN positions.
+- It validates marked equity, checkpoints to file-backed SQLite, reopens through a fresh connection, proves exact restart equivalence, rejects replay of an already-terminal intent without changing the ledger, continues through C5 after restore, advances both OPEN marks independently, writes a later checkpoint, reloads the latest state, and reconciles accounting again.
+- The stable public API is exactly:
 
 ```text
 AccountingFinding
@@ -129,18 +66,8 @@ validate_paper_accounting
 validate_restart_equivalence
 ```
 
-No storage internals/provider/live authority are exported.
+## Phase C boundary
 
----
+C6 proves the accounting/restart mechanics required for extended realistic PAPER operation. It does **not** claim that any strategy is profitable, does not supply production thresholds or capital settings, and does not authorize live trading. Promotion still requires extended unseen paper evidence with positive expectancy after realistic costs, acceptable drawdown, stable providers/restarts, reproducible evaluation, and no unresolved accounting/execution defect.
 
-## Documentation and seal
-
-- Add README C6 accounting/restart semantics.
-- Replace this plan with a concise verification record after implementation evidence is complete.
-- Freeze branch.
-- Compare exact C5 -> C6 diff and confirm only intended C6/storage/README files changed.
-- Run one fresh full exact-head CI and require Python, Rust/workspace metadata, and repository safety all green.
-- Put final SHA/run only in draft PR metadata, not tracked docs.
-- Leave PR draft/unmerged.
-
-**Phase C exit claim is allowed only after the final seal proves realistic autonomous paper trading plus complete/reconcilable durable history.**
+The final exact-head SHA and final CI run are recorded only in draft PR metadata after the branch is frozen, not in this tracked verification file.

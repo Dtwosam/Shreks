@@ -322,6 +322,20 @@ Every position OPEN at cycle start is independently monitored when evidence is s
 
 C5 ships **no production thresholds, starting capital, fill assumptions, or strategy ordering defaults**. It adds no provider/RPC/storage reads, wallet intelligence, signer, Solana transaction construction/submission, or live execution. `live` remains disabled.
 
+## Paper accounting validation and restart recovery
+
+Phase C6 adds `shreks_brain.paper_validation` plus Rust-owned migration 0006 to prove that C5 paper state remains economically reconcilable and restart-safe. It does not change C1 fills, C3 accounting formulas, C4 exits, or C5 trading decisions.
+
+The accounting validator independently recomputes cash, realized PnL, accumulated costs, lifecycle-linked realized/cost evidence, running quantities, marked open-position market value, equity, and net PnL from the immutable C3 journal and positions. It explicitly counts partial reductions, terminal execution failures, open/closed lifecycles, and winning/losing/flat closed lifecycles. If any OPEN position is unmarked, portfolio unrealized PnL/equity remains `INCOMPLETE` rather than treating missing evidence as zero. Contradictory accounting is `INVALID`; C6 never repairs the ledger behind the caller's back.
+
+Durable checkpoints use the same WAL-mode operational SQLite database. Migration 0006 owns the append-only `paper_loop_checkpoints` table; Python does not create or migrate it. State payloads are canonical JSON over an explicit allow-list of C3/C4/C5/B9 immutable types, with exact hexadecimal finite floats, deterministic tuples/frozensets, and SHA-256 integrity. Pickle, eval, dynamic imports, arbitrary class paths, and executable deserialization are not used.
+
+Checkpoint writes are deterministic and collision-safe. Re-saving the same run/sequence with identical state and metadata is idempotent; a different payload at the same sequence is rejected, and a new lower sequence cannot be inserted after a higher checkpoint. On load, checksum and row/envelope metadata must agree before restored state is accepted.
+
+File-backed restart tests close and reopen SQLite through a fresh connection, restore the exact `PaperLoopState`, compare canonical state fingerprints and accounting reports, prove duplicate terminal C3 intents cannot be rebooked, and continue C5 afterward with multiple OPEN positions independently monitored and marked. This validates durable mechanics, not strategy profitability.
+
+C6 ships **no production thresholds, starting capital, strategy-profitability claim, signer, transaction submission, or live-money authority**. Completing these mechanics permits extended realistic PAPER evaluation; promotion still requires positive unseen expectancy after realistic costs, acceptable drawdown, stable provider/restart behavior, reproducible evaluation, and no unresolved accounting or execution defects. `live` remains disabled.
+
 ## Local setup
 
 ### Rust
