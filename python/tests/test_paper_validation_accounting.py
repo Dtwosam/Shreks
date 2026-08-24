@@ -182,8 +182,13 @@ def test_marked_open_position_reconciles_equity_and_cost_inclusive_pnl() -> None
     assert report.closed_position_count == 0
     assert report.open_market_value_usd == 120.0
     assert report.equity_usd == 10_018.9
-    assert report.net_pnl_usd == 18.9
-    assert report.expected_net_pnl_usd == 18.9
+    assert math.isclose(report.net_pnl_usd or 0.0, 18.9, rel_tol=1e-12, abs_tol=1e-9)
+    assert math.isclose(
+        report.expected_net_pnl_usd or 0.0,
+        18.9,
+        rel_tol=1e-12,
+        abs_tol=1e-9,
+    )
     assert report.accumulated_costs_usd == 1.1
     assert report.expected_accumulated_costs_usd == 1.1
     assert report.findings == ()
@@ -241,7 +246,12 @@ def test_partial_multiple_win_loss_and_failed_fill_counts_reconcile() -> None:
         rel_tol=1e-12,
         abs_tol=1e-9,
     )
-    assert report.net_pnl_usd == report.realized_pnl_usd
+    assert math.isclose(
+        report.net_pnl_usd or 0.0,
+        report.realized_pnl_usd,
+        rel_tol=1e-12,
+        abs_tol=1e-9,
+    )
     assert report.findings == ()
 
 
@@ -256,5 +266,6 @@ def test_validator_detects_tampered_cash_without_repairing_state() -> None:
     assert report.expected_cash_balance_usd == 10_000.0
     assert tuple(finding.code for finding in report.findings) == (
         AccountingFindingCode.CASH_BALANCE_MISMATCH,
+        AccountingFindingCode.EQUITY_PNL_MISMATCH,
     )
     assert state.ledger.cash_balance_usd == 9_999.0
