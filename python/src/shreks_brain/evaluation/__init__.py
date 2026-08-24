@@ -1,3 +1,4 @@
+from .calibration import build_probability_observations_from_e4
 from .models import (
     TRADING_EVALUATION_SCHEMA_VERSION,
     CalibrationBucket,
@@ -21,4 +22,5 @@ __all__ = (
     "CalibrationReport",
     "SegmentPerformance",
     "TradingEvaluationReport",
+    "build_probability_observations_from_e4",
 )
