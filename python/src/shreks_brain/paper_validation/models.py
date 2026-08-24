@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 import math
 
+from shreks_brain.paper_loop import PaperLoopState
+
+
+_CHECKPOINT_SCHEMA_VERSION = "c6-paper-state-v1"
+
 
 class AccountingValidationStatus(StrEnum):
     RECONCILED = "RECONCILED"
@@ -138,6 +143,79 @@ class AccountingValidationReport:
                 raise ValueError("INCOMPLETE report requires only unmarked-position findings")
         if self.status is AccountingValidationStatus.INVALID and not self.findings:
             raise ValueError("INVALID report requires findings")
+
+
+@dataclass(frozen=True, slots=True)
+class PaperCheckpointRecord:
+    run_id: str
+    sequence: int
+    checkpoint_schema_version: str
+    state_as_of_unix_ms: int
+    created_at_unix_ms: int
+    payload_sha256: str
+    state: PaperLoopState
+
+    def __post_init__(self) -> None:
+        _require_non_empty_string("run_id", self.run_id)
+        _require_non_negative_int("sequence", self.sequence)
+        if self.checkpoint_schema_version != _CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError("unsupported checkpoint_schema_version")
+        _require_non_negative_int("state_as_of_unix_ms", self.state_as_of_unix_ms)
+        _require_non_negative_int("created_at_unix_ms", self.created_at_unix_ms)
+        if self.created_at_unix_ms < self.state_as_of_unix_ms:
+            raise ValueError("created_at_unix_ms must not precede state_as_of_unix_ms")
+        if (
+            not isinstance(self.payload_sha256, str)
+            or len(self.payload_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.payload_sha256)
+        ):
+            raise ValueError("payload_sha256 must be a lowercase SHA-256 hex digest")
+        if not isinstance(self.state, PaperLoopState):
+            raise ValueError("state must be a PaperLoopState")
+        if self.state.last_cycle_at_unix_ms != self.state_as_of_unix_ms:
+            raise ValueError("state_as_of_unix_ms must equal state last-cycle time")
+
+
+@dataclass(frozen=True, slots=True)
+class RestartValidationReport:
+    equivalent: bool
+    expected_state_sha256: str
+    restored_state_sha256: str
+    expected_accounting: AccountingValidationReport
+    restored_accounting: AccountingValidationReport
+    differences: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.equivalent, bool):
+            raise ValueError("equivalent must be a boolean")
+        for name in ("expected_state_sha256", "restored_state_sha256"):
+            value = getattr(self, name)
+            if (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise ValueError(f"{name} must be a lowercase SHA-256 hex digest")
+        if not isinstance(self.expected_accounting, AccountingValidationReport):
+            raise ValueError("expected_accounting must be an AccountingValidationReport")
+        if not isinstance(self.restored_accounting, AccountingValidationReport):
+            raise ValueError("restored_accounting must be an AccountingValidationReport")
+        if not isinstance(self.differences, tuple) or not all(
+            isinstance(item, str) and item.strip() for item in self.differences
+        ):
+            raise ValueError("differences must be a tuple of non-empty strings")
+        if self.equivalent != (not self.differences):
+            raise ValueError("equivalent must match whether differences are empty")
+
+
+def _require_non_empty_string(name: str, value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
+
+
+def _require_non_negative_int(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
 
 
 def _require_finite(name: str, value: object) -> None:
