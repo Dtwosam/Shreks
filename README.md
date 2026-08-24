@@ -445,3 +445,17 @@ D5 exposes inclusive recent entry/exit wallet counts, confidence-weighted strong
 Creator/deployer activity is the count of supplied D1 `CREATOR_ACTION` observations inside the configured local observation window. Zero means zero qualifying supplied observations, not proof that no such activity happened elsewhere.
 
 D5 is research evidence only. It adds **no Smart Wallet Cluster entry eligibility, production wallet-strength thresholds, B7/B8/B9 policy change, `TradeIntent`, position size, signer, transaction submission, or live-money authority**. D6 must export point-in-time-safe research datasets, and later unseen post-cost evaluation must prove whether the D5 wallet features improve trading results.
+
+## Point-in-time research dataset export
+
+Phase D6 adds a pure Python research-export boundary under `shreks_brain.research` with schema `d6-research-v1`. Each logical record is one candidate decision snapshot identified by `(candidate_mint, as_of_unix_ms)`, and `REJECT`, `WATCH`, and `ENTER` candidates are all retained so rejected opportunities remain available for selection-bias and filter-opportunity-cost research.
+
+Future labels are decision-anchored rather than silently reused from candidate discovery. Every row carries the seven approved 1m, 5m, 15m, 30m, 1h, 4h, and 24h horizons, and a label baseline must equal the row decision timestamp. A discovery-anchored A9 checkpoint can be reused only when its actual baseline matches that decision timestamp; otherwise later historical replay must derive a decision-anchored label.
+
+The physical schema keeps decision-time features/provenance and future targets structurally separate: 93 feature columns contain no `label_` prefix, while all 98 future-label columns do. Pending future metrics remain null rather than becoming zero. D5 wallet-strength audit rows are preserved as canonical JSON and reason/missing-code collections remain list-valued research evidence.
+
+Dataset rows are deterministically sorted and receive a logical SHA-256 fingerprint over the canonical row values, including exact finite-float encoding. The fingerprint is independent of output path and Parquet byte layout, so writer/library changes cannot silently redefine logical dataset identity.
+
+Parquet output uses an explicit schema, Zstandard compression, and metadata carrying the D6/B2/D5 schema versions, horizon set, row count, and logical digest. PyArrow is lazy-loaded and isolated behind the optional `shreks-brain[research]` extra; importing or building logical D6 research rows does not require it.
+
+D6 does **not** read SQLite, replay history, generate missing labels, train or promote a model, change strategy/score/decision/risk behavior, create a `TradeIntent`, size capital, sign or submit transactions, or enable live trading. Phase E must use chronological replay and unseen post-cost evaluation to determine whether the wallet/market research evidence actually improves expectancy.
