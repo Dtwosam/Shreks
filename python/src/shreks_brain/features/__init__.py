@@ -11,6 +11,15 @@ from .models import (
     FeatureVector,
     MarketFeaturePoint,
 )
+from .wallet_engine import build_wallet_feature_vector
+from .wallet_models import (
+    WALLET_FEATURE_SCHEMA_VERSION,
+    WalletFeatureInputs,
+    WalletFeaturePolicy,
+    WalletFeatureVector,
+    WalletHistoricalStrengthState,
+    WalletStrengthAssessment,
+)
 
 __all__ = (
     "ANCHOR_1M_MAX_AGE_MS",
@@ -24,4 +33,11 @@ __all__ = (
     "FeatureVector",
     "MarketFeaturePoint",
     "build_feature_vector",
+    "WALLET_FEATURE_SCHEMA_VERSION",
+    "WalletHistoricalStrengthState",
+    "WalletFeaturePolicy",
+    "WalletFeatureInputs",
+    "WalletStrengthAssessment",
+    "WalletFeatureVector",
+    "build_wallet_feature_vector",
 )
