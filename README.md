@@ -336,6 +336,18 @@ File-backed restart tests close and reopen SQLite through a fresh connection, re
 
 C6 ships **no production thresholds, starting capital, strategy-profitability claim, signer, transaction submission, or live-money authority**. Completing these mechanics permits extended realistic PAPER evaluation; promotion still requires positive unseen expectancy after realistic costs, acceptable drawdown, stable provider/restart behavior, reproducible evaluation, and no unresolved accounting or execution defects. `live` remains disabled.
 
+## Wallet observation store
+
+Phase D1 adds the first durable wallet-evidence layer in Rust without turning wallet activity into a trading signal. `WalletObservation` records provider, wallet, candidate mint, broad action class (`buy`, `sell`, `transfer`, `liquidity_event`, `creator_action`, or `other`), whether the classification is `direct` or `inferred`, transaction signature/event index, full-width Solana slot, decision-safe local observation time, optional chain time, optional signed raw token/counter-asset deltas, venue, and counterparty evidence.
+
+Wallet amount evidence is stored as signed raw integer units rather than floating-point UI amounts. Full `u64` slots and signed `i128` deltas are persisted as canonical decimal text, so SQLite never narrows Solana-width values into signed 64-bit integers. Missing deltas remain missing, and an inferred classification remains distinguishable from direct evidence.
+
+The durable event identity is provider + signature + event index + wallet + candidate mint. An identical replay is idempotent and may only move the stored local observation timestamp earlier. If a replay changes action, evidence class, slot, chain time, deltas, counter asset, venue, or counterparty, storage rejects the contradiction instead of rewriting wallet history. Writes are accepted only for mints already known in `token_candidates`.
+
+Migration 0007 adds restart-safe `wallet_observations` storage and deterministic inclusive time-bounded queries by candidate mint or wallet. The local `observed_at_unix_ms` remains the point-in-time availability clock; optional on-chain occurrence time is audit metadata and cannot backdate what Shreks knew.
+
+D1 adds **no provider/RPC ingestion wiring, historical wallet backfill, trade reconstruction, wallet PnL, wallet ranking, clustering, smart-wallet score, B2 feature, setup/decision/risk change, signer, transaction submission, or live-money authority**. Those intelligence steps remain D2–D5 so wallet behavior can be tested with real sample-size, confidence, and independence evidence before it is allowed to influence trading.
+
 ## Local setup
 
 ### Rust
