@@ -1,3 +1,4 @@
+from .engine import evaluate_shadow_challenger
 from .models import (
     SHADOW_CHALLENGER_SCHEMA_VERSION,
     ShadowDecisionPolicy,
@@ -12,4 +13,5 @@ __all__ = (
     "ShadowReasonCode",
     "ShadowDecisionRecord",
     "ShadowEvidenceLedger",
+    "evaluate_shadow_challenger",
 )
