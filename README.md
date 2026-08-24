@@ -487,3 +487,13 @@ Only allow-listed numeric/boolean decision-time evidence can enter the training 
 Scikit-learn is optional training infrastructure and is lazy-loaded only when fitting. The base Python package remains dependency-free, and the trained model contains only standard-library values rather than a sklearn estimator, NumPy array, pickle, or joblib payload. Prediction is pure Python, applies only the artifact's stored transforms, uses a stable logistic sigmoid, and never reads future-label values.
 
 E3 does not split data chronologically, calculate trading/economic metrics, search hyperparameters, select or promote a champion, alter B7/B8/B9 behavior, size risk, create a `TradeIntent`, execute trades, or enable live money. Profitability remains unproven: Phase E4 must validate challengers on chronological unseen data and Phase E5 must measure realistic post-cost trading results before any model can be considered useful.
+
+## Time-aware challenger validation
+
+Phase E4 adds pure Python chronological validation under `shreks_brain.validation` with schema `e4-time-validation-v1`. Callers provide explicit half-open training and validation intervals; E4 invents no dates, durations, gaps, model features, targets, or hyperparameters.
+
+A historical row may train a fold only when its decision timestamp is inside that fold's training interval **and** the selected target was completed no later than the fold's validation start. This label-maturity gate prevents an old decision row from borrowing an outcome that Shreks would not actually have known at the split.
+
+Validation membership is defined only by decision time. Every candidate in the unseen validation interval receives a prediction regardless of whether its future label is pending or completed, and a fold's own validation labels cannot alter that fold's model, prediction population, probabilities, or fingerprint. Earlier validation rows may enter a later fold's training population only after their selected labels have legitimately matured by that later split.
+
+Each fold trains a fresh sealed-E3 logistic artifact and applies sealed-E3 pure inference. E4 preserves deterministic fold, model, prediction, and run provenance, but computes no accuracy, AUC, calibration, expectancy, PnL, drawdown, win rate, cost, or promotion metric. E4 makes no profitability claim and changes no trading authority. Phase E5 must evaluate the exact unseen populations economically before any challenger can be considered useful.
