@@ -1,4 +1,5 @@
 from .features import TRAINABLE_RESEARCH_FEATURE_COLUMNS
+from .inference import predict_positive_probability
 from .models import (
     MODEL_TRAINING_SCHEMA_VERSION,
     ClassWeightMode,
@@ -10,6 +11,7 @@ from .models import (
     ResearchReturnTarget,
     TrainedLogisticRegressionModel,
 )
+from .trainer import train_logistic_regression
 
 
 __all__ = (
@@ -23,4 +25,6 @@ __all__ = (
     "FeatureTransform",
     "TrainedLogisticRegressionModel",
     "ModelPrediction",
+    "train_logistic_regression",
+    "predict_positive_probability",
 )
