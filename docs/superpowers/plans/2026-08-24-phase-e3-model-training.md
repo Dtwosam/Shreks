@@ -1,345 +1,143 @@
-# Phase E3 Model Training Pipeline Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+# Phase E3 Model Training Pipeline Verification Record
 
-**Goal:** Build the first deterministic supervised tabular training and pure-Python inference boundary over sealed D6 logical research rows.
+## Sealed predecessor
 
-**Architecture:** E3-v1 trains one explicit logistic-regression family. Standard-library code validates D6 rows, derives a caller-specified binary return target, computes training-only median/standardization transforms, and exports an immutable portable coefficient artifact. `trainer.py` lazy-loads scikit-learn only for fitting; inference uses stored transforms plus a pure-Python sigmoid. E4 still owns chronological splitting and E5 still owns trading metrics.
+Phase E3 was built from the immutable Phase E2 seal:
 
-**Tech Stack:** Python 3.12+, standard library, scikit-learn `>=1.7,<2` behind an optional `learning` extra, pytest.
-
-**Spec:** `docs/superpowers/specs/2026-08-24-phase-e3-model-training-design.md`
+- E2 head: `caeb7b127b39a9c7fd5cf40ca877fbe677ba703f`
+- E3 branch: `feat/phase-e3-model-training`
+- E3 design: `docs/superpowers/specs/2026-08-24-phase-e3-model-training-design.md`
 
-## Global Constraints
+E3 does not modify E1 replay, E2 baselines, B7 scoring, B8 decisions, Rust source, or migrations.
 
-- Base exactly on sealed E2 head `caeb7b127b39a9c7fd5cf40ca877fbe677ba703f`.
-- Keep base `shreks-brain` dependency-free; scikit-learn is optional training infrastructure.
-- Consume caller-supplied D6 logical rows only; no Parquet/SQLite/provider/filesystem/network/wall-clock reads.
-- Use only E3 allow-listed scalar numeric/boolean columns from `RESEARCH_FEATURE_COLUMNS`; never permit a `label_` column as a feature.
-- No production/default feature tuple, target horizon/threshold, or training hyperparameters.
-- No chronological split, evaluation metrics, model promotion, risk, execution, or live-money behavior.
-- No pickle/joblib/executable model serialization.
-- Preserve E1/E2/B7/B8 behavior unchanged.
+## Delivered boundary
 
----
+E3 adds `shreks_brain.learning` with schema `e3-training-v1` and one deliberately simple supervised challenger family: binary logistic regression.
 
-### Task 1: Immutable E3 model and public API contract
+The implementation:
 
-**Files:**
-- Create: `python/src/shreks_brain/learning/models.py`
-- Create: `python/src/shreks_brain/learning/__init__.py`
-- Create: `python/tests/test_learning_models.py`
-- Create: `python/tests/test_learning_public_api.py`
+- consumes caller-supplied logical D6 `d6-research-v1` rows;
+- accepts only an explicit caller-supplied tuple of allow-listed numeric/boolean decision-time features;
+- excludes all future-label columns, candidate identity/time, categorical policy/state strings, collections/JSON audit payloads, and B8 `decision_action` / `required_score_threshold` from the trainable feature surface;
+- derives a binary target only from the caller-supplied D6 return horizon and finite return threshold, using inclusive `>=` semantics;
+- excludes pending/unavailable targets rather than treating them as negatives or zero;
+- deterministically sorts eligible rows by `(as_of_unix_ms, candidate_mint)`;
+- derives training-only median imputation, mean, and population-standard-deviation transforms;
+- records deterministic training provenance and a SHA-256 training fingerprint;
+- lazy-loads scikit-learn only when fitting;
+- exports only immutable standard-library values rather than a sklearn/NumPy estimator object;
+- performs inference in standard-library Python with stored transforms and a numerically stable sigmoid;
+- reads no future-label value during inference.
 
-**Interfaces:**
-- Produces `MODEL_TRAINING_SCHEMA_VERSION = "e3-training-v1"`.
-- Produces `ModelFamily.LOGISTIC_REGRESSION`.
-- Produces `ClassWeightMode.NONE` and `ClassWeightMode.BALANCED`.
-- Produces immutable `ResearchReturnTarget`, `LogisticRegressionTrainingPolicy`, `ModelTrainingRequest`, `FeatureTransform`, `TrainedLogisticRegressionModel`, and `ModelPrediction`.
-- Later tasks consume these exact types.
+The base package remains dependency-free. `scikit-learn>=1.7,<2` is isolated to the optional `learning` extra and the `dev` test extra.
 
-- [ ] **Step 1: Add model/public RED tests**
+## TDD evidence
 
-Tests must assert:
+### Model/API RED
 
-```python
-from dataclasses import FrozenInstanceError
+Commit: `5d6f03daf2d302944f6dce23f56fd14afa4459e3`  
+CI: `32762589979`
 
-from shreks_brain.learning import (
-    MODEL_TRAINING_SCHEMA_VERSION,
-    ClassWeightMode,
-    FeatureTransform,
-    LogisticRegressionTrainingPolicy,
-    ModelFamily,
-    ModelPrediction,
-    ModelTrainingRequest,
-    ResearchReturnTarget,
-    TrainedLogisticRegressionModel,
-)
+Expected RED: two collection errors because `shreks_brain.learning` did not exist.
 
-assert MODEL_TRAINING_SCHEMA_VERSION == "e3-training-v1"
-assert ModelFamily.LOGISTIC_REGRESSION.value == "LOGISTIC_REGRESSION"
-assert ClassWeightMode.NONE.value == "NONE"
-assert ClassWeightMode.BALANCED.value == "BALANCED"
-```
+### Model/API GREEN
 
-Cover exact type/value validation, approved D6 horizons, finite target thresholds, positive logistic `C/tolerance/max_iterations`, duplicate/empty feature rejection, coefficient/transform dimensional agreement, probability bounds, 64-character lowercase SHA-256 provenance, and frozen dataclasses.
+Commit: `f4e48bb334189e14bbd1c23b947bf522929c7772`  
+CI: `32762742101`
 
-- [ ] **Step 2: Run the RED**
+Immutable learning contracts and the explicit public API were added without preprocessing, sklearn, or fitting behavior. Repository safety, Python, and Rust/workspace gates were green.
 
-Run:
+### Feature-preparation RED
 
-```bash
-python -m pytest python/tests/test_learning_models.py python/tests/test_learning_public_api.py -q
-```
+Commit: `1f41f32337c4da096aa90a430f97e327468dbcb1`  
+CI: `32764822800`
 
-Expected: collection failure because `shreks_brain.learning` does not exist.
+Expected RED: collection reached the E3 package and failed specifically because `TRAINABLE_RESEARCH_FEATURE_COLUMNS` was not yet exported.
 
-- [ ] **Step 3: Implement the minimal model/public GREEN**
+### Feature-preparation implementation
 
-Create exact immutable validated contracts. `ModelTrainingRequest.feature_columns` is a non-empty duplicate-free tuple of non-empty strings; semantic allow-list validation belongs to Task 2.
+Commit: `0be93d74a631ecdf8398cb884a67ba05f1b75194`  
+CI: `32765242825`
 
-`TrainedLogisticRegressionModel` fields:
+Result: `1 failed, 1735 passed`.
 
-```python
-schema_version: str
-model_version: str
-model_family: ModelFamily
-training_policy_version: str
-research_dataset_schema_version: str
-target: ResearchReturnTarget
-feature_transforms: tuple[FeatureTransform, ...]
-coefficients: tuple[float, ...]
-intercept: float
-training_row_count: int
-positive_row_count: int
-negative_row_count: int
-target_unavailable_row_count: int
-min_training_as_of_unix_ms: int
-max_training_as_of_unix_ms: int
-training_fingerprint_sha256: str
-```
+The sole failure was a test-fixture error, not a production semantic defect: the fixture changed a target return from `+10%` to `+50%` while the configured positive boundary was `+5%`, so the binary target correctly remained positive.
 
-`ModelPrediction` fields:
+### Feature test-only repair
 
-```python
-model_version: str
-candidate_mint: str
-as_of_unix_ms: int
-positive_probability: float
-```
+Commit: `00fff146ca852fdfef810685a583c1a9d503c270`  
+CI: `32765464217`
 
-- [ ] **Step 4: Run model/public tests**
+The fixture was changed only from `+50%` to `-50%` so the test actually crossed the configured class boundary. No production code changed. Repository safety, Python, and Rust/workspace gates were green.
 
-Expected: PASS while no training behavior exists yet.
+### Training/inference RED
 
-- [ ] **Step 5: Commit**
+Commit: `b4d3ef6e0195f2dcd1cc8deec351227f95b9425f`  
+CI: `32765770710`
 
-```bash
-git add python/src/shreks_brain/learning/models.py python/src/shreks_brain/learning/__init__.py python/tests/test_learning_models.py python/tests/test_learning_public_api.py
-git commit -m "feat: add E3 learning contracts"
-```
+Expected RED: exactly two collection errors, one for the missing `train_logistic_regression` function and one for the missing `predict_positive_probability` function. No sklearn dependency or trainer/inference production code existed at this RED point.
 
----
+### Production GREEN
 
-### Task 2: Point-in-time feature and target preparation
+Commit: `d795a03913d995d6e737df3e8482d669f3d7de97`  
+CI: `32766079490`
 
-**Files:**
-- Create: `python/src/shreks_brain/learning/features.py`
-- Create: `python/tests/test_learning_features.py`
+Fresh exact-head evidence:
 
-**Interfaces:**
-- Produces public `TRAINABLE_RESEARCH_FEATURE_COLUMNS`.
-- Produces internal deterministic preparation consumed by trainer/inference.
-- Must never import scikit-learn.
+- repository safety: GREEN;
+- Python: `1751 passed in 4.59s`;
+- Rust tests: GREEN;
+- workspace metadata: GREEN.
 
-- [ ] **Step 1: Write feature-preparation RED tests**
+The CI environment installed and exercised `scikit-learn 1.9.0`, proving the real lazy training path rather than only import-level behavior.
 
-Cover:
+## Behavior proved by tests
 
-1. every allowed feature belongs to D6 `RESEARCH_FEATURE_COLUMNS`;
-2. no allowed feature starts with `label_`;
-3. identity/provenance/categorical/reason/action/required-threshold columns are absent;
-4. requested feature columns outside the allow-list fail;
-5. duplicate D6 identities fail;
-6. pending selected target rows are excluded, not negative;
-7. completed selected return labels derive `return_pct >= minimum_return_pct` exactly;
-8. feature `None` values use a training-only median;
-9. bool becomes `0.0/1.0`;
-10. non-finite/unsupported feature values fail;
-11. an all-missing selected feature fails;
-12. transforms and training fingerprint do not depend on input row order;
-13. future non-target labels cannot alter prepared features/target or fingerprint.
+The E3 suite proves:
 
-Use synthetic dicts with exactly `RESEARCH_FEATURE_COLUMNS + RESEARCH_LABEL_COLUMNS` so the test does not need provider/storage fixtures.
+- only sealed decision-time scalar evidence can be requested as model features;
+- future labels cannot enter the feature matrix;
+- non-target future-label changes cannot change prepared training data, fingerprints, trained artifacts, or predictions;
+- pending targets are excluded and counted;
+- target threshold equality is positive;
+- missing selected features use training medians;
+- booleans become numeric evidence;
+- unsupported/non-finite evidence fails closed;
+- an all-missing selected feature fails closed;
+- training population/order/transforms/fingerprint are input-order independent;
+- training requires at least two eligible rows and both target classes;
+- coefficients/intercept are finite and dimensionally reconciled;
+- the trained artifact carries no accuracy, AUC, expectancy, PnL, drawdown, win-rate, profit-factor, turnover, or promotion fields;
+- importing `shreks_brain.learning` does not import sklearn;
+- inference uses no sklearn or NumPy and remains stable for extreme logits;
+- inference uses only stored training transforms and decision-time row evidence.
 
-- [ ] **Step 2: Run RED**
+## Sealed-E2 -> E3 implementation diff audit
 
-Expected: missing `learning.features` or missing preparation behavior.
+Before documentation seal, the exact comparison from E2 `caeb7b127b39a9c7fd5cf40ca877fbe677ba703f` to production GREEN `d795a03913d995d6e737df3e8482d669f3d7de97` contained only:
 
-- [ ] **Step 3: Implement deterministic preparation**
+- the E3 design and implementation-plan documents;
+- `python/pyproject.toml` optional `learning` / `dev` dependency change;
+- `python/src/shreks_brain/learning/__init__.py`;
+- `python/src/shreks_brain/learning/models.py`;
+- `python/src/shreks_brain/learning/features.py`;
+- `python/src/shreks_brain/learning/trainer.py`;
+- `python/src/shreks_brain/learning/inference.py`;
+- E3 learning model, feature, training, inference, and public-API tests.
 
-Create the explicit scalar allow-list described by the spec. Validate every row has the exact sealed D6 column set and `dataset_schema_version == "d6-research-v1"`.
+No predecessor production file, Rust source file, migration, setup evaluator, score engine, decision engine, risk engine, or execution path changed.
 
-Sort rows by `(as_of_unix_ms, candidate_mint)`. Reject duplicate identities before target filtering.
+## Scope boundary
 
-For selected horizon `H`, use exactly:
+E3 does not choose a production feature set, target horizon, target return threshold, or training policy. It does not split data chronologically, perform walk-forward validation, compute trading/economic metrics, search hyperparameters, select a champion, persist a model registry, change B7/B8/B9 behavior, create a `TradeIntent`, execute a trade, sign a transaction, or enable live money.
 
-```python
-status_column = f"label_{H}s_status"
-return_column = f"label_{H}s_return_pct"
-```
+Profitability remains unproven. Phase E4 must validate models with chronological unseen data; Phase E5 must measure post-cost trading behavior before any challenger can be considered useful.
 
-Only `COMPLETED` with a finite numeric return is target-eligible.
+## Seal rule
 
-Per feature, compute observed-value median, impute, then mean/population standard deviation; use scale `1.0` for zero variance.
+The final documentation seal is permitted to change only:
 
-Canonicalize floats with `.hex()` while computing the SHA-256 training fingerprint.
+- `README.md`, additions only;
+- this verification-record file.
 
-- [ ] **Step 4: Run feature tests and the full existing Python suite**
-
-```bash
-python -m pytest python/tests/test_learning_features.py -q
-python -m pytest python/tests -q
-```
-
-Expected: all green.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add python/src/shreks_brain/learning/features.py python/tests/test_learning_features.py
-git commit -m "feat: prepare E3 training features"
-```
-
----
-
-### Task 3: Logistic training adapter and pure-Python inference
-
-**Files:**
-- Create: `python/src/shreks_brain/learning/trainer.py`
-- Create: `python/src/shreks_brain/learning/inference.py`
-- Modify: `python/src/shreks_brain/learning/__init__.py`
-- Modify: `python/pyproject.toml`
-- Create: `python/tests/test_learning_training.py`
-- Create: `python/tests/test_learning_inference.py`
-
-**Interfaces:**
-- Produces `train_logistic_regression(rows, request) -> TrainedLogisticRegressionModel`.
-- Produces `predict_positive_probability(model, row) -> ModelPrediction`.
-
-- [ ] **Step 1: Write training/inference RED tests**
-
-Training tests must prove:
-
-- two-class synthetic data trains successfully;
-- input row reordering yields identical artifact coefficients/intercept/transforms/fingerprint;
-- `target_unavailable_row_count` is retained;
-- one-class eligible data fails;
-- fewer than two eligible rows fail;
-- all-missing selected feature fails through the Task 2 boundary;
-- changing only future non-target label values does not change the trained artifact;
-- changing target return evidence can change the target/fingerprint;
-- no accuracy/AUC/PnL/evaluation fields exist in the artifact;
-- import of `shreks_brain.learning` does not import sklearn.
-
-Inference tests must prove:
-
-- probability is always in `[0, 1]`;
-- prediction identity/model version is preserved;
-- missing inference feature uses stored training median;
-- unsupported/non-finite inference evidence fails;
-- mutating any D6 future label leaves prediction unchanged;
-- inference source contains no sklearn/NumPy import.
-
-- [ ] **Step 2: Run RED**
-
-Expected: missing trainer/inference functions.
-
-- [ ] **Step 3: Add optional learning dependency**
-
-Update `python/pyproject.toml`:
-
-```toml
-[project.optional-dependencies]
-research = ["pyarrow==25.0.*"]
-learning = ["scikit-learn>=1.7,<2"]
-dev = ["pytest>=8,<9", "pyarrow==25.0.*", "scikit-learn>=1.7,<2"]
-```
-
-Do not add scikit-learn to base dependencies.
-
-- [ ] **Step 4: Implement lazy sklearn trainer**
-
-`trainer.py` imports no sklearn at module import time. Inside training, lazy-import:
-
-```python
-from sklearn.exceptions import ConvergenceWarning
-from sklearn.linear_model import LogisticRegression
-```
-
-Fit standardized features with:
-
-```python
-LogisticRegression(
-    solver="lbfgs",
-    C=policy.regularization_c,
-    max_iter=policy.max_iterations,
-    tol=policy.tolerance,
-    class_weight=("balanced" if policy.class_weight_mode is BALANCED else None),
-    fit_intercept=True,
-)
-```
-
-Treat `ConvergenceWarning` as an error. Export finite scalar coefficients/intercept into the immutable artifact; never return the estimator.
-
-- [ ] **Step 5: Implement pure inference**
-
-Use stored transforms and a numerically stable sigmoid:
-
-```python
-if z >= 0:
-    probability = 1.0 / (1.0 + math.exp(-z))
-else:
-    exp_z = math.exp(z)
-    probability = exp_z / (1.0 + exp_z)
-```
-
-No target/label column is read during prediction.
-
-- [ ] **Step 6: Run focused and full verification**
-
-```bash
-python -m pytest python/tests/test_learning_training.py python/tests/test_learning_inference.py -q
-python -m pytest python/tests -q
-cargo metadata --no-deps --format-version 1
-cargo test --workspace
-```
-
-Expected: all green.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add python/pyproject.toml python/src/shreks_brain/learning python/tests/test_learning_training.py python/tests/test_learning_inference.py
-git commit -m "feat: train E3 logistic challenger"
-```
-
----
-
-### Task 4: Audit, README, verification record, and immutable seal
-
-**Files:**
-- Modify additions-only: `README.md`
-- Replace with verification record: `docs/superpowers/plans/2026-08-24-phase-e3-model-training.md`
-
-- [ ] **Step 1: Verify fresh full CI on behavior GREEN**
-
-Require repository safety, Python, Rust tests, and workspace metadata green on the exact behavior head.
-
-- [ ] **Step 2: Audit sealed-E2 -> E3 implementation diff**
-
-Expected implementation scope only:
-
-- E3 design/plan docs;
-- `python/src/shreks_brain/learning/*`;
-- E3 learning tests;
-- `python/pyproject.toml` optional `learning`/dev dependency change.
-
-No E1/E2/B7/B8 production code, migration, or Rust source may change.
-
-- [ ] **Step 3: Build documentation seal detached**
-
-Append an E3 README section without deleting prior text. Replace this plan with the TDD/CI/diff verification record. Build the commit detached from the verified behavior GREEN tree.
-
-- [ ] **Step 4: Audit detached seal**
-
-Require exactly README plus this verification-record file. README deletions must equal zero.
-
-- [ ] **Step 5: Attach seal and run exact-head CI**
-
-After attaching the audited seal, run/observe full CI and require all jobs green. Record final immutable SHA and CI run only in PR metadata.
-
-- [ ] **Step 6: Freeze E3**
-
-No tracked-file changes after final seal. E4 Time-Aware Validation begins from this exact SHA.
+After the seal is attached and exact-head CI is green, E3 is immutable and Phase E4 Time-Aware Validation must start from that exact SHA.

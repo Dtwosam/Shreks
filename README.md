@@ -477,3 +477,13 @@ The zero-score-threshold baseline changes only numeric B8 HOT/NORMAL/WEAK entry 
 Every baseline reuses E1's point-in-time replay and D6-compatible snapshots. Future outcome values remain isolated from policy derivation and decisions, so changing a later return label cannot change a replayed setup, score, or action. E2-v1 intentionally adds no pseudo-random baseline; random comparison is deferred until the later chronological evaluation/metrics layer can define a meaningful seeded experiment.
 
 E2 computes no return, PnL, expectancy, drawdown, win-rate, cost, or promotion metric and adds no model training, risk sizing, `TradeIntent`, paper/live execution, signer, transaction submission, or live-money authority. Its output exists only so later Phase E evaluation can test whether more complex policy choices actually beat transparent simple baselines.
+
+## Deterministic model training pipeline
+
+Phase E3 adds a pure, point-in-time model-training boundary under `shreks_brain.learning` with schema `e3-training-v1`. E3-v1 trains one deliberately simple challenger family—binary logistic regression—from caller-supplied logical D6 rows. The feature tuple, future-return horizon/threshold, model version, and hyperparameters are all explicit caller inputs; E3 ships no production model defaults.
+
+Only allow-listed numeric/boolean decision-time evidence can enter the training matrix. Future-label columns, B8 action/threshold outputs, identity/time fields, categorical policy/state strings, and audit collections are excluded. Eligible rows are deterministically ordered, missing selected features are imputed from training medians, and standardization parameters plus a logical training fingerprint are preserved in the immutable artifact.
+
+Scikit-learn is optional training infrastructure and is lazy-loaded only when fitting. The base Python package remains dependency-free, and the trained model contains only standard-library values rather than a sklearn estimator, NumPy array, pickle, or joblib payload. Prediction is pure Python, applies only the artifact's stored transforms, uses a stable logistic sigmoid, and never reads future-label values.
+
+E3 does not split data chronologically, calculate trading/economic metrics, search hyperparameters, select or promote a champion, alter B7/B8/B9 behavior, size risk, create a `TradeIntent`, execute trades, or enable live money. Profitability remains unproven: Phase E4 must validate challengers on chronological unseen data and Phase E5 must measure realistic post-cost trading results before any model can be considered useful.
