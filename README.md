@@ -431,3 +431,17 @@ Every possible wallet pair remains explicitly `LINKED`, `INDEPENDENT`, `CONFLICT
 Strong `LINKED` and `CONFLICTING` pairs form conservative connected components so coordinated wallets cannot be counted as multiple confirmations. `maximum_independent_group_count` is only the number of components after those strong edges are collapsed; it is an upper bound, not proof that the remaining groups are independent. `all_pairs_independent_under_evidence` is true only when every possible pair is explicitly independent under the active policy, or fewer than two wallets exist.
 
 D4 preserves uncertainty and does not claim common ownership, control, identity, or profitability. It adds **no wallet ranking, smart-wallet label, D5 wallet feature, setup/score/decision/risk change, signer, transaction submission, or live-money authority**. D5 must decide whether wallet quality plus D4 independence evidence can become a useful research feature, and unseen post-cost evaluation must prove any value.
+
+## Smart-wallet research features
+
+Phase D5 adds a parallel pure Python wallet-feature contract under `shreks_brain.features` with schema `d5-wallet-v1`. The sealed market feature schema remains exactly `b2-v1`; D5 does not silently widen `FeatureVector` or change existing setup, score, decision, risk, paper, or exit behavior.
+
+The D5 reducer consumes only caller-supplied D2 candidate trade chronology, D3 confidence-weighted wallet profiles, the exact-time D4 relationship assessment, and optional D1 creator/deployer observations. All D2/D3/D4 evidence must align to the same `as_of_unix_ms` and wallet set, future local observations fail closed, and the reducer performs no provider, RPC, SQLite, wall-clock, price, FX, or token-decimal reads.
+
+Wallet history strength is explicit `STRONG`, `NOT_STRONG`, or `UNKNOWN` under a caller-supplied versioned `WalletFeaturePolicy`. Positive effective history and evidence confidence are required; configured missing rug/drawdown evidence remains `UNKNOWN` unless another known threshold failure already proves `NOT_STRONG`. D5 creates no global smart-wallet label or composite wallet score.
+
+D5 exposes inclusive recent entry/exit wallet counts, confidence-weighted strong-entry/exit support, and deterministic entrant historical return/win-rate aggregates. An exact independently-strong entrant count exists only when every strong-entrant pair is explicitly `INDEPENDENT` under D4; `LINKED`/`CONFLICTING` evidence blocks the claim and `UNKNOWN` stays unknown. D4 components connected through non-entrant bridge wallets remain visible through coordination-cluster and maximum-independent-group upper-bound features.
+
+Creator/deployer activity is the count of supplied D1 `CREATOR_ACTION` observations inside the configured local observation window. Zero means zero qualifying supplied observations, not proof that no such activity happened elsewhere.
+
+D5 is research evidence only. It adds **no Smart Wallet Cluster entry eligibility, production wallet-strength thresholds, B7/B8/B9 policy change, `TradeIntent`, position size, signer, transaction submission, or live-money authority**. D6 must export point-in-time-safe research datasets, and later unseen post-cost evaluation must prove whether the D5 wallet features improve trading results.
