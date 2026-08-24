@@ -4,8 +4,13 @@ from dataclasses import dataclass
 from enum import StrEnum
 import math
 
-from shreks_brain.decision import TradeDecision
-from shreks_brain.features import FeatureVector, WalletFeatureVector
+from shreks_brain.decision import DecisionAction, TradeDecision
+from shreks_brain.features import (
+    FEATURE_SCHEMA_VERSION,
+    WALLET_FEATURE_SCHEMA_VERSION,
+    FeatureVector,
+    WalletFeatureVector,
+)
 from shreks_brain.regime import RegimeAssessment
 from shreks_brain.scoring import ScoreAssessment
 
@@ -141,6 +146,93 @@ class ResearchSnapshotInputs:
     score: ScoreAssessment
     decision: TradeDecision
     outcomes: tuple[ResearchOutcomeLabel, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.candidate_mint, str) or not self.candidate_mint.strip():
+            raise ValueError("candidate_mint must be a non-empty string")
+        for name, value, expected in (
+            ("market_features", self.market_features, FeatureVector),
+            ("wallet_features", self.wallet_features, WalletFeatureVector),
+            ("regime", self.regime, RegimeAssessment),
+            ("score", self.score, ScoreAssessment),
+            ("decision", self.decision, TradeDecision),
+        ):
+            if type(value) is not expected:
+                raise ValueError(f"{name} must be an exact {expected.__name__}")
+
+        if self.market_features.schema_version != FEATURE_SCHEMA_VERSION:
+            raise ValueError("market feature schema must equal sealed b2-v1")
+        if self.wallet_features.schema_version != WALLET_FEATURE_SCHEMA_VERSION:
+            raise ValueError("wallet feature schema must equal sealed d5-wallet-v1")
+        if (
+            self.wallet_features.candidate_mint != self.candidate_mint
+            or self.decision.mint != self.candidate_mint
+        ):
+            raise ValueError("candidate mint must agree across D6 snapshot evidence")
+
+        as_of = self.market_features.as_of_unix_ms
+        if any(
+            value != as_of
+            for value in (
+                self.wallet_features.as_of_unix_ms,
+                self.regime.as_of_unix_ms,
+                self.score.as_of_unix_ms,
+                self.decision.as_of_unix_ms,
+            )
+        ):
+            raise ValueError("all D6 evidence must share the exact as_of_unix_ms")
+        if self.score.source_observed_at_unix_ms != self.market_features.source_observed_at_unix_ms:
+            raise ValueError("score source timestamp must match market feature source")
+        if (
+            self.score.feature_schema_version != self.market_features.schema_version
+            or self.decision.feature_schema_version != self.market_features.schema_version
+        ):
+            raise ValueError("score and decision feature schema must match market feature schema")
+        if not (
+            self.market_features.safety_decision
+            == self.score.safety_decision
+            == self.decision.safety_decision
+        ):
+            raise ValueError("safety decision must agree across market, score, and decision")
+        if self.decision.score_policy_version != self.score.policy_version:
+            raise ValueError("score policy version must agree between score and decision")
+        if self.decision.setup_name != self.score.setup_name:
+            raise ValueError("setup name must agree between score and decision")
+        if self.decision.setup_policy_version != self.score.setup_policy_version:
+            raise ValueError("setup policy version must agree between score and decision")
+        if self.decision.setup_state != self.score.setup_state:
+            raise ValueError("setup state must agree between score and decision")
+        if self.score.regime_policy_version != self.regime.policy_version:
+            raise ValueError("regime policy version must agree between score and regime")
+        if not (
+            self.score.market_regime == self.regime.regime == self.decision.market_regime
+        ):
+            raise ValueError("market regime must agree across regime, score, and decision")
+        if self.score.total_score != self.decision.total_score:
+            raise ValueError("total score must agree between score and decision")
+        if self.decision.action not in (
+            DecisionAction.REJECT,
+            DecisionAction.WATCH,
+            DecisionAction.ENTER,
+        ):
+            raise ValueError("decision action must be REJECT, WATCH, or ENTER")
+
+        if not isinstance(self.outcomes, tuple) or not all(
+            type(value) is ResearchOutcomeLabel for value in self.outcomes
+        ):
+            raise ValueError("outcomes must be a tuple of ResearchOutcomeLabel values")
+        if len(self.outcomes) != len(RESEARCH_OUTCOME_HORIZONS_SECONDS):
+            raise ValueError("outcomes must contain exactly seven research horizons")
+        horizons = tuple(value.horizon_seconds for value in self.outcomes)
+        if (
+            len(set(horizons)) != len(horizons)
+            or set(horizons) != set(RESEARCH_OUTCOME_HORIZONS_SECONDS)
+        ):
+            raise ValueError("outcome horizon set must contain each approved horizon once")
+        if horizons != RESEARCH_OUTCOME_HORIZONS_SECONDS:
+            raise ValueError("outcome order must follow canonical ascending horizon order")
+        if any(value.baseline_observed_at_unix_ms != as_of for value in self.outcomes):
+            raise ValueError("every outcome baseline must equal the decision as_of_unix_ms")
 
 
 @dataclass(frozen=True, slots=True)
