@@ -487,7 +487,7 @@ def test_zero_threshold_preserves_disabled_and_none_semantics_without_mutating_b
     assert zero.replay_policy_set_version == "e2-suite-policy-v1:zero_score_threshold"
     assert decisions["mint-fresh-normal"].required_score_threshold == 0.0
     assert decisions["mint-fresh-hot"].required_score_threshold == 0.0
-    assert decisions["mint-graduation-disabled"].action is DecisionAction.WATCH
+    assert decisions["mint-graduation-disabled"].action is DecisionAction.REJECT
     assert decisions["mint-graduation-disabled"].required_score_threshold is None
     assert decisions["mint-pullback-weak-none"].action is DecisionAction.WATCH
     assert decisions["mint-pullback-weak-none"].required_score_threshold is None
