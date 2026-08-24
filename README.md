@@ -467,3 +467,13 @@ Phase E1 adds a pure Python historical replay boundary under `shreks_brain.backt
 Future D6 outcome labels are not part of replay decision inputs. They enter through a separate identity-matched bundle and are attached only after setup, score, and decision have been recomputed for the exact `(candidate_mint, as_of_unix_ms)`. Rejected and watched candidates remain in the replay output alongside entries, and D5 wallet features are preserved for research segmentation without being injected into the current B7/B8 decision path.
 
 E1 performs no SQLite, provider, filesystem, network, PyArrow, or wall-clock reads and computes no profitability metric. It adds no risk sizing, paper/live execution, model training or promotion, signer, transaction submission, or live-money authority. Later chronological splitting, baselines, model training, and post-cost evaluation remain separate Phase E work.
+
+## Deterministic evaluation baselines
+
+Phase E2 adds a pure Python comparison layer under `shreks_brain.baselines` with schema `e2-baselines-v1`. V0 is exactly the sealed E1 replay under the caller-supplied base `ReplayPolicySet`; E2 does not create a second setup, score, or decision engine.
+
+The zero-score-threshold baseline changes only numeric B8 HOT/NORMAL/WEAK entry thresholds to `0.0`; explicit `None` thresholds and disabled setup rules keep their original meaning. Caller-specified threshold-delta variants apply one finite signed score-point delta to those same numeric thresholds, clamp them to `[0, 100]`, and are emitted in deterministic lexical name order. Setup policies, B7 `ScorePolicy`, decision-time evidence, candidate populations, and future-outcome attachment remain otherwise unchanged.
+
+Every baseline reuses E1's point-in-time replay and D6-compatible snapshots. Future outcome values remain isolated from policy derivation and decisions, so changing a later return label cannot change a replayed setup, score, or action. E2-v1 intentionally adds no pseudo-random baseline; random comparison is deferred until the later chronological evaluation/metrics layer can define a meaningful seeded experiment.
+
+E2 computes no return, PnL, expectancy, drawdown, win-rate, cost, or promotion metric and adds no model training, risk sizing, `TradeIntent`, paper/live execution, signer, transaction submission, or live-money authority. Its output exists only so later Phase E evaluation can test whether more complex policy choices actually beat transparent simple baselines.
