@@ -5,6 +5,7 @@ from shreks_brain.exits import create_exit_state
 from shreks_brain.paper import (
     PaperExecutionContext,
     PaperExecutionState,
+    PaperFillPolicy,
     PaperLedger,
     PaperLedgerUpdateState,
     PaperPosition,
@@ -12,8 +13,8 @@ from shreks_brain.paper import (
     apply_paper_execution,
     execute_paper_intent,
 )
-from shreks_brain.regime import RegimeAssessment
-from shreks_brain.risk import RiskState, RuntimeMode, assess_entry_risk
+from shreks_brain.risk import RiskState, assess_entry_risk
+from shreks_brain.runtime import RuntimeMode
 from shreks_brain.scoring import score_candidate
 from shreks_brain.setups import (
     assess_first_pullback,
@@ -42,7 +43,7 @@ from .models import (
 def create_paper_loop_state(
     ledger: PaperLedger,
     loop_policy: PaperLoopPolicy,
-    paper_fill_policy,
+    paper_fill_policy: PaperFillPolicy,
     managed_positions: tuple[ManagedPaperPosition, ...] = (),
     pending_entry: PendingPaperEntry | None = None,
 ) -> PaperLoopState:
@@ -52,6 +53,8 @@ def create_paper_loop_state(
         raise ValueError("ledger must be a PaperLedger")
     if not isinstance(loop_policy, PaperLoopPolicy):
         raise ValueError("loop_policy must be a PaperLoopPolicy")
+    if not isinstance(paper_fill_policy, PaperFillPolicy):
+        raise ValueError("paper_fill_policy must be a PaperFillPolicy")
 
     last_cycle_at = ledger.as_of_unix_ms
     if managed_positions:
