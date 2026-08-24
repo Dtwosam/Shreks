@@ -421,3 +421,13 @@ Only D2 `CLOSED` episodes contribute to return, win-rate, hold-time, raw-PnL, an
 Raw realized PnL is aggregated only when every closed episode uses the same counter-asset mint. D3 performs no cross-asset conversion. Optional entry quality, candidate-discovery-to-entry delay, drawdown, rug exposure, and regime history require explicit context observed no earlier than the target episode close and no later than the profile as-of time. Context semantic versions cannot be mixed, and unknown optional values remain unknown rather than becoming zero or false.
 
 D3 produces descriptive wallet-history evidence only. It adds **no wallet ranking, smart-wallet label, clustering/independence claim, D5 smart-wallet feature, setup/score/decision/risk change, signer, transaction submission, or live-money authority**. D4 must establish independence/clustering evidence before wallet-derived signals can be treated as multiple independent confirmations.
+
+## Wallet independence and coordination evidence
+
+Phase D4 adds a pure Python point-in-time relationship layer under `shreks_brain.wallets`. It consumes only caller-supplied relationship evidence and an explicit versioned `WalletRelationshipPolicy`; it performs no provider, RPC, SQLite, wall-clock, balance, transaction-history, graph-service, or external-attribution reads.
+
+Every possible wallet pair remains explicitly `LINKED`, `INDEPENDENT`, `CONFLICTING`, or `UNKNOWN`. Missing linkage evidence is never converted into independence. Direct and inferred evidence are provenance-weighted, but potentially correlated clues are never summed: each direction uses only its strongest weighted evidence, with deterministic provenance and lexical tie-breaking.
+
+Strong `LINKED` and `CONFLICTING` pairs form conservative connected components so coordinated wallets cannot be counted as multiple confirmations. `maximum_independent_group_count` is only the number of components after those strong edges are collapsed; it is an upper bound, not proof that the remaining groups are independent. `all_pairs_independent_under_evidence` is true only when every possible pair is explicitly independent under the active policy, or fewer than two wallets exist.
+
+D4 preserves uncertainty and does not claim common ownership, control, identity, or profitability. It adds **no wallet ranking, smart-wallet label, D5 wallet feature, setup/score/decision/risk change, signer, transaction submission, or live-money authority**. D5 must decide whether wallet quality plus D4 independence evidence can become a useful research feature, and unseen post-cost evaluation must prove any value.

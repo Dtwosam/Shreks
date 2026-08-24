@@ -17,6 +17,17 @@ from .profile_models import (
     WalletRegimeProfile,
 )
 from .profiles import build_wallet_profile
+from .relationship_models import (
+    WalletIndependenceAssessment,
+    WalletPairRelationship,
+    WalletRelationshipCluster,
+    WalletRelationshipDirection,
+    WalletRelationshipEvidence,
+    WalletRelationshipEvidenceQuality,
+    WalletRelationshipPolicy,
+    WalletRelationshipState,
+)
+from .independence import assess_wallet_independence
 
 __all__ = (
     "WalletActionKind",
@@ -34,4 +45,13 @@ __all__ = (
     "WalletProfilePolicy",
     "WalletRegimeProfile",
     "build_wallet_profile",
+    "WalletRelationshipDirection",
+    "WalletRelationshipEvidenceQuality",
+    "WalletRelationshipState",
+    "WalletRelationshipEvidence",
+    "WalletRelationshipPolicy",
+    "WalletPairRelationship",
+    "WalletRelationshipCluster",
+    "WalletIndependenceAssessment",
+    "assess_wallet_independence",
 )
