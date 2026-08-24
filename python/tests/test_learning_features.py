@@ -264,7 +264,7 @@ def test_target_change_changes_targets_and_training_fingerprint() -> None:
     rows = list(_rows()[:3])
     first = _prepare_training_data(tuple(rows), _request())
     changed = [dict(value) for value in rows]
-    changed[0][f"label_{TARGET_HORIZON}s_return_pct"] = 50.0
+    changed[0][f"label_{TARGET_HORIZON}s_return_pct"] = -50.0
     second = _prepare_training_data(tuple(changed), _request())
     assert first.targets != second.targets
     assert first.training_fingerprint_sha256 != second.training_fingerprint_sha256
