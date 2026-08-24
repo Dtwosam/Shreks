@@ -267,7 +267,7 @@ class ExitAssessment:
     primary_reason: ExitReasonCode
     target_reduction_fraction: float
     target_quantity: float
-    position_age_seconds: float
+    position_age_seconds: float | None
     current_price_usd: float | None
     current_market_value_usd: float | None
     price_return_pct: float | None
@@ -295,7 +295,9 @@ class ExitAssessment:
             "target_reduction_fraction", self.target_reduction_fraction
         )
         _require_non_negative_finite("target_quantity", self.target_quantity)
-        _require_non_negative_finite("position_age_seconds", self.position_age_seconds)
+        _require_optional_non_negative_finite(
+            "position_age_seconds", self.position_age_seconds
+        )
         _require_optional_positive_finite("current_price_usd", self.current_price_usd)
         _require_optional_non_negative_finite(
             "current_market_value_usd", self.current_market_value_usd
@@ -435,7 +437,12 @@ def _require_optional_fraction_closed(name: str, value: object | None) -> None:
         _require_fraction_closed(name, value)
 
 
-def _require_pair(name_a: str, value_a: object | None, name_b: str, value_b: object | None) -> None:
+def _require_pair(
+    name_a: str,
+    value_a: object | None,
+    name_b: str,
+    value_b: object | None,
+) -> None:
     if (value_a is None) != (value_b is None):
         raise ValueError(f"{name_a} and {name_b} must be both set or both None")
 
