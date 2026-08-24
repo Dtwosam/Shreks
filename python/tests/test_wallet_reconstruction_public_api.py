@@ -4,7 +4,7 @@ import inspect
 
 import shreks_brain.wallets as wallets
 
-EXPECTED = (
+EXPECTED_D2_PREFIX = (
     "WalletActionKind",
     "WalletObservation",
     "WalletObservationEvidence",
@@ -18,9 +18,9 @@ EXPECTED = (
 )
 
 
-def test_public_api_is_exact_and_research_only() -> None:
-    assert wallets.__all__ == EXPECTED
-    public_text = " ".join(EXPECTED).lower()
+def test_public_api_preserves_d2_prefix_and_research_only() -> None:
+    assert wallets.__all__[: len(EXPECTED_D2_PREFIX)] == EXPECTED_D2_PREFIX
+    public_text = " ".join(wallets.__all__).lower()
     for forbidden in (
         "sqlite", "providerclient", "signer", "transaction", "tradeintent",
         "paperfill", "decision", "execution", "live",
