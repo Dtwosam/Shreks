@@ -58,7 +58,7 @@ fn migration_five_adds_inbox_and_normalized_lifecycle_tables() {
     let root = unique_test_dir("schema");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 6);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 7);
     drop(db);
 
     let connection = Connection::open(&db_path).unwrap();
