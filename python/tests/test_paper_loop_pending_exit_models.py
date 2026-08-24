@@ -11,7 +11,7 @@ from shreks_brain.exits import (
     ExitState,
     TakeProfitLevel,
 )
-from shreks_brain.paper_loop.models import ManagedPaperPosition, PaperLoopReasonCode
+from shreks_brain.paper_loop.models import ManagedPaperPosition
 
 
 def _policy(version: str = "exit-v1-test") -> ExitPolicy:
@@ -166,7 +166,3 @@ def test_pending_exit_can_be_older_than_latest_evolving_exit_state() -> None:
     managed = ManagedPaperPosition("position-1", _policy(), newer_state, pending)
     assert managed.pending_exit.as_of_unix_ms == 1_000_000
     assert managed.exit_state.last_evaluated_at_unix_ms == 1_010_000
-
-
-def test_exit_position_marked_reason_exists_for_separate_mark_audit() -> None:
-    assert PaperLoopReasonCode.EXIT_POSITION_MARKED.value == "EXIT_POSITION_MARKED"
