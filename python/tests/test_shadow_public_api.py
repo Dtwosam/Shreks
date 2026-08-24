@@ -3,13 +3,14 @@ import inspect
 import shreks_brain.shadow as shadow
 
 
-def test_shadow_task1_public_api_is_deliberately_small() -> None:
+def test_shadow_task2_public_api_is_deliberately_small() -> None:
     assert set(shadow.__all__) == {
         "SHADOW_CHALLENGER_SCHEMA_VERSION",
         "ShadowDecisionPolicy",
         "ShadowReasonCode",
         "ShadowDecisionRecord",
         "ShadowEvidenceLedger",
+        "evaluate_shadow_challenger",
     }
 
 
@@ -22,7 +23,7 @@ def test_shadow_policy_has_no_default_probability_threshold() -> None:
     )
 
 
-def test_shadow_task1_api_has_no_execution_or_promotion_authority() -> None:
+def test_shadow_task2_api_has_no_execution_or_promotion_authority() -> None:
     forbidden = {
         "RegistryStore",
         "record_status",
