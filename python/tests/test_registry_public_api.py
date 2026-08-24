@@ -9,6 +9,7 @@ def test_registry_public_api_is_deliberately_small() -> None:
         "RegistryEvaluationEvidence",
         "RegistryStatus",
         "RegistryStatusEvent",
+        "RegistryStore",
         "build_registry_candidate",
     }
 
