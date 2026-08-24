@@ -29,8 +29,8 @@ from shreks_brain.setups import (
     PullbackContext,
 )
 
-AS_OF = 2_000_000
-SOURCE = 1_999_000
+AS_OF = 5_000_000
+SOURCE = 4_999_000
 MINT = "mint-a"
 
 
