@@ -6,6 +6,7 @@ import shreks_brain.learning as learning
 def test_learning_public_api_is_explicit() -> None:
     assert learning.__all__ == (
         "MODEL_TRAINING_SCHEMA_VERSION",
+        "MODEL_ARTIFACT_STORE_SCHEMA_VERSION",
         "TRAINABLE_RESEARCH_FEATURE_COLUMNS",
         "ModelFamily",
         "ClassWeightMode",
@@ -15,6 +16,7 @@ def test_learning_public_api_is_explicit() -> None:
         "FeatureTransform",
         "TrainedLogisticRegressionModel",
         "ModelPrediction",
+        "ModelArtifactStore",
         "train_logistic_regression",
         "predict_positive_probability",
     )
