@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+from shreks_brain.evaluation import EvaluatedTrade
 from shreks_brain.paper import (
     PaperExecutionResult,
     PaperExecutionState,
@@ -12,7 +13,7 @@ from shreks_brain.paper import (
 )
 from shreks_brain.paper_loop import PaperCycleResult
 from shreks_brain.registry import RegistryCandidate
-from shreks_brain.risk import TradeIntent
+from shreks_brain.risk import TradeIntent, TradeSide
 
 from .models import (
     PaperClosedPositionEvidence,
@@ -156,6 +157,167 @@ def extract_paper_evaluation_evidence(
         closures=tuple(closures),
         orphan_costs=tuple(orphan_costs),
     )
+
+
+def build_evaluated_trades(
+    paper_run_id: str,
+    candidate_version: str,
+    entry_provenance: tuple[PaperEntryProvenance, ...],
+    executions: tuple[PaperPositionExecutionEvidence, ...],
+    closures: tuple[PaperClosedPositionEvidence, ...],
+    orphan_costs: tuple[PaperOrphanCostEvidence, ...],
+) -> tuple[EvaluatedTrade, ...]:
+    """Normalize one paper run/candidate into reconciled closed E5 trades."""
+
+    _require_non_empty_string("paper_run_id", paper_run_id)
+    _require_non_empty_string("candidate_version", candidate_version)
+    _require_exact_tuple("entry_provenance", entry_provenance, PaperEntryProvenance)
+    _require_exact_tuple("executions", executions, PaperPositionExecutionEvidence)
+    _require_exact_tuple("closures", closures, PaperClosedPositionEvidence)
+    _require_exact_tuple("orphan_costs", orphan_costs, PaperOrphanCostEvidence)
+
+    target_entries = tuple(
+        value
+        for value in entry_provenance
+        if value.paper_run_id == paper_run_id
+        and value.candidate_version == candidate_version
+    )
+    target_executions = tuple(
+        value
+        for value in executions
+        if value.paper_run_id == paper_run_id
+        and value.candidate_version == candidate_version
+    )
+    target_closures = tuple(
+        value
+        for value in closures
+        if value.paper_run_id == paper_run_id
+        and value.candidate_version == candidate_version
+    )
+    target_orphans = tuple(
+        value
+        for value in orphan_costs
+        if value.paper_run_id == paper_run_id
+        and value.candidate_version == candidate_version
+    )
+
+    _require_target_not_silently_misattributed(
+        paper_run_id,
+        candidate_version,
+        entry_provenance,
+        executions,
+        closures,
+        orphan_costs,
+    )
+    _require_canonical_normalization_inputs(
+        target_entries,
+        target_executions,
+        target_closures,
+        target_orphans,
+    )
+    _require_coherent_attribution(
+        target_entries,
+        target_executions,
+        target_closures,
+        target_orphans,
+    )
+
+    if target_orphans:
+        raise ValueError(
+            "positive orphan paper execution cost blocks candidate/run normalization"
+        )
+    if not target_closures:
+        return ()
+
+    trades: list[EvaluatedTrade] = []
+    for closure in target_closures:
+        linked = tuple(
+            value
+            for value in target_executions
+            if value.position_id == closure.position_id
+        )
+        if not linked:
+            raise ValueError("closure requires linked execution evidence")
+        if any(value.mint != closure.mint for value in linked):
+            raise ValueError("closure mint does not match linked execution evidence")
+        if linked[-1].ledger_sequence != closure.closing_ledger_sequence:
+            raise ValueError("closing ledger sequence must be the final linked execution")
+
+        closing = linked[-1]
+        if (
+            closing.side is not TradeSide.SELL
+            or closing.execution_state
+            not in (PaperExecutionState.PARTIAL, PaperExecutionState.FILLED)
+            or closing.ledger_reason_code is not PaperLedgerReasonCode.POSITION_CLOSED
+        ):
+            raise ValueError("closing execution evidence must be a successful POSITION_CLOSED sell")
+
+        successful = tuple(
+            value
+            for value in linked
+            if value.execution_state
+            in (PaperExecutionState.PARTIAL, PaperExecutionState.FILLED)
+        )
+        buys = tuple(value for value in successful if value.side is TradeSide.BUY)
+        sells = tuple(value for value in successful if value.side is TradeSide.SELL)
+        if len(buys) != closure.buy_fill_count:
+            raise ValueError("BUY fill count does not match closure evidence")
+        if len(sells) != closure.sell_fill_count:
+            raise ValueError("SELL fill count does not match closure evidence")
+        if not buys or not sells:
+            raise ValueError("closed trade requires BUY and SELL fill evidence")
+
+        opener = buys[0]
+        if opener.ledger_reason_code is not PaperLedgerReasonCode.POSITION_OPENED:
+            raise ValueError("first BUY fill must be the position-opening execution")
+        matching_provenance = tuple(
+            value
+            for value in target_entries
+            if value.intent_idempotency_key == opener.intent_idempotency_key
+        )
+        if len(matching_provenance) != 1:
+            raise ValueError("missing or duplicate entry provenance for opening BUY intent")
+        provenance = matching_provenance[0]
+        if provenance.mint != closure.mint:
+            raise ValueError("entry provenance mint does not match closure")
+        if provenance.intent_idempotency_key != opener.intent_idempotency_key:
+            raise ValueError("entry provenance intent does not match opening BUY")
+
+        entry_notional = sum(_filled_notional(value) for value in buys)
+        turnover = sum(_filled_notional(value) for value in successful)
+        friction = sum(
+            max(0.0, _signed_slippage(value)) for value in successful
+        )
+        explicit_cost = sum(value.explicit_cost_usd for value in linked)
+        if not math.isclose(
+            closure.accumulated_costs_usd,
+            explicit_cost,
+            rel_tol=_REL_TOL,
+            abs_tol=_ABS_TOL,
+        ):
+            raise ValueError("closure accumulated cost does not match linked booked costs")
+
+        net_pnl = closure.realized_pnl_usd
+        gross_pnl = net_pnl + friction + explicit_cost
+        trades.append(
+            EvaluatedTrade(
+                candidate_version=candidate_version,
+                position_id=closure.position_id,
+                candidate_mint=closure.mint,
+                setup_name=provenance.setup_name,
+                market_regime=provenance.market_regime.value,
+                opened_at_unix_ms=closure.opened_at_unix_ms,
+                closed_at_unix_ms=closure.closed_at_unix_ms,
+                entry_notional_usd=entry_notional,
+                turnover_usd=turnover,
+                gross_pnl_usd=gross_pnl,
+                execution_friction_usd=friction,
+                explicit_cost_usd=explicit_cost,
+                net_pnl_usd=net_pnl,
+            )
+        )
+
+    return tuple(trades)
 
 
 def _capture_applied_execution(
@@ -314,6 +476,100 @@ def _capture_applied_execution(
         )
 
 
+def _require_target_not_silently_misattributed(
+    paper_run_id: str,
+    candidate_version: str,
+    entry_provenance: tuple[PaperEntryProvenance, ...],
+    executions: tuple[PaperPositionExecutionEvidence, ...],
+    closures: tuple[PaperClosedPositionEvidence, ...],
+    orphan_costs: tuple[PaperOrphanCostEvidence, ...],
+) -> None:
+    for collection in (entry_provenance, executions, closures, orphan_costs):
+        for value in collection:
+            if value.paper_run_id == paper_run_id and value.candidate_version != candidate_version:
+                raise ValueError("candidate attribution mismatch within requested paper run")
+            if value.candidate_version == candidate_version and value.paper_run_id != paper_run_id:
+                continue
+
+
+def _require_canonical_normalization_inputs(
+    entries: tuple[PaperEntryProvenance, ...],
+    executions: tuple[PaperPositionExecutionEvidence, ...],
+    closures: tuple[PaperClosedPositionEvidence, ...],
+    orphan_costs: tuple[PaperOrphanCostEvidence, ...],
+) -> None:
+    entry_order = tuple(
+        sorted(
+            entries,
+            key=lambda value: (
+                value.decision_as_of_unix_ms,
+                value.intent_idempotency_key,
+            ),
+        )
+    )
+    if entries != entry_order:
+        raise ValueError("entry provenance must be in canonical order")
+    entry_keys = tuple(value.intent_idempotency_key for value in entries)
+    if len(entry_keys) != len(set(entry_keys)):
+        raise ValueError("entry provenance intent identities must be unique")
+
+    sequences = tuple(value.ledger_sequence for value in executions)
+    if sequences != tuple(sorted(sequences)) or len(sequences) != len(set(sequences)):
+        raise ValueError("execution journal sequence must be strictly increasing")
+
+    closure_order = tuple(
+        sorted(closures, key=lambda value: (value.closed_at_unix_ms, value.position_id))
+    )
+    if closures != closure_order:
+        raise ValueError("closure evidence must be in canonical order")
+    closure_ids = tuple(value.position_id for value in closures)
+    if len(closure_ids) != len(set(closure_ids)):
+        raise ValueError("closure position identities must be unique")
+
+    orphan_order = tuple(
+        sorted(
+            orphan_costs,
+            key=lambda value: (
+                value.evaluated_at_unix_ms,
+                value.intent_idempotency_key,
+            ),
+        )
+    )
+    if orphan_costs != orphan_order:
+        raise ValueError("orphan cost evidence must be in canonical order")
+
+
+def _require_coherent_attribution(
+    entries: tuple[PaperEntryProvenance, ...],
+    executions: tuple[PaperPositionExecutionEvidence, ...],
+    closures: tuple[PaperClosedPositionEvidence, ...],
+    orphan_costs: tuple[PaperOrphanCostEvidence, ...],
+) -> None:
+    values = entries + executions + closures + orphan_costs
+    if not values:
+        return
+    expected = (
+        values[0].candidate_fingerprint_sha256,
+        values[0].strategy_version,
+    )
+    for value in values[1:]:
+        actual = (value.candidate_fingerprint_sha256, value.strategy_version)
+        if actual != expected:
+            raise ValueError("candidate fingerprint or strategy attribution mismatch")
+
+
+def _filled_notional(value: PaperPositionExecutionEvidence) -> float:
+    if value.filled_notional_usd is None:
+        raise ValueError("successful fill evidence is missing filled notional")
+    return value.filled_notional_usd
+
+
+def _signed_slippage(value: PaperPositionExecutionEvidence) -> float:
+    if value.signed_slippage_usd is None:
+        raise ValueError("successful fill evidence is missing signed slippage")
+    return value.signed_slippage_usd
+
+
 def _require_intent_matches_journal(intent, journal, execution: PaperExecutionResult) -> None:
     if intent.idempotency_key != journal.intent_idempotency_key:
         raise ValueError("intent key does not match journal")
@@ -336,6 +592,16 @@ def _require_intent_matches_journal(intent, journal, execution: PaperExecutionRe
         intent.requested_notional_usd,
         execution.requested_notional_usd,
     )
+
+
+def _require_exact_tuple(name: str, value: object, expected_type: type) -> None:
+    if not isinstance(value, tuple) or not all(type(item) is expected_type for item in value):
+        raise ValueError(f"{name} must be a tuple of exact {expected_type.__name__} values")
+
+
+def _require_non_empty_string(name: str, value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a non-empty string")
 
 
 def _require_close(name: str, actual: float, expected: float) -> None:
