@@ -110,11 +110,10 @@ def test_policy_rejects_invalid_or_ambiguous_configuration():
             _policy(**changes)
 
 
-def test_candidate_identity_rejects_invalid_values():
+def test_candidate_identity_rejects_invalid_values_but_allows_storage_empty_pair_sentinel():
     invalid = (
-        {"candidate_id": -1},
+        {"candidate_id": 0},
         {"mint": ""},
-        {"pair_address": ""},
         {"discovery_source": ""},
         {"discovered_at_unix_ms": -1},
         {"venue": ""},
@@ -123,15 +122,16 @@ def test_candidate_identity_rejects_invalid_values():
         with pytest.raises(ValueError):
             _candidate(**changes)
 
+    assert _candidate(pair_address="").pair_address == ""
 
-def test_snapshot_rejects_invalid_persisted_market_values():
+
+def test_snapshot_rejects_invalid_persisted_market_values_but_allows_empty_pair_sentinel():
     invalid = (
         {"row_id": 0},
-        {"candidate_id": -1},
+        {"candidate_id": 0},
         {"observed_at_unix_ms": -1},
         {"source": ""},
         {"source_observed_at_unix_ms": -1},
-        {"pair_address": ""},
         {"price_usd": -0.01},
         {"price_usd": math.nan},
         {"liquidity_usd": -1.0},
@@ -144,6 +144,8 @@ def test_snapshot_rejects_invalid_persisted_market_values():
         with pytest.raises(ValueError):
             _snapshot(**changes)
 
+    assert _snapshot(pair_address="").pair_address == ""
+
 
 def test_snapshot_rejects_source_time_after_observation_and_pair_creation_after_observation():
     with pytest.raises(ValueError, match="source_observed_at"):
@@ -153,7 +155,6 @@ def test_snapshot_rejects_source_time_after_observation_and_pair_creation_after_
 
 
 def test_window_rejects_wrong_schema_or_attribution():
-    current = _snapshot()
     invalid = (
         {"schema_version": "wrong"},
         {"policy_version": ""},
@@ -181,9 +182,10 @@ def test_window_rejects_anchor_from_different_candidate_source_pair_or_future():
             _window(one_minute_ago=anchor)
 
 
-def test_window_allows_nullable_market_fields_and_missing_anchors():
+def test_window_allows_nullable_market_fields_missing_anchors_and_empty_pair_path():
     current = _snapshot(
         source_observed_at_unix_ms=None,
+        pair_address="",
         price_usd=None,
         liquidity_usd=None,
         volume_m5_usd=None,
@@ -195,7 +197,9 @@ def test_window_allows_nullable_market_fields_and_missing_anchors():
         pair_created_at_unix_ms=None,
     )
     window = _window(
+        candidate=_candidate(pair_address=""),
         current=current,
+        selected_pair_address="",
         pair_created_at_unix_ms=None,
         local_high_price_usd=None,
         local_low_price_usd=None,
