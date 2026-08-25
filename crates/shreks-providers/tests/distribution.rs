@@ -235,7 +235,7 @@ fn page_provenance_must_be_coherent_and_duplicate_accounts_are_deduplicated() {
         "Mint111",
     )
     .unwrap();
-    assert!(aggregate_token_account_pages(&request, &[first], changed_total], 102).is_err());
+    assert!(aggregate_token_account_pages(&request, &[first, changed_total], 102).is_err());
 }
 
 #[test]
