@@ -2,6 +2,7 @@
 
 mod lifecycle;
 mod outcomes;
+mod safety_evidence;
 mod wallet;
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
