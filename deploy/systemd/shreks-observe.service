@@ -3,6 +3,9 @@ Description=Shreks Solana observer
 After=network-online.target
 Wants=network-online.target
 PartOf=shreks.target
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,6 +13,8 @@ User=shreks
 Group=shreks
 WorkingDirectory=/opt/shreks/current
 EnvironmentFile=/etc/shreks/shreks.env
+ExecStartPre=/usr/bin/test -d /var/lib/shreks
+ExecStartPre=/usr/bin/test -w /var/lib/shreks
 ExecStart=/opt/shreks/current/target/release/shreks-observe
 Restart=on-failure
 RestartSec=5s
