@@ -88,7 +88,7 @@ class StageRunner:
     def __call__(self, command: tuple[str, ...]) -> None:
         self.calls.append(command)
         if len(command) >= 4 and command[1:3] == ("-m", "venv"):
-            venv = Path(command[3])
+            venv = Path(command[-1])
             python = venv / "bin" / "python"
             python.parent.mkdir(parents=True, exist_ok=True)
             python.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -99,13 +99,20 @@ class SymlinkVenvRunner(StageRunner):
     def __call__(self, command: tuple[str, ...]) -> None:
         self.calls.append(command)
         if len(command) >= 4 and command[1:3] == ("-m", "venv"):
-            venv = Path(command[3])
+            venv = Path(command[-1])
             bin_dir = venv / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
             python3 = bin_dir / "python3"
             python3.write_text("#!/bin/sh\n", encoding="utf-8")
             python3.chmod(0o755)
             (bin_dir / "python").symlink_to("python3")
+
+
+class FailingPipRunner(StageRunner):
+    def __call__(self, command: tuple[str, ...]) -> None:
+        super().__call__(command)
+        if len(command) >= 4 and command[1:4] == ("-m", "pip", "install"):
+            raise RuntimeError("simulated pip failure")
 
 
 class SystemctlRunner:
@@ -153,7 +160,7 @@ def test_release_paths_expose_only_release_current_and_systemd_locations(tmp_pat
     assert "/var/lib/shreks" not in rendered
 
 
-def test_stage_release_verifies_bundle_builds_local_venv_and_preserves_payload(tmp_path: Path):
+def test_stage_release_verifies_bundle_builds_final_path_copied_venv_and_preserves_payload(tmp_path: Path):
     paths = _paths(tmp_path)
     runner = StageRunner()
     archive, checksum, manifest_path, manifest = _build_bundle(tmp_path, SHA_A, "a")
@@ -169,48 +176,62 @@ def test_stage_release_verifies_bundle_builds_local_venv_and_preserves_payload(t
 
     assert release_dir == paths.releases_dir / SHA_A
     assert release_dir.is_dir()
+    assert stat.S_IMODE(release_dir.stat().st_mode) == 0o755
     assert (release_dir / "RELEASE_MANIFEST.json").read_bytes() == manifest_path.read_bytes()
     for entry in manifest.files:
         assert (release_dir / entry.path).is_file()
     assert stat.S_IMODE((release_dir / "target/release/shreks-observe").stat().st_mode) & 0o111
     assert stat.S_IMODE((release_dir / "target/release/shreks-paper-evidence").stat().st_mode) & 0o111
 
-    assert len(runner.calls) == 2
-    venv_command, pip_command = runner.calls
-    assert venv_command[:3] == ("/usr/bin/python3", "-m", "venv")
-    staged_venv = Path(venv_command[3])
-    assert staged_venv.name == ".venv"
-    assert staged_venv.parent.parent == paths.releases_dir
-    assert staged_venv.parent.name.startswith(f".staging-{SHA_A}-")
-    assert pip_command[:6] == (
-        str(staged_venv / "bin" / "python"),
-        "-m",
-        "pip",
-        "install",
-        "--no-index",
-        "--no-deps",
-    )
-    staged_wheel = Path(pip_command[6])
-    assert staged_wheel.parent == staged_venv.parent / "wheelhouse"
-    assert staged_wheel.name.startswith("shreks_brain-")
+    venv = release_dir / ".venv"
+    wheel = next((release_dir / "wheelhouse").glob("shreks_brain-*.whl"))
+    assert runner.calls == [
+        ("/usr/bin/python3", "-m", "venv", "--copies", str(venv)),
+        (
+            str(venv / "bin" / "python"),
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            str(wheel),
+        ),
+    ]
     assert not paths.current_link.exists()
 
 
-def test_stage_release_accepts_normal_internal_virtualenv_symlinks(tmp_path: Path):
+def test_stage_release_rejects_symlinked_virtualenv_and_cleans_incomplete_release(tmp_path: Path):
     paths = _paths(tmp_path)
     archive, checksum, manifest_path, _ = _build_bundle(tmp_path, SHA_A, "a")
 
-    release_dir = release_manager.stage_release(
-        archive,
-        checksum,
-        manifest_path,
-        paths,
-        command_runner=SymlinkVenvRunner(),
-    )
+    with pytest.raises(release_manager.ReleaseManagerError):
+        release_manager.stage_release(
+            archive,
+            checksum,
+            manifest_path,
+            paths,
+            command_runner=SymlinkVenvRunner(),
+        )
 
-    python = release_dir / ".venv" / "bin" / "python"
-    assert python.is_symlink()
-    assert python.resolve() == release_dir / ".venv" / "bin" / "python3"
+    assert not (paths.releases_dir / SHA_A).exists()
+    assert not paths.current_link.exists()
+
+
+def test_venv_install_failure_cleans_release_without_touching_current(tmp_path: Path):
+    paths = _paths(tmp_path)
+    archive, checksum, manifest_path, _ = _build_bundle(tmp_path, SHA_A, "a")
+
+    with pytest.raises(release_manager.ReleaseManagerError):
+        release_manager.stage_release(
+            archive,
+            checksum,
+            manifest_path,
+            paths,
+            command_runner=FailingPipRunner(),
+        )
+
+    assert not (paths.releases_dir / SHA_A).exists()
+    assert not paths.current_link.exists()
 
 
 def test_stage_failure_never_changes_current_or_creates_release(tmp_path: Path):
