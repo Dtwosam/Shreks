@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, replace
+from dataclasses import replace
 
 import pytest
 
@@ -32,10 +32,7 @@ from shreks_brain.promotion.models import (
 )
 from shreks_brain.regime import MarketRegime
 from shreks_brain.registry import RegistryStatus, build_registry_candidate
-from shreks_brain.registry.codec import (
-    build_registry,
-    compute_event_fingerprint,
-)
+from shreks_brain.registry.codec import build_registry, compute_event_fingerprint
 from shreks_brain.registry.models import RegistryStatusEvent
 from shreks_brain.risk import TradeSide
 
@@ -106,7 +103,9 @@ def _execution(
         strategy_version=STRATEGY,
         position_id=position_id,
         ledger_sequence=sequence,
-        intent_idempotency_key=(f"buy-{index}" if side is TradeSide.BUY else f"sell-{index}"),
+        intent_idempotency_key=(
+            f"buy-{index}" if side is TradeSide.BUY else f"sell-{index}"
+        ),
         mint=mint,
         side=side,
         execution_state=PaperExecutionState.FILLED,
@@ -204,6 +203,27 @@ def _ledger(
     )
 
 
+def _with_candidate_fingerprint(ledger, fingerprint: str):
+    return build_paper_evaluation_ledger(
+        tuple(
+            replace(value, candidate_fingerprint_sha256=fingerprint)
+            for value in ledger.entry_provenance
+        ),
+        tuple(
+            replace(value, candidate_fingerprint_sha256=fingerprint)
+            for value in ledger.executions
+        ),
+        tuple(
+            replace(value, candidate_fingerprint_sha256=fingerprint)
+            for value in ledger.closures
+        ),
+        tuple(
+            replace(value, candidate_fingerprint_sha256=fingerprint)
+            for value in ledger.orphan_costs
+        ),
+    )
+
+
 def _paper_evaluation(ledger):
     trades = build_evaluated_trades(
         RUN,
@@ -268,7 +288,7 @@ def _e8_assessment(
             if registry_fingerprint is None
             else registry_fingerprint
         ),
-        evaluation_fingerprint_sha256=paper_evaluation_placeholder(candidate),
+        evaluation_fingerprint_sha256=candidate.evaluation.evaluation_fingerprint_sha256,
         trade_evidence_fingerprint_sha256=SHA_B,
         shadow_ledger_fingerprint_sha256=SHA_C,
         baseline_evaluation_identities=(),
@@ -279,18 +299,19 @@ def _e8_assessment(
     )
 
 
-def paper_evaluation_placeholder(candidate) -> str:
-    return candidate.evaluation.evaluation_fingerprint_sha256
-
-
 def _fixture(
     nets: tuple[float, ...] = (10.0, 5.0, -4.0),
     *,
     same_mint: bool = False,
 ):
-    ledger = _ledger(nets, same_mint=same_mint)
+    raw_ledger = _ledger(nets, same_mint=same_mint)
+    raw_evaluation = _paper_evaluation(raw_ledger)
+    candidate, registry = _registry(raw_evaluation)
+    ledger = _with_candidate_fingerprint(
+        raw_ledger, candidate.candidate_fingerprint_sha256
+    )
     paper_evaluation = _paper_evaluation(ledger)
-    candidate, registry = _registry(paper_evaluation)
+    assert paper_evaluation == raw_evaluation
     e8 = _e8_assessment(candidate, registry)
     return ledger, paper_evaluation, candidate, registry, e8
 
@@ -354,7 +375,10 @@ def test_e8_decision_maps_to_proof_gate(
     ledger, evidence, candidate, registry, _e8 = _fixture()
     e8 = _e8_assessment(candidate, registry, decision=e8_decision)
     result = _evaluate(ledger, evidence, registry, e8)
-    assert _gate(result, PaperProofGateCode.E8_ASSESSMENT_ELIGIBLE).status is expected_status
+    assert (
+        _gate(result, PaperProofGateCode.E8_ASSESSMENT_ELIGIBLE).status
+        is expected_status
+    )
     assert result.decision is expected_decision
 
 
@@ -373,15 +397,17 @@ def test_missing_candidate_raises() -> None:
 )
 def test_e8_registry_provenance_mismatch_is_failed(field: str, value: str) -> None:
     ledger, evidence, candidate, registry, _e8 = _fixture()
-    kwargs = {field: value}
-    e8 = _e8_assessment(candidate, registry, **kwargs)
+    e8 = _e8_assessment(candidate, registry, **{field: value})
     result = _evaluate(ledger, evidence, registry, e8)
-    assert _gate(result, PaperProofGateCode.E8_REGISTRY_PROVENANCE).status is PaperProofGateStatus.FAIL
+    assert (
+        _gate(result, PaperProofGateCode.E8_REGISTRY_PROVENANCE).status
+        is PaperProofGateStatus.FAIL
+    )
     assert result.decision is PaperProofDecision.FAILED
 
 
 def test_candidate_must_still_be_current_challenger() -> None:
-    ledger, evidence, candidate, registry, _e8 = _fixture()
+    ledger, evidence, candidate, _registry, _e8 = _fixture()
     draft = RegistryStatusEvent(
         candidate_version=CANDIDATE,
         from_status=RegistryStatus.CHALLENGER,
@@ -391,14 +417,14 @@ def test_candidate_must_still_be_current_challenger() -> None:
         reason="retired",
         event_fingerprint_sha256="0" * 64,
     )
-    event = replace(
-        draft,
-        event_fingerprint_sha256=compute_event_fingerprint(draft),
-    )
+    event = replace(draft, event_fingerprint_sha256=compute_event_fingerprint(draft))
     retired = build_registry((candidate,), (event,))
     e8 = _e8_assessment(candidate, retired)
     result = _evaluate(ledger, evidence, retired, e8)
-    assert _gate(result, PaperProofGateCode.E8_REGISTRY_PROVENANCE).status is PaperProofGateStatus.FAIL
+    assert (
+        _gate(result, PaperProofGateCode.E8_REGISTRY_PROVENANCE).status
+        is PaperProofGateStatus.FAIL
+    )
 
 
 def test_e10_trade_mismatch_fails_paper_provenance_and_metric_gates() -> None:
@@ -413,17 +439,28 @@ def test_e10_trade_mismatch_fails_paper_provenance_and_metric_gates() -> None:
     )
     mismatched = build_evidence(CANDIDATE, changed, (), _paper_policy())
     result = _evaluate(ledger, mismatched, registry, e8)
-    assert _gate(result, PaperProofGateCode.PAPER_EVIDENCE_PROVENANCE).status is PaperProofGateStatus.FAIL
-    assert _gate(result, PaperProofGateCode.MIN_PAPER_NET_EXPECTANCY_PCT).status is PaperProofGateStatus.FAIL
+    assert (
+        _gate(result, PaperProofGateCode.PAPER_EVIDENCE_PROVENANCE).status
+        is PaperProofGateStatus.FAIL
+    )
+    assert (
+        _gate(result, PaperProofGateCode.MIN_PAPER_NET_EXPECTANCY_PCT).status
+        is PaperProofGateStatus.FAIL
+    )
     assert result.decision is PaperProofDecision.FAILED
 
 
 def test_e10_candidate_mismatch_fails_paper_provenance() -> None:
     ledger, evidence, _candidate, registry, e8 = _fixture()
-    other_trades = tuple(replace(trade, candidate_version="other-v1") for trade in evidence.trades)
+    other_trades = tuple(
+        replace(trade, candidate_version="other-v1") for trade in evidence.trades
+    )
     other = build_evidence("other-v1", other_trades, (), _paper_policy())
     result = _evaluate(ledger, other, registry, e8)
-    assert _gate(result, PaperProofGateCode.PAPER_EVIDENCE_PROVENANCE).status is PaperProofGateStatus.FAIL
+    assert (
+        _gate(result, PaperProofGateCode.PAPER_EVIDENCE_PROVENANCE).status
+        is PaperProofGateStatus.FAIL
+    )
 
 
 def test_e11_orphan_cost_reconciliation_error_propagates() -> None:
@@ -523,7 +560,10 @@ def test_all_losing_run_has_insufficient_winner_concentration() -> None:
         e8,
         policy=_proof_policy(min_net_expectancy_pct=-100.0, min_profit_factor=0.0),
     )
-    assert _gate(result, PaperProofGateCode.MAX_PAPER_SINGLE_WINNER_SHARE).status is PaperProofGateStatus.INSUFFICIENT
+    assert (
+        _gate(result, PaperProofGateCode.MAX_PAPER_SINGLE_WINNER_SHARE).status
+        is PaperProofGateStatus.INSUFFICIENT
+    )
 
 
 def test_evaluation_timestamp_cannot_precede_referenced_evidence() -> None:
@@ -540,12 +580,14 @@ def test_gate_order_is_lexical_and_trade_fingerprint_is_source_sensitive() -> No
         sorted(code.value for code in PaperProofGateCode)
     )
 
-    changed_ledger = _ledger((11.0, 5.0, -4.0))
-    changed_evidence = _paper_evaluation(changed_ledger)
-    changed_candidate, changed_registry = _registry(changed_evidence)
-    changed_e8 = _e8_assessment(changed_candidate, changed_registry)
+    changed_ledger, changed_evidence, _changed_candidate, changed_registry, changed_e8 = (
+        _fixture((11.0, 5.0, -4.0))
+    )
     changed = _evaluate(
         changed_ledger, changed_evidence, changed_registry, changed_e8
     )
-    assert result.paper_trade_evidence_fingerprint_sha256 != changed.paper_trade_evidence_fingerprint_sha256
+    assert (
+        result.paper_trade_evidence_fingerprint_sha256
+        != changed.paper_trade_evidence_fingerprint_sha256
+    )
     assert result.assessment_fingerprint_sha256 != changed.assessment_fingerprint_sha256
