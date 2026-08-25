@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import gzip
 import hashlib
 import io
@@ -7,6 +8,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 import re
+import sys
 import tarfile
 
 
@@ -361,3 +363,69 @@ def verify_release_archive(
         if len(payload) != entry.size or _sha256_bytes(payload) != entry.sha256:
             raise ReleaseBundleError(f"release archive payload verification failed: {relative}")
     return manifest
+
+
+def build_release_artifacts(
+    staging_dir: Path,
+    source_sha: str,
+    platform: str,
+    out_dir: Path,
+) -> tuple[Path, Path, Path]:
+    staging_dir = Path(staging_dir)
+    out_dir = Path(out_dir)
+    manifest = build_release_manifest(staging_dir, source_sha, platform)
+    manifest_payload = encode_release_manifest(manifest)
+    control_manifest = staging_dir / _CONTROL_MANIFEST_PATH
+    control_manifest.write_bytes(manifest_payload)
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    external_manifest = out_dir / _CONTROL_MANIFEST_PATH
+    external_manifest.write_bytes(manifest_payload)
+    archive_path = out_dir / f"shreks-release-{manifest.source_sha}.tar.gz"
+    archive_sha = write_release_archive(staging_dir, manifest, archive_path)
+    checksum_path = out_dir / f"{archive_path.name}.sha256"
+    checksum_path.write_text(
+        f"{archive_sha}  {archive_path.name}\n",
+        encoding="utf-8",
+    )
+    verify_release_archive(archive_path, checksum_path, external_manifest)
+    return archive_path, checksum_path, external_manifest
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Build and verify Shreks release bundles")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    build = subparsers.add_parser("build")
+    build.add_argument("--staging", required=True, type=Path)
+    build.add_argument("--source-sha", required=True)
+    build.add_argument("--platform", default=SUPPORTED_PLATFORM)
+    build.add_argument("--out-dir", required=True, type=Path)
+
+    verify = subparsers.add_parser("verify")
+    verify.add_argument("--archive", required=True, type=Path)
+    verify.add_argument("--checksum", required=True, type=Path)
+    verify.add_argument("--manifest", required=True, type=Path)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _build_parser().parse_args(argv)
+    try:
+        if args.command == "build":
+            build_release_artifacts(
+                args.staging,
+                args.source_sha,
+                args.platform,
+                args.out_dir,
+            )
+        else:
+            verify_release_archive(args.archive, args.checksum, args.manifest)
+    except (OSError, ReleaseBundleError) as exc:
+        print(f"release bundle error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
