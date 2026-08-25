@@ -17,12 +17,9 @@ from shreks_brain.paper_validation import (
     encode_paper_checkpoint,
 )
 from shreks_brain.regime import RecentStrategyPerformance, RegimePolicy
-from shreks_brain.registry import (
-    RegistryCandidate,
-    RegistryEvaluationEvidence,
-    RegistryStatus,
-)
+from shreks_brain.registry import RegistryCandidate
 from shreks_brain.registry.codec import compute_candidate_fingerprint
+from shreks_brain.registry.models import RegistryEvaluationEvidence, RegistryStatus
 from shreks_brain.risk import RiskPolicy
 from shreks_brain.safety import SafetyPolicy
 from shreks_brain.scoring import ScorePolicy
@@ -347,9 +344,6 @@ def _decode_initial_state_checkpoint(value: object, paper_run_id: str) -> PaperL
 
 
 def _encode_value(value: object) -> object:
-    if value is None or isinstance(value, (bool, int, str)):
-        return value
-
     value_type = type(value)
     if isinstance(value, Enum):
         enum_name = _ENUM_NAME_BY_TYPE.get(value_type)
@@ -358,6 +352,9 @@ def _encode_value(value: object) -> object:
                 f"unsupported runtime manifest enum type: {value_type.__name__}"
             )
         return {"$enum": enum_name, "value": value.value}
+
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
 
     dataclass_name = _DATACLASS_NAME_BY_TYPE.get(value_type)
     if dataclass_name is not None:
