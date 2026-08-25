@@ -75,12 +75,12 @@ class PaperPositionExecutionEvidence:
         _require_positive_int("ledger_sequence", self.ledger_sequence)
         if type(self.side) is not TradeSide:
             raise ValueError("side must be an exact TradeSide")
-        if self.execution_state not in (
+        if type(self.execution_state) is not PaperExecutionState or self.execution_state not in (
             PaperExecutionState.FAILED,
             PaperExecutionState.PARTIAL,
             PaperExecutionState.FILLED,
         ):
-            raise ValueError("execution_state must be terminal FAILED/PARTIAL/FILLED")
+            raise ValueError("execution_state must be an exact terminal FAILED/PARTIAL/FILLED PaperExecutionState")
         if type(self.ledger_reason_code) is not PaperLedgerReasonCode:
             raise ValueError("ledger_reason_code must be an exact PaperLedgerReasonCode")
         _require_non_negative_int("booked_at_unix_ms", self.booked_at_unix_ms)
