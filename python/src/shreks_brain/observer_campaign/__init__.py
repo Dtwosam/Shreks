@@ -5,6 +5,15 @@ from .assembler import (
     ObserverPaperCycleAudit,
     assemble_observer_paper_cycle,
 )
+from .coordinator import (
+    OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION,
+    ObserverCampaignCandidate,
+    ObserverCampaignCoordinatorError,
+    ObserverPaperCampaignCoordinatorRunner,
+    ObserverPaperCampaignCycleAudit,
+    ObserverPaperCampaignSelectionPolicy,
+    assemble_observer_paper_campaign_cycle,
+)
 from .models import (
     OBSERVER_PAPER_CAMPAIGN_SCHEMA_VERSION,
     ObserverPaperQuoteAsset,
@@ -45,4 +54,11 @@ __all__ = (
     "assemble_observer_paper_cycle",
     "ObserverPaperCampaignError",
     "ObserverPaperCampaignRunner",
+    "OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION",
+    "ObserverCampaignCoordinatorError",
+    "ObserverPaperCampaignSelectionPolicy",
+    "ObserverCampaignCandidate",
+    "ObserverPaperCampaignCycleAudit",
+    "assemble_observer_paper_campaign_cycle",
+    "ObserverPaperCampaignCoordinatorRunner",
 )
