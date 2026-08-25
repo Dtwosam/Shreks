@@ -189,14 +189,14 @@ def _populate_replay_fixture(path: Path) -> tuple[int, int]:
         pair_address="PairA",
         price_usd=1.6,
     )
-    # Too young for the 1m window.
+    # Too young for the 1m window, but still ordinary local-range evidence.
     _insert_snapshot(
         path,
         candidate_id,
         observed_at_unix_ms=1_940_001,
         source="alpha",
         pair_address="PairA",
-        price_usd=88.0,
+        price_usd=1.7,
     )
 
     _insert_snapshot(
