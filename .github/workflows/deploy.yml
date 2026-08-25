@@ -1,0 +1,114 @@
+name: Deploy verified Shreks release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing immutable release tag shreks-<40-char-sha>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    environment: production-paper
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate existing release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^shreks-[0-9a-f]{40}$ ]]; then
+            echo "release_tag must match shreks-<40 lowercase hex characters>" >&2
+            exit 2
+          fi
+          SOURCE_SHA="${RELEASE_TAG#shreks-}"
+          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Checkout released verifier
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.release_tag }}
+          fetch-depth: 1
+
+      - name: Download exact release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/deploy
+          gh release download "$RELEASE_TAG" \
+            --pattern "shreks-release-$SOURCE_SHA.tar.gz" \
+            --pattern "shreks-release-$SOURCE_SHA.tar.gz.sha256" \
+            --pattern "RELEASE_MANIFEST.json" \
+            --dir dist/deploy
+
+          test -f "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz"
+          test -f "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz.sha256"
+          test -f "dist/deploy/RELEASE_MANIFEST.json"
+          test "$(find dist/deploy -maxdepth 1 -type f | wc -l)" -eq 3
+
+      - name: Verify release locally before host contact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python deploy/release/release_bundle.py verify \
+            --archive "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz" \
+            --checksum "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz.sha256" \
+            --manifest "dist/deploy/RELEASE_MANIFEST.json"
+
+      - name: Transfer verified assets and invoke host release manager
+        shell: bash
+        env:
+          SHREKS_DEPLOY_HOST: ${{ secrets.SHREKS_DEPLOY_HOST }}
+          SHREKS_DEPLOY_PORT: ${{ secrets.SHREKS_DEPLOY_PORT }}
+          SHREKS_DEPLOY_USER: ${{ secrets.SHREKS_DEPLOY_USER }}
+          SHREKS_DEPLOY_SSH_KEY: ${{ secrets.SHREKS_DEPLOY_SSH_KEY }}
+          SHREKS_DEPLOY_KNOWN_HOSTS: ${{ secrets.SHREKS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$SHREKS_DEPLOY_HOST" || ! "$SHREKS_DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+            echo "invalid deployment host" >&2
+            exit 2
+          fi
+          if [[ -z "$SHREKS_DEPLOY_USER" || ! "$SHREKS_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "invalid deployment user" >&2
+            exit 2
+          fi
+          if [[ ! "$SHREKS_DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || (( SHREKS_DEPLOY_PORT < 1 || SHREKS_DEPLOY_PORT > 65535 )); then
+            echo "invalid deployment port" >&2
+            exit 2
+          fi
+          if [[ -z "$SHREKS_DEPLOY_SSH_KEY" || -z "$SHREKS_DEPLOY_KNOWN_HOSTS" ]]; then
+            echo "deployment key material and pinned host keys are required" >&2
+            exit 2
+          fi
+
+          TEMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TEMP_DIR"' EXIT
+          KEY_FILE="$TEMP_DIR/deploy_key"
+          KNOWN_HOSTS_FILE="$TEMP_DIR/known_hosts"
+          umask 077
+          printf '%s\n' "$SHREKS_DEPLOY_SSH_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          printf '%s\n' "$SHREKS_DEPLOY_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
+          chmod 600 "$KNOWN_HOSTS_FILE"
+
+          ARCHIVE="dist/deploy/shreks-release-$SOURCE_SHA.tar.gz"
+          CHECKSUM="dist/deploy/shreks-release-$SOURCE_SHA.tar.gz.sha256"
+          MANIFEST="dist/deploy/RELEASE_MANIFEST.json"
+          REMOTE_ARCHIVE="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz"
+          REMOTE_CHECKSUM="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz.sha256"
+          REMOTE_MANIFEST="/var/tmp/shreks-release-$SOURCE_SHA.RELEASE_MANIFEST.json"
+          DESTINATION="$SHREKS_DEPLOY_USER@$SHREKS_DEPLOY_HOST"
+
+          scp -q -i "$KEY_FILE" -P "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$ARCHIVE" "$DESTINATION:$REMOTE_ARCHIVE"
+          scp -q -i "$KEY_FILE" -P "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$CHECKSUM" "$DESTINATION:$REMOTE_CHECKSUM"
+          scp -q -i "$KEY_FILE" -P "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$MANIFEST" "$DESTINATION:$REMOTE_MANIFEST"
+
+          ssh -i "$KEY_FILE" -p "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$DESTINATION" \
+            "sudo /usr/local/sbin/shreks-release-manager install '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
