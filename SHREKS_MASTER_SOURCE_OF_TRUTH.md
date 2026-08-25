@@ -6,7 +6,7 @@
 **System type:** Autonomous memecoin trading system  
 **Architecture:** Rust + Python  
 **Status:** Implementation in progress; architecture controlled by this source of truth  
-**Last updated:** 2026-08-24
+**Last updated:** 2026-08-25
 
 ---
 
@@ -173,14 +173,28 @@ Python owns research and decision intelligence:
 - model evaluation,
 - champion/challenger comparison.
 
-### 4.3 Shared state
+### 4.3 Shared state and durable storage
 
 V1 starts simple:
 
-- **SQLite in WAL mode** for operational state and event records.
-- **Parquet** for larger historical/research datasets.
+- **SQLite in WAL mode** is the authoritative operational recovery store for state that the running system must survive across process or host restarts. This includes provider health, observer/event-ingestion checkpoints, candidate lifecycle state, normalized observations, safety/quote evidence needed by active flows, paper/live positions and ledgers, processed intent/idempotency state, risk/mode/kill-switch state, campaign/evaluation evidence references, and durable checkpoint metadata.
+- **Parquet** is the durable historical/research format for larger point-in-time datasets, feature/training exports, wallet research, outcome labels, and reproducible evaluation inputs. Research exports must retain schema/version information and must include rejected and untraded candidates where data quality permits.
+- Evidence/checkpoint files may be used where an approved phase requires immutable artifacts, but they must be written atomically, versioned or content-addressed where appropriate, and either referenced by authoritative operational state or reproducibly derivable from it.
+- Logs and dashboards are observability surfaces, **not authoritative state**. A restart must not depend on reconstructing trading or risk state from logs.
+
+Operational data may later be compacted or archived only after the information required for recovery, audit, labels, accounting, and reproducible research has been preserved. Do not silently discard or rewrite history that an evaluation or proof record depends on.
 
 Do not introduce Redis, Kafka, Kubernetes, or a hosted database unless real operating evidence shows they are necessary.
+
+### 4.4 Production runtime and GitHub boundary
+
+GitHub is the source-control, review, CI, release, and deployment control plane. It is **not** the machine that continuously observes markets or trades.
+
+The initial production architecture should run Shreks 24/7 on **one dedicated Linux host/VPS** with persistent storage. Rust observer/execution services, Python brain/paper-or-live runner, operational SQLite, checkpoints/evidence, and monitoring agents may coexist on that host for V1. Process supervision may use `systemd` or Docker Compose; the exact supervisor/provider is an operational choice, not a strategy dependency.
+
+The host must restart services after reboot/crash and remount the same durable state before autonomous operation resumes. Splitting into multiple hosts or managed data services is deferred until measured load, reliability, or security evidence requires it.
+
+Runtime wallet/signing secrets are injected only on the execution host through protected runtime secret handling. They never belong in GitHub source, repository history, ChatGPT, research exports, logs, or dashboard payloads.
 
 ---
 
@@ -478,6 +492,16 @@ The learning problem is not simply **"will this token pump?"**
 The intended question is closer to:
 
 > Given everything observable at this timestamp, what future path is likely, what is the upside/downside distribution, how does liquidity/executability evolve, and is there a realistic positive-expectancy trade after costs?
+
+### 7.6 Collection durability, identity, and retention
+
+Continuous collection is valuable only if later research can prove what was known at each timestamp. Persisted observation records therefore need stable candidate/event identity, source timestamp where available, Shreks ingestion/observation timestamp, normalized schema/version context, and freshness/confidence or provider-health context when it affects interpretation.
+
+Restart-safe collection must resume from durable checkpoints and deduplicate replayed provider events or already-processed observation work. A restart must not create duplicate trades, duplicate labels, or materially different history merely because the same provider data was seen twice.
+
+Point-in-time history should be treated as append-oriented evidence. Corrections, backfills, normalization upgrades, or research re-exports must be explicit and versioned rather than silently rewriting the data that earlier decisions or evaluations consumed.
+
+As volume grows, hot operational records may be compacted or archived, but only after required recovery state and research/audit fields are durably preserved in approved historical storage. Provider limits and storage pressure may reduce sampling frequency; they must not silently convert continuous/path-aware collection back into sparse checkpoint-only collection.
 
 ---
 
@@ -834,7 +858,18 @@ Shreks must be able to survive:
 
 Critical health degradation pauses new entries.
 
-State must be recoverable after restart from the operational database and onchain truth where necessary.
+State must be recoverable after restart from the operational database and onchain truth where necessary. At minimum, recovery must preserve or reconstruct consistently:
+
+- last durable observer/event-ingestion checkpoints,
+- active candidate/observation scheduling state where needed to continue labels,
+- open paper/live positions and the authoritative position ledger,
+- realized/unrealized accounting state and accumulated costs,
+- processed intent/idempotency identifiers,
+- current risk, mode, halt, and kill-switch state,
+- paper-campaign/evaluation evidence required by the active proof phase,
+- latest durable checkpoint/evidence references.
+
+A restarted process must reconcile this state before new entries are allowed. In live mode, local execution/accounting state must be reconciled against onchain balances, signatures, and confirmed fills where necessary. Monitoring may report the problem, but it must never substitute for the recovery/reconciliation path itself.
 
 ---
 
