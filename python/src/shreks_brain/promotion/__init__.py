@@ -1,3 +1,4 @@
+from .engine import evaluate_promotion
 from .models import (
     PROMOTION_SCHEMA_VERSION,
     PromotionAssessment,
@@ -17,4 +18,5 @@ __all__ = (
     "PromotionPolicy",
     "PromotionGateResult",
     "PromotionAssessment",
+    "evaluate_promotion",
 )
