@@ -1,153 +1,119 @@
-# Phase E10 Trading Evaluation Evidence Store Implementation Plan
-
-**Goal:** Make the exact E5 source evidence required by E8 promotion restart-safe without duplicating derived E5 report state.
+# Phase E10 Trading Evaluation Evidence Store Verification Record
 
 **Base:** sealed E9 `7bf83204f87b210d0f784911413d4870471ed740`
 
+**Behavior head:** `654f74947183d3557ec134ddb06c3dc116dd17cd`
+
 **Spec:** `docs/superpowers/specs/2026-08-25-phase-e10-evaluation-evidence-store-design.md`
 
-## Global constraints
+## Result
 
-- Store schema exactly `e10-evaluation-evidence-v1`.
-- Do not change sealed E5 arithmetic, canonical ordering, calibration, segmentation, or fingerprint semantics.
-- Persist only candidate version, E5 policy, raw evaluated trades, raw probability observations, and the existing E5 evaluation fingerprint.
-- Reconstruct `TradingEvaluationReport` on every load by calling sealed `evaluate_trading_performance(...)`.
-- Require recomputed E5 fingerprint to equal the persisted fingerprint.
-- Physical JSON: sorted keys, compact separators, UTF-8, `ensure_ascii=False`, `allow_nan=False`, exactly one trailing newline.
-- Writes: fsync + atomic replace + best-effort `.tmp` cleanup.
-- Store is append-only; same identity/content is idempotent; conflicting content fails closed.
-- Add no registry mutation, promotion, trade creation, signing/submission, or live authority.
+Phase E10 makes the exact sealed E5 source evidence required by E8 promotion restart-safe without persisting a second source of truth for derived trading metrics.
 
----
+The persisted record contains only:
 
-## Task 1 — immutable evidence bundle + exact source codec
+- candidate version;
+- exact `TradingEvaluationPolicy`;
+- canonical raw `EvaluatedTrade` values;
+- canonical raw `ProbabilityObservation` values;
+- the existing sealed E5 `evaluation_fingerprint_sha256`.
 
-**Create:**
+Every load reconstructs `TradingEvaluationReport` by calling sealed `evaluate_trading_performance(...)` and rejects the record unless the recomputed E5 fingerprint equals the persisted fingerprint.
+
+## Implemented surface
+
+Added:
+
 - `python/src/shreks_brain/evaluation/evidence.py`
 - `python/src/shreks_brain/evaluation/codec.py`
-- `python/tests/test_trading_evaluation_evidence_codec.py`
-
-### RED
-
-Write tests first for:
-
-- exact `TradingEvaluationEvidence` bundle fields/types;
-- source evidence round-trip;
-- canonical trade order and observation order;
-- report reconstruction equality with direct E5 evaluation;
-- stale/tampered stored fingerprint rejection;
-- source tampering rejection;
-- exact top-level/evaluation/policy/trade/observation field sets;
-- wrong schema and invalid SHA rejection;
-- non-finite values rejected;
-- candidate-version mismatches rejected;
-- duplicate trade position ids and duplicate observation `(mint, as_of)` identities rejected;
-- reordered persisted evidence rejected as non-canonical.
-
-Run exact PR CI. Expected Python failure: `shreks_brain.evaluation.codec` / evidence contract absent. Rust/workspace and repository safety remain GREEN.
-
-### GREEN
-
-Implement:
-
-```text
-EVALUATION_EVIDENCE_STORE_SCHEMA_VERSION = "e10-evaluation-evidence-v1"
-TradingEvaluationEvidence
-canonical_json(...)
-build_evidence_document(...)
-decode_evidence_document(...)
-```
-
-Codec explicitly maps every E5 policy/trade/observation field. Decode reconstructs exact E5 dataclasses and calls public sealed `evaluate_trading_performance(...)`; it never decodes a report from disk.
-
-Persist source arrays only in sealed E5 canonical order. Reject non-canonical persisted ordering.
-
-Commit implementation and require full Python suite GREEN.
-
----
-
-## Task 2 — restart-safe append-only store
-
-**Create:**
 - `python/src/shreks_brain/evaluation/store.py`
-- `python/tests/test_trading_evaluation_evidence_store.py`
+- additive E10 exports in `python/src/shreks_brain/evaluation/__init__.py`
+- E10 codec/store/public-API tests.
 
-### RED
-
-Cover:
-
-- missing file -> empty tuple;
-- `get(...)` missing -> `None`;
-- append -> fresh store instance -> exact source evidence + reconstructed report;
-- same source evidence is idempotent;
-- multiple different fingerprints for one candidate append in order;
-- same candidate/fingerprint with conflicting source content fails closed;
-- canonical file + single newline;
-- malformed/tampered persisted file fails closed;
-- invalid lookup args fail closed;
-- atomic replace failure cleans `.tmp` and preserves prior file.
-
-Expected RED: missing `shreks_brain.evaluation.store` only.
-
-### GREEN
-
-Implement public store API only:
+The public store method surface is exactly:
 
 ```text
-load()
-get(candidate_version, evaluation_fingerprint_sha256)
-append(candidate_version, trades, probability_observations, policy)
+append
+get
+load
 ```
 
-`append` derives the report via sealed E5 first, canonicalizes source arrays, then appends an immutable evidence bundle. Callers cannot inject a report or fingerprint.
+There is no delete, rewrite, update, registry mutation, promotion, trade creation, signing, submission, or live-mode method.
 
-Require full Python suite GREEN.
+## TDD evidence
 
----
+### Task 1 — evidence bundle and codec
 
-## Task 3 — package public API, authority firewall, scope audit, seal
+RED commit: `eb6616c51ecf6445746e00c6e62d350d097fc83d`
 
-**Modify:**
-- `python/src/shreks_brain/evaluation/__init__.py`
-- `python/tests/test_trading_evaluation_public_api.py`
+- CI `32836689213` failed in Python as intended while Rust/workspace and repository safety remained GREEN.
 
-**Create:**
-- `python/tests/test_trading_evaluation_evidence_public_api.py`
+GREEN implementation completed at `63f45dafa30053a38fe5781ff64f1ddb447b5ca5`.
 
-### RED
+- CI `32836866198` — GREEN across Python, Rust/workspace, and repository safety.
 
-Require additive public exports:
+### Task 2 — restart-safe append-only store
 
-```text
-EVALUATION_EVIDENCE_STORE_SCHEMA_VERSION
-TradingEvaluationEvidence
-TradingEvaluationEvidenceStore
-```
+RED commit: `c0e20d9629702dafc067cace173729b702a98686`
 
-Require exact public store method surface `{append, get, load}` and no delete/rewrite/update/registry/promotion/trade/sign/submit/live methods.
+- CI `32836974904` failed only because `shreks_brain.evaluation.store` did not yet exist.
+- Rust/workspace and repository safety remained GREEN.
 
-Expected RED: new package exports absent.
+GREEN commit: `b3f6f69d0ca04d46f06908f06d75a6b7a070bc13`
 
-### GREEN
+- CI `32837297409` — GREEN.
+- Python: `1979 passed in 7.31s`.
+- Rust/workspace: GREEN.
+- Repository safety: GREEN.
 
-Add exports without removing or reordering sealed E5 symbols except for explicit additive E10 entries.
+### Task 3 — public API and authority firewall
 
-Run full Python suite and exact PR CI; require Python, Rust/workspace, and repository safety GREEN. Record behavior head SHA, CI id, Python count/runtime, and every TDD correction.
+RED anchor: `3ee2e791bc369ea9158bfd88c564dab644065f79`
 
-### Scope audit
+- CI `32837444113` failed exactly on the absent E10 package exports.
+- Python: `4 failed, 1978 passed in 7.01s`.
+- The four failures were the expected missing schema/store exports and exact `__all__` extension.
 
-Compare sealed E9 to E10 behavior head. Allowed changes only:
+Behavior head: `654f74947183d3557ec134ddb06c3dc116dd17cd`
 
-- E10 design/plan docs;
-- `evaluation/evidence.py`;
-- `evaluation/codec.py`;
-- `evaluation/store.py`;
-- additive `evaluation/__init__.py` exports;
-- E10 evidence tests;
-- additive extension of the exact E5 public-API expectation.
+- CI `32837532045` — GREEN.
+- Python: `1982 passed in 5.36s`.
+- Rust/workspace: GREEN.
+- Repository safety: GREEN.
 
-No changes to E5 engine/models/calibration logic, E6 registry, E7 shadow, E8 promotion, E9 learning, paper/risk, Rust execution, provider, observer, or live paths.
+## Scope audit
 
-### Immutable seal
+The exact sealed E9 -> E10 behavior-head comparison contains ten changed files and all are permitted:
 
-Replace this plan with the verification record. Behavior head -> seal candidate must change exactly this one documentation file and zero production/test files. Run final exact-head CI and require all lanes GREEN. Update stacked draft PR and leave it unmerged/frozen.
+1. this E10 verification/plan document;
+2. the E10 design document;
+3. additive `evaluation/__init__.py` exports;
+4. `evaluation/codec.py`;
+5. `evaluation/evidence.py`;
+6. `evaluation/store.py`;
+7. E10 codec tests;
+8. E10 public-API tests;
+9. E10 store tests;
+10. the additive extension of the sealed E5 exact public-API expectation.
+
+No E5 engine/models/calibration arithmetic, E6 registry, E7 shadow, E8 promotion, E9 learning, paper/risk, Rust execution, provider, observer/executor, or live-execution path changed.
+
+## Authority boundary
+
+E10 adds evidence persistence only. It cannot:
+
+- generate or execute a trade;
+- alter E5 trading math;
+- train or tune a model;
+- mutate registry status;
+- promote a challenger;
+- select promotion thresholds;
+- sign or submit transactions;
+- enable live mode;
+- claim positive expectancy or profitability.
+
+Its purpose is narrower: preserve the exact evidence required to prove or reject a challenger after restart.
+
+## Immutable seal rule
+
+This verification record is the only file changed after behavior head `654f74947183d3557ec134ddb06c3dc116dd17cd`. The seal candidate must pass final exact-head CI before PR #34 is marked frozen. The final run identity and test count are recorded in the PR seal metadata so this file does not require a second post-CI mutation.
