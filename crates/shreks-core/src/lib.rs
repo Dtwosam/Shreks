@@ -217,6 +217,85 @@ pub struct TokenMintState {
     pub observed_at_unix_ms: i64,
 }
 
+pub const MAX_TOKEN_DISTRIBUTION_PAGE_SIZE: usize = 1_000;
+
+/// Bounded request for a read-only token-account distribution scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenDistributionRequest {
+    pub mint: String,
+    pub page_size: usize,
+    pub max_pages: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenDistributionRequestError {
+    EmptyMint,
+    ZeroPageSize,
+    PageSizeOutOfRange(usize),
+    ZeroMaxPages,
+}
+
+impl fmt::Display for TokenDistributionRequestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyMint => formatter.write_str("distribution mint must not be empty"),
+            Self::ZeroPageSize => formatter.write_str("distribution page size must be positive"),
+            Self::PageSizeOutOfRange(value) => write!(
+                formatter,
+                "distribution page size must be <= {MAX_TOKEN_DISTRIBUTION_PAGE_SIZE}; got {value}"
+            ),
+            Self::ZeroMaxPages => formatter.write_str("distribution max pages must be positive"),
+        }
+    }
+}
+
+impl Error for TokenDistributionRequestError {}
+
+impl TokenDistributionRequest {
+    pub fn new(
+        mint: impl Into<String>,
+        page_size: usize,
+        max_pages: usize,
+    ) -> Result<Self, TokenDistributionRequestError> {
+        let mint = mint.into();
+        if mint.trim().is_empty() {
+            return Err(TokenDistributionRequestError::EmptyMint);
+        }
+        if page_size == 0 {
+            return Err(TokenDistributionRequestError::ZeroPageSize);
+        }
+        if page_size > MAX_TOKEN_DISTRIBUTION_PAGE_SIZE {
+            return Err(TokenDistributionRequestError::PageSizeOutOfRange(page_size));
+        }
+        if max_pages == 0 {
+            return Err(TokenDistributionRequestError::ZeroMaxPages);
+        }
+        Ok(Self {
+            mint,
+            page_size,
+            max_pages,
+        })
+    }
+}
+
+/// Normalized owner-level concentration evidence from one coherent provider index point.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TokenHolderDistribution {
+    pub provider: ProviderId,
+    pub mint: String,
+    pub last_indexed_slot: u64,
+    pub observed_at_unix_ms: i64,
+    pub reported_total_accounts: u64,
+    pub accounts_scanned: usize,
+    pub unique_owners: usize,
+    pub pages_scanned: usize,
+    pub complete: bool,
+    pub total_balance_raw: u64,
+    pub largest_owner: Option<String>,
+    pub largest_owner_balance_raw: Option<u64>,
+    pub top_holder_concentration_pct: Option<f64>,
+}
+
 /// Validated request for a read-only executable Jupiter route/build quote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuoteRequest {
