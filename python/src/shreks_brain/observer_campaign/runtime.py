@@ -103,6 +103,19 @@ def bootstrap_observer_paper_campaign_runtime(
     )
 
 
+def preflight_observer_paper_campaign_runtime(
+    config: ObserverPaperCampaignRuntimeConfig,
+    *,
+    status_sink: Callable[[str], object] | None = None,
+) -> ObserverPaperCampaignRuntimeBootstrap:
+    """Validate durable PAPER recovery state without advancing the campaign."""
+
+    bootstrap = bootstrap_observer_paper_campaign_runtime(config)
+    sink = print if status_sink is None else status_sink
+    sink(_preflight_status_line(bootstrap))
+    return bootstrap
+
+
 def run_observer_paper_campaign_runtime(
     config: ObserverPaperCampaignRuntimeConfig,
     *,
@@ -150,12 +163,27 @@ def run_observer_paper_campaign_runtime(
     return completed_cycles
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args not in ([], ["--preflight"]):
+        _emit_failure_status(
+            ObserverPaperCampaignRuntimeError("unsupported paper runtime argument")
+        )
+        return 2
+
     try:
         config = load_observer_paper_campaign_runtime_config()
     except (ObserverPaperCampaignRuntimeConfigError, OSError, TypeError, ValueError) as error:
         _emit_failure_status(error)
         return 1
+
+    if args == ["--preflight"]:
+        try:
+            preflight_observer_paper_campaign_runtime(config)
+        except ObserverPaperCampaignRuntimeError as error:
+            _emit_failure_status(error)
+            return 1
+        return 0
 
     stop_event = Event()
     previous_handlers = _install_signal_handlers(stop_event)
@@ -183,6 +211,28 @@ def _runtime_timestamp(clock: Callable[[], int]) -> int:
 
 def _wall_clock_unix_ms() -> int:
     return time.time_ns() // 1_000_000
+
+
+def _preflight_status_line(
+    bootstrap: ObserverPaperCampaignRuntimeBootstrap,
+) -> str:
+    document = {
+        "schema_version": OBSERVER_PAPER_CAMPAIGN_RUNTIME_STATUS_SCHEMA_VERSION,
+        "mode": "PAPER",
+        "state": "READY",
+        "paper_run_id": bootstrap.manifest.paper_run_id,
+        "candidate_version": bootstrap.manifest.candidate.candidate_version,
+        "manifest_fingerprint_sha256": bootstrap.manifest.manifest_fingerprint_sha256,
+        "state_as_of_unix_ms": bootstrap.restored_state.last_cycle_at_unix_ms,
+        "global_risk_halt": bootstrap.manifest.global_risk_halt,
+    }
+    return json.dumps(
+        document,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
 
 
 def _status_line(

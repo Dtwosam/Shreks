@@ -11,8 +11,15 @@ fn assert_common_service_contract(unit: &str) {
         "WorkingDirectory=/opt/shreks/current",
         "EnvironmentFile=/etc/shreks/shreks.env",
         "Restart=on-failure",
+        "RestartSec=5s",
         "After=network-online.target",
         "Wants=network-online.target",
+        "PartOf=shreks.target",
+        "RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current",
+        "StartLimitIntervalSec=300",
+        "StartLimitBurst=5",
+        "ExecStartPre=/usr/bin/test -d /var/lib/shreks",
+        "ExecStartPre=/usr/bin/test -w /var/lib/shreks",
     ] {
         assert!(unit.contains(required), "missing service contract: {required}");
     }
@@ -32,14 +39,14 @@ fn assert_common_service_contract(unit: &str) {
 }
 
 #[test]
-fn observe_service_runs_existing_observer_under_non_root_supervision() {
+fn observe_service_runs_existing_observer_under_non_root_bounded_supervision() {
     assert_common_service_contract(OBSERVE_SERVICE);
     assert!(OBSERVE_SERVICE.contains("ExecStart=/opt/shreks/current/target/release/shreks-observe"));
     assert!(OBSERVE_SERVICE.contains("WantedBy=shreks.target"));
 }
 
 #[test]
-fn paper_evidence_service_runs_new_daemon_under_non_root_supervision() {
+fn paper_evidence_service_runs_daemon_under_non_root_bounded_supervision() {
     assert_common_service_contract(EVIDENCE_SERVICE);
     assert!(EVIDENCE_SERVICE.contains(
         "ExecStart=/opt/shreks/current/target/release/shreks-paper-evidence"
@@ -48,8 +55,11 @@ fn paper_evidence_service_runs_new_daemon_under_non_root_supervision() {
 }
 
 #[test]
-fn paper_campaign_service_runs_sealed_python_runtime_under_non_root_supervision() {
+fn paper_campaign_service_preflights_recovery_before_sealed_runtime() {
     assert_common_service_contract(CAMPAIGN_SERVICE);
+    assert!(CAMPAIGN_SERVICE.contains(
+        "ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime --preflight"
+    ));
     assert!(CAMPAIGN_SERVICE.contains(
         "ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime"
     ));
@@ -60,9 +70,9 @@ fn paper_campaign_service_runs_sealed_python_runtime_under_non_root_supervision(
 }
 
 #[test]
-fn target_groups_observer_evidence_and_paper_campaign_services() {
+fn target_requires_all_runtime_services_and_starts_on_host_boot() {
     assert!(SHREKS_TARGET.contains(
-        "Wants=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service"
+        "Requires=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service"
     ));
     assert!(SHREKS_TARGET.contains("After=network-online.target"));
     assert!(SHREKS_TARGET.contains("WantedBy=multi-user.target"));
@@ -96,4 +106,29 @@ fn operator_runbook_preserves_persistent_paths_runtime_secret_boundary_and_relea
     assert!(!README.contains("JUPITER_API_KEY=example"));
     assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_MAX_SLIPPAGE_BPS="));
     assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_RISK_LIMIT_USD="));
+}
+
+#[test]
+fn operator_runbook_exposes_restart_reboot_health_and_fail_closed_recovery_evidence() {
+    for required in [
+        "systemctl is-enabled shreks.target",
+        "ActiveState",
+        "SubState",
+        "NRestarts",
+        "ExecMainStatus",
+        "ActiveEnterTimestamp",
+        "systemctl show shreks-observe.service",
+        "systemctl show shreks-paper-evidence.service",
+        "systemctl show shreks-paper-campaign.service",
+        "systemctl reset-failed shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service",
+        "only after the root cause is resolved",
+        "readlink -f /opt/shreks/current",
+        "test -r /etc/shreks/paper-campaign.json",
+        "test -r /var/lib/shreks/shreks.db",
+        "test -r /var/lib/shreks/paper-evaluation-e11.json",
+        "do not bypass the campaign preflight",
+        "do not launch the campaign runtime manually",
+    ] {
+        assert!(README.contains(required), "missing G3 recovery instruction: {required}");
+    }
 }

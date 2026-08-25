@@ -2,6 +2,10 @@
 Description=Shreks paper campaign runtime
 After=network-online.target shreks-observe.service shreks-paper-evidence.service
 Wants=network-online.target
+PartOf=shreks.target
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -10,9 +14,12 @@ Group=shreks
 WorkingDirectory=/opt/shreks/current
 EnvironmentFile=/etc/shreks/shreks.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -d /var/lib/shreks
+ExecStartPre=/usr/bin/test -w /var/lib/shreks
+ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime --preflight
 ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime
 Restart=on-failure
-RestartSec=5
+RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
