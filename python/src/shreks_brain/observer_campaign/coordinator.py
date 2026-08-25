@@ -244,15 +244,17 @@ def _reject_ambiguous_mints(
 
 def _require_non_empty_string(name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be a non-empty string")
+        raise ObserverCampaignCoordinatorError(f"{name} must be a non-empty string")
 
 
 def _require_non_negative_int(name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
+        raise ObserverCampaignCoordinatorError(
+            f"{name} must be a non-negative integer"
+        )
 
 
 def _require_positive_int(name: str, value: object) -> None:
     _require_non_negative_int(name, value)
     if value == 0:
-        raise ValueError(f"{name} must be positive")
+        raise ObserverCampaignCoordinatorError(f"{name} must be positive")
