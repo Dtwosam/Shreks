@@ -79,7 +79,7 @@ These values are policy inputs, not hard-coded claims of profitability.
 
 The evaluator requires the challenger report fingerprint and headline metrics to agree with the E6 registry candidate. It does not trust a second, conflicting evaluation report.
 
-Raw E5 trades must match the challenger identity and reconcile at least the persisted trade count and net PnL used by the E6/E5 evaluation. Their timestamps are used only for evaluation-span evidence, and their positive net-PnL distribution is used only for winner-concentration evidence.
+Raw E5 trades must match the challenger identity and reconcile the persisted trade count and headline economics used by the E6/E5 evaluation. Their timestamps are used for evaluation-span evidence and their positive net-PnL distribution is used for winner-concentration evidence. E8 also computes a canonical SHA-256 fingerprint of the exact trade tuple used so later audits cannot silently substitute a different trade subset.
 
 ## Gate semantics
 
@@ -104,6 +104,7 @@ The evaluator records stable gate codes for:
 - current registry status is `CHALLENGER`;
 - complete model + time-aware validation provenance exists;
 - E5 report matches E6 persisted evaluation identity/headline values;
+- raw trade evidence reconciles to the E5 headline economics;
 - minimum closed-trade sample size;
 - minimum evaluation time span;
 - minimum post-cost net expectancy percent;
@@ -170,6 +171,7 @@ The policy then gates decision count, distinct mint count, and time span. The ev
 - candidate version/fingerprint;
 - registry fingerprint;
 - E5 evaluation fingerprint;
+- canonical trade-evidence fingerprint;
 - E7 ledger fingerprint;
 - ordered baseline `(version, evaluation_fingerprint)` identities;
 - evaluated timestamp;
@@ -211,6 +213,7 @@ Tests lock:
 - exact model/schema/fingerprint validation;
 - PASS/FAIL/INSUFFICIENT precedence;
 - E6/E5 evidence mismatch rejection;
+- raw-trade reconciliation and trade-evidence fingerprinting;
 - champion auto-baseline requirement;
 - baseline margin behavior;
 - sample/span/economic/risk/cost/calibration gates;
