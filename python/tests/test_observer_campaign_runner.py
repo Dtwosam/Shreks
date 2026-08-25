@@ -229,7 +229,7 @@ def _seed(path) -> None:
             slippage_bps, route_available, price_impact_pct, route_labels_json,
             quoted_at_unix_ms)
            VALUES (20, 1, 'entry', 'jupiter', 'probe-v2', ?, ?, ?, '100000000',
-                   '400000000', '390000000', 75, 1, '0.1', '[\"Raydium\"]', 988000)""",
+                   '400000000', '390000000', 75, 1, '0.1', '[\"Raydium\"]', 1000000)""",
         (QUOTE_ASSET, MINT, TAKER),
     )
     connection.execute(
