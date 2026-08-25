@@ -36,7 +36,7 @@ The default Phase-A `build_free_observer` remains unchanged and continues to exc
 | `mint_authority_active` | latest persisted `token_mint_states` row at/before `as_of` | authority string present => `True`, null => `False`; no row => `None` |
 | `freeze_authority_active` | same mint-state row | authority string present => `True`, null => `False`; no row => `None` |
 | `liquidity_usd` | E13 selected current market snapshot | preserve exact observed value |
-| `top_holder_concentration_pct` | new complete Helius holder-distribution snapshot | largest aggregated owner balance / observed supply * 100; incomplete scan => `None` |
+| `top_holder_concentration_pct` | new complete Helius holder-distribution snapshot | largest aggregated owner balance / total observed token-account balance * 100; incomplete scan => `None` |
 | `creator_concentration_pct` | unavailable in current normalized evidence | `None`; remains a soft unknown, never invented |
 | `exit_quote_available` | new persisted successful Jupiter probe | exact `route_available`; no matching quote => `None` |
 | `exit_price_impact_pct` | same matching quote | parsed finite percentage when supplied; missing => `None` |
@@ -51,28 +51,30 @@ The default Phase-A `build_free_observer` remains unchanged and continues to exc
 
 E14 therefore adds a provider-neutral `TokenHolderDistribution` domain value and a separate `DistributionDataProvider` trait.
 
-The Helius implementation uses `getTokenAccounts` filtered by mint and paginates through token-account rows. Each row supplies an owner and raw token amount. E14 aggregates raw amounts by owner before choosing the largest owner.
+The Helius implementation uses `getTokenAccounts` filtered by mint and paginates through token-account rows using the API's page-number pagination. Each row supplies an owner and raw token amount. E14 aggregates raw amounts by owner before choosing the largest owner.
 
 The request is bounded by an explicit caller/provider policy:
 
 - page size;
 - maximum pages.
 
-If Helius indicates more data remains after the allowed page budget, the observation is marked incomplete and no hard-safety `top_holder_concentration_pct` is exposed. A partial scan may be retained for audit, but it must never be treated as a complete concentration value.
+A page shorter than the requested page size, or an empty page, proves completion. If the maximum-page budget is reached after a full page, completion is not proven: the observation is marked incomplete and no hard-safety `top_holder_concentration_pct` is exposed. A partial scan may be retained for audit, but it must never be treated as complete concentration evidence.
 
 The provider snapshot records at least:
 
 - provider;
 - mint;
-- observed/indexed slot when supplied by Helius;
-- observed timestamp;
-- observed total supply used for the denominator;
+- local observation timestamp;
+- token accounts scanned;
 - unique owners scanned;
 - pages scanned;
 - scan completeness;
+- total raw token-account balance scanned;
 - largest owner address when known;
 - largest owner raw balance when known;
-- concentration percentage only when complete and supply is positive.
+- concentration percentage only when the scan is complete and total raw balance is positive.
+
+The complete-scan denominator is the sum of raw balances across all returned token accounts. This avoids adding a second hidden supply query to the distribution API and keeps the concentration calculation self-contained in one complete point-in-time scan. Zero-balance accounts do not affect the denominator.
 
 Raw integer token units are kept as unsigned integers/decimal text across SQLite boundaries; percentages are derived only after checked arithmetic.
 
@@ -97,7 +99,7 @@ Add one append-only migration after schema version 7.
 
 ### `token_holder_distributions`
 
-Stores one normalized holder scan per candidate/provider/observation identity. Required columns include candidate id, provider, mint, slot/index point where available, observation time, supply raw text, owner/page counts, completeness, largest-owner provenance, and complete concentration percentage when available.
+Stores one normalized holder scan per candidate/provider/observation identity. Required columns include candidate id, provider, mint, observation time, account/owner/page counts, completeness, total raw balance text, largest-owner provenance, largest-owner raw balance text, and complete concentration percentage when available.
 
 ### `exit_quote_snapshots`
 
@@ -171,7 +173,7 @@ Jupiter remains read-only through `QuoteProvider`.
 
 Implementation will be split into small independently verified RED/GREEN tasks:
 
-1. provider-neutral distribution models + Helius pagination/aggregation;
+1. provider-neutral distribution models + Helius page-number pagination/aggregation;
 2. storage migration + idempotent holder/quote persistence;
 3. explicit Rust safety-evidence collector with no default-observer wiring;
 4. Python read-only safety evidence models/store/assembler and exact B1 evaluation;
