@@ -1,262 +1,94 @@
-# Phase E11 Paper Evaluation Bridge Implementation Plan
+# Phase E11 — Paper Evaluation Bridge Verification Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+## Seal identity
 
-**Goal:** Preserve complete paper execution provenance across restarts and deterministically convert fully reconciled closed paper positions into sealed E5 `EvaluatedTrade` evidence without inventing missing costs, fills, setup, or regime data.
+- Sealed base: Phase E10 head `f31d34382170b3fac8d5073299c8ef2e7e81b8ca`.
+- Behavior head: `32c0f7f843e405819e36560f0e6d1c7a3bcab28f`.
+- Schema: `e11-paper-evaluation-v1`.
+- Stacked branch: `feat/phase-e11-paper-evaluation-bridge`.
+- Draft PR: #35.
 
-**Architecture:** Add a new isolated `shreks_brain.paper_evaluation` package. Pure model/engine code captures C5/C1/C3 evidence and performs strict reconciliation; codec/store code persists that evidence in canonical append-only JSON. Existing C1/C3/C5/E5/E6/E10 behavior remains untouched.
+E11 preserves the paper evidence required to reconstruct fully reconciled closed paper positions as sealed E5 `EvaluatedTrade` values after restart. It does not infer missing setup/regime provenance, fills, reference prices, execution costs, candidate identity, or paper-run identity. A positive execution cost that cannot be attributed to a position is retained as orphan-cost evidence and blocks candidate/run normalization rather than being silently discarded.
 
-**Tech Stack:** Python 3.12 standard library, existing immutable Shreks contracts, pytest, GitHub Actions CI.
+## Verified behavior
 
-**Spec:** `docs/superpowers/specs/2026-08-25-phase-e11-paper-evaluation-bridge-design.md`
+### Immutable evidence contracts
 
-## Global Constraints
+E11 adds frozen/slotted evidence contracts for selected-entry provenance, position-linked terminal execution evidence, closed-position accounting snapshots, orphan execution costs, per-cycle captures, and the cumulative restart ledger.
 
-- Base exactly on sealed E10 head `f31d34382170b3fac8d5073299c8ef2e7e81b8ca`.
-- Schema version is exactly `e11-paper-evaluation-v1`.
-- Never infer setup/regime, quote/reference price, costs, candidate identity, run identity, or missing fills.
-- `paper_run_id` is caller-supplied and non-empty.
-- Use exact E6 `RegistryCandidate` attribution and require matching strategy version on captured ledger evidence.
-- Favorable signed slippage is not a negative cost; E5 execution friction is `max(0, signed_slippage_usd)` summed over successful fills.
-- Any positive orphan failed-entry cost makes candidate/run E5 normalization fail closed.
-- Do not modify sealed C1/C3/C5/C6/E5/E6/E7/E8/E9/E10 behavior.
-- No registry mutation, promotion, trade generation/execution, signing/submission, LIVE enablement, or profitability claim.
-- Every behavior task follows test-first RED -> minimal GREEN -> exact-head CI before advancing.
+The contracts enforce exact enum types, lower-case SHA-256 digests, finite numeric values, paired fill fields, terminal execution coherence, canonical tuple ordering, unique identities, candidate/strategy attribution, and exact schema versioning.
 
----
+TDD evidence:
 
-### Task 1: Immutable E11 evidence contracts
+- RED `8a9cc6f682235aa7a3f516900362e9e6eddd0fe6`, CI `32838526502`: Python failed only because `shreks_brain.paper_evaluation` did not exist; Rust/workspace and repository safety remained GREEN.
+- First implementation `af01de80f8c6e9a460f88d85104a2fb56c45f460`, CI `32838659353`: one model test exposed that a raw string can compare equal to a Python `StrEnum` member, allowing `"FILLED"` through a membership check.
+- Correction `93bd1f60c71a71db8874684b1dba35e7c7c89f08`, CI `32838811305`: switched the affected gate to exact enum typing. Python `1992 passed in 5.84s`; Rust/workspace GREEN; repository safety GREEN.
 
-**Files:**
-- Create: `python/src/shreks_brain/paper_evaluation/models.py`
-- Test: `python/tests/test_paper_evaluation_models.py`
+### C5/C3 paper evidence extraction
 
-**Interfaces:**
-- Consumes: `MarketRegime`, `PaperExecutionState`, `PaperLedgerReasonCode`, `TradeSide`.
-- Produces:
-  - `PAPER_EVALUATION_SCHEMA_VERSION: str = "e11-paper-evaluation-v1"`
-  - `PaperEntryProvenance`
-  - `PaperPositionExecutionEvidence`
-  - `PaperClosedPositionEvidence`
-  - `PaperOrphanCostEvidence`
-  - `PaperEvaluationCapture`
-  - `PaperEvaluationLedger`
+`extract_paper_evaluation_evidence` consumes the actual C5 cycle result and C3 applied ledger update. Economic evidence is emitted only from terminal journal entries that C3 actually applied.
 
-- [ ] **Step 1: Write failing model-contract tests**
+It reconciles journal key, mint, side, execution state, paper policy, strategy, reason code, costs, filled notional, and filled quantity against the execution result. Selected entries preserve original setup/regime and policy provenance. Pending terminal entries may add position execution evidence later without fabricating missing decision provenance. `POSITION_CLOSED` captures the exact final C3 closed-position state.
 
-Create tests that instantiate valid values and independently reject: blank run/candidate/strategy/intent/mint/position/provider strings; malformed candidate/document SHA-256; negative timestamps/sequences/notionals/quantities/costs; invalid enum types; fill fields that are only partially present; successful fill states without positive fill evidence; FAILED execution evidence carrying fill fields; closure with non-positive fill counts or close-before-open; duplicate identities inside capture/ledger; non-canonical execution sequence ordering; and candidate/strategy disagreement inside one capture.
+A failed submission with a booked fee and no position becomes `PaperOrphanCostEvidence`; it is not omitted from the evidence set.
 
-Representative contract:
+TDD evidence:
 
-```python
-entry = PaperEntryProvenance(
-    paper_run_id="paper-run-1",
-    candidate_version="candidate-v1",
-    candidate_fingerprint_sha256="a" * 64,
-    strategy_version="strategy-v1",
-    intent_idempotency_key="entry-1",
-    mint="mint-a",
-    decision_as_of_unix_ms=1_000,
-    setup_name="fresh_launch",
-    market_regime=MarketRegime.HOT,
-    score_policy_version="score-v1",
-    decision_policy_version="decision-v1",
-    paper_execution_policy_version="paper-v1",
-)
-assert entry.market_regime is MarketRegime.HOT
-```
+- RED `1ae3b55c7ac31d86d8e564c865ee8b27855419a8`, CI `32839209927`: Python failed only because `paper_evaluation.engine` was absent; Rust/workspace and repository safety GREEN.
+- GREEN `09c7ab7ae33140293b297563e113fdc700041dfc`, CI `32840026228`: Python `1998 passed in 6.81s`; Rust/workspace GREEN; repository safety GREEN.
 
-- [ ] **Step 2: Commit and run RED CI**
+### E5 trade normalization
 
-Commit only `python/tests/test_paper_evaluation_models.py`. Expected Python failure: `ModuleNotFoundError: No module named 'shreks_brain.paper_evaluation'`; Rust/workspace and repository safety remain GREEN.
+`build_evaluated_trades` emits only complete, reconciled closed trades. Open/incomplete positions are ignored until closure evidence exists; contradictory evidence fails closed.
 
-- [ ] **Step 3: Implement minimal immutable contracts**
-
-Use frozen/slotted dataclasses. `PaperPositionExecutionEvidence` has all fill-specific fields paired: either all are `None` for FAILED no-fill evidence or all required fill fields are present for PARTIAL/FILLED evidence. `PaperEvaluationCapture` and `PaperEvaluationLedger` enforce tuple element exact types, unique identities, and deterministic sequence/order invariants.
-
-- [ ] **Step 4: Run exact-head CI and require GREEN**
-
-Run full repository CI. Do not begin Task 2 until Python, Rust/workspace, and repository safety are GREEN.
-
-- [ ] **Step 5: Commit behavior head**
-
-Commit message: `feat: add E11 paper evaluation evidence models`.
-
----
-
-### Task 2: C5 capture and E5 normalization engine
-
-**Files:**
-- Create: `python/src/shreks_brain/paper_evaluation/engine.py`
-- Test: `python/tests/test_paper_evaluation_engine.py`
-
-**Interfaces:**
-- Consumes:
-  - `RegistryCandidate`
-  - `PaperCycleResult`
-  - Task 1 evidence models
-  - sealed E5 `EvaluatedTrade`
-- Produces:
-
-```python
-def extract_paper_evaluation_evidence(
-    paper_run_id: str,
-    candidate: RegistryCandidate,
-    cycle: PaperCycleResult,
-) -> PaperEvaluationCapture: ...
-
-
-def build_evaluated_trades(
-    paper_run_id: str,
-    candidate_version: str,
-    entry_provenance: tuple[PaperEntryProvenance, ...],
-    executions: tuple[PaperPositionExecutionEvidence, ...],
-    closures: tuple[PaperClosedPositionEvidence, ...],
-    orphan_costs: tuple[PaperOrphanCostEvidence, ...],
-) -> tuple[EvaluatedTrade, ...]: ...
-```
-
-- [ ] **Step 1: Write failing extraction tests**
-
-Build real C5 cycle fixtures using sealed paper-loop APIs. Cover:
-- selected DEFERRED entry emits entry provenance but no economic execution;
-- later pending terminal fill can emit position execution evidence without fabricating missing provenance;
-- immediate entry fill emits both provenance and execution evidence;
-- partial/full exit emits execution evidence;
-- `POSITION_CLOSED` emits closure snapshot from resulting C3 ledger;
-- failed booked exit with network cost is linked to its open position;
-- failed entry with positive booked cost and no position emits orphan-cost evidence;
-- rejected/no-op ledger updates emit no economic evidence;
-- candidate strategy mismatch fails closed.
-
-- [ ] **Step 2: Commit and run RED CI**
-
-Commit test only. Expected Python failure is absent engine function/module; Rust/workspace and repository safety stay GREEN.
-
-- [ ] **Step 3: Implement minimal capture engine**
-
-For each applied ledger update, identify the newly appended journal entry by comparing the terminal result intent key to `update.ledger.entries[-1]`; require exact key/mint/side/policy/strategy agreement. For a close, fetch the exact CLOSED position by `position_id` from the update ledger and copy final C3 accounting fields. Never synthesize a journal event from a result that C3 did not apply.
-
-- [ ] **Step 4: Run extraction tests to GREEN**
-
-Run focused E11 tests, then full CI.
-
-- [ ] **Step 5: Write failing normalization/reconciliation tests**
-
-Create directly constructed E11 evidence for:
-- one complete profitable closed trade;
-- one losing trade;
-- partial buys and partial sells;
-- adverse and favorable slippage;
-- failed linked execution cost included in explicit costs;
-- deterministic output ordering;
-- open/incomplete position ignored;
-- missing entry provenance rejected;
-- mint/candidate/fingerprint/strategy mismatch rejected;
-- BUY opener intent mismatch rejected;
-- duplicate/non-increasing journal sequence rejected;
-- fill-count mismatch rejected;
-- summed explicit-cost mismatch rejected;
-- closure-order mismatch rejected;
-- positive orphan cost rejected.
-
-Assert exact economics:
+Economics are fixed as:
 
 ```text
-entry_notional = sum(successful BUY filled_notional)
-turnover = sum(successful BUY/SELL filled_notional)
-friction = sum(max(0, signed_slippage_usd))
-explicit_cost = sum(all linked booked execution explicit_cost_usd)
-net_pnl = closure.realized_pnl_usd
-gross_pnl = net_pnl + friction + explicit_cost
+entry_notional_usd = sum(successful BUY filled_notional_usd)
+turnover_usd = sum(successful BUY/SELL filled_notional_usd)
+execution_friction_usd = sum(max(0, signed_slippage_usd))
+explicit_cost_usd = sum(all linked booked execution explicit_cost_usd)
+net_pnl_usd = authoritative C3 closure.realized_pnl_usd
+gross_pnl_usd = net_pnl_usd + execution_friction_usd + explicit_cost_usd
 ```
 
-- [ ] **Step 6: Run RED and verify failure is missing normalization behavior**
+Favorable slippage cannot become a negative friction credit. Failed position-linked execution fees remain in explicit costs. Entry provenance must match the opening BUY intent. Journal sequences, fill counts, closure costs, close identity, mint, candidate fingerprint, strategy, and closing sequence must reconcile. Any positive orphan cost for the requested run/candidate blocks normalization.
 
-Do not alter tests to match implementation shortcuts.
+The sealed E5 `EvaluatedTrade` constructor remains the final arithmetic invariant gate.
 
-- [ ] **Step 7: Implement minimal normalization**
+TDD evidence:
 
-Use deterministic grouping by `(paper_run_id, position_id)`. Emit `EvaluatedTrade.position_id` as the original C3 position id, `candidate_mint` from closure/execution reconciliation, setup/regime from matching entry provenance, and authoritative open/close times from closure. Use E5 dataclass construction as the final arithmetic invariant gate.
+- RED `324364126b939dea3f734047df3b189ff3bca9b0`, CI `32840262625`: Python failed only because `build_evaluated_trades` was missing.
+- GREEN `0554dd5c2469d42a49769e52fc0f5e02912f0688`, CI `32840548054`: Python `2017 passed in 7.05s`; Rust/workspace GREEN; repository safety GREEN.
 
-- [ ] **Step 8: Run full exact-head CI and require GREEN**
+### Canonical restart codec
 
-All Python, Rust/workspace, and repository safety lanes must pass before Task 3.
+The evidence document uses exact top-level and nested key sets, enum `.value` strings, compact/sorted canonical JSON, and exactly one trailing physical newline.
 
-- [ ] **Step 9: Commit**
+`document_fingerprint_sha256` is the SHA-256 of canonical document content with that field replaced by 64 zeroes. Decode reconstructs the exact typed ledger first and independently recomputes the digest before accepting persisted state. Unknown/missing fields, malformed enums or SHA values, non-finite numbers, non-canonical order, duplicate identities, and stale fingerprints fail closed.
 
-Commit message: `feat: bridge paper outcomes to E5 trades`.
+TDD evidence:
 
----
+- RED `4a0e1fa39ddef92e8979495ebf5ddba77de981b1`, CI `32840705620`: Python failed only because `paper_evaluation.codec` was missing.
+- Initial implementation `5b6ac1c51e49ef53f780d4afad86945633254b56`, CI `32840863164`: production correctly rejected duplicate identity; one test was over-specific about the error-message word (`"duplicate"` versus the model's `"identities must be unique"`). Result: `2028 passed, 1 failed`.
+- Test-only assertion correction `d765b84ca3466121e35a6253c3d86dff22a18eab`, CI `32841014951`: Python `2029 passed in 6.45s`; Rust/workspace GREEN; repository safety GREEN.
 
-### Task 3: Canonical codec and restart-safe evidence store
+### Append-only restart-safe evidence store
 
-**Files:**
-- Create: `python/src/shreks_brain/paper_evaluation/codec.py`
-- Create: `python/src/shreks_brain/paper_evaluation/store.py`
-- Test: `python/tests/test_paper_evaluation_codec.py`
-- Test: `python/tests/test_paper_evaluation_store.py`
+`PaperEvaluationEvidenceStore` exposes only `load`, `record_capture`, `record_cycle`, and `evaluated_trades`.
 
-**Interfaces:**
-- Produces codec helpers internal to the package for exact document encode/decode, canonical JSON, and SHA-256 document fingerprint.
-- Produces:
+A missing file returns a valid empty sealed ledger without creating a file. Existing state is strict-decoded and fingerprint-verified. New captures are unioned by immutable identity. Exact repeats are byte-for-byte idempotent and do not rewrite the file; an existing identity with different content fails closed. A paper-run ID cannot silently change candidate version, candidate fingerprint, or strategy across cycles.
 
-```python
-class PaperEvaluationEvidenceStore:
-    def load(self) -> PaperEvaluationLedger: ...
-    def record_capture(self, capture: PaperEvaluationCapture) -> PaperEvaluationLedger: ...
-    def record_cycle(
-        self,
-        paper_run_id: str,
-        candidate: RegistryCandidate,
-        cycle: PaperCycleResult,
-    ) -> PaperEvaluationLedger: ...
-    def evaluated_trades(
-        self,
-        paper_run_id: str,
-        candidate_version: str,
-    ) -> tuple[EvaluatedTrade, ...]: ...
-```
+Writes use a sibling `.tmp`, flush, `os.fsync`, and `os.replace`, with best-effort temporary cleanup on write failure. `evaluated_trades` reloads persisted evidence before reconstructing E5 trades, proving restart recovery instead of relying on process memory.
 
-- [ ] **Step 1: Write codec RED tests**
+TDD evidence:
 
-Lock exact document schema, enum `.value` encoding, sorted/compact canonical JSON, one trailing physical newline, exact nested key sets, fingerprint determinism, unknown/missing field rejection, malformed SHA rejection, invalid enum rejection, non-finite numeric rejection, duplicate identity rejection, non-canonical persisted ordering rejection, and stale document fingerprint rejection.
+- RED `c570dcdf674f36f80dcf19b0b45896b97d42d884`, CI `32841189507`: Python failed only because `paper_evaluation.store` was missing; repository safety GREEN.
+- GREEN `6702ded60e75c14c7bf97b028aa6157f2eea9f3a`, CI `32841296902`: Python `2038 passed in 7.13s`; Rust/workspace GREEN; repository safety GREEN.
 
-- [ ] **Step 2: Run RED and implement codec minimally**
+### Public API and authority firewall
 
-The document fingerprint hashes canonical content with `document_fingerprint_sha256` replaced by 64 zeroes, then the physical document stores the computed digest. Decoder reconstructs exact Task 1 dataclasses and independently recomputes the fingerprint.
-
-- [ ] **Step 3: Run focused codec tests GREEN and commit**
-
-Commit message: `feat: encode E11 paper evaluation evidence`.
-
-- [ ] **Step 4: Write store RED tests**
-
-Cover missing-file empty ledger, restart recovery, record-cycle delegation, idempotent repeated capture, conflicting identity rejection, canonical append order, `.tmp` cleanup, atomic replace behavior, tampered-file rejection, and `evaluated_trades` delegation including orphan-cost fail-closed behavior.
-
-- [ ] **Step 5: Run RED and implement store minimally**
-
-Write to `<name>.tmp`, flush, `os.fsync`, `os.replace`, best-effort cleanup on OSError. `record_capture` merges only new immutable evidence by identity; exact repeats are no-ops; conflicts raise `ValueError`.
-
-- [ ] **Step 6: Run full exact-head CI and require GREEN**
-
-Do not advance on partial/focused GREEN only.
-
-- [ ] **Step 7: Commit**
-
-Commit message: `feat: persist E11 paper evaluation evidence`.
-
----
-
-### Task 4: Explicit public API, authority firewall, and immutable seal
-
-**Files:**
-- Create: `python/src/shreks_brain/paper_evaluation/__init__.py`
-- Create: `python/tests/test_paper_evaluation_public_api.py`
-- Modify: `docs/superpowers/plans/2026-08-25-phase-e11-paper-evaluation-bridge.md` only for final verification record after behavior GREEN.
-
-**Interfaces:**
-- Public exports exactly:
+The public package API is exactly:
 
 ```text
 PAPER_EVALUATION_SCHEMA_VERSION
@@ -271,34 +103,45 @@ extract_paper_evaluation_evidence
 build_evaluated_trades
 ```
 
-- [ ] **Step 1: Write public API / authority RED tests**
+The package surface exposes no registry store/status mutation, promotion evaluator/store, trade intent, runtime LIVE switch, signing, or submission capability. A fresh-process import check proves importing `shreks_brain.paper_evaluation` does not eagerly import `sklearn` or `pyarrow`.
 
-Assert the exact `__all__` tuple. Assert `PaperEvaluationEvidenceStore` public callable surface is exactly `load`, `record_capture`, `record_cycle`, `evaluated_trades`. Assert no public names contain authority fragments such as `registry`, `promote`, `promotion`, `trade_intent`, `execute`, `sign`, `submit`, `live`, `delete`, `overwrite`, or `rewrite`.
+TDD evidence:
 
-- [ ] **Step 2: Run RED and implement export-only package API**
+- RED `75d75b8f63c855080247d72d9c9d8f502f24146d`, CI `32841539888`: `3 failed, 2039 passed`; all failures were exactly missing `__all__` / public E11 exports.
+- GREEN behavior head `32c0f7f843e405819e36560f0e6d1c7a3bcab28f`, CI `32841620850`: Python `2042 passed in 7.60s`; Rust/workspace GREEN; repository safety GREEN.
 
-No behavior changes in this step.
+## Cumulative E10 -> E11 scope audit
 
-- [ ] **Step 3: Run full CI to establish behavior head**
+Exact compare: base `f31d34382170b3fac8d5073299c8ef2e7e81b8ca` -> behavior head `32c0f7f843e405819e36560f0e6d1c7a3bcab28f`.
 
-Record exact behavior SHA, CI run id, Python count/time, Rust/workspace result, and repository-safety result.
+Result: ahead by 16 commits, behind by 0. The only changed files are:
 
-- [ ] **Step 4: Cumulative E10 -> E11 scope audit**
+- `docs/superpowers/specs/2026-08-25-phase-e11-paper-evaluation-bridge-design.md`
+- `docs/superpowers/plans/2026-08-25-phase-e11-paper-evaluation-bridge.md`
+- `python/src/shreks_brain/paper_evaluation/__init__.py`
+- `python/src/shreks_brain/paper_evaluation/codec.py`
+- `python/src/shreks_brain/paper_evaluation/engine.py`
+- `python/src/shreks_brain/paper_evaluation/models.py`
+- `python/src/shreks_brain/paper_evaluation/store.py`
+- `python/tests/test_paper_evaluation_codec.py`
+- `python/tests/test_paper_evaluation_engine.py`
+- `python/tests/test_paper_evaluation_models.py`
+- `python/tests/test_paper_evaluation_normalization.py`
+- `python/tests/test_paper_evaluation_public_api.py`
+- `python/tests/test_paper_evaluation_store.py`
 
-Allowed paths are only E11 design/verification docs, `python/src/shreks_brain/paper_evaluation/`, and `python/tests/test_paper_evaluation_*.py`. Any other changed path is a stop-and-investigate condition.
+No sealed C1 paper execution, C3 paper accounting, C5 loop, C6 runtime, E5 evaluation math, E6 registry, E7 shadow, E8 promotion, E9/E10 evidence infrastructure, Rust execution, provider, risk, signing, submission, or LIVE path changed.
 
-- [ ] **Step 5: Rewrite this plan as the final verification record**
+## Authority boundary
 
-Record each RED/GREEN commit and CI run, final behavior head, scope audit, authority boundary, and exact test counts. This documentation update must be the only post-behavior change.
+E11 is evidence infrastructure only. It cannot mutate champion/challenger state, promote a candidate, create or submit an order, sign a transaction, enable LIVE mode, or move capital. Persisted paper evidence remains observational input to later evaluation/promotion decisions.
 
-- [ ] **Step 6: Prove behavior-head -> seal candidate is one commit / one file**
+## Profitability boundary
 
-Compare exact SHAs and require only this verification document to differ.
+E11 closes an evidence-integrity gap; it does **not** prove the current strategy has positive expectancy. A technically valid E11 ledger or `EvaluatedTrade` sequence is not evidence by itself that live-money gates have passed. Phase F remains disabled until the source-of-truth profitability, sample-size, drawdown, cost realism, execution, restart, provider-health, risk-halt, and paper/live-parity criteria are actually satisfied.
 
-- [ ] **Step 7: Run final exact-head CI**
+## Seal procedure
 
-Require Python, Rust/workspace, and repository safety GREEN on the seal candidate.
+Behavior is frozen at `32c0f7f843e405819e36560f0e6d1c7a3bcab28f`.
 
-- [ ] **Step 8: Freeze the stacked draft PR**
-
-Update PR metadata with final seal SHA, behavior SHA, CI identities, test counts, scope audit, and authority boundary. Keep PR draft and intentionally unmerged.
+This verification-record update is the only allowed post-behavior change. The behavior-head -> seal-candidate compare must therefore be exactly one commit and this one documentation file. The final exact-head CI run is recorded in PR #35 after it completes; embedding that future CI identity in this same commit would itself create a new head and invalidate the exact-head seal.
