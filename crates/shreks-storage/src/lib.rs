@@ -2,6 +2,7 @@
 
 mod lifecycle;
 mod outcomes;
+mod safety_evidence;
 mod wallet;
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
@@ -66,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 7,
         name: "wallet_observations",
         sql: include_str!("../migrations/0007_wallet_observations.sql"),
+    },
+    Migration {
+        version: 8,
+        name: "safety_evidence",
+        sql: include_str!("../migrations/0008_safety_evidence.sql"),
     },
 ];
 

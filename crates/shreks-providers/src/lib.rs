@@ -13,7 +13,7 @@ use std::{error::Error, fmt};
 use async_trait::async_trait;
 use shreks_core::{
     DiscoveredToken, PairMarketData, ProviderHealthState, ProviderId, QuoteRequest, QuoteSnapshot,
-    TokenMintState,
+    TokenDistributionRequest, TokenHolderDistribution, TokenMintState,
 };
 use tokio::sync::mpsc;
 
@@ -112,6 +112,17 @@ pub trait ChainDataProvider: Send + Sync {
     fn provider_id(&self) -> ProviderId;
 
     async fn token_mint_state(&self, token_mint: &str) -> Result<TokenMintState, ProviderError>;
+}
+
+/// Read-only owner-distribution evidence boundary.
+#[async_trait]
+pub trait DistributionDataProvider: Send + Sync {
+    fn provider_id(&self) -> ProviderId;
+
+    async fn token_holder_distribution(
+        &self,
+        request: &TokenDistributionRequest,
+    ) -> Result<TokenHolderDistribution, ProviderError>;
 }
 
 /// Raw confirmed-transaction boundary used by protocol-specific verification.

@@ -5,9 +5,13 @@
 //! persistence, pacing, and operational provider-health tracking.
 
 mod runtime;
+mod safety_evidence;
 pub use runtime::{
     build_free_observer, free_observe_provider_plan, ObserveProviderPlan, ObserverRuntimeConfig,
     RuntimeConfigError,
+};
+pub use safety_evidence::{
+    SafetyEvidenceCollector, SafetyEvidenceCycleReport, SafetyEvidenceError, SafetyEvidenceProbe,
 };
 
 use std::{

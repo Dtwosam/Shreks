@@ -36,14 +36,14 @@ fn open_creates_parent_directory_and_configures_sqlite() {
     let diagnostics = db.diagnostics().unwrap();
     assert_eq!(diagnostics.journal_mode, "wal");
     assert!(diagnostics.foreign_keys_enabled);
-    assert_eq!(diagnostics.schema_version, 7);
+    assert_eq!(diagnostics.schema_version, 8);
 
     drop(db);
     cleanup_dir(&root);
 }
 
 #[test]
-fn migrations_create_operational_lifecycle_paper_and_wallet_tables() {
+fn migrations_create_operational_lifecycle_paper_wallet_and_safety_tables() {
     let root = unique_test_dir("tables");
     let db_path = root.join("shreks.db");
 
@@ -65,6 +65,8 @@ fn migrations_create_operational_lifecycle_paper_and_wallet_tables() {
         "candidate_outcome_checkpoints",
         "paper_loop_checkpoints",
         "wallet_observations",
+        "token_holder_distributions",
+        "exit_quote_snapshots",
     ] {
         let count: i64 = connection
             .query_row(
@@ -81,6 +83,8 @@ fn migrations_create_operational_lifecycle_paper_and_wallet_tables() {
         "idx_wallet_observations_mint_time",
         "idx_wallet_observations_wallet_time",
         "idx_wallet_observations_provider_signature",
+        "idx_token_holder_distributions_candidate_time",
+        "idx_exit_quote_snapshots_candidate_time",
     ] {
         let count: i64 = connection
             .query_row(
@@ -103,11 +107,11 @@ fn reopening_database_does_not_reapply_migrations() {
 
     drop(ShreksDb::open(&db_path).unwrap());
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 7);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 8);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
-    for version in [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64] {
+    for version in [1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64, 8_i64] {
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
