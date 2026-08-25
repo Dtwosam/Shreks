@@ -62,22 +62,36 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _load_stored_manifest(release_dir: Path) -> ReleaseManifest:
-    manifest_path = release_dir / _CONTROL_MANIFEST_PATH
-    if manifest_path.is_symlink() or not manifest_path.is_file():
-        raise ReleaseManagerError("stored release manifest is missing or not a regular file")
+def _load_manifest(path: Path, context: str) -> ReleaseManifest:
+    if path.is_symlink() or not path.is_file():
+        raise ReleaseManagerError(f"{context} manifest is missing or not a regular file")
     try:
-        return decode_release_manifest(manifest_path.read_bytes())
+        return decode_release_manifest(path.read_bytes())
     except (OSError, ReleaseBundleError) as exc:
-        raise ReleaseManagerError("stored release manifest verification failed") from exc
+        raise ReleaseManagerError(f"{context} manifest verification failed") from exc
+
+
+def _verify_runtime_venv(release_dir: Path) -> None:
+    venv_dir = release_dir / ".venv"
+    python = venv_dir / "bin" / "python"
+    if venv_dir.is_symlink() or not venv_dir.is_dir():
+        raise ReleaseManagerError("stored release virtualenv is missing or invalid")
+    if python.is_symlink() or not python.is_file():
+        raise ReleaseManagerError("stored release Python executable is missing or symlinked")
+
+    for path in venv_dir.rglob("*"):
+        if path.is_symlink():
+            raise ReleaseManagerError("symlinks are not allowed inside stored release virtualenv")
 
 
 def _verify_stored_release(release_dir: Path) -> ReleaseManifest:
     release_dir = Path(release_dir)
     if release_dir.is_symlink() or not release_dir.is_dir():
         raise ReleaseManagerError("stored release directory is missing or invalid")
+    if stat.S_IMODE(release_dir.stat().st_mode) != 0o755:
+        raise ReleaseManagerError("stored release directory permissions must be 0755")
 
-    manifest = _load_stored_manifest(release_dir)
+    manifest = _load_manifest(release_dir / _CONTROL_MANIFEST_PATH, "stored release")
     if release_dir.name != manifest.source_sha:
         raise ReleaseManagerError("stored release directory does not match source SHA")
 
@@ -90,16 +104,16 @@ def _verify_stored_release(release_dir: Path) -> ReleaseManifest:
             raise ReleaseManagerError(f"stored release payload verification failed: {relative}")
 
     for path in release_dir.rglob("*"):
-        if path.is_dir() and not path.is_symlink():
-            continue
-        if path.is_symlink():
-            raise ReleaseManagerError("symlinks are not allowed inside stored releases")
         relative = path.relative_to(release_dir).as_posix()
         if relative == _CONTROL_MANIFEST_PATH or relative in expected:
             continue
         if relative == ".venv" or relative.startswith(".venv/"):
             continue
+        if path.is_dir() and not path.is_symlink():
+            continue
         raise ReleaseManagerError(f"unexpected stored release file: {relative}")
+
+    _verify_runtime_venv(release_dir)
     return manifest
 
 
@@ -131,85 +145,8 @@ def _find_wheel(release_dir: Path, manifest: ReleaseManifest) -> Path:
     return wheels[0]
 
 
-def stage_release(
-    archive_path: Path,
-    checksum_path: Path,
-    manifest_path: Path,
-    paths: ReleasePaths,
-    *,
-    python_executable: str = "/usr/bin/python3",
-    command_runner: CommandRunner = _default_command_runner,
-) -> Path:
-    try:
-        manifest = verify_release_archive(archive_path, checksum_path, manifest_path)
-    except (OSError, ReleaseBundleError) as exc:
-        raise ReleaseManagerError("release bundle verification failed") from exc
-
-    releases_dir = Path(paths.releases_dir)
-    release_dir = releases_dir / manifest.source_sha
-    releases_dir.mkdir(parents=True, exist_ok=True)
-
-    if release_dir.exists() or release_dir.is_symlink():
-        stored = _verify_stored_release(release_dir)
-        if stored != manifest:
-            raise ReleaseManagerError("existing release content does not match incoming manifest")
-        return release_dir
-
-    staging_dir = Path(
-        tempfile.mkdtemp(prefix=f".staging-{manifest.source_sha}-", dir=releases_dir)
-    )
-    try:
-        _extract_verified_archive(Path(archive_path), staging_dir)
-        stored = _verify_stored_release(staging_dir.with_name(manifest.source_sha)) if False else None
-        del stored
-
-        embedded = _load_stored_manifest_for_staging(staging_dir, manifest.source_sha)
-        if embedded != manifest:
-            raise ReleaseManagerError("staged manifest does not match verified release manifest")
-        _verify_payloads_for_staging(staging_dir, manifest)
-
-        for relative in _RUNTIME_BINARY_PATHS:
-            binary = staging_dir / relative
-            binary.chmod(stat.S_IMODE(binary.stat().st_mode) | 0o755)
-
-        venv_dir = staging_dir / ".venv"
-        command_runner((python_executable, "-m", "venv", str(venv_dir)))
-        wheel = _find_wheel(staging_dir, manifest)
-        command_runner(
-            (
-                str(venv_dir / "bin" / "python"),
-                "-m",
-                "pip",
-                "install",
-                "--no-index",
-                "--no-deps",
-                str(wheel),
-            )
-        )
-
-        if release_dir.exists() or release_dir.is_symlink():
-            raise ReleaseManagerError("release directory appeared during staging")
-        os.replace(staging_dir, release_dir)
-        _verify_stored_release(release_dir)
-        return release_dir
-    except ReleaseManagerError:
-        shutil.rmtree(staging_dir, ignore_errors=True)
-        raise
-    except Exception as exc:
-        shutil.rmtree(staging_dir, ignore_errors=True)
-        raise ReleaseManagerError("release staging failed") from exc
-
-
-def _load_stored_manifest_for_staging(
-    staging_dir: Path, expected_source_sha: str
-) -> ReleaseManifest:
-    manifest_path = staging_dir / _CONTROL_MANIFEST_PATH
-    if manifest_path.is_symlink() or not manifest_path.is_file():
-        raise ReleaseManagerError("staged release manifest is missing or invalid")
-    try:
-        manifest = decode_release_manifest(manifest_path.read_bytes())
-    except (OSError, ReleaseBundleError) as exc:
-        raise ReleaseManagerError("staged release manifest verification failed") from exc
+def _load_staged_manifest(staging_dir: Path, expected_source_sha: str) -> ReleaseManifest:
+    manifest = _load_manifest(staging_dir / _CONTROL_MANIFEST_PATH, "staged release")
     if manifest.source_sha != expected_source_sha:
         raise ReleaseManagerError("staged release source SHA mismatch")
     return manifest
@@ -234,6 +171,109 @@ def _verify_payloads_for_staging(staging_dir: Path, manifest: ReleaseManifest) -
     expected_with_control = set(expected) | {_CONTROL_MANIFEST_PATH}
     if actual != expected_with_control:
         raise ReleaseManagerError("staged release member set does not match manifest")
+
+
+def _current_points_to(current_link: Path, release_dir: Path) -> bool:
+    current_link = Path(current_link)
+    if not current_link.is_symlink():
+        return False
+    try:
+        return current_link.resolve(strict=False) == release_dir.resolve(strict=False)
+    except OSError:
+        return False
+
+
+def _cleanup_incomplete_release(release_dir: Path, current_link: Path) -> None:
+    if not release_dir.exists() and not release_dir.is_symlink():
+        return
+    if _current_points_to(current_link, release_dir):
+        raise ReleaseManagerError("refusing to remove an incomplete release referenced by current")
+    if release_dir.is_symlink():
+        release_dir.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(release_dir, ignore_errors=False)
+
+
+def stage_release(
+    archive_path: Path,
+    checksum_path: Path,
+    manifest_path: Path,
+    paths: ReleasePaths,
+    *,
+    python_executable: str = "/usr/bin/python3",
+    command_runner: CommandRunner = _default_command_runner,
+) -> Path:
+    try:
+        manifest = verify_release_archive(archive_path, checksum_path, manifest_path)
+    except (OSError, ReleaseBundleError) as exc:
+        raise ReleaseManagerError("release bundle verification failed") from exc
+
+    releases_dir = Path(paths.releases_dir)
+    release_dir = releases_dir / manifest.source_sha
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    releases_dir.chmod(0o755)
+
+    if release_dir.exists() or release_dir.is_symlink():
+        stored = _verify_stored_release(release_dir)
+        if stored != manifest:
+            raise ReleaseManagerError("existing release content does not match incoming manifest")
+        return release_dir
+
+    staging_dir = Path(
+        tempfile.mkdtemp(prefix=f".staging-{manifest.source_sha}-", dir=releases_dir)
+    )
+    payload_committed = False
+    try:
+        _extract_verified_archive(Path(archive_path), staging_dir)
+        embedded = _load_staged_manifest(staging_dir, manifest.source_sha)
+        if embedded != manifest:
+            raise ReleaseManagerError("staged manifest does not match verified release manifest")
+        _verify_payloads_for_staging(staging_dir, manifest)
+
+        for relative in _RUNTIME_BINARY_PATHS:
+            binary = staging_dir / relative
+            binary.chmod(stat.S_IMODE(binary.stat().st_mode) | 0o755)
+
+        if release_dir.exists() or release_dir.is_symlink():
+            raise ReleaseManagerError("release directory appeared during staging")
+        staging_dir.chmod(0o755)
+        os.replace(staging_dir, release_dir)
+        payload_committed = True
+
+        venv_dir = release_dir / ".venv"
+        command_runner((python_executable, "-m", "venv", "--copies", str(venv_dir)))
+        wheel = _find_wheel(release_dir, manifest)
+        command_runner(
+            (
+                str(venv_dir / "bin" / "python"),
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                str(wheel),
+            )
+        )
+
+        _verify_stored_release(release_dir)
+        return release_dir
+    except ReleaseManagerError:
+        if payload_committed:
+            _cleanup_incomplete_release(release_dir, paths.current_link)
+        else:
+            shutil.rmtree(staging_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        try:
+            if payload_committed:
+                _cleanup_incomplete_release(release_dir, paths.current_link)
+            else:
+                shutil.rmtree(staging_dir, ignore_errors=True)
+        except ReleaseManagerError:
+            raise
+        except OSError as cleanup_error:
+            raise ReleaseManagerError("release staging failed and cleanup failed") from cleanup_error
+        raise ReleaseManagerError("release staging failed") from exc
 
 
 def _require_managed_release(release_dir: Path, paths: ReleasePaths) -> ReleaseManifest:
