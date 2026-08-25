@@ -334,6 +334,11 @@ def _systemctl(command_runner: CommandRunner, *args: str) -> None:
     command_runner(("systemctl", *args))
 
 
+def _require_runtime_healthy(command_runner: CommandRunner) -> None:
+    for unit_name in _SYSTEMD_UNIT_NAMES:
+        _systemctl(command_runner, "is-active", "--quiet", unit_name)
+
+
 def _rollback_after_failure(
     previous: Path | None,
     failed_release: Path,
@@ -356,7 +361,7 @@ def _rollback_after_failure(
     _atomic_switch(current, previous)
     _systemctl(command_runner, "daemon-reload")
     _systemctl(command_runner, "start", "shreks.target")
-    _systemctl(command_runner, "is-active", "--quiet", "shreks.target")
+    _require_runtime_healthy(command_runner)
 
 
 def activate_release(
@@ -377,7 +382,7 @@ def activate_release(
         _atomic_switch(paths.current_link, release_dir)
         _systemctl(command_runner, "daemon-reload")
         _systemctl(command_runner, "start", "shreks.target")
-        _systemctl(command_runner, "is-active", "--quiet", "shreks.target")
+        _require_runtime_healthy(command_runner)
     except Exception as activation_error:
         try:
             _rollback_after_failure(previous, release_dir, paths, command_runner)
