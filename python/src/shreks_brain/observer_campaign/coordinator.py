@@ -1,9 +1,34 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import hashlib
+import json
 import os
 from pathlib import Path
 import sqlite3
+
+from shreks_brain.paper import PaperQuote
+from shreks_brain.paper_loop import (
+    FreshLaunchSetupInput,
+    PaperCycleInput,
+    PaperEntryCandidate,
+    PaperExitObservation,
+    PaperLoopState,
+)
+from shreks_brain.regime import RecentStrategyPerformance
+from shreks_brain.scoring import score_candidate
+from shreks_brain.setups import assess_fresh_launch
+
+from .assembler import (
+    ObserverFreshLaunchPolicyBundle,
+    assemble_observer_paper_cycle,
+)
+from .models import ObserverPaperRiskEnvironment
+
+
+OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION = (
+    "g1b-observer-paper-campaign-cycle-audit-v1"
+)
 
 
 class ObserverCampaignCoordinatorError(ValueError):
@@ -33,6 +58,38 @@ class ObserverCampaignCandidate:
             "latest_market_observed_at_unix_ms",
             self.latest_market_observed_at_unix_ms,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverPaperCampaignCycleAudit:
+    schema_version: str
+    as_of_unix_ms: int
+    selected_candidate_ids: tuple[int, ...]
+    selected_mints: tuple[str, ...]
+    ranked_entry_mints: tuple[str, ...]
+    component_paper_cycle_fingerprints: tuple[str, ...]
+    aggregate_cycle_fingerprint: str
+
+    def __post_init__(self) -> None:
+        if self.schema_version != OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION:
+            raise ValueError("unsupported observer paper campaign cycle audit schema")
+        _require_non_negative_int("as_of_unix_ms", self.as_of_unix_ms)
+        if not isinstance(self.selected_candidate_ids, tuple) or not all(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in self.selected_candidate_ids
+        ):
+            raise ValueError("selected_candidate_ids must be a tuple of positive integers")
+        _require_unique_non_empty_strings("selected_mints", self.selected_mints)
+        _require_unique_non_empty_strings("ranked_entry_mints", self.ranked_entry_mints)
+        if not set(self.ranked_entry_mints).issubset(set(self.selected_mints)):
+            raise ValueError("ranked_entry_mints must be selected mints")
+        if not isinstance(self.component_paper_cycle_fingerprints, tuple):
+            raise ValueError("component_paper_cycle_fingerprints must be a tuple")
+        if len(self.component_paper_cycle_fingerprints) != len(self.selected_mints):
+            raise ValueError("component fingerprint count must match selected mints")
+        for value in self.component_paper_cycle_fingerprints:
+            _require_sha256("component_paper_cycle_fingerprint", value)
+        _require_sha256("aggregate_cycle_fingerprint", self.aggregate_cycle_fingerprint)
 
 
 _REQUIRED_COLUMNS = {
@@ -215,6 +272,210 @@ class ObserverCampaignCandidateStore:
             ) from error
 
 
+def assemble_observer_paper_campaign_cycle(
+    database_path: str | os.PathLike[str],
+    state: PaperLoopState,
+    as_of_unix_ms: int,
+    policy_bundle: ObserverFreshLaunchPolicyBundle,
+    environment: ObserverPaperRiskEnvironment,
+    selection_policy: ObserverPaperCampaignSelectionPolicy,
+    *,
+    recent_performance: RecentStrategyPerformance | None = None,
+    global_risk_halt: bool,
+) -> tuple[PaperCycleInput, ObserverPaperCampaignCycleAudit]:
+    if type(state) is not PaperLoopState:
+        raise ObserverCampaignCoordinatorError("state must be an exact PaperLoopState")
+    _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+    if type(policy_bundle) is not ObserverFreshLaunchPolicyBundle:
+        raise ObserverCampaignCoordinatorError(
+            "policy_bundle must be an exact ObserverFreshLaunchPolicyBundle"
+        )
+    if type(environment) is not ObserverPaperRiskEnvironment:
+        raise ObserverCampaignCoordinatorError(
+            "environment must be an exact ObserverPaperRiskEnvironment"
+        )
+    if type(selection_policy) is not ObserverPaperCampaignSelectionPolicy:
+        raise ObserverCampaignCoordinatorError(
+            "selection_policy must be an exact ObserverPaperCampaignSelectionPolicy"
+        )
+    if recent_performance is not None and type(recent_performance) is not RecentStrategyPerformance:
+        raise ObserverCampaignCoordinatorError(
+            "recent_performance must be an exact RecentStrategyPerformance or None"
+        )
+    if type(global_risk_halt) is not bool:
+        raise ObserverCampaignCoordinatorError("global_risk_halt must be a boolean")
+
+    store = ObserverCampaignCandidateStore(database_path)
+    required_mints = tuple(
+        managed.exit_state.mint for managed in state.managed_positions
+    )
+    if state.pending_entry is not None:
+        required_mints += (state.pending_entry.intent.mint,)
+
+    required = store.resolve_required_mints(
+        tuple(dict.fromkeys(required_mints)),
+        as_of_unix_ms=as_of_unix_ms,
+    )
+    recent = store.recent_candidates(
+        as_of_unix_ms=as_of_unix_ms,
+        policy=selection_policy,
+    )
+    selected = _merge_selected_candidates(required, recent)
+
+    components: list[tuple[ObserverCampaignCandidate, PaperCycleInput, str]] = []
+    for candidate in selected:
+        candidate_bundle = replace(
+            policy_bundle,
+            entry_quote_identity=replace(
+                policy_bundle.entry_quote_identity,
+                candidate_id=candidate.candidate_id,
+                output_mint=candidate.mint,
+            ),
+        )
+        try:
+            component_cycle, component_audit = assemble_observer_paper_cycle(
+                database_path,
+                state,
+                as_of_unix_ms,
+                candidate_bundle,
+                environment,
+                recent_performance=recent_performance,
+                global_risk_halt=global_risk_halt,
+            )
+        except ValueError as error:
+            raise ObserverCampaignCoordinatorError(
+                f"observer candidate {candidate.candidate_id} assembly failed: {error}"
+            ) from error
+        if component_cycle.as_of_unix_ms != as_of_unix_ms:
+            raise ObserverCampaignCoordinatorError(
+                "component paper cycle timestamp changed during aggregation"
+            )
+        if component_audit.candidate_id != candidate.candidate_id or component_audit.mint != candidate.mint:
+            raise ObserverCampaignCoordinatorError(
+                "component paper cycle attribution changed during aggregation"
+            )
+        components.append(
+            (candidate, component_cycle, component_audit.paper_cycle_fingerprint)
+        )
+
+    entries_by_mint: dict[str, PaperEntryCandidate] = {}
+    exits_by_id: dict[str, PaperExitObservation] = {}
+    quotes_by_mint: dict[str, PaperQuote] = {}
+    candidate_ids_by_mint = {value.mint: value.candidate_id for value in selected}
+
+    for candidate, cycle, _ in components:
+        if len(cycle.entry_candidates) != 1 or cycle.entry_candidates[0].mint != candidate.mint:
+            raise ObserverCampaignCoordinatorError(
+                "component paper cycle must contain exactly its attributed entry candidate"
+            )
+        _insert_unique(entries_by_mint, candidate.mint, cycle.entry_candidates[0], "entry candidate")
+        for observation in cycle.exit_observations:
+            _insert_unique(exits_by_id, observation.position_id, observation, "exit observation")
+        for quote in cycle.quotes:
+            _insert_unique(quotes_by_mint, quote.mint, quote, "paper quote")
+
+    ranked_entries = tuple(
+        sorted(
+            entries_by_mint.values(),
+            key=lambda item: _entry_rank_key(item, candidate_ids_by_mint[item.mint]),
+        )
+    )
+    ranked_mints = tuple(item.mint for item in ranked_entries)
+
+    quote_order = ranked_mints + tuple(
+        candidate.mint for candidate in selected if candidate.mint not in ranked_mints
+    )
+    quotes = tuple(quotes_by_mint[mint] for mint in quote_order if mint in quotes_by_mint)
+    exits = tuple(exits_by_id[key] for key in sorted(exits_by_id))
+
+    try:
+        aggregate = PaperCycleInput(
+            as_of_unix_ms=as_of_unix_ms,
+            entry_candidates=ranked_entries,
+            exit_observations=exits,
+            quotes=quotes,
+        )
+    except ValueError as error:
+        raise ObserverCampaignCoordinatorError(
+            f"aggregate paper cycle is invalid: {error}"
+        ) from error
+
+    component_fingerprints = tuple(value[2] for value in components)
+    audit_payload = {
+        "schema_version": OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION,
+        "as_of_unix_ms": as_of_unix_ms,
+        "selected_candidate_ids": [value.candidate_id for value in selected],
+        "selected_mints": [value.mint for value in selected],
+        "ranked_entry_mints": list(ranked_mints),
+        "component_paper_cycle_fingerprints": list(component_fingerprints),
+    }
+    audit = ObserverPaperCampaignCycleAudit(
+        schema_version=OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION,
+        as_of_unix_ms=as_of_unix_ms,
+        selected_candidate_ids=tuple(value.candidate_id for value in selected),
+        selected_mints=tuple(value.mint for value in selected),
+        ranked_entry_mints=ranked_mints,
+        component_paper_cycle_fingerprints=component_fingerprints,
+        aggregate_cycle_fingerprint=_fingerprint(audit_payload),
+    )
+    return aggregate, audit
+
+
+def _merge_selected_candidates(
+    required: tuple[ObserverCampaignCandidate, ...],
+    recent: tuple[ObserverCampaignCandidate, ...],
+) -> tuple[ObserverCampaignCandidate, ...]:
+    by_mint: dict[str, ObserverCampaignCandidate] = {}
+    ordered: list[ObserverCampaignCandidate] = []
+    for candidate in required + recent:
+        existing = by_mint.get(candidate.mint)
+        if existing is None:
+            by_mint[candidate.mint] = candidate
+            ordered.append(candidate)
+            continue
+        if existing.candidate_id != candidate.candidate_id:
+            raise ObserverCampaignCoordinatorError(
+                f"observer candidate mint '{candidate.mint}' resolved to conflicting identities"
+            )
+    return tuple(ordered)
+
+
+def _entry_rank_key(
+    candidate: PaperEntryCandidate,
+    observer_candidate_id: int,
+) -> tuple[int, float, int, str]:
+    if type(candidate.setup) is not FreshLaunchSetupInput:
+        raise ObserverCampaignCoordinatorError(
+            "G1B V1 entry ordering supports Fresh Launch candidates only"
+        )
+    try:
+        setup = assess_fresh_launch(candidate.features, candidate.setup.policy)
+        score = score_candidate(
+            candidate.features,
+            setup,
+            candidate.regime,
+            candidate.score_policy,
+        )
+    except (TypeError, ValueError) as error:
+        raise ObserverCampaignCoordinatorError(
+            f"entry score reconstruction failed for mint '{candidate.mint}': {error}"
+        ) from error
+    if score.total_score is None:
+        return (1, 0.0, observer_candidate_id, candidate.mint)
+    return (0, -score.total_score, observer_candidate_id, candidate.mint)
+
+
+def _insert_unique(mapping: dict[str, object], key: str, value: object, label: str) -> None:
+    existing = mapping.get(key)
+    if existing is None:
+        mapping[key] = value
+        return
+    if existing != value:
+        raise ObserverCampaignCoordinatorError(
+            f"conflicting duplicate {label} for '{key}'"
+        )
+
+
 def _candidate_from_row(row: tuple[object, ...]) -> ObserverCampaignCandidate:
     if len(row) != 3:
         raise ObserverCampaignCoordinatorError("observer campaign candidate row is malformed")
@@ -242,6 +503,16 @@ def _reject_ambiguous_mints(
         by_mint[candidate.mint] = candidate.candidate_id
 
 
+def _fingerprint(value: object) -> str:
+    payload = json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _require_non_empty_string(name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ObserverCampaignCoordinatorError(f"{name} must be a non-empty string")
@@ -258,3 +529,21 @@ def _require_positive_int(name: str, value: object) -> None:
     _require_non_negative_int(name, value)
     if value == 0:
         raise ObserverCampaignCoordinatorError(f"{name} must be positive")
+
+
+def _require_unique_non_empty_strings(name: str, values: object) -> None:
+    if not isinstance(values, tuple):
+        raise ValueError(f"{name} must be a tuple")
+    if not all(isinstance(value, str) and value.strip() for value in values):
+        raise ValueError(f"{name} must contain non-empty strings")
+    if len(values) != len(set(values)):
+        raise ValueError(f"{name} must not contain duplicates")
+
+
+def _require_sha256(name: str, value: object) -> None:
+    if not isinstance(value, str) or len(value) != 64:
+        raise ValueError(f"{name} must be a 64-character sha256")
+    try:
+        int(value, 16)
+    except ValueError as error:
+        raise ValueError(f"{name} must be hexadecimal sha256") from error
