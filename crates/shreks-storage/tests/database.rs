@@ -127,3 +127,83 @@ fn reopening_database_does_not_reapply_migrations() {
     drop(connection);
     cleanup_dir(&root);
 }
+
+#[test]
+fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence() {
+    let root = unique_test_dir("upgrade-eight-to-nine");
+    let db_path = root.join("shreks.db");
+
+    drop(ShreksDb::open(&db_path).unwrap());
+
+    let connection = Connection::open(&db_path).unwrap();
+    connection
+        .execute_batch(
+            r#"
+            INSERT INTO token_candidates (
+                mint, pair_address, discovery_source, discovered_at_unix_ms, created_at_unix_ms
+            ) VALUES ('LegacyMint111', '', 'helius', 100, 100);
+
+            INSERT INTO exit_quote_snapshots (
+                candidate_id, provider, probe_policy_version, input_mint, output_mint, taker,
+                input_amount, output_amount, minimum_output_amount, slippage_bps,
+                route_available, price_impact_pct, route_labels_json, quoted_at_unix_ms
+            )
+            SELECT id, 'jupiter', 'probe-v1', 'LegacyMint111',
+                   'So11111111111111111111111111111111111111112', 'LegacyTaker111',
+                   '1000', '900', '850', 75, 1, '0.01', '["LegacyRoute"]', 200
+            FROM token_candidates
+            WHERE mint = 'LegacyMint111';
+
+            DROP TABLE paper_quote_snapshots;
+            DELETE FROM schema_migrations WHERE version = 9;
+            "#,
+        )
+        .unwrap();
+    drop(connection);
+
+    let upgraded = ShreksDb::open(&db_path).unwrap();
+    assert_eq!(upgraded.diagnostics().unwrap().schema_version, 9);
+    drop(upgraded);
+
+    let connection = Connection::open(&db_path).unwrap();
+    let candidate_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM token_candidates WHERE mint = 'LegacyMint111'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(candidate_count, 1);
+
+    let exit_quote_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM exit_quote_snapshots WHERE input_mint = 'LegacyMint111'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(exit_quote_count, 1);
+
+    let paper_quote_table_count: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'paper_quote_snapshots'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(paper_quote_table_count, 1);
+
+    for version in [8_i64, 9_i64] {
+        let count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",
+                [version],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "migration {version} should remain singular after upgrade");
+    }
+
+    drop(connection);
+    cleanup_dir(&root);
+}
