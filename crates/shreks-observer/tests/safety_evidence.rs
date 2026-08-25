@@ -50,7 +50,7 @@ fn probe(mint: &str) -> SafetyEvidenceProbe {
     SafetyEvidenceProbe {
         probe_policy_version: "probe-v1".to_owned(),
         distribution_request: TokenDistributionRequest::new(mint, 100, 2).unwrap(),
-        quote_request: QuoteRequest::new(
+        exit_quote_request: QuoteRequest::new(
             mint,
             "So11111111111111111111111111111111111111112",
             1_000,
@@ -58,6 +58,7 @@ fn probe(mint: &str) -> SafetyEvidenceProbe {
             75,
         )
         .unwrap(),
+        entry_quote_request: None,
     }
 }
 
@@ -151,7 +152,11 @@ async fn explicit_collector_persists_successful_holder_and_quote_evidence_idempo
     });
     let quote_provider = Arc::new(StaticQuoteProvider {
         id: ProviderId::Jupiter,
-        result: Ok(quote(&probe.quote_request, ProviderId::Jupiter, 1_100)),
+        result: Ok(quote(
+            &probe.exit_quote_request,
+            ProviderId::Jupiter,
+            1_100,
+        )),
     });
 
     let collector = SafetyEvidenceCollector::new(
@@ -176,6 +181,7 @@ async fn explicit_collector_persists_successful_holder_and_quote_evidence_idempo
     assert_eq!(replay.quote_snapshots_stored, 1);
     assert_eq!(row_count(&db_path, "token_holder_distributions"), 1);
     assert_eq!(row_count(&db_path, "exit_quote_snapshots"), 1);
+    assert_eq!(row_count(&db_path, "paper_quote_snapshots"), 1);
 
     cleanup_dir(&root);
 }
@@ -191,10 +197,14 @@ async fn candidate_identity_must_match_both_probe_requests_before_any_provider_c
         id: ProviderId::Helius,
         result: Ok(distribution("Mint111", ProviderId::Helius, 1_000)),
     });
-    let quote_request = probe("Mint111").quote_request;
+    let exit_quote_request = probe("Mint111").exit_quote_request;
     let quote_provider = Arc::new(StaticQuoteProvider {
         id: ProviderId::Jupiter,
-        result: Ok(quote(&quote_request, ProviderId::Jupiter, 1_100)),
+        result: Ok(quote(
+            &exit_quote_request,
+            ProviderId::Jupiter,
+            1_100,
+        )),
     });
     let collector = SafetyEvidenceCollector::new(
         db,
@@ -205,7 +215,8 @@ async fn candidate_identity_must_match_both_probe_requests_before_any_provider_c
     let wrong_distribution = SafetyEvidenceProbe {
         probe_policy_version: "probe-v1".to_owned(),
         distribution_request: TokenDistributionRequest::new("OtherMint", 100, 2).unwrap(),
-        quote_request: probe("Mint111").quote_request,
+        exit_quote_request: probe("Mint111").exit_quote_request,
+        entry_quote_request: None,
     };
     assert!(collector
         .collect_candidate(candidate_id, "Mint111", &wrong_distribution)
@@ -215,7 +226,7 @@ async fn candidate_identity_must_match_both_probe_requests_before_any_provider_c
     let wrong_quote = SafetyEvidenceProbe {
         probe_policy_version: "probe-v1".to_owned(),
         distribution_request: probe("Mint111").distribution_request,
-        quote_request: QuoteRequest::new(
+        exit_quote_request: QuoteRequest::new(
             "OtherMint",
             "So11111111111111111111111111111111111111112",
             1_000,
@@ -223,6 +234,7 @@ async fn candidate_identity_must_match_both_probe_requests_before_any_provider_c
             75,
         )
         .unwrap(),
+        entry_quote_request: None,
     };
     assert!(collector
         .collect_candidate(candidate_id, "Mint111", &wrong_quote)
@@ -231,6 +243,7 @@ async fn candidate_identity_must_match_both_probe_requests_before_any_provider_c
 
     assert_eq!(row_count(&db_path, "token_holder_distributions"), 0);
     assert_eq!(row_count(&db_path, "exit_quote_snapshots"), 0);
+    assert_eq!(row_count(&db_path, "paper_quote_snapshots"), 0);
     cleanup_dir(&root);
 }
 
@@ -252,7 +265,11 @@ async fn provider_failures_and_misattributed_results_never_synthesize_evidence_r
     });
     let quote_provider = Arc::new(StaticQuoteProvider {
         id: ProviderId::Jupiter,
-        result: Ok(quote(&probe.quote_request, ProviderId::Helius, 1_100)),
+        result: Ok(quote(
+            &probe.exit_quote_request,
+            ProviderId::Helius,
+            1_100,
+        )),
     });
     let collector = SafetyEvidenceCollector::new(
         db,
@@ -270,6 +287,7 @@ async fn provider_failures_and_misattributed_results_never_synthesize_evidence_r
     assert_eq!(report.quote_provider_failures, 1);
     assert_eq!(row_count(&db_path, "token_holder_distributions"), 0);
     assert_eq!(row_count(&db_path, "exit_quote_snapshots"), 0);
+    assert_eq!(row_count(&db_path, "paper_quote_snapshots"), 0);
 
     cleanup_dir(&root);
 }
@@ -282,7 +300,7 @@ async fn explicit_route_unavailable_result_is_persisted_as_successful_quote_evid
     let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
     let probe = probe("Mint111");
 
-    let mut unavailable = quote(&probe.quote_request, ProviderId::Jupiter, 1_200);
+    let mut unavailable = quote(&probe.exit_quote_request, ProviderId::Jupiter, 1_200);
     unavailable.output_amount = 0;
     unavailable.minimum_output_amount = 0;
     unavailable.price_impact_pct = None;
@@ -313,6 +331,14 @@ async fn explicit_route_unavailable_result_is_persisted_as_successful_quote_evid
         )
         .unwrap();
     assert_eq!(value, 0);
+    let paper_value: i64 = connection
+        .query_row(
+            "SELECT route_available FROM paper_quote_snapshots WHERE candidate_id = ?1 AND purpose = 'exit'",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(paper_value, 0);
     cleanup_dir(&root);
 }
 

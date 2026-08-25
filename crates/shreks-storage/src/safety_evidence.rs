@@ -1,7 +1,7 @@
 use std::fmt::Write as _;
 
 use rusqlite::{params, OptionalExtension};
-use shreks_core::{QuoteRequest, QuoteSnapshot, TokenHolderDistribution};
+use shreks_core::{QuotePurpose, QuoteRequest, QuoteSnapshot, TokenHolderDistribution};
 
 use crate::{ShreksDb, StorageError};
 
@@ -38,9 +38,12 @@ impl ShreksDb {
         let candidate_mint = safety_candidate_mint(self, candidate_id)?;
         validate_holder_distribution(distribution, &candidate_mint)?;
 
-        let accounts_scanned = safety_usize_as_i64(distribution.accounts_scanned, "holder accounts_scanned")?;
-        let unique_owners = safety_usize_as_i64(distribution.unique_owners, "holder unique_owners")?;
-        let pages_scanned = safety_usize_as_i64(distribution.pages_scanned, "holder pages_scanned")?;
+        let accounts_scanned =
+            safety_usize_as_i64(distribution.accounts_scanned, "holder accounts_scanned")?;
+        let unique_owners =
+            safety_usize_as_i64(distribution.unique_owners, "holder unique_owners")?;
+        let pages_scanned =
+            safety_usize_as_i64(distribution.pages_scanned, "holder pages_scanned")?;
         let complete = i64::from(distribution.complete);
         let expected = StoredHolderEvidence {
             reported_total_accounts: distribution.reported_total_accounts.to_string(),
@@ -228,6 +231,113 @@ impl ShreksDb {
         )?;
         Ok(())
     }
+
+    /// Persist one purpose-attributed read-only quote for paper-proof replay.
+    /// Purpose is part of semantic identity; exact replays are no-ops and
+    /// contradictory replays fail closed. Direction policy is enforced by the
+    /// E15 collector rather than this storage boundary.
+    pub fn insert_paper_quote_snapshot(
+        &self,
+        candidate_id: i64,
+        purpose: QuotePurpose,
+        probe_policy_version: &str,
+        request: &QuoteRequest,
+        snapshot: &QuoteSnapshot,
+    ) -> Result<(), StorageError> {
+        let candidate_mint = safety_candidate_mint(self, candidate_id)?;
+        validate_paper_quote(
+            probe_policy_version,
+            request,
+            snapshot,
+            &candidate_mint,
+        )?;
+
+        let route_labels_json = encode_route_labels(&snapshot.route_labels)?;
+        let expected = StoredQuoteEvidence {
+            output_amount: snapshot.output_amount.to_string(),
+            minimum_output_amount: snapshot.minimum_output_amount.to_string(),
+            route_available: i64::from(snapshot.route_available),
+            price_impact_pct: snapshot.price_impact_pct.clone(),
+            route_labels_json,
+        };
+
+        let existing = self
+            .connection
+            .query_row(
+                r#"SELECT output_amount, minimum_output_amount, route_available,
+                          price_impact_pct, route_labels_json
+                   FROM paper_quote_snapshots
+                   WHERE candidate_id = ?1
+                     AND purpose = ?2
+                     AND provider = ?3
+                     AND probe_policy_version = ?4
+                     AND input_mint = ?5
+                     AND output_mint = ?6
+                     AND taker = ?7
+                     AND input_amount = ?8
+                     AND slippage_bps = ?9
+                     AND quoted_at_unix_ms = ?10"#,
+                params![
+                    candidate_id,
+                    purpose.as_str(),
+                    snapshot.provider.as_str(),
+                    probe_policy_version,
+                    request.input_mint.as_str(),
+                    request.output_mint.as_str(),
+                    request.taker.as_str(),
+                    request.amount.to_string(),
+                    i64::from(request.slippage_bps),
+                    snapshot.quoted_at_unix_ms,
+                ],
+                |row| {
+                    Ok(StoredQuoteEvidence {
+                        output_amount: row.get(0)?,
+                        minimum_output_amount: row.get(1)?,
+                        route_available: row.get(2)?,
+                        price_impact_pct: row.get(3)?,
+                        route_labels_json: row.get(4)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        if let Some(existing) = existing {
+            if existing == expected {
+                return Ok(());
+            }
+            return Err(StorageError::InvalidData(format!(
+                "paper quote replay contradicts stored evidence for candidate {candidate_id}, purpose '{}', at {}",
+                purpose.as_str(),
+                snapshot.quoted_at_unix_ms
+            )));
+        }
+
+        self.connection.execute(
+            r#"INSERT INTO paper_quote_snapshots (
+                   candidate_id, purpose, provider, probe_policy_version, input_mint, output_mint,
+                   taker, input_amount, output_amount, minimum_output_amount, slippage_bps,
+                   route_available, price_impact_pct, route_labels_json, quoted_at_unix_ms
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"#,
+            params![
+                candidate_id,
+                purpose.as_str(),
+                snapshot.provider.as_str(),
+                probe_policy_version,
+                request.input_mint.as_str(),
+                request.output_mint.as_str(),
+                request.taker.as_str(),
+                request.amount.to_string(),
+                expected.output_amount,
+                expected.minimum_output_amount,
+                i64::from(request.slippage_bps),
+                expected.route_available,
+                expected.price_impact_pct,
+                expected.route_labels_json,
+                snapshot.quoted_at_unix_ms,
+            ],
+        )?;
+        Ok(())
+    }
 }
 
 fn safety_candidate_mint(db: &ShreksDb, candidate_id: i64) -> Result<String, StorageError> {
@@ -394,6 +504,83 @@ fn validate_exit_quote(
     }
     for label in &snapshot.route_labels {
         safety_non_blank("exit quote route label", label)?;
+    }
+    Ok(())
+}
+
+fn validate_paper_quote(
+    probe_policy_version: &str,
+    request: &QuoteRequest,
+    snapshot: &QuoteSnapshot,
+    candidate_mint: &str,
+) -> Result<(), StorageError> {
+    safety_non_blank("paper quote probe policy version", probe_policy_version)?;
+    safety_non_blank("paper quote input mint", &request.input_mint)?;
+    safety_non_blank("paper quote output mint", &request.output_mint)?;
+    safety_non_blank("paper quote taker", &request.taker)?;
+    if request.input_mint == request.output_mint {
+        return Err(StorageError::InvalidData(
+            "paper quote input and output mints must differ".to_owned(),
+        ));
+    }
+    if request.amount == 0 {
+        return Err(StorageError::InvalidData(
+            "paper quote input amount must be positive".to_owned(),
+        ));
+    }
+    if request.slippage_bps > 10_000 {
+        return Err(StorageError::InvalidData(
+            "paper quote slippage must be within 0..=10000 bps".to_owned(),
+        ));
+    }
+    if request.input_mint != candidate_mint && request.output_mint != candidate_mint {
+        return Err(StorageError::InvalidData(format!(
+            "paper quote request is not attributed to candidate mint '{candidate_mint}'"
+        )));
+    }
+    if snapshot.input_mint != request.input_mint
+        || snapshot.output_mint != request.output_mint
+        || snapshot.input_amount != request.amount
+        || snapshot.slippage_bps != request.slippage_bps
+    {
+        return Err(StorageError::InvalidData(
+            "paper quote snapshot does not match originating request".to_owned(),
+        ));
+    }
+    if snapshot.quoted_at_unix_ms < 0 {
+        return Err(StorageError::InvalidData(
+            "paper quote timestamp must be nonnegative".to_owned(),
+        ));
+    }
+    if snapshot.minimum_output_amount > snapshot.output_amount {
+        return Err(StorageError::InvalidData(
+            "paper quote minimum output cannot exceed output amount".to_owned(),
+        ));
+    }
+    if snapshot.route_available && snapshot.output_amount == 0 {
+        return Err(StorageError::InvalidData(
+            "available paper quote route requires positive output amount".to_owned(),
+        ));
+    }
+    if snapshot.route_available && snapshot.route_labels.is_empty() {
+        return Err(StorageError::InvalidData(
+            "available paper quote route requires route labels".to_owned(),
+        ));
+    }
+    if let Some(value) = snapshot.price_impact_pct.as_deref() {
+        let parsed = value.parse::<f64>().map_err(|error| {
+            StorageError::InvalidData(format!(
+                "paper quote price impact is not numeric: {error}"
+            ))
+        })?;
+        if !parsed.is_finite() || parsed < 0.0 {
+            return Err(StorageError::InvalidData(
+                "paper quote price impact must be finite and nonnegative".to_owned(),
+            ));
+        }
+    }
+    for label in &snapshot.route_labels {
+        safety_non_blank("paper quote route label", label)?;
     }
     Ok(())
 }

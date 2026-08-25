@@ -6,7 +6,7 @@
 **System type:** Autonomous memecoin trading system  
 **Architecture:** Rust + Python  
 **Status:** Implementation in progress; architecture controlled by this source of truth  
-**Last updated:** 2026-08-24
+**Last updated:** 2026-08-25
 
 ---
 
@@ -890,7 +890,263 @@ Initial real-money deployment, when reached, must use deliberately limited capit
 
 ---
 
-## 21. Scope Explicitly Deferred
+## 21. Production Runtime, Monitoring, and Operations
+
+The finished Shreks system must **not run continuously on GitHub**. GitHub is the source-control and delivery control plane: code lives there, changes are reviewed there, CI/tests run there, releases are recorded there, and deployment can be triggered from there. The actual Shreks processes must run continuously on a dedicated server.
+
+The deployment/monitoring architecture is not yet sealed and should be built after the trading/proof path is finished enough to justify production operations work.
+
+### 21.1 Initial runtime architecture
+
+The initial production setup should be:
+
+```text
+                    GITHUB
+          code / PRs / tests / releases
+                       |
+                       | deploy
+                       v
+             +------------------+
+             |  SHREKS SERVER   |
+             |   Linux VPS      |
+             |                  |
+             | Rust Observer    |
+Solana/APIs ->| Safety Collector |
+             | Paper/Live Loop  |
+             | Risk Engine      |
+             | SQLite database  |
+             | Evidence stores  |
+             +--------+---------+
+                      |
+            monitoring / alerts
+                      |
+        +-------------+-------------+
+        |                           |
+        v                           v
+   Web dashboard              Phone alerts
+   Grafana/Shreks UI          Telegram/etc.
+```
+
+For the first production version, the whole system should run on **one dedicated Linux VPS**, with Europe as the initial preference unless measured network/provider behavior justifies another region.
+
+A suitable first-host layout is:
+
+```text
+Ubuntu VPS
+|
++-- shreks-observer
++-- shreks-safety-evidence
++-- shreks-paper/live-runner
++-- shreks-monitor
++-- SQLite database
++-- evidence/checkpoint files
++-- monitoring stack
+```
+
+Services should run under **Docker Compose or systemd** and automatically restart after a machine reboot or process crash.
+
+The intended deployment flow is:
+
+```text
+code change
+   -> GitHub PR
+   -> tests all GREEN
+   -> approved release
+   -> GitHub deploys release to VPS
+   -> VPS keeps Shreks running 24/7
+```
+
+GitHub is therefore the software factory/control plane, not the continuously running trading machine.
+
+### 21.2 Operator dashboard
+
+The operator should not need to SSH into the server and manually read logs for normal monitoring. Shreks should expose a **private authenticated web dashboard**, for example at a private operator domain such as `https://shreks.<operator-domain>`.
+
+The main dashboard should expose at least:
+
+**System**
+
+- running state,
+- uptime,
+- observer health,
+- Helius health,
+- Jupiter health,
+- other required provider health,
+- market-data freshness/age,
+- latest checkpoint,
+- accounting reconciliation state.
+
+**Trading**
+
+- current mode,
+- candidates observed/discovered,
+- candidates passing safety,
+- trades entered,
+- open positions.
+
+**Performance**
+
+- realized PnL,
+- unrealized PnL,
+- net expectancy,
+- profit factor,
+- maximum drawdown,
+- costs, fees, and slippage.
+
+**Proof**
+
+- paper-trade count versus required evidence,
+- distinct tokens/mints represented,
+- proof-gate state such as `INSUFFICIENT` or `SUFFICIENT`,
+- promotion state,
+- live-trading enabled/disabled state.
+
+**Risk**
+
+- capital deployed,
+- daily loss,
+- drawdown,
+- kill-switch state,
+- risk-halt state.
+
+### 21.3 Individual-trade drill-down
+
+The operator must be able to inspect an individual paper/live trade and see both **what Shreks did** and **why it did it**.
+
+The trade view should expose, where applicable:
+
+- token,
+- observation time,
+- why Shreks liked the setup,
+- safety assessment,
+- features,
+- regime,
+- score,
+- decision,
+- risk sizing,
+- entry quote,
+- actual simulated/live fill,
+- exit reason,
+- fees,
+- slippage,
+- PnL.
+
+Monitoring must not only show outcomes; it must make the decision path understandable from stored evidence.
+
+### 21.4 Phone alerts
+
+The dashboard is for inspection. Critical operational/trading events should also be pushed automatically to the operator.
+
+Alerts should include at least:
+
+- Shreks stopped running,
+- market data became stale,
+- Helius/Jupiter/required-provider failure persists,
+- database/checkpoint problem,
+- accounting does not reconcile,
+- risk kill switch activates,
+- daily-loss or drawdown halt activates,
+- a paper/live position opens,
+- a position closes with its PnL,
+- an unusually bad fill/slippage event occurs,
+- paper proof becomes sufficient,
+- a challenger fails proof,
+- eventually, any live-money transaction.
+
+**Telegram** is a practical first notification channel. Email, Discord, or Slack may also be used. This is alerting; it does not make Telegram an authoritative trading control surface.
+
+### 21.5 Emergency live controls
+
+Before live trading is legitimately enabled, the dashboard should make the state obvious, for example:
+
+```text
+LIVE TRADING: DISABLED
+```
+
+When live trading is legitimately enabled, the operator dashboard should provide at least:
+
+```text
+LIVE TRADING: ENABLED
+
+[ HALT NEW ENTRIES ]
+[ EMERGENCY KILL SWITCH ]
+```
+
+The dashboard must **not bypass the risk engine**. Any halt or kill-switch action must write through the controlled risk/runtime path.
+
+### 21.6 Crash/restart recovery
+
+Operational state must survive process or server crashes. If the host dies and restarts, Shreks should recover or reconcile at least:
+
+```text
+last observer state
++
+open paper/live positions
++
+ledger
++
+processed intent IDs
++
+risk state
++
+E11 evidence
++
+latest checkpoint
+      ->
+same state before/after restart
+```
+
+A restart must not erase Shreks' memory, duplicate actions, silently change accounting, or lose required proof state.
+
+### 21.7 Four monitoring layers
+
+Monitoring should be separated into four layers:
+
+| Layer | What the operator sees |
+| --- | --- |
+| **System** | uptime, CPU/RAM/disk, provider health, restarts |
+| **Trading** | observations, scores, decisions, entries, exits |
+| **Money** | PnL, fees, slippage, drawdown, exposure |
+| **Proof/Risk** | sample size, expectancy, E12 gates, halts, accounting |
+
+This should answer both whether Shreks is technically healthy and whether it is making money safely.
+
+### 21.8 GitHub's continuing role
+
+Even though GitHub does not run the bot continuously, it remains important for:
+
+- source code,
+- every version of the strategy,
+- tests,
+- CI history,
+- release history,
+- deployment workflow,
+- sealed proof phases,
+- rollback points.
+
+A deployed version must remain traceable to the exact code/release that produced its behavior so a bad version can be rolled back.
+
+### 21.9 Runtime secret rule
+
+When live money is eventually enabled, wallet/private signing credentials must **never** live in the GitHub repository.
+
+They belong in the runtime server's protected secret store/environment with the smallest practical permissions. GitHub may deploy the application without storing the trading wallet key in source control.
+
+### 21.10 Operations build sequence
+
+The trading/proof path remains:
+
+`observer -> evidence -> strategy decision -> paper execution -> restart -> evaluation -> proof`
+
+After the proof machinery is sealed, the next major operational layer should be:
+
+`deployment -> 24/7 supervisor -> telemetry -> dashboard -> alerts -> backup/recovery`
+
+The intended end state is that the operator can open Shreks from a phone and see what it is doing, its PnL, its health, why it took each trade, and whether a safety/proof gate is blocking it, while the actual bot runs 24/7 on its own server and GitHub remains the source/testing/deployment control plane.
+
+---
+
+## 22. Scope Explicitly Deferred
 
 Do not add these until core performance requires them:
 
@@ -912,7 +1168,7 @@ Do not add these until core performance requires them:
 
 ---
 
-## 22. Source of Truth Hierarchy
+## 23. Source of Truth Hierarchy
 
 When project documents conflict, use this order:
 
@@ -926,7 +1182,7 @@ If implementation discoveries require changing architecture, update the source o
 
 ---
 
-## 23. Definition of Success
+## 24. Definition of Success
 
 Shreks is successful when it can:
 
