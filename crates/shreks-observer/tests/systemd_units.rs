@@ -1,5 +1,6 @@
 const OBSERVE_SERVICE: &str = include_str!("../../../deploy/systemd/shreks-observe.service");
 const EVIDENCE_SERVICE: &str = include_str!("../../../deploy/systemd/shreks-paper-evidence.service");
+const CAMPAIGN_SERVICE: &str = include_str!("../../../deploy/systemd/shreks-paper-campaign.service");
 const SHREKS_TARGET: &str = include_str!("../../../deploy/systemd/shreks.target");
 const README: &str = include_str!("../../../deploy/systemd/README.md");
 
@@ -47,28 +48,52 @@ fn paper_evidence_service_runs_new_daemon_under_non_root_supervision() {
 }
 
 #[test]
-fn target_groups_observer_and_paper_evidence_services() {
-    assert!(SHREKS_TARGET.contains("Wants=shreks-observe.service shreks-paper-evidence.service"));
+fn paper_campaign_service_runs_sealed_python_runtime_under_non_root_supervision() {
+    assert_common_service_contract(CAMPAIGN_SERVICE);
+    assert!(CAMPAIGN_SERVICE.contains(
+        "ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime"
+    ));
+    assert!(CAMPAIGN_SERVICE.contains("Environment=PYTHONDONTWRITEBYTECODE=1"));
+    assert!(CAMPAIGN_SERVICE.contains("ReadWritePaths=/var/lib/shreks"));
+    assert!(CAMPAIGN_SERVICE.contains("WantedBy=shreks.target"));
+    assert!(!CAMPAIGN_SERVICE.contains("SHREKS_PAPER_CAMPAIGN_MAX_CYCLES="));
+}
+
+#[test]
+fn target_groups_observer_evidence_and_paper_campaign_services() {
+    assert!(SHREKS_TARGET.contains(
+        "Wants=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service"
+    ));
     assert!(SHREKS_TARGET.contains("After=network-online.target"));
     assert!(SHREKS_TARGET.contains("WantedBy=multi-user.target"));
 }
 
 #[test]
-fn operator_runbook_preserves_persistent_paths_and_runtime_secret_boundary() {
+fn operator_runbook_preserves_persistent_paths_runtime_secret_boundary_and_release_python() {
     for required in [
         "/opt/shreks/current",
+        "/opt/shreks/current/.venv/bin/python",
+        "python3 -m venv .venv",
+        ".venv/bin/python -m pip install ./python",
         "/etc/shreks/shreks.env",
         "chmod 600 /etc/shreks/shreks.env",
+        "SHREKS_PAPER_CAMPAIGN_OBSERVER_DB_PATH=/var/lib/shreks/shreks.db",
+        "SHREKS_PAPER_CAMPAIGN_E11_PATH=/var/lib/shreks/paper-evaluation-e11.json",
+        "SHREKS_PAPER_CAMPAIGN_MANIFEST_PATH=/etc/shreks/paper-campaign.json",
         "systemctl daemon-reload",
         "systemctl enable --now shreks.target",
         "systemctl status shreks-observe",
         "systemctl status shreks-paper-evidence",
+        "systemctl status shreks-paper-campaign",
         "journalctl -u shreks-observe",
         "journalctl -u shreks-paper-evidence",
+        "journalctl -u shreks-paper-campaign",
         "LIVE TRADING: DISABLED",
     ] {
         assert!(README.contains(required), "missing runbook instruction: {required}");
     }
     assert!(!README.contains("HELIUS_API_KEY=example"));
     assert!(!README.contains("JUPITER_API_KEY=example"));
+    assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_MAX_SLIPPAGE_BPS="));
+    assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_RISK_LIMIT_USD="));
 }

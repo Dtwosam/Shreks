@@ -1,0 +1,24 @@
+[Unit]
+Description=Shreks paper campaign runtime
+After=network-online.target shreks-observe.service shreks-paper-evidence.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=shreks
+Group=shreks
+WorkingDirectory=/opt/shreks/current
+EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shreks
+UMask=0077
+
+[Install]
+WantedBy=shreks.target
