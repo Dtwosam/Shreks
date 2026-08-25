@@ -235,7 +235,7 @@ def test_decoder_rejects_noncanonical_execution_order() -> None:
 def test_decoder_rejects_duplicate_identity() -> None:
     document = build_paper_evaluation_document(_ledger())
     document["entry_provenance"].append(dict(document["entry_provenance"][0]))
-    with pytest.raises(ValueError, match="duplicate"):
+    with pytest.raises(ValueError, match="unique"):
         decode_paper_evaluation_document(document)
 
 
