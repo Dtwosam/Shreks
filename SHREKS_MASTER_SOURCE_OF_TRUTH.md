@@ -925,7 +925,273 @@ Initial real-money deployment, when reached, must use deliberately limited capit
 
 ---
 
-## 21. Scope Explicitly Deferred
+## 21. Production Operations and Monitoring Architecture
+
+This layer is required for the finished autonomous system, but implementation remains sequenced **after the trading/proof path is sealed enough to justify operating infrastructure**. Monitoring must make Shreks understandable and controllable without becoming a second trading brain or an authoritative state store.
+
+### 21.1 GitHub is the control plane, not the runtime
+
+GitHub remains responsible for:
+
+- source code,
+- pull requests and review,
+- automated tests and CI history,
+- release history,
+- sealed proof phases and immutable verification points,
+- deployment workflows,
+- rollback points.
+
+The intended delivery path is:
+
+`code change -> PR -> tests GREEN -> approved/sealed release -> deploy to Shreks host -> host runs 24/7`
+
+GitHub must not be treated as the continuously running trading machine.
+
+### 21.2 Initial production host
+
+For the first production deployment, Shreks should run on **one dedicated Linux VPS/host with persistent storage**, preferably in Europe unless measured network/provider behavior gives a reason to choose another region. An Ubuntu-class Linux host is a suitable baseline.
+
+The initial host may contain:
+
+- `shreks-observer` / Rust observer,
+- safety-evidence collection,
+- Python paper/live runner and decision brain,
+- risk engine runtime,
+- SQLite operational database,
+- Parquet/research storage and exports,
+- evidence/checkpoint files,
+- monitoring/telemetry agent,
+- backup/recovery jobs.
+
+Services should be supervised by `systemd` or Docker Compose and automatically restart after process failure or host reboot. The exact supervisor, VPS vendor, and dashboard technology are operational choices, not trading-strategy dependencies.
+
+### 21.3 Operator dashboard
+
+The operator must not need to SSH into the host and manually inspect logs to understand normal operation. A private authenticated dashboard should be provided, for example at a private domain such as `https://shreks.<operator-domain>` once deployment exists.
+
+The top-level dashboard should expose at least four classes of information.
+
+**System**
+
+- running/halted state,
+- uptime,
+- observer health,
+- provider health including Helius/Jupiter and other active providers,
+- market-data age/freshness,
+- last durable checkpoint,
+- restart count/recent recovery state,
+- CPU/RAM/disk where useful,
+- accounting reconciliation state.
+
+**Trading**
+
+- operating mode: observe / paper / shadow / live / halted,
+- candidates observed/discovered,
+- candidates passing safety,
+- decisions generated,
+- trades entered,
+- open positions,
+- recent entries/exits.
+
+**Performance / Money**
+
+- realized PnL,
+- unrealized PnL,
+- net expectancy after costs,
+- profit factor,
+- max drawdown,
+- fees, slippage and other execution costs,
+- capital deployed / exposure,
+- daily realized loss.
+
+**Proof / Risk**
+
+- independent paper-trade count,
+- distinct tokens/mints represented,
+- time-span/evidence coverage,
+- proof-gate state such as `INSUFFICIENT` / `SUFFICIENT`,
+- promotion state,
+- live-trading enabled/disabled state,
+- kill-switch state,
+- risk-halt state,
+- E11/E12 evaluation/gate summaries and reproducibility status.
+
+The dashboard may be implemented as a small Shreks UI, Grafana-backed view, or another lightweight authenticated operator surface. A large or sophisticated dashboard remains deferred until core performance evidence warrants it.
+
+### 21.4 Per-trade explainability
+
+The operator must be able to drill into an individual paper/live trade and reconstruct both **what Shreks did** and **why it did it**. The trade view should expose, where applicable:
+
+- token/mint,
+- observation/decision timestamp,
+- why the setup became eligible,
+- safety assessment and reasons,
+- point-in-time feature vector/schema version,
+- regime,
+- setup,
+- score,
+- decision and structured reasons,
+- risk sizing,
+- entry quote and quote purpose,
+- simulated or actual fill,
+- position-management decisions,
+- exit reason,
+- fees,
+- slippage/price impact,
+- realized PnL,
+- strategy/model version,
+- relevant evidence/checkpoint references.
+
+A monitoring UI must not invent explanations that are absent from durable decision evidence.
+
+### 21.5 Alerts and phone notifications
+
+The dashboard is for inspection; important operational or trading events should be pushed automatically. Alert conditions should include at least:
+
+- Shreks process/service stopped unexpectedly,
+- market data became materially stale,
+- Helius/Jupiter/other required provider failure persists,
+- database/checkpoint/evidence-store failure,
+- accounting no longer reconciles,
+- risk kill switch activates,
+- daily-loss or drawdown halt activates,
+- a paper/live position opens,
+- a paper/live position closes with its PnL and costs,
+- unusually bad fill/slippage/price-impact behavior,
+- paper proof becomes sufficient under the active gate,
+- a challenger fails or is rejected by proof/evaluation,
+- eventually, any live-money transaction or execution/reconciliation anomaly.
+
+Telegram is a practical first alert transport. Email, Discord, or Slack may be added or substituted. This is **alerting only**; a Telegram trading UI or command surface remains out of scope unless separately approved.
+
+### 21.6 Emergency operator controls
+
+When live mode is eventually allowed, the dashboard must make live state unmistakable. Before promotion it should visibly show that live trading is disabled. Once live is legitimately enabled, operator controls should include at least:
+
+- `HALT NEW ENTRIES`,
+- `EMERGENCY KILL SWITCH`.
+
+These controls must write through the controlled runtime/risk authority path. The dashboard must never bypass the risk engine, construct trades independently, or mutate authoritative accounting directly.
+
+### 21.7 Four monitoring layers
+
+Operational monitoring should remain conceptually separated into:
+
+1. **System** — uptime, CPU/RAM/disk, provider health, freshness, restarts, checkpoints.
+2. **Trading** — observations, scores, decisions, entries, position management, exits.
+3. **Money** — PnL, fees, slippage, drawdown, exposure, reconciliation.
+4. **Proof/Risk** — sample size, expectancy, E12 gates, halts, accounting integrity, promotion/live state.
+
+This separation is intended to answer both: **"is Shreks technically healthy?"** and **"is it making money safely and with enough proof?"**
+
+### 21.8 Crash/restart recovery contract
+
+If the runtime host dies and restarts, the recovery path must restore or reconcile, at minimum:
+
+- last observer/event-ingestion state,
+- open paper/live positions,
+- authoritative ledger/accounting,
+- processed intent/idempotency IDs,
+- risk state and active halts,
+- mode / live-enable state,
+- E11/evaluation evidence needed by the active campaign,
+- latest durable checkpoint,
+- provider-health/freshness context where needed,
+- onchain truth for live positions/balances where applicable.
+
+The required invariant is that a normal crash/restart does **not** erase Shreks' memory, duplicate its actions, silently change accounting, or corrupt proof/research history. Autonomous new entries must remain paused whenever recovery or reconciliation is uncertain.
+
+### 21.9 Backups and recovery
+
+The operations layer must eventually include durable backups for operational SQLite state, evidence/checkpoint artifacts, configuration required for recovery, and historical/research datasets that cannot be reconstructed safely from providers. Backup restoration must be tested before live money is enabled. Secrets must follow separate protected-runtime handling and must not be copied into normal research or telemetry archives.
+
+### 21.10 Operational build sequence
+
+The current trading/proof path remains:
+
+`observer -> evidence -> strategy decision -> paper execution -> restart -> evaluation -> proof`
+
+After that path is sealed and a real paper campaign can run, the next major operational layer is:
+
+`deployment -> 24/7 supervisor -> telemetry -> dashboard -> alerts -> backup/recovery`
+
+This operations work must support the proof campaign and eventual live execution without changing the proven strategy/risk decision path.
+
+---
+
+## 22. Current Verified Implementation and Proof Position
+
+**Status date:** 2026-08-25
+
+Shreks is near the point where the engineering bottleneck changes from building proof machinery to collecting and evaluating real paper performance. It has **not** yet demonstrated that it makes money. Live money remains disabled.
+
+### 22.1 E15 status
+
+The active workstream is **Phase E15 — Observer Paper Campaign**, stacked on sealed E14. At the point Task 7 completed, the E15 code head was `45e454cd7aa21a23d4f7ff52f21752b2fa8b07d3`. CI run `32879194087` was fully GREEN with **2220 Python tests passing in 8.63s**, Rust/workspace GREEN, and repository safety GREEN. Tasks 1–7 were therefore effectively complete at that verified checkpoint.
+
+A later documentation-only commit `f43550b3c0609b75d263ccce0c1421cdf39e0c4f` added the runtime/data-persistence architecture to this source of truth and also passed CI (`32880782381`). Documentation commits after the Task-7 code checkpoint do not themselves complete E15 Task 8 or change the proven trading behavior.
+
+### 22.2 What remains to seal E15
+
+E15 Task 8 remains the immediate engineering task. It includes:
+
+1. add the restricted `observer_campaign` public API,
+2. test the authority firewall,
+3. freeze the behavior SHA,
+4. audit every changed file from sealed E14 through E15,
+5. write the final verification record,
+6. make the one-document seal commit,
+7. run fresh exact-seal CI,
+8. update draft PR #39.
+
+This is primarily verification, authority-boundary checking, auditing, and sealing rather than new strategy/trading logic.
+
+### 22.3 Real paper campaign after E15
+
+Once E15 is sealed, Shreks should begin accumulating **real independent paper trades from actual point-in-time observer data**, not synthetic fixtures. E15 is intended to turn real observer market+safety history into purpose-correct paper cycles while surviving restarts, preserving exact accounting, and producing E11 evaluation evidence.
+
+The campaign must collect enough real evidence to evaluate the system honestly. It must not manufacture trades, reuse synthetic fixture performance as proof, or reduce thresholds merely to make a gate pass.
+
+### 22.4 Evaluation of real evidence
+
+Real paper evidence should flow through the already-built E10/E11/E12 evaluation/proof stack. Required evaluation includes, at minimum:
+
+- positive or negative expectancy after realistic costs,
+- profit factor,
+- maximum drawdown,
+- independent trade count,
+- distinct token/mint count,
+- evidence time span,
+- cost burden,
+- winner concentration / dependence on a few extreme winners,
+- reproducible accounting,
+- reproducible evaluation,
+- setup/regime breakdowns where supported.
+
+The exact numeric promotion thresholds must be evidence-based. They must not be invented or weakened merely to pass the live gate.
+
+### 22.5 Remaining live-proof requirements before Phase F
+
+Before Phase F live-money activation can be legitimate, Shreks still needs real evidence demonstrating:
+
+- stable provider behavior and safe degradation,
+- restart/recovery stability,
+- realistic paper fill behavior,
+- reliable risk halts and kill-switch behavior,
+- execution/accounting integrity,
+- no unresolved reconciliation defects,
+- paper/live decision-path parity,
+- reproducible evaluation and proof.
+
+Only after those requirements are demonstrated should deliberately limited-capital live trading be considered.
+
+### 22.6 Plain-English project position
+
+The infrastructure is nearly ready to prove whether Shreks can develop a real edge, but profitability has **not** been proven. After the E15 seal, the main bottleneck becomes collecting and evaluating independent real paper performance rather than adding more speculative strategy complexity.
+
+---
+
+## 23. Scope Explicitly Deferred
 
 Do not add these until core performance requires them:
 
@@ -947,7 +1213,7 @@ Do not add these until core performance requires them:
 
 ---
 
-## 22. Source of Truth Hierarchy
+## 24. Source of Truth Hierarchy
 
 When project documents conflict, use this order:
 
@@ -961,7 +1227,7 @@ If implementation discoveries require changing architecture, update the source o
 
 ---
 
-## 23. Definition of Success
+## 25. Definition of Success
 
 Shreks is successful when it can:
 
@@ -975,7 +1241,13 @@ Shreks is successful when it can:
 - safely evaluate improved challengers,
 - execute live trades automatically only after proof,
 - preserve capital through hard risk controls,
-- explain why every trade was entered and exited.
+- explain why every trade was entered and exited,
+- run continuously on a supervised production host rather than GitHub,
+- recover durable observer/trading/risk/evidence state after crashes without duplicate actions,
+- expose an authenticated operator view covering system, trading, money, and proof/risk state,
+- push meaningful operational/trading alerts to the operator,
+- provide controlled halt/kill-switch actions that cannot bypass the risk engine,
+- preserve rollback/audit linkage between deployed behavior, GitHub release history, and evaluation evidence.
 
 The goal is not an impressive dashboard.
 
