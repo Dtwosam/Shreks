@@ -107,3 +107,28 @@ fn operator_runbook_preserves_persistent_paths_runtime_secret_boundary_and_relea
     assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_MAX_SLIPPAGE_BPS="));
     assert!(!README.contains("SHREKS_PAPER_CAMPAIGN_RISK_LIMIT_USD="));
 }
+
+#[test]
+fn operator_runbook_exposes_restart_reboot_health_and_fail_closed_recovery_evidence() {
+    for required in [
+        "systemctl is-enabled shreks.target",
+        "ActiveState",
+        "SubState",
+        "NRestarts",
+        "ExecMainStatus",
+        "ActiveEnterTimestamp",
+        "systemctl show shreks-observe.service",
+        "systemctl show shreks-paper-evidence.service",
+        "systemctl show shreks-paper-campaign.service",
+        "systemctl reset-failed shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service",
+        "only after the root cause is resolved",
+        "readlink -f /opt/shreks/current",
+        "test -r /etc/shreks/paper-campaign.json",
+        "test -r /var/lib/shreks/shreks.db",
+        "test -r /var/lib/shreks/paper-evaluation-e11.json",
+        "do not bypass the campaign preflight",
+        "do not launch the campaign runtime manually",
+    ] {
+        assert!(README.contains(required), "missing G3 recovery instruction: {required}");
+    }
+}
