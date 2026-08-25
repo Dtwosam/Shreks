@@ -8,6 +8,7 @@ from .models import (
     PromotionGateStatus,
     PromotionPolicy,
 )
+from .store import PromotionAssessmentStore
 
 
 __all__ = (
@@ -18,5 +19,6 @@ __all__ = (
     "PromotionPolicy",
     "PromotionGateResult",
     "PromotionAssessment",
+    "PromotionAssessmentStore",
     "evaluate_promotion",
 )
