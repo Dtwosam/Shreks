@@ -41,6 +41,10 @@ fn paper_evidence_binary_logs_counts_not_provider_keys() {
     assert!(source.contains("entry_quote_snapshots_stored"));
     assert!(source.contains("exit_quote_snapshots_stored"));
     assert!(source.contains("provider_failures"));
-    assert!(!source.contains("helius_api_key()"));
-    assert!(!source.contains("jupiter_api_key()"));
+
+    for line in source.lines().filter(|line| line.contains("eprintln!")) {
+        assert!(!line.contains("api_key"), "credential accessor appeared in log statement");
+    }
+    assert!(!source.contains("{helius_key}"));
+    assert!(!source.contains("{jupiter_key}"));
 }
