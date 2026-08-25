@@ -19,6 +19,13 @@ _FORBIDDEN_RELEASE_TEXT = (
     "JUPITER_API_KEY",
     "LIVE_TRADING=ENABLED",
 )
+_DEPLOY_SECRET_NAMES = {
+    "SHREKS_DEPLOY_HOST",
+    "SHREKS_DEPLOY_PORT",
+    "SHREKS_DEPLOY_USER",
+    "SHREKS_DEPLOY_SSH_KEY",
+    "SHREKS_DEPLOY_KNOWN_HOSTS",
+}
 
 
 def _read(path: Path) -> str:
@@ -114,4 +121,94 @@ def test_release_workflow_does_not_consume_deployment_or_runtime_secrets():
     assert "ssh" not in workflow.lower()
 
 
-# Task 4 extends this file with deploy-transport and bootstrap/runbook assertions.
+def test_deploy_workflow_is_manual_existing_release_only_and_minimum_permission():
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    assert "workflow_dispatch:" in workflow
+    assert "release_tag:" in workflow
+    assert "required: true" in workflow
+    assert "environment: production-paper" in workflow
+    assert re.search(r"permissions:\s*\n\s+contents: read", workflow)
+    assert "contents: write" not in workflow
+    assert "push:" not in workflow
+    assert "pull_request:" not in workflow
+    assert "^shreks-[0-9a-f]{40}$" in workflow
+    assert "gh release download" in workflow
+    assert 'shreks-release-$SOURCE_SHA.tar.gz' in workflow
+    assert 'shreks-release-$SOURCE_SHA.tar.gz.sha256' in workflow
+    assert "RELEASE_MANIFEST.json" in workflow
+    assert "release_bundle.py verify" in workflow
+    assert "gh release create" not in workflow
+    assert "cargo build" not in workflow
+    assert "pip wheel" not in workflow
+
+
+def test_deploy_workflow_uses_only_transport_secrets_and_strict_host_verification():
+    workflow = _read(_DEPLOY_WORKFLOW)
+    consumed = set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow))
+    assert consumed == _DEPLOY_SECRET_NAMES
+
+    for required in (
+        "mktemp -d",
+        'chmod 600 "$KEY_FILE"',
+        "SHREKS_DEPLOY_KNOWN_HOSTS",
+        "StrictHostKeyChecking=yes",
+        "UserKnownHostsFile=",
+        "BatchMode=yes",
+        "scp",
+        "ssh",
+        "sudo /usr/local/sbin/shreks-release-manager install",
+    ):
+        assert required in workflow
+
+    assert "ssh-keyscan" not in workflow
+    for forbidden in _FORBIDDEN_RELEASE_TEXT:
+        assert forbidden not in workflow
+
+
+def test_deploy_workflow_copies_only_release_assets_and_does_not_mutate_runtime_state():
+    workflow = _read(_DEPLOY_WORKFLOW)
+    for protected in (
+        "/etc/shreks/shreks.env",
+        "/etc/shreks/paper-campaign.json",
+        "/var/lib/shreks",
+    ):
+        assert protected not in workflow
+
+    assert workflow.count("scp ") == 3
+    assert "systemctl" not in workflow
+    assert "activate-existing" not in workflow
+    assert "LIVE_TRADING" not in workflow
+
+
+def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "install -o root -g root -m 0755",
+        "/usr/local/sbin/shreks-release-manager",
+        "/usr/local/sbin/release_bundle.py",
+        "shreks-deploy",
+        "/etc/sudoers.d/shreks-release-manager",
+        "NOPASSWD",
+        "production-paper",
+        "SHREKS_DEPLOY_HOST",
+        "SHREKS_DEPLOY_PORT",
+        "SHREKS_DEPLOY_USER",
+        "SHREKS_DEPLOY_SSH_KEY",
+        "SHREKS_DEPLOY_KNOWN_HOSTS",
+        "readlink -f /opt/shreks/current",
+        "cat /opt/shreks/current/RELEASE_MANIFEST.json",
+        "/etc/shreks/shreks.env",
+        "/etc/shreks/paper-campaign.json",
+        "/var/lib/shreks",
+        "rollback",
+        "earlier GitHub Release tag",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
+
+    lower = runbook.lower()
+    assert "deploy ssh key" in lower
+    assert "trading key" in lower
+    assert "never" in lower
