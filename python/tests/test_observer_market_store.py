@@ -205,5 +205,5 @@ def test_invalid_query_arguments_fail_before_sql(tmp_path):
 
     with pytest.raises(ValueError, match="mint"):
         store.resolve_candidate("")
-    with pytest.raises(ValueError, match="pair_address"):
+    with pytest.raises(ValueError, match="discovery_source"):
         store.resolve_candidate("Mint111", pair_address=None, discovery_source="")
