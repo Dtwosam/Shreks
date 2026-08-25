@@ -1,3 +1,5 @@
+from importlib import import_module
+
 from .assembler import (
     OBSERVER_PAPER_CYCLE_AUDIT_SCHEMA_VERSION,
     ObserverFreshLaunchPolicyBundle,
@@ -30,13 +32,6 @@ from .quotes import (
 )
 from .risk_context import ObserverPaperRiskContextError, build_observer_risk_context
 from .runner import ObserverPaperCampaignError, ObserverPaperCampaignRunner
-from .runtime import (
-    OBSERVER_PAPER_CAMPAIGN_RUNTIME_STATUS_SCHEMA_VERSION,
-    ObserverPaperCampaignRuntimeBootstrap,
-    ObserverPaperCampaignRuntimeError,
-    bootstrap_observer_paper_campaign_runtime,
-    run_observer_paper_campaign_runtime,
-)
 from .runtime_config import (
     ObserverPaperCampaignRuntimeConfig,
     ObserverPaperCampaignRuntimeConfigError,
@@ -51,6 +46,16 @@ from .runtime_manifest import (
     encode_observer_paper_campaign_runtime_manifest,
 )
 from .store import ObserverCampaignReadError, ObserverCampaignStore
+
+_RUNTIME_LAZY_EXPORTS = frozenset(
+    {
+        "OBSERVER_PAPER_CAMPAIGN_RUNTIME_STATUS_SCHEMA_VERSION",
+        "ObserverPaperCampaignRuntimeError",
+        "ObserverPaperCampaignRuntimeBootstrap",
+        "bootstrap_observer_paper_campaign_runtime",
+        "run_observer_paper_campaign_runtime",
+    }
+)
 
 __all__ = (
     "OBSERVER_PAPER_CAMPAIGN_SCHEMA_VERSION",
@@ -96,3 +101,12 @@ __all__ = (
     "bootstrap_observer_paper_campaign_runtime",
     "run_observer_paper_campaign_runtime",
 )
+
+
+def __getattr__(name: str):
+    if name not in _RUNTIME_LAZY_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    runtime = import_module(".runtime", __name__)
+    value = getattr(runtime, name)
+    globals()[name] = value
+    return value
