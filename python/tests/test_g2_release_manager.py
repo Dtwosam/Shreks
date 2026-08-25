@@ -34,6 +34,12 @@ _MANAGER_SPEC.loader.exec_module(release_manager)
 PLATFORM = "x86_64-unknown-linux-gnu"
 SHA_A = "a" * 40
 SHA_B = "b" * 40
+HEALTH_UNITS = (
+    "shreks-observe.service",
+    "shreks-paper-evidence.service",
+    "shreks-paper-campaign.service",
+    "shreks.target",
+)
 
 
 def _payloads(marker: str) -> dict[str, bytes]:
@@ -127,6 +133,25 @@ class SystemctlRunner:
             self.health_checks += 1
             if self.fail_first_health_check and self.health_checks == 1:
                 raise RuntimeError("simulated inactive target")
+
+
+class ScriptedUnitHealthRunner:
+    def __init__(self, failures: dict[str, int] | None = None):
+        self.calls: list[tuple[str, ...]] = []
+        self.failures = {} if failures is None else dict(failures)
+
+    def __call__(self, command: tuple[str, ...]) -> None:
+        self.calls.append(command)
+        if len(command) == 4 and command[:3] == (
+            "systemctl",
+            "is-active",
+            "--quiet",
+        ):
+            unit = command[3]
+            remaining = self.failures.get(unit, 0)
+            if remaining:
+                self.failures[unit] = remaining - 1
+                raise RuntimeError(f"simulated inactive unit: {unit}")
 
 
 def _stage(
@@ -264,6 +289,7 @@ def test_existing_verified_release_is_reused_without_reinstall(tmp_path: Path):
         checksum,
         manifest_path,
         paths,
+        python_executable="/usr/bin/python3",
         command_runner=second,
     )
 
@@ -287,10 +313,20 @@ def test_existing_release_with_tampered_payload_fails_closed(tmp_path: Path):
         )
 
 
+def test_runtime_health_probe_checks_all_units_and_is_read_only():
+    runner = ScriptedUnitHealthRunner()
+
+    release_manager._require_runtime_healthy(runner)
+
+    assert runner.calls == [
+        ("systemctl", "is-active", "--quiet", unit) for unit in HEALTH_UNITS
+    ]
+
+
 def test_successful_activation_atomically_points_current_and_installs_units(tmp_path: Path):
     paths = _paths(tmp_path)
     release_dir = _stage(tmp_path / "bundle", paths, SHA_A, "a")
-    runner = SystemctlRunner()
+    runner = ScriptedUnitHealthRunner()
 
     release_manager.activate_release(release_dir, paths, command_runner=runner)
 
@@ -300,45 +336,68 @@ def test_successful_activation_atomically_points_current_and_installs_units(tmp_
         ("systemctl", "stop", "shreks.target"),
         ("systemctl", "daemon-reload"),
         ("systemctl", "start", "shreks.target"),
-        ("systemctl", "is-active", "--quiet", "shreks.target"),
+        *(("systemctl", "is-active", "--quiet", unit) for unit in HEALTH_UNITS),
     ]
-    for name in (
-        "shreks-observe.service",
-        "shreks-paper-evidence.service",
-        "shreks-paper-campaign.service",
-        "shreks.target",
-    ):
+    for name in HEALTH_UNITS:
         assert (paths.systemd_dir / name).read_bytes() == (
             release_dir / "deploy" / "systemd" / name
         ).read_bytes()
 
 
-def test_failed_activation_restores_previous_release_and_units(tmp_path: Path):
+def test_failed_child_activation_restores_previous_release_and_requires_all_restored_units_healthy(
+    tmp_path: Path,
+):
     paths = _paths(tmp_path)
     previous = _stage(tmp_path / "previous", paths, SHA_B, "previous")
     new = _stage(tmp_path / "new", paths, SHA_A, "new")
-    release_manager.activate_release(previous, paths, command_runner=SystemctlRunner())
+    release_manager.activate_release(
+        previous,
+        paths,
+        command_runner=ScriptedUnitHealthRunner(),
+    )
     previous_units = {
         path.name: path.read_bytes() for path in paths.systemd_dir.iterdir() if path.is_file()
     }
 
-    runner = SystemctlRunner(fail_first_health_check=True)
-    with pytest.raises(release_manager.ReleaseManagerError):
+    runner = ScriptedUnitHealthRunner({"shreks-paper-evidence.service": 1})
+    with pytest.raises(release_manager.ReleaseManagerError, match="previous state restored"):
         release_manager.activate_release(new, paths, command_runner=runner)
 
     assert paths.current_link.resolve() == previous.resolve()
     assert {
         path.name: path.read_bytes() for path in paths.systemd_dir.iterdir() if path.is_file()
     } == previous_units
-    assert runner.health_checks == 2
     assert runner.calls.count(("systemctl", "daemon-reload")) == 2
     assert runner.calls.count(("systemctl", "start", "shreks.target")) == 2
+    rollback_start = len(runner.calls) - 6
+    assert runner.calls[rollback_start:] == [
+        ("systemctl", "daemon-reload"),
+        ("systemctl", "start", "shreks.target"),
+        *(("systemctl", "is-active", "--quiet", unit) for unit in HEALTH_UNITS),
+    ]
 
 
-def test_first_deploy_health_failure_leaves_no_active_release_claim(tmp_path: Path):
+def test_rollback_is_not_claimed_successful_when_a_restored_child_is_unhealthy(tmp_path: Path):
+    paths = _paths(tmp_path)
+    previous = _stage(tmp_path / "previous", paths, SHA_B, "previous")
+    new = _stage(tmp_path / "new", paths, SHA_A, "new")
+    release_manager.activate_release(
+        previous,
+        paths,
+        command_runner=ScriptedUnitHealthRunner(),
+    )
+
+    runner = ScriptedUnitHealthRunner({"shreks-paper-evidence.service": 2})
+    with pytest.raises(release_manager.ReleaseManagerError, match="rollback failed"):
+        release_manager.activate_release(new, paths, command_runner=runner)
+
+    assert paths.current_link.resolve() == previous.resolve()
+
+
+def test_first_deploy_child_health_failure_leaves_no_active_release_claim(tmp_path: Path):
     paths = _paths(tmp_path)
     release_dir = _stage(tmp_path / "new", paths, SHA_A, "new")
-    runner = SystemctlRunner(fail_first_health_check=True)
+    runner = ScriptedUnitHealthRunner({"shreks-paper-campaign.service": 1})
 
     with pytest.raises(release_manager.ReleaseManagerError):
         release_manager.activate_release(release_dir, paths, command_runner=runner)
