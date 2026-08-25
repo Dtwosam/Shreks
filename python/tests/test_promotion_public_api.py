@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
 import sys
 
 import shreks_brain.promotion as promotion
@@ -56,5 +57,15 @@ def test_task2_api_has_no_registry_execution_or_live_authority() -> None:
 
 
 def test_importing_promotion_does_not_eagerly_import_heavy_training_or_parquet_modules() -> None:
-    assert "sklearn" not in sys.modules
-    assert "pyarrow" not in sys.modules
+    probe = (
+        "import sys; import shreks_brain.promotion; "
+        "assert 'sklearn' not in sys.modules; "
+        "assert 'pyarrow' not in sys.modules"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
