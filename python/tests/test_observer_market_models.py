@@ -172,9 +172,24 @@ def test_window_rejects_wrong_schema_or_attribution():
 
 def test_window_rejects_anchor_from_different_candidate_source_pair_or_future():
     invalid_anchors = (
-        _snapshot(row_id=12, candidate_id=8, observed_at_unix_ms=940_000),
-        _snapshot(row_id=12, source="meteora", observed_at_unix_ms=940_000),
-        _snapshot(row_id=12, pair_address="OtherPair", observed_at_unix_ms=940_000),
+        _snapshot(
+            row_id=12,
+            candidate_id=8,
+            observed_at_unix_ms=940_000,
+            source_observed_at_unix_ms=939_500,
+        ),
+        _snapshot(
+            row_id=12,
+            source="meteora",
+            observed_at_unix_ms=940_000,
+            source_observed_at_unix_ms=939_500,
+        ),
+        _snapshot(
+            row_id=12,
+            pair_address="OtherPair",
+            observed_at_unix_ms=940_000,
+            source_observed_at_unix_ms=939_500,
+        ),
         _snapshot(row_id=12, observed_at_unix_ms=1_006_000),
     )
     for anchor in invalid_anchors:
