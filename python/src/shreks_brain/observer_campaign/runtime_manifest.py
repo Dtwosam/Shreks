@@ -213,7 +213,7 @@ def decode_observer_paper_campaign_runtime_manifest(
     )
     _require_candidate_fingerprint(candidate)
     initial_state = _decode_initial_state_checkpoint(
-        document["initial_state_checkpoint"], paper_run_id
+        document["initial_state_checkpoint"]
     )
     policy_bundle = _decode_exact_type(
         document["policy_bundle"],
@@ -320,7 +320,7 @@ def _manifest_document(
     return result
 
 
-def _decode_initial_state_checkpoint(value: object, paper_run_id: str) -> PaperLoopState:
+def _decode_initial_state_checkpoint(value: object) -> PaperLoopState:
     checkpoint_payload = _string(value, "initial_state_checkpoint")
     try:
         record = decode_paper_checkpoint(checkpoint_payload)
@@ -328,10 +328,6 @@ def _decode_initial_state_checkpoint(value: object, paper_run_id: str) -> PaperL
         raise ObserverPaperCampaignRuntimeManifestError(
             f"initial_state_checkpoint is invalid: {error}"
         ) from error
-    if record.run_id != paper_run_id:
-        raise ObserverPaperCampaignRuntimeManifestError(
-            "initial_state_checkpoint run_id must match paper_run_id"
-        )
     if record.sequence != 0:
         raise ObserverPaperCampaignRuntimeManifestError(
             "initial_state_checkpoint sequence must be zero"
