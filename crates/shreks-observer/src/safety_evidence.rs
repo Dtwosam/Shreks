@@ -1,7 +1,7 @@
 use std::{error::Error, fmt, sync::Arc};
 
 use shreks_core::{
-    QuoteRequest, QuoteSnapshot, TokenDistributionRequest, TokenHolderDistribution,
+    QuotePurpose, QuoteRequest, QuoteSnapshot, TokenDistributionRequest, TokenHolderDistribution,
     MAX_TOKEN_DISTRIBUTION_PAGE_SIZE,
 };
 use shreks_providers::{DistributionDataProvider, QuoteProvider};
@@ -12,7 +12,8 @@ use shreks_storage::{ShreksDb, StorageError};
 pub struct SafetyEvidenceProbe {
     pub probe_policy_version: String,
     pub distribution_request: TokenDistributionRequest,
-    pub quote_request: QuoteRequest,
+    pub exit_quote_request: QuoteRequest,
+    pub entry_quote_request: Option<QuoteRequest>,
 }
 
 /// Counts from one explicitly invoked evidence collection pass.
@@ -115,27 +116,53 @@ impl SafetyEvidenceCollector {
 
         for provider in &self.quote_providers {
             let provider_id = provider.provider_id();
-            let result = match provider.quote(&probe.quote_request).await {
-                Ok(result) => result,
-                Err(_) => {
+
+            match provider.quote(&probe.exit_quote_request).await {
+                Ok(result)
+                    if quote_identity_matches(provider_id, &probe.exit_quote_request, &result) =>
+                {
+                    self.db.insert_exit_quote_snapshot(
+                        candidate_id,
+                        &probe.probe_policy_version,
+                        &probe.exit_quote_request,
+                        &result,
+                    )?;
+                    self.db.insert_paper_quote_snapshot(
+                        candidate_id,
+                        QuotePurpose::Exit,
+                        &probe.probe_policy_version,
+                        &probe.exit_quote_request,
+                        &result,
+                    )?;
+                    report.quote_snapshots_stored =
+                        report.quote_snapshots_stored.saturating_add(1);
+                }
+                Ok(_) | Err(_) => {
                     report.quote_provider_failures =
                         report.quote_provider_failures.saturating_add(1);
-                    continue;
                 }
-            };
-
-            if !quote_identity_matches(provider_id, &probe.quote_request, &result) {
-                report.quote_provider_failures = report.quote_provider_failures.saturating_add(1);
-                continue;
             }
 
-            self.db.insert_exit_quote_snapshot(
-                candidate_id,
-                &probe.probe_policy_version,
-                &probe.quote_request,
-                &result,
-            )?;
-            report.quote_snapshots_stored = report.quote_snapshots_stored.saturating_add(1);
+            let Some(entry_request) = probe.entry_quote_request.as_ref() else {
+                continue;
+            };
+            match provider.quote(entry_request).await {
+                Ok(result) if quote_identity_matches(provider_id, entry_request, &result) => {
+                    self.db.insert_paper_quote_snapshot(
+                        candidate_id,
+                        QuotePurpose::Entry,
+                        &probe.probe_policy_version,
+                        entry_request,
+                        &result,
+                    )?;
+                    report.quote_snapshots_stored =
+                        report.quote_snapshots_stored.saturating_add(1);
+                }
+                Ok(_) | Err(_) => {
+                    report.quote_provider_failures =
+                        report.quote_provider_failures.saturating_add(1);
+                }
+            }
         }
 
         Ok(report)
@@ -181,21 +208,52 @@ fn validate_probe(
         )));
     }
 
-    QuoteRequest::new(
-        probe.quote_request.input_mint.clone(),
-        probe.quote_request.output_mint.clone(),
-        probe.quote_request.amount,
-        probe.quote_request.taker.clone(),
-        probe.quote_request.slippage_bps,
-    )
-    .map_err(|error| SafetyEvidenceError::InvalidProbe(error.to_string()))?;
-    if probe.quote_request.input_mint != candidate_mint {
+    validate_quote_request(&probe.exit_quote_request)?;
+    if probe.exit_quote_request.input_mint != candidate_mint {
         return Err(SafetyEvidenceError::InvalidProbe(format!(
-            "quote input mint '{}' does not match candidate mint '{candidate_mint}'",
-            probe.quote_request.input_mint
+            "exit quote input mint '{}' does not match candidate mint '{candidate_mint}'",
+            probe.exit_quote_request.input_mint
         )));
     }
+
+    if let Some(entry_request) = probe.entry_quote_request.as_ref() {
+        validate_quote_request(entry_request)?;
+        if entry_request.output_mint != candidate_mint {
+            return Err(SafetyEvidenceError::InvalidProbe(format!(
+                "entry quote output mint '{}' does not match candidate mint '{candidate_mint}'",
+                entry_request.output_mint
+            )));
+        }
+        if entry_request.input_mint != probe.exit_quote_request.output_mint {
+            return Err(SafetyEvidenceError::InvalidProbe(format!(
+                "entry quote input mint '{}' does not match exit quote asset '{}'",
+                entry_request.input_mint, probe.exit_quote_request.output_mint
+            )));
+        }
+        if entry_request.taker != probe.exit_quote_request.taker {
+            return Err(SafetyEvidenceError::InvalidProbe(
+                "entry and exit quote takers must match".to_owned(),
+            ));
+        }
+        if entry_request.slippage_bps != probe.exit_quote_request.slippage_bps {
+            return Err(SafetyEvidenceError::InvalidProbe(
+                "entry and exit quote slippage must match".to_owned(),
+            ));
+        }
+    }
     Ok(())
+}
+
+fn validate_quote_request(request: &QuoteRequest) -> Result<(), SafetyEvidenceError> {
+    QuoteRequest::new(
+        request.input_mint.clone(),
+        request.output_mint.clone(),
+        request.amount,
+        request.taker.clone(),
+        request.slippage_bps,
+    )
+    .map(|_| ())
+    .map_err(|error| SafetyEvidenceError::InvalidProbe(error.to_string()))
 }
 
 fn distribution_identity_matches(
