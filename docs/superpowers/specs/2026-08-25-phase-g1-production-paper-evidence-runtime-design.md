@@ -17,7 +17,7 @@ The runtime remains inside `shreks-observer`, whose crate-level contract is obse
 - read normalized candidate/market state from the operational SQLite database,
 - call read-only Helius distribution APIs,
 - call read-only Jupiter quote/build APIs,
-- persist holder-distribution, exit-quote, and purpose-attributed paper-quote evidence,
+- persist holder-distribution, exit-quote, and purpose-attributed paper-quote evidence through the sealed E15 collector/storage path,
 - report provider failures and operational counts.
 
 It must not:
@@ -33,7 +33,9 @@ It must not:
 
 ## 1. Candidate selection
 
-Add one bounded storage read model, `EvidenceProbeCandidate`, and a deterministic `ShreksDb::recent_evidence_probe_candidates(as_of_unix_ms, lookback_ms, limit)` query.
+Keep the sealed E15 storage API unchanged. The new daemon owns a small read-only `EvidenceCandidateStore` backed by a separate SQLite `mode=ro` connection, matching the existing read-only observer-store pattern on the Python side.
+
+The store returns `EvidenceProbeCandidate { candidate_id, mint, latest_market_observed_at_unix_ms }` and performs one deterministic query over `token_candidates` joined to `market_snapshots`.
 
 Selection rules:
 
@@ -42,14 +44,15 @@ Selection rules:
 3. candidates are ordered by latest eligible market observation descending, then candidate id ascending;
 4. the caller supplies a hard `limit`;
 5. future market observations are invisible;
-6. `limit == 0` returns an empty set without querying providers;
-7. invalid negative timestamps or non-positive lookback values fail closed.
+6. `limit == 0` returns an empty set;
+7. invalid negative timestamps or non-positive lookback values fail closed;
+8. required table/column drift fails startup/read rather than silently changing selection semantics.
 
-This keeps the evidence daemon bounded and point-in-time rather than scanning every historical candidate forever.
+This keeps the evidence daemon bounded and point-in-time rather than scanning every historical candidate forever, while avoiding any expansion of the sealed storage library surface.
 
 ## 2. Explicit runtime configuration
 
-Add `PaperEvidenceRuntimeConfig` in `shreks-observer`. It is derived from an environment-like lookup so tests do not mutate process-global state.
+Add `PaperEvidenceRuntimeConfig` inside the `shreks-paper-evidence` binary module tree. It is derived from an environment-like lookup so tests do not mutate process-global state.
 
 Operational parameters may have conservative defaults where they do not change economic semantics. Economic evidence parameters must be explicitly supplied and validated.
 
@@ -84,26 +87,27 @@ No test-fixture threshold or amount becomes a production default.
 
 ## 3. Long-running evidence daemon
 
-Add binary `shreks-paper-evidence`.
+Add binary `shreks-paper-evidence` using focused modules under `crates/shreks-observer/src/bin/shreks-paper-evidence/`.
 
 Startup:
 
 1. parse and validate `PaperEvidenceRuntimeConfig`;
 2. build `ProviderConfig`;
 3. require Helius and Jupiter;
-4. open the shared SQLite WAL database through `ShreksDb`;
-5. construct exactly one `SafetyEvidenceCollector` using Helius for distribution and Jupiter for quotes;
-6. log only non-secret enablement/config summaries.
+4. validate/open the read-only `EvidenceCandidateStore` against the configured database path;
+5. open the shared SQLite WAL database through `ShreksDb` for sealed evidence writes;
+6. construct exactly one `SafetyEvidenceCollector` using Helius for distribution and Jupiter for quotes;
+7. log only non-secret enablement/config summaries.
 
 Each cycle:
 
 1. capture one cycle `as_of_unix_ms`;
-2. ask storage for bounded recent candidates;
+2. ask the read-only candidate store for bounded recent candidates;
 3. derive a candidate-specific probe;
 4. call the sealed E15 `SafetyEvidenceCollector`;
 5. aggregate stored-evidence and provider-failure counts;
 6. continue across nonfatal provider failures represented in collector reports;
-7. fail the process on storage/config/probe integrity errors rather than hiding evidence corruption.
+7. fail the process on storage/config/probe/schema integrity errors rather than hiding evidence corruption.
 
 The process sleeps until the next configured interval and exits cleanly on Ctrl-C/systemd SIGINT handling through Tokio's signal support.
 
@@ -140,11 +144,12 @@ TDD is required for behavior changes.
 
 Repository CI must prove:
 
-- candidate selection is bounded, deterministic, point-in-time, and rejects invalid windows;
+- candidate selection is bounded, deterministic, point-in-time, read-only, schema-validated, and rejects invalid windows;
 - runtime config rejects missing/invalid economic inputs and builds exact bidirectional probes;
 - provider requirements fail closed;
 - one daemon cycle invokes evidence collection for exactly the selected candidate set and aggregates reports without synthesizing success;
 - service files contain no secrets or live/trading command paths;
+- the sealed E15 storage public surface is not expanded by this slice;
 - all existing Rust, Python, and repository-safety checks remain GREEN.
 
 ## Explicitly deferred from this slice
