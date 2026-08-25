@@ -195,7 +195,7 @@ def test_gate_result_requires_exact_enums_and_non_empty_message() -> None:
         )
 
 
-def test_assessment_requires_canonical_unique_gates_and_baselines() -> None:
+def test_assessment_requires_complete_canonical_unique_gates_and_baselines() -> None:
     reversed_gates = tuple(reversed(gates()))
     with pytest.raises(ValueError, match="gates"):
         assessment(gates=reversed_gates)
@@ -203,6 +203,9 @@ def test_assessment_requires_canonical_unique_gates_and_baselines() -> None:
     duplicated = gates() + (gates()[0],)
     with pytest.raises(ValueError, match="gates"):
         assessment(gates=duplicated)
+
+    with pytest.raises(ValueError, match="gates"):
+        assessment(gates=gates()[:-1])
 
     with pytest.raises(ValueError, match="baseline_evaluation_identities"):
         assessment(
