@@ -1,393 +1,365 @@
-# Phase G2 GitHub-to-VPS Release Delivery Implementation Plan
+# Phase G2 GitHub-to-VPS Release Delivery Verification Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Phase:** G2 — GitHub deployment path
 
-**Goal:** Deliver one sealed Shreks source SHA from GitHub to the dedicated Linux VPS as a verified immutable release with atomic activation and rollback, without putting trading-wallet material in GitHub.
+**Base sealed G1C SHA:** `517bc81efa6d5cb88c3a471bb7683b5c1cc330ec`
 
-**Architecture:** GitHub builds a release tarball from an exact sealed SHA, records it as `shreks-<40-char-sha>`, and deploys only existing release assets over a deployment-only SSH credential. A root-owned standard-library host release manager verifies the bundle, stages `/opt/shreks/releases/<sha>`, atomically switches `/opt/shreks/current`, restarts the existing systemd target, and restores the previous release on activation failure.
+**Frozen G2 behavior SHA:** `2aa640196266109119a7c21dde27727fc33d9beb`
 
-**Tech Stack:** GitHub Actions, Bash, Python 3.12 standard library, Cargo/Rust, Python wheel packaging, systemd, SSH/SCP.
+**Frozen-behavior CI:** `32904668639`
 
-**Spec:** `docs/superpowers/specs/2026-08-25-phase-g2-github-vps-release-delivery-design.md`
+**Frozen-behavior result:** Python `2308 passed in 10.23s`; Rust/workspace GREEN; repository safety GREEN.
 
-## Global Constraints
+**Status at record commit:** behavior frozen and audited; this record is the one-file seal commit. Exact-seal CI is recorded in PR #43 metadata after this commit runs through CI.
 
-- Base is sealed G1C `517bc81efa6d5cb88c3a471bb7683b5c1cc330ec`.
-- Solana V1 only.
-- No paid external infrastructure requirement is introduced.
-- GitHub is delivery/control plane only; the VPS remains the 24/7 runtime.
-- Trading wallet/private signing credentials never enter GitHub, release assets, workflow logs, or deployment transport.
-- Deployment must not mutate proof, promotion, strategy, scoring, risk, accounting, checkpoint, or live-enable state.
-- `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, `/var/lib/shreks`, E11 evidence, and checkpoints survive deploy/rollback unchanged.
-- Existing G1C systemd runtime paths through `/opt/shreks/current` remain authoritative.
-- First release platform is `x86_64-unknown-linux-gnu`.
-- Release tags are exactly `shreks-<40-character-source-sha>`.
-- **LIVE TRADING: DISABLED.**
+**LIVE TRADING: DISABLED.**
 
----
+## 1. Goal and authority boundary
 
-### Task 1: Release manifest, allowlist, and bundle verifier
+G2 establishes a traceable GitHub-controlled delivery path from one sealed Shreks source SHA to one immutable Linux release on the dedicated VPS. GitHub is the release/deployment control plane; it is not the 24/7 trading runtime.
 
-**Files:**
-- Create: `deploy/release/release_bundle.py`
-- Create: `python/tests/test_g2_release_bundle.py`
+G2 adds release packaging, verification, atomic host activation/rollback, exact-SHA GitHub Release construction, deployment-only SSH transport, and a VPS bootstrap/runbook. It does not add or modify strategy, scoring, risk, paper/live execution logic, promotion, transaction signing/submission, or live-enable authority.
 
-**Interfaces:**
-- Produces `RELEASE_MANIFEST_SCHEMA_VERSION = "g2-release-manifest-v1"`.
-- Produces `ReleaseBundleError(ValueError)`.
-- Produces `ReleaseFile(path: str, size: int, sha256: str)` immutable dataclass.
-- Produces `ReleaseManifest(schema_version: str, source_sha: str, platform: str, files: tuple[ReleaseFile, ...])` immutable dataclass.
-- Produces `validate_source_sha(value: str) -> str`.
-- Produces `release_tag_for_sha(source_sha: str) -> str`.
-- Produces `build_release_manifest(staging_dir: Path, source_sha: str, platform: str) -> ReleaseManifest`.
-- Produces `encode_release_manifest(manifest: ReleaseManifest) -> bytes` using canonical compact JSON with sorted keys and one trailing newline.
-- Produces `decode_release_manifest(payload: bytes) -> ReleaseManifest` with exact-key validation.
-- Produces `verify_release_tree(root: Path, manifest: ReleaseManifest) -> None`.
-- Produces `write_release_archive(staging_dir: Path, manifest: ReleaseManifest, archive_path: Path) -> str`, returning the archive SHA-256.
-- Produces `verify_release_archive(archive_path: Path, checksum_path: Path, manifest_path: Path) -> ReleaseManifest` without extracting unsafe members.
+Trading-wallet/private signing credentials are not release assets and are not GitHub deployment credentials. The deployment SSH key is a separate transport-only credential. Protected runtime configuration and durable state remain host-side.
 
-Exact allowlisted release members:
+## 2. Final implemented architecture
 
-```python
-REQUIRED_RELEASE_PATHS = (
-    "target/release/shreks-observe",
-    "target/release/shreks-paper-evidence",
-    "deploy/systemd/shreks-observe.service",
-    "deploy/systemd/shreks-paper-evidence.service",
-    "deploy/systemd/shreks-paper-campaign.service",
-    "deploy/systemd/shreks.target",
-    "RELEASE_MANIFEST.json",
-)
-```
-
-The manifest additionally permits exactly one regular file matching `wheelhouse/shreks_brain-*.whl`. No symlink/device/FIFO/archive member is allowed.
-
-- [ ] **Step 1: Write RED manifest/verification tests**
-
-Tests must prove:
-
-```python
-assert validate_source_sha("a" * 40) == "a" * 40
-with pytest.raises(ReleaseBundleError):
-    validate_source_sha("abc")
-assert release_tag_for_sha("a" * 40) == "shreks-" + "a" * 40
-```
-
-Build a temporary allowlisted staging tree and assert canonical encode/decode round-trip, sorted file paths, exact sizes/hashes, one-wheel rule, unsupported platform rejection, unknown/missing manifest keys rejection, tampered file rejection, checksum mismatch rejection, archive `../escape` rejection, absolute path rejection, symlink member rejection, and unexpected member rejection.
-
-- [ ] **Step 2: Run RED**
-
-Run:
-
-```sh
-python -m pytest python/tests/test_g2_release_bundle.py -q
-```
-
-Expected: collection/import failure because `deploy/release/release_bundle.py` does not exist.
-
-- [ ] **Step 3: Implement the minimal standard-library bundle module**
-
-Use `hashlib`, `json`, `tarfile`, `gzip`, `io`, `re`, `dataclasses`, and `pathlib` only. Never shell out from validation code. Validate archive members before extraction and compare the archive member set to the manifest/allowlist exactly.
-
-- [ ] **Step 4: Run targeted GREEN and full CI-equivalent Python tests**
-
-```sh
-python -m pytest python/tests/test_g2_release_bundle.py -q
-python -m pytest python/tests -q
-```
-
-- [ ] **Step 5: Commit Task 1**
-
-Commit message:
+The verified path is:
 
 ```text
-feat: add verified G2 release bundle format
+sealed source SHA
+  -> exact-SHA GitHub release workflow
+  -> Rust/Python/repository-safety retest
+  -> allowlisted deterministic release bundle
+  -> canonical manifest + SHA-256 sidecar
+  -> immutable GitHub Release shreks-<40-char-sha>
+  -> manual existing-release deploy workflow
+  -> local bundle verification before host contact
+  -> pinned-host-key SSH/SCP using deploy-only credential
+  -> root-owned host release manager
+  -> /opt/shreks/releases/<sha>
+  -> release-local copied Python venv at final SHA path
+  -> systemd unit install
+  -> atomic /opt/shreks/current switch
+  -> shreks.target health check
+  -> automatic previous-release restoration on activation failure
 ```
 
----
+Protected runtime/state paths are outside the release manager API and outside deployment transport:
 
-### Task 2: Host release manager with atomic activation and rollback
+- `/etc/shreks/shreks.env`
+- `/etc/shreks/paper-campaign.json`
+- `/var/lib/shreks`
 
-**Files:**
-- Create: `deploy/release/release_manager.py`
-- Create: `python/tests/test_g2_release_manager.py`
+## 3. Task 1 — immutable release manifest, archive, and verifier
 
-**Interfaces:**
-- Consumes Task 1 manifest/archive verification functions.
-- Produces `ReleaseManagerError(RuntimeError)`.
-- Produces immutable `ReleasePaths(releases_dir: Path, current_link: Path, systemd_dir: Path)`.
-- Produces `stage_release(archive_path: Path, checksum_path: Path, manifest_path: Path, paths: ReleasePaths, *, python_executable: str = "/usr/bin/python3") -> Path`.
-- Produces `activate_release(release_dir: Path, paths: ReleasePaths, *, command_runner: Callable[[tuple[str, ...]], None]) -> None`.
-- Produces `activate_existing(source_sha: str, paths: ReleasePaths, *, command_runner: Callable[[tuple[str, ...]], None]) -> None`.
-- Produces CLI commands `install` and `activate-existing` with production defaults `/opt/shreks/releases`, `/opt/shreks/current`, `/etc/systemd/system`.
+### RED
 
-Activation uses:
+Commit: `56ec6187cfcbde6c6655fc27ce081296e66a40ec`
 
-```python
-("systemctl", "stop", "shreks.target")
-("systemctl", "daemon-reload")
-("systemctl", "start", "shreks.target")
-("systemctl", "is-active", "--quiet", "shreks.target")
-```
+CI: `32901438939`
 
-The current symlink switch must use a temporary sibling symlink followed by `os.replace`.
+Result: Rust and repository safety GREEN; Python failed at collection only because `deploy/release/release_bundle.py` did not exist.
 
-- [ ] **Step 1: Write RED manager tests**
+The RED contract covered exact source SHA identity, canonical manifest encoding, strict payload allowlist, exactly one Shreks wheel, checksums, external/embedded manifest equality, archive traversal/absolute-path rejection, and rejection of symlinks/non-regular members.
 
-Tests must use temporary release/systemd directories and a recording fake command runner. Prove:
+### First implementation and fixture correction
 
-- verified archive stages under `<releases>/<source_sha>`;
-- a staging failure never changes `current`;
-- an existing matching release is reusable;
-- an existing mismatched release fails closed;
-- activation installs exactly the four allowlisted systemd unit files;
-- successful activation points `current` to the new release;
-- health-check failure restores the previous symlink and previous systemd units;
-- first-deploy health failure leaves no false active release claim;
-- `/etc/shreks` and `/var/lib/shreks` are not parameters or mutation targets anywhere in the manager API;
-- `activate-existing` re-verifies the stored manifest/tree before switching.
+Implementation commit: `fcb9a452cbd0e97cf201dff2112db610480d3352`
 
-Patch venv construction in unit tests so tests do not perform network/package installation. Production staging must run:
+CI: `32901680524`
+
+Result: `1 failed, 2287 passed`. The only failure was a test helper creating `second/staging` without creating its parent; the release verifier was not the failing behavior.
+
+Fixture-only correction commit: `327112b800b955c33fc162acfb902cc35c14b70e`
+
+Final Task 1 CI: `32901814288`
+
+Result: Python `2288 passed in 10.17s`; Rust/workspace GREEN; repository safety GREEN.
+
+### Frozen Task 1 behavior
+
+- schema: `g2-release-manifest-v1`
+- source SHA: exactly 40 lowercase hexadecimal characters
+- platform: `x86_64-unknown-linux-gnu`
+- static payload allowlist:
+  - `target/release/shreks-observe`
+  - `target/release/shreks-paper-evidence`
+  - `deploy/systemd/shreks-observe.service`
+  - `deploy/systemd/shreks-paper-evidence.service`
+  - `deploy/systemd/shreks-paper-campaign.service`
+  - `deploy/systemd/shreks.target`
+- exactly one `wheelhouse/shreks_brain-*.whl`
+- `RELEASE_MANIFEST.json` is an archive control member but is intentionally not recursively listed inside its own `files` array
+- external and embedded manifest bytes must be identical
+- canonical compact sorted JSON with one trailing newline
+- deterministic tar metadata
+- SHA-256 archive sidecar
+- archive validation occurs before extraction and rejects unsafe/non-regular members
+
+## 4. Task 2 — root-owned host release manager, atomic activation, and rollback
+
+### RED
+
+Commit: `a98362f3591f5c35743b24c91cd5baac0705018b`
+
+CI: `32902059563`
+
+Result: Python failed at collection only because `deploy/release/release_manager.py` did not exist; repository safety remained GREEN.
+
+### Iteration and hardening history
+
+First manager implementation: `b4376ab20505b1db3a425904bfd4f2c4a3ca8e5d`
+
+CI: `32902196376`
+
+Result: `1 failed, 2297 passed`. The failure was a test expectation that assumed venv construction at the final path while the first implementation used a temporary staging path.
+
+Test correction/hardening: `a7a4a7e2e00873cd4a2003f37ef9645533ec6ff9`
+
+CI: `32902333754`
+
+Result: `1 failed, 2298 passed`. The new failing case exposed that a normal Python venv can contain interpreter symlinks.
+
+The design was then tightened rather than weakening release verification. A Python venv built under a temporary path and renamed can contain absolute-path assumptions, and the temporary directory mode also prevented safe traversal by the non-root Shreks runtime.
+
+Corrected RED contract commit: `c95a6a8ba16e61f535a8bbc2df7fa865965d3997`
+
+CI: `32902586039`
+
+Result: `2 failed, 2298 passed`. The two intended failures were:
+
+1. final release directory mode remained `0700` rather than `0755`;
+2. a rejected venv state left an incomplete SHA-addressed release directory.
+
+### Final GREEN
+
+Commit: `4aae09207b594dbd6e7e91e0407998391080b4a6`
+
+CI: `32902756839`
+
+Result: Python `2300 passed in 10.04s`; Rust/workspace GREEN; repository safety GREEN.
+
+### Frozen Task 2 behavior
+
+- `ReleasePaths` exposes only release directory, `current` symlink, and systemd unit directory.
+- No `/etc/shreks` or `/var/lib/shreks` mutation parameter exists.
+- incoming archive is verified before staging.
+- signed payload is extracted into hidden staging and reverified.
+- verified payload moves to immutable final `/opt/shreks/releases/<sha>`.
+- final release directory is traversable by the non-root services (`0755`).
+- runtime binaries are executable.
+- Python venv is created only at the final SHA path using `python3 -m venv --copies`.
+- Shreks wheel installation is offline and dependency-closed at install time: `pip install --no-index --no-deps`.
+- incomplete releases are removed on install/final-verification failure.
+- `/opt/shreks/current` is untouched until activation.
+- stored payloads are reverified before any activation.
+- activation installs exactly the four sealed systemd unit files.
+- `current` switches through a temporary sibling symlink followed by `os.replace`.
+- activation requires `shreks.target` to become active.
+- failed upgrade restores the previous verified release and its previous systemd units, then health-checks the restored target.
+- failed first deployment leaves no false active-release claim.
+
+## 5. Task 3 — exact-SHA GitHub Release construction
+
+### RED
+
+Commit: `ff99227dc271848f154f9f9a720bd3c9f1cd909b`
+
+CI: `32902924638`
+
+Result: Rust/workspace and repository safety GREEN; Python failed only on the newly introduced release workflow/build-script/CLI contract because those G2 files/features were not yet present.
+
+### GREEN
+
+Commit: `055be3658b60d116d7a19e4132a6921669621624`
+
+CI: `32904304095`
+
+Result: Python `2304 passed in 12.44s`; Rust/workspace GREEN; repository safety GREEN.
+
+### Frozen Task 3 behavior
+
+`deploy/release/build_release.sh`:
+
+- `set -euo pipefail`
+- exact 40-lowercase-hex source SHA validation
+- `git rev-parse HEAD` must equal requested source SHA
+- builds only `shreks-observe` and `shreks-paper-evidence`
+- builds exactly one Shreks wheel with `--no-deps`
+- stages only the allowlisted binaries, existing sealed systemd files, and Shreks wheel
+- delegates bundle construction and verification to `release_bundle.py`
+
+`.github/workflows/release.yml`:
+
+- manual `workflow_dispatch` only
+- required exact `source_sha`
+- `permissions: contents: write` only
+- no `secrets.*` consumption
+- no SSH or deployment environment
+- checkout exact input SHA with full history
+- assert checkout SHA equality
+- require commit subject to contain `seal` case-insensitively
+- rerun committed-secret guard
+- rerun Rust workspace tests
+- rerun Python tests
+- build and locally verify release bundle
+- reject duplicate `shreks-<sha>` release tag
+- create the GitHub Release only after all gates pass
+- release target is the exact source SHA
+
+## 6. Task 4 — deployment-only GitHub-to-VPS transport and runbook
+
+### RED
+
+Commit: `83e01d8733f70c05ecc156f26e8f47b507ae2ce9`
+
+CI: `32904495302`
+
+Result: Python `4 failed, 2304 passed in 9.59s`. All four failures were exactly the new Task 4 boundary: three tests required missing `.github/workflows/deploy.yml`, and one required missing `deploy/release/README.md`. Repository safety remained GREEN.
+
+### GREEN / frozen behavior
+
+Commit: `2aa640196266109119a7c21dde27727fc33d9beb`
+
+CI: `32904668639`
+
+Result: Python `2308 passed in 10.23s`; Rust/workspace GREEN; repository safety GREEN.
+
+### Frozen Task 4 behavior
+
+`.github/workflows/deploy.yml`:
+
+- manual `workflow_dispatch` only
+- accepts an existing `shreks-<40-char-sha>` release tag only
+- `environment: production-paper`
+- `permissions: contents: read`
+- cannot build or create a release
+- checks out the verifier at the release tag
+- downloads exactly tarball, checksum, and manifest
+- verifies the release locally before any host contact
+- consumes exactly five deployment-transport environment secrets:
+  - `SHREKS_DEPLOY_HOST`
+  - `SHREKS_DEPLOY_PORT`
+  - `SHREKS_DEPLOY_USER`
+  - `SHREKS_DEPLOY_SSH_KEY`
+  - `SHREKS_DEPLOY_KNOWN_HOSTS`
+- deploy key and pinned known-hosts material are written only to trapped temporary files with restrictive permissions
+- `StrictHostKeyChecking=yes`, explicit known-hosts file, and `BatchMode=yes`
+- no `ssh-keyscan`
+- exactly three `scp` transfers: tarball, checksum, manifest
+- no protected runtime/state path appears in the workflow
+- no direct `systemctl`
+- only remote privileged command is the root-owned Shreks release manager `install` command
+
+`deploy/release/README.md`:
+
+- creates dedicated unprivileged `shreks-deploy` account
+- installs verifier and release manager root-owned mode `0755`
+- documents narrow sudoers entry for the manager install command
+- documents the exact five `production-paper` transport secrets
+- explicitly separates the deploy SSH key from any trading/signing key
+- keeps runtime/provider/trading credentials host-only
+- includes active-release provenance and systemd health checks
+- rollback selects an earlier immutable GitHub Release and reuses the exact same verified deployment path
+- explicitly states `LIVE TRADING: DISABLED`
+
+## 7. Frozen G1C -> G2 behavior audit
+
+Compare range:
 
 ```text
-/usr/bin/python3 -m venv <release>/.venv
-<release>/.venv/bin/python -m pip install --no-index --no-deps <release>/wheelhouse/shreks_brain-*.whl
+517bc81efa6d5cb88c3a471bb7683b5c1cc330ec
+  ->
+2aa640196266109119a7c21dde27727fc33d9beb
 ```
 
-- [ ] **Step 2: Run RED**
+Compare result:
 
-```sh
-python -m pytest python/tests/test_g2_release_manager.py -q
-```
+- status: ahead
+- commits: `13`
+- changed files: `11`
+- every changed file is an addition; no pre-existing file was modified
 
-Expected: import failure because `release_manager.py` is absent.
+Exact changed files:
 
-- [ ] **Step 3: Implement minimal release manager**
+1. `.github/workflows/deploy.yml`
+2. `.github/workflows/release.yml`
+3. `deploy/release/README.md`
+4. `deploy/release/build_release.sh`
+5. `deploy/release/release_bundle.py`
+6. `deploy/release/release_manager.py`
+7. `docs/superpowers/plans/2026-08-25-phase-g2-github-vps-release-delivery.md`
+8. `docs/superpowers/specs/2026-08-25-phase-g2-github-vps-release-delivery-design.md`
+9. `python/tests/test_g2_delivery_workflows.py`
+10. `python/tests/test_g2_release_bundle.py`
+11. `python/tests/test_g2_release_manager.py`
 
-The CLI may use `argparse`; production command execution uses `subprocess.run(..., check=True)`. On rollback failure, retain the original deployment exception as context and exit nonzero; never report success after a failed health check.
+The audit therefore found no modifications to any sealed production file implementing:
 
-- [ ] **Step 4: Run targeted GREEN and full Python suite**
-
-```sh
-python -m pytest python/tests/test_g2_release_manager.py -q
-python -m pytest python/tests -q
-```
-
-- [ ] **Step 5: Commit Task 2**
-
-```text
-feat: add atomic VPS release activation
-```
-
----
-
-### Task 3: Exact-SHA GitHub Release builder
-
-**Files:**
-- Create: `deploy/release/build_release.sh`
-- Create: `.github/workflows/release.yml`
-- Create: `python/tests/test_g2_delivery_workflows.py`
-
-**Interfaces:**
-- Consumes Task 1 `release_bundle.py`.
-- Produces release artifacts under `dist/release/`.
-- Produces GitHub Release tag `shreks-${SOURCE_SHA}`.
-
-`build_release.sh` must:
-
-```sh
-cargo build --release --bin shreks-observe --bin shreks-paper-evidence
-python -m pip wheel ./python --no-deps -w dist/release-wheel
-```
-
-Then copy only the allowlisted binaries, wheel, and systemd files into a clean staging directory and invoke `release_bundle.py` to write manifest/archive/checksum.
-
-`release.yml` must:
-
-- use `workflow_dispatch.source_sha`;
-- require `permissions: contents: write` and no other write permission;
-- validate `^[0-9a-f]{40}$`;
-- checkout `ref: ${{ inputs.source_sha }}` with `fetch-depth: 0`;
-- assert `git rev-parse HEAD` equals the input;
-- require `git log -1 --format=%s` to contain `seal` case-insensitively;
-- run repository secret-assignment guard;
-- run `cargo test --workspace`;
-- install `./python[dev]` and run `python -m pytest python/tests -q`;
-- build/verify the bundle;
-- fail when `shreks-${SOURCE_SHA}` already exists;
-- create the GitHub Release with `gh release create` only after verification.
-
-- [ ] **Step 1: Write RED static workflow/build-script tests**
-
-Parse workflow text as plain text rather than adding PyYAML. Assert exact required commands/permissions and assert forbidden strings are absent:
-
-```python
-FORBIDDEN = (
-    "WALLET",
-    "SEED_PHRASE",
-    "SIGNING_KEY",
-    "HELIUS_API_KEY",
-    "JUPITER_API_KEY",
-    "LIVE_TRADING=ENABLED",
-)
-```
-
-Also assert `build_release.sh` has `set -euo pipefail`, builds both Rust binaries, builds the wheel with `--no-deps`, starts from a clean staging directory, and delegates manifest/archive creation to the verified Task 1 module.
-
-- [ ] **Step 2: Run RED**
-
-```sh
-python -m pytest python/tests/test_g2_delivery_workflows.py -q
-```
-
-Expected: missing workflow/build-script assertions fail.
-
-- [ ] **Step 3: Implement build script and release workflow**
-
-Do not add third-party release actions. Use `actions/checkout@v7`, `actions/setup-python@v7`, `dtolnay/rust-toolchain@stable`, and the preinstalled GitHub CLI.
-
-- [ ] **Step 4: Run targeted GREEN and full suites**
-
-```sh
-python -m pytest python/tests/test_g2_delivery_workflows.py -q
-python -m pytest python/tests -q
-cargo test --workspace
-```
-
-- [ ] **Step 5: Commit Task 3**
-
-```text
-feat: build exact-SHA GitHub releases
-```
-
----
-
-### Task 4: GitHub-to-VPS deployment transport and bootstrap runbook
-
-**Files:**
-- Create: `.github/workflows/deploy.yml`
-- Create: `deploy/release/README.md`
-- Modify: `python/tests/test_g2_delivery_workflows.py`
-- Modify: `crates/shreks-observer/tests/systemd_units.rs` only if needed to lock unchanged `/opt/shreks/current` execution paths.
-
-**Interfaces:**
-- Consumes an existing GitHub Release `shreks-<40-char-sha>`.
-- Consumes only deployment transport secrets `SHREKS_DEPLOY_HOST`, `SHREKS_DEPLOY_PORT`, `SHREKS_DEPLOY_USER`, `SHREKS_DEPLOY_SSH_KEY`, `SHREKS_DEPLOY_KNOWN_HOSTS`.
-- Invokes root-owned `/usr/local/sbin/shreks-release-manager install ...` on the host.
-
-- [ ] **Step 1: Extend RED tests for deployment boundary**
-
-Assert `.github/workflows/deploy.yml`:
-
-- is `workflow_dispatch` only;
-- accepts required `release_tag`;
-- uses `environment: production-paper`;
-- has `permissions: contents: read`;
-- validates tag `^shreks-[0-9a-f]{40}$`;
-- downloads exactly tarball/checksum/manifest from the existing GitHub Release;
-- runs local bundle verification before SSH;
-- writes the private SSH key to an ephemeral `0600` file;
-- writes `SHREKS_DEPLOY_KNOWN_HOSTS` to an ephemeral known-hosts file;
-- passes `StrictHostKeyChecking=yes` and the explicit known-hosts file;
-- never invokes `ssh-keyscan`;
-- copies only release artifacts;
-- invokes only the root-owned release manager through `sudo`;
-- contains none of the forbidden wallet/provider/live-mode secret strings.
-
-Assert the runbook includes one-time installation of the manager as root-owned mode `0755`, a dedicated deploy account, a narrow sudoers command, release provenance checks (`readlink -f /opt/shreks/current` and `cat /opt/shreks/current/RELEASE_MANIFEST.json`), and rollback by selecting an earlier GitHub Release tag.
-
-- [ ] **Step 2: Run RED**
-
-```sh
-python -m pytest python/tests/test_g2_delivery_workflows.py -q
-```
-
-Expected: deployment/runbook assertions fail because files are absent.
-
-- [ ] **Step 3: Implement deploy workflow and runbook**
-
-The workflow must not create or alter host runtime secrets. Document that GitHub Environment secret population is account configuration, not repository content, and that the deploy SSH key is intentionally separate from any trading key.
-
-- [ ] **Step 4: Run full verification**
-
-```sh
-python -m pytest python/tests -q
-cargo test --workspace
-```
-
-Repository-safety CI must also remain GREEN.
-
-- [ ] **Step 5: Commit Task 4**
-
-```text
-feat: add verified GitHub-to-VPS deployment
-```
-
----
-
-### Task 5: Freeze, audit, verification record, and seal
-
-**Files:**
-- Modify only after behavior freeze: `docs/superpowers/plans/2026-08-25-phase-g2-github-vps-release-delivery.md`
-
-- [ ] **Step 1: Freeze behavior SHA**
-
-Wait for full CI GREEN on the exact final behavior commit. Record Python pass count, Rust/workspace result, repository-safety result, and workflow run ID.
-
-- [ ] **Step 2: Audit sealed G1C -> G2 behavior**
-
-Compare:
-
-```text
-517bc81efa6d5cb88c3a471bb7683b5c1cc330ec -> <G2_BEHAVIOR_SHA>
-```
-
-Inspect every changed file. Verify the diff contains only G2 design/plan, release bundle/manager/build/deploy tooling, workflow files, runbook, and tests.
-
-Explicitly verify absent:
-
-- strategy/setup/scoring changes;
-- risk-engine changes;
-- provider behavior changes;
-- storage schema/migration changes;
-- paper/live execution logic changes;
-- ledger/accounting/checkpoint/evaluation changes;
-- registry/promotion mutation;
+- strategy/setup/scoring logic;
+- risk engine;
+- provider behavior;
+- observer/storage schema or migrations;
+- paper/live execution logic;
+- ledger/accounting/checkpoint/evaluation logic;
+- registry/promotion authority;
 - transaction construction/signing/submission;
-- wallet/private key material;
-- live-mode enablement;
-- mutation/deletion of `/etc/shreks` protected runtime config or `/var/lib/shreks` durable state.
+- live-mode enablement.
 
-- [ ] **Step 3: Replace this plan with final verification record**
+The G2 Python release modules use standard-library release/deployment mechanics and do not import Shreks strategy, promotion, live, signing, or execution authority. The workflows/scripts invoke build/test/package/release/SSH/release-manager operations only. Existing G1C systemd unit source files are release inputs; G2 did not modify them.
 
-Record every RED/GREEN commit/CI anchor, final behavior SHA/CI, exact changed-file audit, secret/authority boundary, and release/deploy/rollback invariants.
+No wallet/private signing key material was committed. The only private-key-shaped authority introduced by G2 is a reference to a deployment SSH secret stored in the GitHub `production-paper` environment; it is explicitly transport-only and distinct from any trading/signing credential.
 
-- [ ] **Step 4: Commit the one-document seal**
+Protected `/etc/shreks` and `/var/lib/shreks` paths are referenced only in the runbook/tests as protected state that deployment must preserve, not as workflow mutation targets.
 
-```text
-docs: seal G2 GitHub VPS release delivery
-```
+## 8. Complete G2 commit chronology
 
-- [ ] **Step 5: Prove seal geometry**
+The 13 commits from sealed G1C through frozen G2 behavior are:
 
-Compare behavior SHA -> seal SHA and require:
+1. `dc805fea70f8364f9b595b138c1ab4c2d1808237` — G2 design and implementation plan.
+2. `56ec6187cfcbde6c6655fc27ce081296e66a40ec` — Task 1 RED.
+3. `fcb9a452cbd0e97cf201dff2112db610480d3352` — Task 1 first implementation.
+4. `327112b800b955c33fc162acfb902cc35c14b70e` — Task 1 fixture correction / final GREEN.
+5. `a98362f3591f5c35743b24c91cd5baac0705018b` — Task 2 RED.
+6. `b4376ab20505b1db3a425904bfd4f2c4a3ca8e5d` — Task 2 first implementation.
+7. `a7a4a7e2e00873cd4a2003f37ef9645533ec6ff9` — Task 2 test correction/hardening RED.
+8. `c95a6a8ba16e61f535a8bbc2df7fa865965d3997` — Task 2 corrected final-path/permissions/cleanup RED contract.
+9. `4aae09207b594dbd6e7e91e0407998391080b4a6` — Task 2 final GREEN.
+10. `ff99227dc271848f154f9f9a720bd3c9f1cd909b` — Task 3 RED.
+11. `055be3658b60d116d7a19e4132a6921669621624` — Task 3 GREEN.
+12. `83e01d8733f70c05ecc156f26e8f47b507ae2ce9` — Task 4 RED.
+13. `2aa640196266109119a7c21dde27727fc33d9beb` — Task 4 GREEN / frozen G2 behavior.
 
-```text
-ahead_by = 1
-behind_by = 0
-changed_files = [docs/superpowers/plans/2026-08-25-phase-g2-github-vps-release-delivery.md]
-```
+## 9. What G2 proves — and what it does not
 
-- [ ] **Step 6: Run/check fresh exact-seal CI**
+G2 proves in repository tests/CI that Shreks has a fail-closed software/control path for:
 
-Require Python, Rust/workspace, and repository safety all GREEN on the exact seal SHA.
+- exact sealed source provenance;
+- immutable release identity;
+- allowlisted reproducible packaging;
+- cryptographic bundle verification;
+- root-owned release installation;
+- atomic release activation;
+- health-gated rollback;
+- deployment-only SSH transport with pinned host keys;
+- preservation of protected runtime configuration and durable state by the deployment path.
 
-- [ ] **Step 7: Update stacked draft PR**
+G2 does **not** claim that an actual production VPS was bootstrapped or reached by this conversation. Real-host bootstrap and deployment require the dedicated VPS plus correctly configured `production-paper` environment/host transport credentials. That operational execution remains external to this repository-only proof.
 
-Record base sealed G1C SHA, behavior SHA, seal SHA, CI IDs, audit result, rollback mechanics, secret boundary, and:
+G2 also does not prove profitability, positive expectancy, production market-data quality, live-capital readiness, wallet-signing safety, or recovery/monitoring/emergency-control completeness. Those remain governed by later proof and Phase G gates.
 
-`LIVE TRADING: DISABLED.`
+## 10. Seal rule
 
-## Deferred after G2 seal
+This verification record is the only permitted file change after frozen behavior SHA `2aa640196266109119a7c21dde27727fc33d9beb`.
 
-After G2 is sealed, configure the real VPS and GitHub `production-paper` environment/transport secrets when the host exists, then use the release/deploy path to support G3 real-host supervision/restart verification. G4+ monitoring/dashboard/alerts/backup work remains separate. Live money remains disabled until all proof and pre-F7 operational gates pass.
+The seal is valid only if all of the following hold after this commit:
+
+1. behavior -> seal compare is exactly one commit;
+2. the only changed file is this verification record;
+3. exact-seal CI is GREEN for Python, Rust/workspace, and repository safety;
+4. Python remains at the frozen behavior test count (`2308`);
+5. PR #43 remains draft and unmerged;
+6. live trading remains disabled.
+
+The exact seal SHA and exact-seal CI run are recorded in PR #43 after CI completes, because those identifiers do not exist until this one-file seal commit itself has been created and tested.
