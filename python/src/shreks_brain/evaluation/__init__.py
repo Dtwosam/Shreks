@@ -11,6 +11,9 @@ from .models import (
     TradingEvaluationReport,
     TradingPerformanceMetrics,
 )
+from .codec import EVALUATION_EVIDENCE_STORE_SCHEMA_VERSION
+from .evidence import TradingEvaluationEvidence
+from .store import TradingEvaluationEvidenceStore
 
 
 __all__ = (
@@ -25,4 +28,7 @@ __all__ = (
     "TradingEvaluationReport",
     "build_probability_observations_from_e4",
     "evaluate_trading_performance",
+    "EVALUATION_EVIDENCE_STORE_SCHEMA_VERSION",
+    "TradingEvaluationEvidence",
+    "TradingEvaluationEvidenceStore",
 )
