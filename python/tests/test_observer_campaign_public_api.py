@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import fields
 import inspect
 import json
 from pathlib import Path
@@ -39,6 +40,20 @@ _EXPECTED_PUBLIC_API = (
     "ObserverPaperCampaignCycleAudit",
     "assemble_observer_paper_campaign_cycle",
     "ObserverPaperCampaignCoordinatorRunner",
+    "OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION",
+    "ObserverPaperCampaignRuntimeManifestError",
+    "ObserverPaperCampaignRuntimeManifest",
+    "build_observer_paper_campaign_runtime_manifest",
+    "encode_observer_paper_campaign_runtime_manifest",
+    "decode_observer_paper_campaign_runtime_manifest",
+    "ObserverPaperCampaignRuntimeConfigError",
+    "ObserverPaperCampaignRuntimeConfig",
+    "load_observer_paper_campaign_runtime_config",
+    "OBSERVER_PAPER_CAMPAIGN_RUNTIME_STATUS_SCHEMA_VERSION",
+    "ObserverPaperCampaignRuntimeError",
+    "ObserverPaperCampaignRuntimeBootstrap",
+    "bootstrap_observer_paper_campaign_runtime",
+    "run_observer_paper_campaign_runtime",
 )
 
 _FORBIDDEN_IMPORT_PREFIXES = (
@@ -71,6 +86,7 @@ def test_public_api_is_exact_and_authority_limited():
         for word in _FORBIDDEN_PUBLIC_AUTHORITY_WORDS
     )
     assert "ObserverCampaignCandidateStore" not in observer_campaign.__all__
+    assert "main" not in observer_campaign.__all__
 
 
 def test_campaign_store_public_methods_are_read_only_evidence_queries():
@@ -122,6 +138,39 @@ def test_coordinator_runner_public_methods_are_paper_evidence_only():
         for method_name in public_methods
         for word in _FORBIDDEN_PUBLIC_AUTHORITY_WORDS
     )
+
+
+def test_runtime_config_public_shape_has_no_provider_credentials_or_trading_policy_fields():
+    field_names = {
+        field.name for field in fields(observer_campaign.ObserverPaperCampaignRuntimeConfig)
+    }
+    assert field_names == {
+        "observer_database_path",
+        "evidence_path",
+        "manifest_path",
+        "cycle_interval_seconds",
+        "max_cycles",
+    }
+    assert not any(
+        word in name.lower()
+        for name in field_names
+        for word in (
+            "key",
+            "secret",
+            "credential",
+            "slippage",
+            "capital",
+            "risk",
+            "score",
+            "provider",
+        )
+    )
+
+
+def test_runtime_bootstrap_exposes_only_manifest_runner_and_restored_state():
+    assert {
+        field.name for field in fields(observer_campaign.ObserverPaperCampaignRuntimeBootstrap)
+    } == {"manifest", "runner", "restored_state"}
 
 
 def test_source_import_firewall_excludes_promotion_and_live_execution_authority():
