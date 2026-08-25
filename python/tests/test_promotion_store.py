@@ -179,6 +179,7 @@ def _write_document(path: Path, document: object) -> None:
 
 def _persisted_document(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     path = tmp_path / "promotion.json"
+    path.unlink(missing_ok=True)
     PromotionAssessmentStore(path).append(_assessment())
     return path, json.loads(path.read_text(encoding="utf-8"))
 
