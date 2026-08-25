@@ -1,271 +1,137 @@
-# Phase G1 Production Paper Evidence Runtime Implementation Plan
+# Phase G1 Production Paper Evidence Runtime — Final Verification Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+**Phase:** G1 — Dedicated Linux production runtime, first bounded slice  
+**Sealed base:** E15 `b8daa24bbaaa1369e91c9735aaad0d990fd6ba53`  
+**Frozen behavior SHA:** `711d4b68a4bc41f17ba133163bf4f41615a7835b`  
+**Behavior CI:** GitHub Actions run `32891299275` — SUCCESS on the exact frozen behavior SHA  
+**Design:** `docs/superpowers/specs/2026-08-25-phase-g1-production-paper-evidence-runtime-design.md`  
+**Stacked PR:** #40 — `Phase G1: Production paper evidence runtime`  
+**Date:** 2026-08-25
 
-**Goal:** Add a continuously runnable, restart-safe, paper-only evidence daemon that collects real Helius holder evidence and purpose-correct Jupiter ENTRY/EXIT quote evidence for bounded recent observer candidates.
+## Result
 
-**Architecture:** Reuse the sealed E15 `SafetyEvidenceCollector`, `ShreksDb` evidence-write path, and existing provider adapters without expanding the sealed storage public API. The daemon owns a separate read-only SQLite candidate store, an environment-derived config that requires all economic probe parameters explicitly, a bounded cycle runner, a thin long-running binary, and systemd supervision files. No strategy, registry, promotion, execution, or live authority is introduced.
+Phase G1 adds a continuously runnable, restart-supervised, paper-only evidence runtime on top of sealed E15 without adding trading, signing, submission, promotion, registry-mutation, or live-money authority.
 
-**Tech Stack:** Rust 2021, Tokio, SQLite/rusqlite, existing Helius/Jupiter adapters, GitHub Actions, systemd unit files.
+The frozen behavior can:
 
-**Spec:** `docs/superpowers/specs/2026-08-25-phase-g1-production-paper-evidence-runtime-design.md`
+- select a deterministic bounded set of recently active observer candidates from the operational SQLite database using a separate read-only connection;
+- require every operational/economic paper-evidence input explicitly at runtime;
+- require Helius and Jupiter before daemon startup;
+- collect real read-only Helius holder-distribution evidence;
+- collect purpose-correct Jupiter EXIT and ENTRY quote evidence through the sealed E15 `SafetyEvidenceCollector` and storage path;
+- aggregate provider degradation without fabricating evidence;
+- fail closed on candidate-store, schema, configuration, probe, or storage-integrity failures;
+- run continuously as `shreks-paper-evidence` with clean Ctrl-C/SIGINT handling;
+- supervise both `shreks-observe` and `shreks-paper-evidence` under systemd on one Linux host with durable state outside the release checkout.
 
-## Global Constraints
+**LIVE TRADING REMAINS DISABLED.**
 
-- Base exactly on sealed E15 `b8daa24bbaaa1369e91c9735aaad0d990fd6ba53`.
-- Do not modify sealed B1/B2/B6/C5/C6/E11/E12 strategy/risk/evaluation/promotion semantics.
-- Do not create trade intents, transactions, signatures, submissions, or live-money authority.
-- No wallet/private signing credentials in code, GitHub, logs, docs examples, or tests.
-- Use only existing free/public provider adapters; Helius and Jupiter credentials are runtime environment values.
-- Economic probe values must be explicit configuration, never copied from permissive test fixtures.
-- TDD RED -> inspect -> minimal GREEN for every behavior change.
-- Keep new runtime implementation inside the `shreks-paper-evidence` binary module tree where practical; avoid widening unrelated library surfaces.
+## TDD evidence ledger
 
-## Design correction before implementation
+### Task 1 — bounded read-only candidate selection
 
-The first Task-1 RED attempt at `45e4d85a4c962e61cecfb948feb09932b482641d` proposed a new `ShreksDb` candidate-read method. CI proved the intended missing-method failure while Python and repository safety stayed GREEN. Before any production implementation landed, the design was tightened: candidate enumeration is operational read-only behavior and does not need to widen sealed E15 storage. That test was removed and replaced by the runtime-local read-store contract below. The abandoned RED remains immutable history and will be recorded in the final verification record.
+The first RED at `45e4d85a4c962e61cecfb948feb09932b482641d` intentionally exposed the absence of a proposed storage read API. Before production implementation, the design was tightened so operational candidate enumeration would not widen sealed E15 storage. The abandoned RED remains immutable history.
 
----
+The corrected runtime-local RED was `8872540329ba58d19cca5deb113bf29b4ee4d686`. Production implementation landed through `520e7e8a3b3bdfd7d38a278d33d3310daf039c43` plus the runtime dependency move at `1ac8f33991ae9bad6830b1bd20da9e91d0012d16`. Exact-head CI run `32888846383` was GREEN.
 
-### Task 1: Read-only bounded point-in-time evidence candidate store
+Verified properties include point-in-time windowing, future-row exclusion, deterministic ordering, duplicate collapse, hard limiting, zero-limit behavior, invalid-window rejection, schema validation, malformed-row rejection, and non-creation of a missing database by the read-only store.
 
-**Files:**
-- Create: `crates/shreks-observer/src/bin/shreks-paper-evidence/candidate_store.rs`
-- Create: `crates/shreks-observer/tests/paper_evidence_candidate_store.rs`
-- Modify: `crates/shreks-observer/Cargo.toml` only when moving the already-tested module into production-binary compilation.
+### Task 2 — explicit runtime/economic configuration
 
-**Interfaces:**
-- Produces:
-  - `EvidenceProbeCandidate { candidate_id: i64, mint: String, latest_market_observed_at_unix_ms: i64 }`
-  - `EvidenceCandidateStore::open(path)` using SQLite `mode=ro`
-  - `EvidenceCandidateStore::recent_candidates(as_of_unix_ms, lookback_ms, limit)`
+RED: `89a7eafd51d55c1ab68d0e35f31a5b9b6f258dd7`.
 
-- [ ] **Step 1: Write RED tests**
+GREEN behavior: `b628cdf02c6e278fc877f4156a389a36ab0d8629`, with blank variable declarations at `a9a5d72f29ce894821177ce4666b7b69dd985cfd`. Exact-head CI run `32889181098` was GREEN.
 
-The integration test includes the not-yet-created binary module by path and proves:
+Verified properties include explicit required interval/lookback/batch settings, explicit probe version, quote asset, taker, entry/exit amounts, slippage, distribution page size/max pages, separate Helius/Jupiter provider gates, purpose-correct bidirectional probes, and no provider-key contents in debug/error output. No economic production default was copied from a test fixture.
 
-1. only candidates with market evidence inside `[as_of - lookback, as_of]` are returned;
-2. future market snapshots are excluded;
-3. duplicate snapshots collapse to one candidate using the latest eligible timestamp;
-4. order is latest timestamp descending then candidate id ascending;
-5. result count is capped by `limit`;
-6. `limit == 0` returns empty;
-7. negative `as_of_unix_ms` and non-positive lookback fail closed;
-8. missing database, missing required tables/columns, and malformed candidate rows fail closed;
-9. opening/querying the store never creates or mutates the database.
+### Task 3 — one bounded evidence cycle
 
-- [ ] **Step 2: Run repository CI and verify RED**
+RED: `41e0defdd054e3d842b20c49a3d254a7b67ae8d2`.
 
-Expected Rust failure: `candidate_store.rs` absent. Python and repository-safety jobs remain GREEN.
+GREEN: `d28dddd1fc8880eb6467f223b13cd4db8fac66a4`. Exact-head CI run `32889508928` was GREEN.
 
-- [ ] **Step 3: Implement minimal read-only store**
+Verified properties include probing only the selected point-in-time candidate set, exact ENTRY/EXIT direction and amount identity, persistence through the sealed E15 collector, zero provider calls for an empty candidate set, provider-failure accounting without synthetic success, and propagation of probe/storage/integrity failures.
 
-Use one SQL query equivalent to:
+### Task 4 — long-running paper-evidence daemon
 
-```sql
-SELECT tc.id, tc.mint, MAX(ms.observed_at_unix_ms) AS latest_market_observed_at_unix_ms
-FROM token_candidates AS tc
-JOIN market_snapshots AS ms ON ms.candidate_id = tc.id
-WHERE ms.observed_at_unix_ms BETWEEN ?1 AND ?2
-GROUP BY tc.id, tc.mint
-ORDER BY latest_market_observed_at_unix_ms DESC, tc.id ASC
-LIMIT ?3
-```
+RED: `7e1fba5a7e2f102519865b00bf0fdbde71b7e556`.
 
-Compute the lower bound with clamped arithmetic so timestamp zero is valid. Validate the required schema and returned ids/timestamps/mints. Use a read-only URI connection and do not run migrations.
+The RED review found a contradictory test assertion: the daemon was required to construct Helius/Jupiter providers while the test also prohibited the safe credential accessors needed to do so. The contract was corrected at `6693660e14be11f41e2691a103f6ce93c9f50519` before production implementation. The correct rule is that runtime credentials may be consumed only to construct provider clients and must never be logged or persisted as evidence.
 
-- [ ] **Step 4: Add `rusqlite` as a normal observer dependency and run full CI to GREEN**
+GREEN: `36fe821719200adf7b272bcc81057e59e6cbd0f2`. Exact-head CI run `32889856333` was GREEN.
 
-Commit message: `feat: read bounded paper evidence candidates`
+Verified properties include startup provider gates, the shared configured database, read-only candidate enumeration, one sealed evidence collector, continuous bounded cycles, aggregate non-secret logging, clean Ctrl-C handling, and a source-level authority firewall against trading/promotion/signing/submission paths.
 
----
+### Task 5 — Linux systemd supervision
 
-### Task 2: Explicit paper-evidence runtime configuration
+Initial RED: `43216cbdf7e2c02632faa2ceef9719d36aee4707`.
 
-**Files:**
-- Create: `crates/shreks-observer/src/bin/shreks-paper-evidence/config.rs`
-- Create: `crates/shreks-observer/tests/paper_evidence_runtime_config.rs`
-- Modify: `.env.example`
+That RED correctly failed Rust because the four deployment artifacts were absent, but repository safety also rejected literal private-key/seed-phrase assignment patterns inside the test source itself. The assertions were rewritten without weakening their semantics at `d02b7b653af6138254b27c452e9dc2a848411794`; the corrected RED then had repository safety and Python GREEN while Rust failed only because the deployment files were absent.
 
-**Interfaces:**
-- Produces:
-  - `PaperEvidenceRuntimeConfig`
-  - `PaperEvidenceRuntimeConfigError`
-  - `PaperEvidenceRuntimeConfig::from_lookup<F>(lookup: F)`
-  - `PaperEvidenceRuntimeConfig::from_env()`
-  - `PaperEvidenceRuntimeConfig::probe_for(&self, candidate_mint: &str)`
-  - `PaperEvidenceRuntimeConfig::require_providers(&self)`
+GREEN/frozen behavior: `711d4b68a4bc41f17ba133163bf4f41615a7835b`. Exact-head push CI run `32891299275` completed SUCCESS with Rust/workspace, Python, and repository-safety jobs all GREEN.
 
-Configuration fields:
+Verified properties include a dedicated non-root `shreks` identity, `/opt/shreks/current`, `/etc/shreks/shreks.env`, `Restart=on-failure`, SIGINT shutdown, grouped `shreks.target`, no embedded provider/wallet secrets, no live enablement, and a runbook that keeps the SQLite WAL database/evidence on durable host storage across release changes and rollbacks.
 
-```text
-db_path: PathBuf
-cycle_interval: Duration
-candidate_lookback_ms: i64
-max_candidates: usize
-probe_policy_version: String
-quote_asset_mint: String
-quote_taker: String
-entry_input_amount: u64
-exit_input_amount: u64
-slippage_bps: u16
-distribution_page_size: usize
-distribution_max_pages: usize
-providers: ProviderConfig
-```
+## Sealed E15 -> frozen G1 behavior audit
 
-- [ ] **Step 1: Write RED tests**
+The exact compare from sealed E15 `b8daa24bbaaa1369e91c9735aaad0d990fd6ba53` to frozen behavior `711d4b68a4bc41f17ba133163bf4f41615a7835b` is ahead by 20 commits, behind by 0, and changes exactly 17 files.
 
-Prove:
+| File | Audit result |
+| --- | --- |
+| `.env.example` | Adds blank provider/paper-evidence variable declarations only; no populated secret or economic default. |
+| `crates/shreks-observer/Cargo.toml` | Moves already-used `rusqlite` from dev-only to runtime dependency; no unrelated dependency widening. |
+| `crates/shreks-observer/src/bin/shreks-paper-evidence/candidate_store.rs` | New runtime-local read-only, schema-validated, deterministic bounded candidate selector; no write/migration authority. |
+| `crates/shreks-observer/src/bin/shreks-paper-evidence/config.rs` | New strict explicit config and probe construction; provider credentials are consumed through existing `ProviderConfig`; no hidden economic defaults. |
+| `crates/shreks-observer/src/bin/shreks-paper-evidence/cycle.rs` | New bounded collector aggregator using sealed E15 evidence APIs only; no trading/promotion/signing/submission authority. |
+| `crates/shreks-observer/src/bin/shreks-paper-evidence/main.rs` | New long-running paper evidence daemon; read-only provider calls plus sealed evidence writes only. |
+| `crates/shreks-observer/tests/paper_evidence_binary.rs` | Structural daemon authority/logging firewall tests only. |
+| `crates/shreks-observer/tests/paper_evidence_candidate_store.rs` | Point-in-time/read-only/schema/bounds regression tests only. |
+| `crates/shreks-observer/tests/paper_evidence_cycle.rs` | Real temp-SQLite + static-provider cycle tests, including no-fabrication provider-failure behavior and authority firewall. |
+| `crates/shreks-observer/tests/paper_evidence_runtime_config.rs` | Explicit-config, exact-probe, provider-gate, and secret-redaction regression tests only. |
+| `crates/shreks-observer/tests/systemd_units.rs` | Static deployment-contract and no-live/no-secret assertions only. |
+| `deploy/systemd/README.md` | Single-host operator runbook; durable state, protected runtime env, supervision, upgrade/rollback, live disabled. |
+| `deploy/systemd/shreks-observe.service` | Non-root supervision for existing observer; no new authority. |
+| `deploy/systemd/shreks-paper-evidence.service` | Non-root supervision for the new paper-evidence daemon; no new authority. |
+| `deploy/systemd/shreks.target` | Groups the two paper/observe services only. |
+| `docs/superpowers/plans/2026-08-25-phase-g1-production-paper-evidence-runtime.md` | G1 implementation/proof record. |
+| `docs/superpowers/specs/2026-08-25-phase-g1-production-paper-evidence-runtime-design.md` | G1 approved design boundary. |
 
-1. every required economic input is rejected when blank/missing;
-2. zero amounts, zero page sizes/pages, invalid slippage, zero/invalid cycle interval/lookback/max-candidate values fail closed;
-3. Helius and Jupiter are both required;
-4. `probe_for("MintX")` creates holder, EXIT and ENTRY requests with exact candidate/quote-asset/taker/slippage/version attribution;
-5. no API-key contents appear in debug/error output;
-6. `.env.example` contains variable names only and no real secrets.
+## Negative authority audit
 
-- [ ] **Step 2: Run CI and verify RED**
+The frozen behavior diff does **not** modify any sealed `shreks-storage` source file and does not widen the sealed storage public API.
 
-Expected Rust failure: config module absent.
+It does **not** modify strategy, risk, E11/E12 evaluation/promotion, live execution, signing, or transaction-submission implementation.
 
-- [ ] **Step 3: Implement minimal config/parser**
+The new runtime does **not** create trade intents, mutate champion/challenger state, promote candidates, construct/sign/submit transactions, enable live mode, or contain wallet/private signing material.
 
-Use existing `ProviderConfig::from_lookup`. Parse all integers with explicit positive/range validation. Do not introduce economic defaults. `probe_for` uses validated `TokenDistributionRequest::new` and `QuoteRequest::new` constructors.
+Provider credentials remain runtime-only configuration. The committed `.env.example`, unit files, tests, docs, and runtime logging contain no real secret values.
 
-- [ ] **Step 4: Run full CI to GREEN and commit**
+Synthetic/static provider fixtures remain test mechanics only and are not evidence of profitability.
 
-Commit message: `feat: configure paper evidence runtime`
+## Seal protocol
 
----
+`711d4b68a4bc41f17ba133163bf4f41615a7835b` is the frozen behavior SHA. The commit containing this verification document is the G1 seal commit and must modify only this file relative to the frozen behavior SHA.
 
-### Task 3: One bounded paper-evidence cycle
+After this document is committed, verification is performed externally against Git history and GitHub Actions:
 
-**Files:**
-- Create: `crates/shreks-observer/src/bin/shreks-paper-evidence/cycle.rs`
-- Create: `crates/shreks-observer/tests/paper_evidence_cycle.rs`
+1. behavior -> seal must be exactly one commit ahead and zero behind;
+2. the only behavior -> seal changed file must be this verification document;
+3. a fresh exact-seal CI run must be GREEN for Rust/workspace, Python, and repository safety.
 
-**Interfaces:**
-- Produces:
-  - `PaperEvidenceCycleReport`
-  - `PaperEvidenceCycleError`
-  - `run_paper_evidence_cycle(...)`
+The seal commit SHA and exact-seal CI run are therefore recorded in PR #40 / GitHub history rather than self-referentially editing this immutable record again.
 
-The cycle function consumes an `EvidenceCandidateStore`, an already-built sealed `SafetyEvidenceCollector`, the validated runtime config, and one explicit `as_of_unix_ms`.
+## Next proof phase
 
-- [ ] **Step 1: Write RED tests**
+The next implementation slice is the **Python multi-candidate paper campaign coordinator**, followed by actual independent paper evidence collection on real point-in-time observer data.
 
-Use static providers and a real temporary SQLite database. Prove:
+That evidence must be evaluated through the existing E10/E11/E12 proof stack for at least:
 
-1. only selected recent candidates are probed;
-2. exact candidate-specific ENTRY/EXIT identities are used;
-3. collector provider failures are accumulated and do not fabricate stored evidence;
-4. candidate-store/config/probe/storage integrity errors fail the cycle;
-5. no candidate selected means zero provider calls and a zero report;
-6. runtime source contains no trade-intent, registry mutation, promotion, signing, submission, or live authority imports.
+- expectancy after measured costs;
+- drawdown;
+- independent trade/sample count, distinct mints, and elapsed time;
+- cost burden and winner concentration;
+- reproducible accounting and evaluation inputs.
 
-- [ ] **Step 2: Run CI and verify RED**
+No threshold may be invented merely to pass a gate. Synthetic fixtures prove mechanics, not profitability.
 
-Expected failure: cycle module absent.
-
-- [ ] **Step 3: Implement minimal bounded cycle**
-
-Keep provider transport failures nonfatal only when the sealed collector already represents them as report counts. Do not catch and suppress storage or invalid-probe failures.
-
-- [ ] **Step 4: Run full CI to GREEN and commit**
-
-Commit message: `feat: run bounded paper evidence cycles`
-
----
-
-### Task 4: Long-running `shreks-paper-evidence` binary
-
-**Files:**
-- Create: `crates/shreks-observer/src/bin/shreks-paper-evidence/main.rs`
-- Create: `crates/shreks-observer/tests/paper_evidence_binary.rs`
-
-**Interfaces:**
-- Binary name: `shreks-paper-evidence`
-- External authority: read-only Helius/Jupiter calls plus evidence writes through sealed E15 storage only.
-
-- [ ] **Step 1: Write RED structural/runtime tests**
-
-Prove the binary source:
-
-1. constructs `PaperEvidenceRuntimeConfig` from environment;
-2. requires Helius/Jupiter before loop start;
-3. validates the read-only candidate store and opens the configured shared SQLite path for evidence writes;
-4. constructs `HeliusProvider`, `JupiterProvider`, and `SafetyEvidenceCollector` only;
-5. repeatedly calls the bounded cycle on a configured interval;
-6. exits cleanly on Ctrl-C;
-7. never imports execution, live, promotion, registry mutation, signing, or transaction-submission paths;
-8. never logs provider key contents.
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected failure: binary main absent.
-
-- [ ] **Step 3: Implement minimal daemon**
-
-Log startup and per-cycle aggregate counts only. Treat configuration/storage/schema/integrity errors as process-fatal. Keep provider failures visible through report counts.
-
-- [ ] **Step 4: Run full CI to GREEN and commit**
-
-Commit message: `feat: add paper evidence daemon`
-
----
-
-### Task 5: Linux systemd supervision
-
-**Files:**
-- Create: `deploy/systemd/shreks-observe.service`
-- Create: `deploy/systemd/shreks-paper-evidence.service`
-- Create: `deploy/systemd/shreks.target`
-- Create: `deploy/systemd/README.md`
-- Create: `crates/shreks-observer/tests/systemd_units.rs`
-
-**Interfaces:**
-- Runtime root: `/opt/shreks/current`
-- Environment file: `/etc/shreks/shreks.env`
-- Service user/group: `shreks`
-
-- [ ] **Step 1: Write RED repository tests**
-
-Require:
-
-- `User=shreks`, `Group=shreks`;
-- `WorkingDirectory=/opt/shreks/current`;
-- `EnvironmentFile=/etc/shreks/shreks.env`;
-- `Restart=on-failure`;
-- observe service executes `shreks-observe`;
-- evidence service executes `shreks-paper-evidence`;
-- no `JUPITER_API_KEY=`, `HELIUS_API_KEY=`, seed phrase, private key, live enable, or transaction-submit command appears;
-- target groups both services.
-
-- [ ] **Step 2: Run CI and verify RED**
-
-Expected failure: deployment files absent.
-
-- [ ] **Step 3: Add minimal systemd units and operator README**
-
-README covers dedicated-user creation, persistent data directory ownership, runtime environment-file permissions (`0600`), build/install paths, `daemon-reload`, enable/start/stop/status/journal commands, reboot behavior, and explicit statement that this slice has no signing/live authority.
-
-- [ ] **Step 4: Run full CI to GREEN and commit**
-
-Commit message: `ops: supervise observer paper evidence runtime`
-
----
-
-### Task 6: Scope audit and seal
-
-**Files:**
-- Modify only this plan file for the final verification record.
-
-- [ ] **Step 1: Freeze behavior SHA after Task 5 full CI is GREEN**
-- [ ] **Step 2: Audit sealed E15 -> G1 behavior diff file by file**
-- [ ] **Step 3: Replace this plan with the final verification record in one docs-only commit**
-- [ ] **Step 4: Prove behavior -> seal is exactly one commit / one verification-document file**
-- [ ] **Step 5: Run fresh exact-seal CI requiring Python, Rust/workspace, and repository-safety GREEN**
-- [ ] **Step 6: Update the stacked draft PR**
-
-The final record must state clearly that the next step is the Python multi-candidate paper campaign coordinator and actual independent paper evidence collection. Live trading remains disabled.
+**Live money remains disabled until the required real-paper, reliability, fill, risk-halt, accounting, restart/reconciliation, and paper/live-parity evidence is actually demonstrated.**
