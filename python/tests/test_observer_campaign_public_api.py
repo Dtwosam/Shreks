@@ -221,3 +221,22 @@ print(json.dumps(loaded))
 
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == []
+
+
+def test_runtime_module_entrypoint_is_not_preimported_by_package():
+    result = subprocess.run(
+        [sys.executable, "-m", "shreks_brain.observer_campaign.runtime"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={"PYTHONIOENCODING": "utf-8"},
+    )
+
+    assert result.returncode == 1
+    assert "RuntimeWarning" not in result.stderr
+    assert "already in sys.modules" not in result.stderr
+    lines = [line for line in result.stderr.splitlines() if line.strip()]
+    assert lines
+    failure = json.loads(lines[-1])
+    assert failure["mode"] == "PAPER"
+    assert failure["state"] == "FAILED"
