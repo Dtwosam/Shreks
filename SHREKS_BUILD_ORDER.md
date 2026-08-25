@@ -448,41 +448,153 @@ Shreks can autonomously buy and sell on Solana with strict limits, complete reco
 
 ---
 
-# PHASE G — OPERATIONS + DASHBOARD
+# PHASE G — PRODUCTION OPERATIONS + MONITORING
 
-Only after the trading machine works.
+Begin this layer after the trading/proof path is sealed enough to justify continuous production operations. GitHub remains the source-control, CI, release, and deployment control plane; it is **not** the machine that runs Shreks continuously.
 
-## G1. Operator dashboard
-Useful views:
+The critical runtime, recovery, monitoring, and emergency-control work in this phase must be verified before **F7 Tiny-capital live stage** is allowed.
 
-- system health
-- current regime
-- observed candidates
-- rejected candidates
-- open positions
-- recent trades
+## G1. Dedicated Linux VPS runtime
+Deploy the first production version to one dedicated Linux VPS/host with persistent storage, with Europe as the initial preference unless measured provider/network behavior justifies another region.
+
+The initial host should run:
+
+- `shreks-observer` / Rust observer
+- safety-evidence collector
+- paper/live runner and Python decision brain
+- risk-engine runtime
+- SQLite operational database
+- evidence/checkpoint storage
+- monitoring/telemetry agent
+- backup/recovery jobs
+
+Wallet/private signing credentials belong only in protected runtime secret storage/environment on the execution host. Never GitHub. Never ChatGPT.
+
+## G2. GitHub deployment path
+Establish the delivery flow:
+
+`code change -> GitHub PR -> tests GREEN -> approved/sealed release -> deploy to VPS -> VPS runs 24/7`
+
+Requirements:
+
+- deployed versions remain traceable to exact source/release versions
+- release history and rollback points remain available
+- GitHub may trigger deployment without storing the trading wallet key
+- deployment must not bypass existing proof, mode, risk, or live-enable gates
+
+## G3. 24/7 supervision and restart behavior
+Run Shreks services under Docker Compose or `systemd` so they automatically restart after process failure or host reboot.
+
+Requirements:
+
+- persistent state is remounted/reopened before autonomous work resumes
+- uncertain recovery or reconciliation pauses new entries
+- process restarts do not create duplicate intents or duplicate trades
+- service/runtime health is observable
+
+## G4. Telemetry and four monitoring layers
+Expose monitoring in four clear layers:
+
+1. **System** — uptime, CPU/RAM/disk, provider health, market-data freshness, restarts, checkpoints, accounting status.
+2. **Trading** — observations, safety passes, scores, decisions, entries, open positions, exits.
+3. **Money** — realized/unrealized PnL, fees, slippage, drawdown, exposure, daily loss.
+4. **Proof/Risk** — paper sample size, distinct tokens/mints, expectancy, E12 gates, promotion state, live state, halts, kill switch, accounting integrity.
+
+Monitoring must answer both whether Shreks is technically healthy and whether it is making money safely.
+
+## G5. Private operator dashboard
+Provide a private authenticated web dashboard so normal operation can be inspected without SSH/log watching.
+
+The main dashboard should expose at least:
+
+- running/halted state and uptime
+- observer/provider health including Helius/Jupiter
+- market-data age and last checkpoint
+- accounting reconciliation state
+- operating mode: observe / paper / shadow / live / halted
+- candidate, safety-pass, trade, and open-position counts
+- realized/unrealized PnL
+- net expectancy and profit factor
+- max drawdown and execution costs/slippage
+- paper-proof progress and distinct tokens/mints
+- proof-gate and promotion state
+- capital deployed, daily loss, kill-switch state, and risk-halt state
+
+The operator must also be able to drill into an individual paper/live trade and see, where applicable:
+
+- token
+- observation time
+- why Shreks liked the setup
+- safety assessment
+- features
+- regime
+- score
+- decision
+- risk sizing
+- entry quote
+- actual simulated/live fill
+- exit reason
+- fees
+- slippage
 - PnL
-- drawdown
-- strategy performance
-- provider health
-- model version
 
-## G2. Kill switch / mode control
-Modes:
+The dashboard must show the stored decision path rather than inventing explanations.
 
-- observe
-- paper
-- shadow
-- live
-- halted
+## G6. Alerts and phone notifications
+Push meaningful critical events automatically.
 
-## G3. Alerts
-Alert only on meaningful operational/trading conditions.
+Alert conditions should include at least:
 
-## G4. Deployment hardening
-Make the system restart-safe and suitable for continuous operation.
+- Shreks stopped running
+- market data became stale
+- Helius/Jupiter/required-provider failure persists
+- database/checkpoint problem
+- accounting does not reconcile
+- risk kill switch activates
+- daily-loss or drawdown halt activates
+- a paper/live position opens
+- a position closes with its PnL
+- unusually bad fill/slippage behavior
+- paper proof becomes sufficient
+- a challenger fails proof
+- eventually, any live-money transaction
+
+Telegram is a practical first alert transport; email, Discord, or Slack may also be used. This does **not** approve a Telegram trading/control bot.
+
+## G7. Emergency operator controls
+The dashboard must make live state unmistakable.
+
+Before live promotion:
+
+`LIVE TRADING: DISABLED`
+
+Once live is legitimately enabled, provide at least:
+
+- `HALT NEW ENTRIES`
+- `EMERGENCY KILL SWITCH`
+
+These controls must write through the controlled risk/runtime authority path. The dashboard must never bypass the risk engine, create trades independently, or mutate authoritative accounting directly.
+
+## G8. Crash recovery, backups, and restore proof
+After a process/server crash, recover or reconcile at minimum:
+
+- last observer state
+- open paper/live positions
+- ledger
+- processed intent IDs
+- risk state
+- E11 evidence
+- latest checkpoint
+- onchain truth where required for live balances/positions
+
+The required invariant is the same state before/after a normal restart: no erased memory, duplicate actions, silent accounting drift, or lost required proof state.
+
+Add backup/recovery for operational SQLite state, evidence/checkpoint files, and research data that cannot be safely reconstructed. Test restoration before live money is enabled.
 
 Do not choose paid infrastructure as a hidden requirement.
+
+**Exit criterion for Phase G:**  
+Shreks can run continuously on its dedicated server, be deployed and rolled back through GitHub-controlled releases, restart safely, expose authenticated four-layer monitoring and per-trade explanations, send critical alerts, preserve recoverable state, and provide emergency controls that remain subordinate to the risk engine.
 
 ---
 
@@ -494,7 +606,7 @@ Do not build these early:
 - leverage
 - perps
 - social/X dependency
-- Telegram bot
+- Telegram trading/control bot
 - paid data sources
 - expensive RPC
 - custom onchain Solana program
