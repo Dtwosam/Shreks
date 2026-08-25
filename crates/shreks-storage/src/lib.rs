@@ -67,6 +67,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "wallet_observations",
         sql: include_str!("../migrations/0007_wallet_observations.sql"),
     },
+    Migration {
+        version: 8,
+        name: "safety_evidence",
+        sql: include_str!("../migrations/0008_safety_evidence.sql"),
+    },
 ];
 
 /// Read-only operational diagnostics for a Shreks database connection.
