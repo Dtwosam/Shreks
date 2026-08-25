@@ -143,6 +143,10 @@ def test_first_aggregate_cycle_runs_c5_once_records_e11_once_and_saves_one_check
     selected = tuple(item for item in result.entry_results if item.selected_for_entry)
     assert len(selected) == 1
     assert selected[0].mint == SECOND_MINT
+    assert selected[0].execution is not None
+    assert selected[0].execution.state is PaperExecutionState.DEFERRED
+    assert result.next_state.pending_entry is not None
+    assert result.next_state.pending_entry.intent.mint == SECOND_MINT
 
     checkpoint = load_latest_paper_checkpoint(db_path, RUN_ID)
     assert checkpoint is not None
@@ -154,7 +158,7 @@ def test_first_aggregate_cycle_runs_c5_once_records_e11_once_and_saves_one_check
 
     evidence = PaperEvaluationEvidenceStore(evidence_path).load()
     assert len(evidence.entry_provenance) == 1
-    assert len(evidence.executions) == 1
+    assert evidence.executions == ()
     assert evidence.entry_provenance[0].paper_run_id == RUN_ID
     assert evidence.entry_provenance[0].mint == SECOND_MINT
 
