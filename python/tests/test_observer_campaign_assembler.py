@@ -458,7 +458,7 @@ def test_clean_fresh_launch_cycle_is_composed_from_point_in_time_evidence(tmp_pa
     assert candidate.features.safety_decision is SafetyDecision.PASS
     assert candidate.regime.regime is MarketRegime.HOT
     assert isinstance(candidate.setup, FreshLaunchSetupInput)
-    assert candidate.setup.policy is _bundle().fresh_launch_policy
+    assert candidate.setup.policy == _bundle().fresh_launch_policy
     assert candidate.risk_context.trading_capital_usd == 1_000.0
     assert candidate.risk_context.expected_price_impact_pct == 0.1
     assert candidate.risk_context.price_impact_notional_usd == 1.0
