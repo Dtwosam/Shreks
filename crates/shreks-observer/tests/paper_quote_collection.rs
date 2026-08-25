@@ -15,7 +15,7 @@ use shreks_core::{
     DiscoveredToken, ProviderId, QuoteRequest, QuoteSnapshot, TokenDistributionRequest, VenueId,
 };
 use shreks_observer::{SafetyEvidenceCollector, SafetyEvidenceProbe};
-use shreks_providers::{ProviderError, QuoteProvider};
+use shreks_providers::{ProviderError, ProviderErrorKind, QuoteProvider};
 use shreks_storage::ShreksDb;
 
 const WSOL: &str = "So11111111111111111111111111111111111111112";
@@ -95,6 +95,26 @@ impl QuoteProvider for EchoQuoteProvider {
     }
 }
 
+struct EntryFailingQuoteProvider;
+
+#[async_trait]
+impl QuoteProvider for EntryFailingQuoteProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Jupiter
+    }
+
+    async fn quote(&self, request: &QuoteRequest) -> Result<QuoteSnapshot, ProviderError> {
+        if request.input_mint == WSOL {
+            return Err(ProviderError::new(
+                ProviderId::Jupiter,
+                ProviderErrorKind::Unavailable,
+                "entry route provider unavailable",
+            ));
+        }
+        Ok(quote(request, 2_000))
+    }
+}
+
 #[tokio::test]
 async fn explicit_collector_persists_purpose_correct_entry_and_exit_quotes() {
     let root = unique_test_dir("bidirectional");
@@ -115,7 +135,11 @@ async fn explicit_collector_persists_purpose_correct_entry_and_exit_quotes() {
         .await
         .unwrap();
     assert_eq!(report.quote_snapshots_stored, 2);
+    assert_eq!(report.entry_quote_snapshots_stored, 1);
+    assert_eq!(report.exit_quote_snapshots_stored, 1);
     assert_eq!(report.quote_provider_failures, 0);
+    assert_eq!(report.entry_quote_provider_failures, 0);
+    assert_eq!(report.exit_quote_provider_failures, 0);
     assert_eq!(calls.load(Ordering::SeqCst), 2);
 
     let connection = Connection::open(&db_path).unwrap();
@@ -153,6 +177,49 @@ async fn explicit_collector_persists_purpose_correct_entry_and_exit_quotes() {
         )
         .unwrap();
     assert_eq!(legacy_exit_count, 1);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn entry_provider_failure_does_not_erase_successful_exit_evidence() {
+    let root = unique_test_dir("entry-failure");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
+    let collector = SafetyEvidenceCollector::new(
+        db,
+        Vec::new(),
+        vec![Arc::new(EntryFailingQuoteProvider)],
+    );
+
+    let report = collector
+        .collect_candidate(candidate_id, "Mint111", &probe("Mint111"))
+        .await
+        .unwrap();
+    assert_eq!(report.quote_snapshots_stored, 1);
+    assert_eq!(report.exit_quote_snapshots_stored, 1);
+    assert_eq!(report.entry_quote_snapshots_stored, 0);
+    assert_eq!(report.quote_provider_failures, 1);
+    assert_eq!(report.exit_quote_provider_failures, 0);
+    assert_eq!(report.entry_quote_provider_failures, 1);
+
+    let connection = Connection::open(&db_path).unwrap();
+    let exit_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM paper_quote_snapshots WHERE candidate_id = ?1 AND purpose = 'exit'",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let entry_rows: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM paper_quote_snapshots WHERE candidate_id = ?1 AND purpose = 'entry'",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!((exit_rows, entry_rows), (1, 0));
 
     cleanup_dir(&root);
 }
