@@ -5,7 +5,8 @@ import inspect
 
 import pytest
 
-from shreks_brain.proof import (
+from shreks_brain.proof.fingerprint import sha256_canonical
+from shreks_brain.proof.models import (
     PAPER_PROOF_SCHEMA_VERSION,
     CandidateProofAssessment,
     PaperProofDecision,
@@ -14,7 +15,6 @@ from shreks_brain.proof import (
     PaperProofGateStatus,
     PaperProofPolicy,
 )
-from shreks_brain.proof.fingerprint import sha256_canonical
 
 
 SHA = "a" * 64
