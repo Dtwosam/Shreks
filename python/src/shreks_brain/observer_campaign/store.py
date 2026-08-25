@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
+from statistics import median
+
+from shreks_brain.observer_market.models import (
+    OBSERVER_MARKET_SCHEMA_VERSION,
+    ObservedMarketWindow,
+    ObserverCandidateIdentity,
+    ObserverMarketSnapshot,
+)
+from shreks_brain.observer_safety import (
+    ObserverSafetyEvidenceStore,
+    ObserverSafetyProbeIdentity,
+    build_safety_inputs,
+)
+from shreks_brain.regime import RegimeMarketWindow
+from shreks_brain.safety import SafetyDecision, SafetyPolicy, assess_safety
 
 from .models import (
     ObserverPaperQuoteEvidence,
     ObserverPaperQuoteIdentity,
     ObserverPaperQuotePurpose,
+    ObserverRegimeReadPolicy,
 )
 
 
@@ -108,6 +125,13 @@ _REQUIRED_COLUMNS = {
         }
     ),
 }
+
+_MARKET_SELECT = """SELECT
+    id, candidate_id, observed_at_unix_ms, source,
+    source_observed_at_unix_ms, venue, pair_address,
+    price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+    buys_m5, sells_m5, buys_h1, sells_h1, pair_created_at_unix_ms
+FROM market_snapshots"""
 
 
 class ObserverCampaignReadError(ValueError):
@@ -235,6 +259,143 @@ class ObserverCampaignStore:
         finally:
             connection.close()
 
+    def build_regime_market_window(
+        self,
+        as_of_unix_ms: int,
+        policy: ObserverRegimeReadPolicy,
+        safety_policy: SafetyPolicy,
+        safety_probe_identity: ObserverSafetyProbeIdentity,
+        *,
+        global_risk_halt: bool,
+    ) -> RegimeMarketWindow:
+        _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+        if type(policy) is not ObserverRegimeReadPolicy:
+            raise ValueError("policy must be an ObserverRegimeReadPolicy")
+        if type(safety_policy) is not SafetyPolicy:
+            raise ValueError("safety_policy must be a SafetyPolicy")
+        if type(safety_probe_identity) is not ObserverSafetyProbeIdentity:
+            raise ValueError(
+                "safety_probe_identity must be an ObserverSafetyProbeIdentity"
+            )
+        if type(global_risk_halt) is not bool:
+            raise ValueError("global_risk_halt must be a boolean")
+
+        window_started_at = max(0, as_of_unix_ms - policy.window_ms)
+        minimum_market_time = max(
+            window_started_at + 1,
+            max(0, as_of_unix_ms - policy.max_snapshot_age_ms),
+        )
+        safety_store = ObserverSafetyEvidenceStore(self._database_path)
+        selected_windows: list[ObservedMarketWindow] = []
+        liquidity_values: list[float | None] = []
+        volume_values: list[float | None] = []
+        consumed_timestamps: list[int] = []
+        executable_candidate_count = 0
+
+        connection = self._connect()
+        try:
+            candidates = connection.execute(
+                """SELECT
+                       id, mint, pair_address, discovery_source,
+                       discovered_at_unix_ms, venue
+                   FROM token_candidates
+                   WHERE discovered_at_unix_ms <= ?
+                   ORDER BY id ASC""",
+                (as_of_unix_ms,),
+            ).fetchall()
+
+            for candidate_row in candidates:
+                candidate = _candidate_from_row(candidate_row)
+                market_row = self._select_regime_market_row(
+                    connection,
+                    candidate.candidate_id,
+                    minimum_market_time,
+                    as_of_unix_ms,
+                    policy.source_priority,
+                )
+                if market_row is None:
+                    continue
+                current = _market_snapshot_from_row(market_row)
+                market_window = ObservedMarketWindow(
+                    schema_version=OBSERVER_MARKET_SCHEMA_VERSION,
+                    policy_version=policy.version,
+                    candidate=candidate,
+                    as_of_unix_ms=as_of_unix_ms,
+                    selected_source=current.source,
+                    selected_pair_address=current.pair_address,
+                    current=current,
+                    one_minute_ago=None,
+                    five_minutes_ago=None,
+                    fifteen_minutes_ago=None,
+                    pair_created_at_unix_ms=current.pair_created_at_unix_ms,
+                    local_high_price_usd=None,
+                    local_low_price_usd=None,
+                )
+                selected_windows.append(market_window)
+                liquidity_values.append(current.liquidity_usd)
+                volume_values.append(current.volume_m5_usd)
+                consumed_timestamps.append(current.observed_at_unix_ms)
+
+                safety_inputs = build_safety_inputs(
+                    market_window,
+                    safety_store,
+                    safety_probe_identity,
+                    global_risk_halt,
+                )
+                assessment = assess_safety(safety_inputs, safety_policy)
+                if safety_inputs.critical_data_observed_at_unix_ms is not None:
+                    consumed_timestamps.append(
+                        safety_inputs.critical_data_observed_at_unix_ms
+                    )
+
+                entry_identity = ObserverPaperQuoteIdentity(
+                    candidate_id=candidate.candidate_id,
+                    purpose=ObserverPaperQuotePurpose.ENTRY,
+                    provider="jupiter",
+                    probe_policy_version=policy.entry_probe_policy_version,
+                    input_mint=policy.quote_asset_mint,
+                    output_mint=candidate.mint,
+                    taker=policy.taker,
+                    input_amount=policy.entry_input_amount,
+                    slippage_bps=policy.slippage_bps,
+                )
+                entry_quote = self.latest_paper_quote(entry_identity, as_of_unix_ms)
+                if entry_quote is not None:
+                    consumed_timestamps.append(entry_quote.quoted_at_unix_ms)
+
+                if (
+                    assessment.decision is SafetyDecision.PASS
+                    and entry_quote is not None
+                    and entry_quote.route_available
+                ):
+                    executable_candidate_count += 1
+        except ObserverCampaignReadError:
+            raise
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise ObserverCampaignReadError(
+                f"observer aggregate regime replay failed: {error}"
+            ) from error
+        finally:
+            connection.close()
+
+        source_observed_at = (
+            min(consumed_timestamps) if consumed_timestamps else as_of_unix_ms
+        )
+        if source_observed_at <= window_started_at:
+            raise ObserverCampaignReadError(
+                "aggregate regime consumed evidence is not inside the requested window"
+            )
+
+        return RegimeMarketWindow(
+            as_of_unix_ms=as_of_unix_ms,
+            source_observed_at_unix_ms=source_observed_at,
+            window_started_at_unix_ms=window_started_at,
+            candidate_count=len(selected_windows),
+            executable_candidate_count=executable_candidate_count,
+            median_liquidity_usd=_complete_median(liquidity_values),
+            median_volume_m5_usd=_complete_median(volume_values),
+        )
+
     def _connect(self) -> sqlite3.Connection:
         database_uri = f"{self._database_path.as_uri()}?mode=ro"
         try:
@@ -290,6 +451,33 @@ class ObserverCampaignStore:
             raise ObserverCampaignReadError("observer candidate not found")
         return _string(row["mint"], "candidate mint")
 
+    @staticmethod
+    def _select_regime_market_row(
+        connection: sqlite3.Connection,
+        candidate_id: int,
+        minimum_observed_at_unix_ms: int,
+        as_of_unix_ms: int,
+        source_priority: tuple[str, ...],
+    ) -> sqlite3.Row | None:
+        for source in source_priority:
+            row = connection.execute(
+                f"""{_MARKET_SELECT}
+                    WHERE candidate_id = ?
+                      AND source = ?
+                      AND observed_at_unix_ms BETWEEN ? AND ?
+                    ORDER BY observed_at_unix_ms DESC, id ASC
+                    LIMIT 1""",
+                (
+                    candidate_id,
+                    source,
+                    minimum_observed_at_unix_ms,
+                    as_of_unix_ms,
+                ),
+            ).fetchone()
+            if row is not None:
+                return row
+        return None
+
 
 def _paper_quote_from_row(
     row: sqlite3.Row,
@@ -343,6 +531,64 @@ def _paper_quote_from_row(
             row["quoted_at_unix_ms"], "quote quoted_at_unix_ms"
         ),
     )
+
+
+def _candidate_from_row(row: sqlite3.Row) -> ObserverCandidateIdentity:
+    return ObserverCandidateIdentity(
+        candidate_id=_positive_int(row["id"], "candidate id"),
+        mint=_string(row["mint"], "candidate mint"),
+        pair_address=_string(
+            row["pair_address"], "candidate pair_address", allow_empty=True
+        ),
+        discovery_source=_string(
+            row["discovery_source"], "candidate discovery_source"
+        ),
+        discovered_at_unix_ms=_non_negative_int(
+            row["discovered_at_unix_ms"], "candidate discovered_at_unix_ms"
+        ),
+        venue=_optional_string(row["venue"], "candidate venue"),
+    )
+
+
+def _market_snapshot_from_row(row: sqlite3.Row) -> ObserverMarketSnapshot:
+    return ObserverMarketSnapshot(
+        row_id=_positive_int(row["id"], "market id"),
+        candidate_id=_positive_int(row["candidate_id"], "market candidate_id"),
+        observed_at_unix_ms=_non_negative_int(
+            row["observed_at_unix_ms"], "market observed_at_unix_ms"
+        ),
+        source=_string(row["source"], "market source"),
+        source_observed_at_unix_ms=_optional_non_negative_int(
+            row["source_observed_at_unix_ms"], "market source_observed_at_unix_ms"
+        ),
+        venue=_string(row["venue"], "market venue"),
+        pair_address=_string(
+            row["pair_address"], "market pair_address", allow_empty=True
+        ),
+        price_usd=_optional_non_negative_float(row["price_usd"], "market price_usd"),
+        liquidity_usd=_optional_non_negative_float(
+            row["liquidity_usd"], "market liquidity_usd"
+        ),
+        volume_m5_usd=_optional_non_negative_float(
+            row["volume_m5_usd"], "market volume_m5_usd"
+        ),
+        volume_h1_usd=_optional_non_negative_float(
+            row["volume_h1_usd"], "market volume_h1_usd"
+        ),
+        buys_m5=_optional_non_negative_int(row["buys_m5"], "market buys_m5"),
+        sells_m5=_optional_non_negative_int(row["sells_m5"], "market sells_m5"),
+        buys_h1=_optional_non_negative_int(row["buys_h1"], "market buys_h1"),
+        sells_h1=_optional_non_negative_int(row["sells_h1"], "market sells_h1"),
+        pair_created_at_unix_ms=_optional_non_negative_int(
+            row["pair_created_at_unix_ms"], "market pair_created_at_unix_ms"
+        ),
+    )
+
+
+def _complete_median(values: list[float | None]) -> float | None:
+    if not values or any(value is None for value in values):
+        return None
+    return float(median(value for value in values if value is not None))
 
 
 def _canonical_u64(value: object, name: str, *, positive: bool = False) -> int:
@@ -401,6 +647,23 @@ def _non_negative_int(value: object, name: str) -> int:
     if type(value) is not int or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
     return value
+
+
+def _optional_non_negative_int(value: object, name: str) -> int | None:
+    if value is None:
+        return None
+    return _non_negative_int(value, name)
+
+
+def _optional_non_negative_float(value: object, name: str) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite non-negative number")
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise ValueError(f"{name} must be a finite non-negative number")
+    return parsed
 
 
 def _require_non_empty_string(name: str, value: str) -> None:
