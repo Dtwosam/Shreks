@@ -1,6 +1,6 @@
 # Shreks systemd deployment
 
-This is the initial single-host Linux supervision layout for the paper runtime. GitHub remains the source/review/CI/release control plane; these services run continuously on the execution host.
+This is the single-host Linux supervision layout for the PAPER runtime. GitHub remains the source/review/CI/release/deployment control plane; these services run continuously on the execution host.
 
 **LIVE TRADING: DISABLED**
 
@@ -73,7 +73,10 @@ sudo install -o root -g root -m 0644 deploy/systemd/shreks-paper-campaign.servic
 sudo install -o root -g root -m 0644 deploy/systemd/shreks.target /etc/systemd/system/shreks.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now shreks.target
+systemctl is-enabled shreks.target
 ```
+
+`shreks.target` is wanted by `multi-user.target`, so enabling it is the reboot-persistence mechanism. A healthy host should report `enabled` above and should bring the target and its three required child services back after boot.
 
 Verify all three processes are supervised:
 
@@ -86,16 +89,73 @@ journalctl -u shreks-paper-evidence
 journalctl -u shreks-paper-campaign
 ```
 
-A crash or reboot restarts failed services automatically. The paper campaign does not execute a new cycle until its manifest has validated and the sealed G1B runner has loaded/reconciled durable C6/E11 state. If manifest validation, checkpoint restoration, E11 attribution, accounting, or restart equivalence fails, the process exits nonzero and systemd retries; it does not silently create a fresh trading state.
+A crash or reboot restarts failed services automatically. Each service uses `Restart=on-failure` with a five-second delay and a bounded five-restarts-per-five-minutes start limit. Persistent release/config/state paths are required before service startup, and each service verifies `/var/lib/shreks` exists and is writable before entering its runtime.
 
-Before treating a restarted runtime as healthy, confirm the observer is advancing, the paper-evidence daemon is completing bounded cycles, `shreks-paper-campaign` is emitting PAPER status records, the shared database and E11 evidence are durable, and provider-failure counts are not silently rising.
+The paper campaign has an additional fail-closed recovery gate: systemd runs the runtime with `--preflight` before `ExecStart`. The preflight loads and validates the same manifest, checkpoint, evidence attribution, and accounting/restart state used by the autonomous PAPER runtime without executing a cycle. If recovery is uncertain, preflight exits nonzero and the campaign does not start.
+
+## Crash/reboot health evidence
+
+After any process crash, host reboot, deployment, or unexpected restart, capture systemd's own supervision evidence for every child service:
+
+```sh
+systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p ExecMainStatus -p ActiveEnterTimestamp
+systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p ExecMainStatus -p ActiveEnterTimestamp
+systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p ExecMainStatus -p ActiveEnterTimestamp
+```
+
+The fields mean:
+
+- `ActiveState` and `SubState`: whether systemd currently considers the process running.
+- `NRestarts`: how many automatic service restarts systemd has performed for the current manager lifetime.
+- `ExecMainStatus`: the most recent main-process exit status.
+- `ActiveEnterTimestamp`: when the service most recently entered the active state.
+
+Inspect the current boot's journals around the restart as well:
+
+```sh
+journalctl -b -u shreks-observe.service
+journalctl -b -u shreks-paper-evidence.service
+journalctl -b -u shreks-paper-campaign.service
+```
+
+A target-level `active` result alone is not enough. All three child services must be active; G2/G3 release activation and rollback also gate success on each child plus `shreks.target` independently.
+
+## Persistent-state and release provenance checks
+
+Before treating a restarted host as safe for unattended PAPER operation, confirm the exact active release and that the protected durable inputs are still readable:
+
+```sh
+readlink -f /opt/shreks/current
+test -r /etc/shreks/paper-campaign.json
+test -r /var/lib/shreks/shreks.db
+test -r /var/lib/shreks/paper-evaluation-e11.json
+```
+
+The resolved `/opt/shreks/current` target must be the expected verified release SHA. Do not create a fresh SQLite database, E11 ledger, checkpoint namespace, or campaign manifest just to make a restart pass. If the expected durable state is missing, corrupt, contradictory, or cannot be reconciled, keep autonomous entries halted and repair/recover the evidence rather than resetting history.
+
+Before treating a restarted runtime as healthy, also confirm the observer is advancing, the paper-evidence daemon is completing bounded cycles, `shreks-paper-campaign` is emitting PAPER status records, the shared database and E11 evidence are durable, and provider-failure counts are not silently rising.
+
+## Start-limit failures
+
+Repeated failure is intentionally bounded rather than restarted forever. If systemd reports `start-limit-hit`, inspect `ExecMainStatus`, the service journal, the PAPER preflight failure record, persistent-state readability, and release provenance first.
+
+Use `reset-failed` only after the root cause is resolved and the durable recovery checks above are clean:
+
+```sh
+sudo systemctl reset-failed shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service
+sudo systemctl start shreks.target
+```
+
+Do not use `reset-failed` as a retry loop. If the campaign preflight still fails, leave it failed closed.
+
+Critically, **do not bypass the campaign preflight** and **do not launch the campaign runtime manually** with the Python module or a direct process command. Manual launch would bypass systemd's `ExecStartPre`, mount/readiness checks, restart limits, target membership, and the auditable restart counters that G3 relies on.
 
 ## Upgrade and rollback
 
-Build/test the intended sealed commit first. Stop `shreks.target`, atomically repoint `/opt/shreks/current` to the tested release, then start the target again. Because each release contains its own `.venv`, rollback restores the matching Python implementation as well as the Rust binaries.
+Build/test the intended sealed commit first. G2's root-owned release manager stops `shreks.target`, installs units from the verified release, atomically repoints `/opt/shreks/current`, reloads systemd, starts the target, and requires observer, paper evidence, paper campaign, and target to all be active. A failed child triggers rollback; rollback is not considered successful until every restored child and the target are active again.
 
-Do not replace or delete the persistent database, E11 evidence, or campaign manifest during a code rollback. Preserve the protected environment file and evidence history. If recovery or reconciliation fails, keep paper/live execution disabled and investigate before resuming autonomous operation.
+Do not replace or delete the persistent database, E11 evidence, campaign manifest, or protected environment file during a code rollback. Preserve evidence history. If recovery or reconciliation fails, keep paper/live execution disabled and investigate before resuming autonomous operation.
 
-GitHub-to-VPS release automation remains deferred to G2. This G1C unit only proves the supervised PAPER runtime boundary and restart behavior; it does not add deployment credentials, promotion authority, transaction construction, signing, submission, or live execution.
+G3 adds supervision, recovery-preflight, restart observability, and per-service deployment-health proof only. It does not add promotion authority, transaction construction, signing, submission, wallet handling, or live execution.
 
 **LIVE TRADING: DISABLED**
