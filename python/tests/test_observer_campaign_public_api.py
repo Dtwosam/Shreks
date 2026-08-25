@@ -32,6 +32,13 @@ _EXPECTED_PUBLIC_API = (
     "assemble_observer_paper_cycle",
     "ObserverPaperCampaignError",
     "ObserverPaperCampaignRunner",
+    "OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION",
+    "ObserverCampaignCoordinatorError",
+    "ObserverPaperCampaignSelectionPolicy",
+    "ObserverCampaignCandidate",
+    "ObserverPaperCampaignCycleAudit",
+    "assemble_observer_paper_campaign_cycle",
+    "ObserverPaperCampaignCoordinatorRunner",
 )
 
 _FORBIDDEN_IMPORT_PREFIXES = (
@@ -49,6 +56,7 @@ _FORBIDDEN_PUBLIC_AUTHORITY_WORDS = (
     "transaction",
     "registry",
     "execute",
+    "credential",
 )
 
 
@@ -62,6 +70,7 @@ def test_public_api_is_exact_and_authority_limited():
         for name in observer_campaign.__all__
         for word in _FORBIDDEN_PUBLIC_AUTHORITY_WORDS
     )
+    assert "ObserverCampaignCandidateStore" not in observer_campaign.__all__
 
 
 def test_campaign_store_public_methods_are_read_only_evidence_queries():
@@ -85,6 +94,24 @@ def test_campaign_runner_public_methods_are_paper_evidence_only():
         name
         for name, value in inspect.getmembers(
             observer_campaign.ObserverPaperCampaignRunner, predicate=callable
+        )
+        if not name.startswith("_")
+    }
+
+    assert public_methods == {"load_state", "run_cycle", "evaluated_trades"}
+    assert not any(
+        word in method_name.lower()
+        for method_name in public_methods
+        for word in _FORBIDDEN_PUBLIC_AUTHORITY_WORDS
+    )
+
+
+def test_coordinator_runner_public_methods_are_paper_evidence_only():
+    public_methods = {
+        name
+        for name, value in inspect.getmembers(
+            observer_campaign.ObserverPaperCampaignCoordinatorRunner,
+            predicate=callable,
         )
         if not name.startswith("_")
     }
