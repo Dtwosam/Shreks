@@ -21,8 +21,12 @@ pub struct SafetyEvidenceProbe {
 pub struct SafetyEvidenceCycleReport {
     pub holder_snapshots_stored: usize,
     pub quote_snapshots_stored: usize,
+    pub entry_quote_snapshots_stored: usize,
+    pub exit_quote_snapshots_stored: usize,
     pub distribution_provider_failures: usize,
     pub quote_provider_failures: usize,
+    pub entry_quote_provider_failures: usize,
+    pub exit_quote_provider_failures: usize,
 }
 
 /// Fatal collection errors. Provider transport failures and misattributed
@@ -136,10 +140,14 @@ impl SafetyEvidenceCollector {
                     )?;
                     report.quote_snapshots_stored =
                         report.quote_snapshots_stored.saturating_add(1);
+                    report.exit_quote_snapshots_stored =
+                        report.exit_quote_snapshots_stored.saturating_add(1);
                 }
                 Ok(_) | Err(_) => {
                     report.quote_provider_failures =
                         report.quote_provider_failures.saturating_add(1);
+                    report.exit_quote_provider_failures =
+                        report.exit_quote_provider_failures.saturating_add(1);
                 }
             }
 
@@ -157,10 +165,14 @@ impl SafetyEvidenceCollector {
                     )?;
                     report.quote_snapshots_stored =
                         report.quote_snapshots_stored.saturating_add(1);
+                    report.entry_quote_snapshots_stored =
+                        report.entry_quote_snapshots_stored.saturating_add(1);
                 }
                 Ok(_) | Err(_) => {
                     report.quote_provider_failures =
                         report.quote_provider_failures.saturating_add(1);
+                    report.entry_quote_provider_failures =
+                        report.entry_quote_provider_failures.saturating_add(1);
                 }
             }
         }
