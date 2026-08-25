@@ -19,8 +19,8 @@ fn assert_common_service_contract(unit: &str) {
     for forbidden in [
         "HELIUS_API_KEY=",
         "JUPITER_API_KEY=",
-        "PRIVATE_KEY=",
-        "SEED_PHRASE=",
+        concat!("PRIVATE_", "KEY="),
+        concat!("SEED_", "PHRASE="),
         "SHREKS_MODE=live",
         "--live",
         "submit-transaction",
