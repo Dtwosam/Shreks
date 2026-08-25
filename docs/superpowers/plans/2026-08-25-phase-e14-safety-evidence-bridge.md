@@ -31,15 +31,15 @@
 - Modify: `crates/shreks-core/src/lib.rs`
 - Modify: `crates/shreks-providers/src/lib.rs`
 - Modify: `crates/shreks-providers/src/helius.rs`
-- Test: existing/new Rust tests under `crates/shreks-providers`
+- Create/Test: `crates/shreks-providers/tests/distribution.rs`
 
 **Interfaces:**
 - Produces `TokenDistributionRequest { mint, page_size, max_pages }` with strict positive bounds.
-- Produces `TokenHolderDistribution` containing provider, mint, indexed slot, observed timestamp, raw supply, owner/page counts, completeness, largest owner/raw balance, and optional complete concentration percentage.
+- Produces `TokenHolderDistribution` containing provider, mint, observed timestamp, account/owner/page counts, completeness, total raw balance, largest owner/raw balance, and optional complete concentration percentage.
 - Produces `DistributionDataProvider::token_holder_distribution(&TokenDistributionRequest)`.
-- Helius aggregates token-account raw balances by owner across `getTokenAccounts` pagination.
+- Helius aggregates token-account raw balances by owner across page-number `getTokenAccounts` pagination.
 
-- [ ] **Step 1: Write RED Rust tests for the normalized distribution contract.**
+- [ ] **Step 1: Write RED Rust tests for the normalized distribution contract and pure Helius page boundary.**
 
 Tests must prove:
 
@@ -50,33 +50,39 @@ assert!(TokenDistributionRequest::new("Mint111", 0, 10).is_err());
 assert!(TokenDistributionRequest::new("Mint111", 1000, 0).is_err());
 ```
 
-and immutable/result invariants: complete scans with positive supply require a largest-owner concentration in `[0,100]`; incomplete scans must expose `top_holder_concentration_pct=None`; observation/index slots and counts cannot be negative/narrowed.
+and result invariants: incomplete scans expose `top_holder_concentration_pct=None`; complete positive-balance scans expose a finite concentration in `[0,100]`; raw totals remain `u64`.
 
-- [ ] **Step 2: Commit RED and verify full CI fails only because the new types/trait are absent.**
+The Helius request helper contract is:
 
-- [ ] **Step 3: Add minimal core types and provider trait.**
+```rust
+get_token_accounts_request(&request, page_number)
+```
 
-Use raw `u64` token amounts in Rust. Do not use UI floating amounts for aggregation. Percentage calculation uses checked integer-to-f64 conversion only after aggregation and validates finite `[0,100]` output.
+and must encode JSON-RPC `method="getTokenAccounts"`, exact mint, exact positive `page`, exact `limit`, and `displayOptions.showZeroBalance=false`.
 
-- [ ] **Step 4: Add Helius parser/pagination tests.**
-
-Fixtures must prove:
+The parser/aggregator test fixtures must prove:
 
 - two token accounts owned by the same wallet are aggregated;
 - a different wallet with the largest aggregate becomes `largest_owner`;
-- zero-balance accounts do not create concentration;
+- zero-balance accounts do not change concentration;
 - response mint mismatch fails;
 - malformed raw amount fails;
-- cursor/page continuation is deterministic;
-- reaching `max_pages` while another cursor exists returns `complete=false` and no concentration;
-- a terminal page yields `complete=true`;
-- reported `last_indexed_slot` and local observation time are retained.
+- page-number continuation is deterministic;
+- a short/empty page proves completion;
+- reaching `max_pages` after a full page returns `complete=false` and no concentration;
+- local observation time is retained.
 
-- [ ] **Step 5: Implement Helius `getTokenAccounts` collection.**
+- [ ] **Step 2: Commit RED and verify full CI fails only because the new types/trait/helpers are absent.**
 
-Build JSON-RPC requests with exact mint, `limit=page_size`, `showZeroBalance=false`, and returned cursor for later pages. Reuse the existing redacted `post_rpc` transport path so API keys cannot leak to errors/logs.
+- [ ] **Step 3: Add minimal core types and provider trait.**
 
-- [ ] **Step 6: Run full CI and commit GREEN.**
+Use raw `u64` token amounts in Rust. Do not use UI floating amounts for aggregation. Percentage calculation occurs only for a complete scan with positive total raw balance and validates finite `[0,100]` output.
+
+- [ ] **Step 4: Implement Helius `getTokenAccounts` page parsing and owner aggregation.**
+
+A page shorter than `page_size`, or an empty page, proves terminal completion. A full page at the `max_pages` budget leaves completeness unproven and must return `complete=false` with no concentration. Reuse the existing redacted `post_rpc` transport path so API keys cannot leak to errors/logs.
+
+- [ ] **Step 5: Run full CI and commit GREEN.**
 
 Expected: all existing Rust/Python/safety lanes GREEN plus the new distribution tests.
 
@@ -100,7 +106,7 @@ Require schema version 8 and exact new tables/indexes. Test reopening a version-
 
 - [ ] **Step 2: Write RED persistence tests.**
 
-Holder tests prove raw supply/balance survive SQLite as decimal text, incomplete rows persist with null concentration, complete rows preserve concentration, duplicates do not multiply.
+Holder tests prove total raw balance/largest-owner raw balance survive SQLite as decimal text, incomplete rows persist with null concentration, complete rows preserve concentration, duplicates do not multiply.
 
 Quote tests prove exact input/output mints, input/output/minimum raw amounts, slippage, route availability, price-impact text, canonical route-label JSON, quote timestamp, and non-empty `probe_policy_version` survive restart. Invalid candidate ids/blank probe version/invalid evidence fail closed.
 
@@ -145,7 +151,7 @@ Prove:
 
 - [ ] **Step 4: Implement the isolated collector.**
 
-Do not change normal `Observer::run_cycle`. Do not add quote pacing or calls to Phase-A default runtime. The collector is invoked only by an explicit later proof/campaign caller.
+Do not change normal `Observer::run_cycle`. Do not add quote calls to Phase-A default runtime. The collector is invoked only by an explicit later proof/campaign caller.
 
 - [ ] **Step 5: Run full CI and commit GREEN.**
 
@@ -237,7 +243,7 @@ Import B1 public APIs; do not duplicate threshold logic. Derive authority boolea
 
 Audit every changed file. Expected scope is E14 docs/tests; provider-neutral core distribution types; Helius distribution adapter; storage migration/persistence; isolated observer safety collector; isolated Python `observer_safety` package. No B1 evaluator changes, no B2 arithmetic changes, no paper/live executor changes, no registry/promotion changes.
 
-- [ ] **Step 4: Replace this plan with a verification record containing all RED/ GREEN anchors, CI run ids/counts, exact public API, scope audit, and authority statement.**
+- [ ] **Step 4: Replace this plan with a verification record containing all RED/GREEN anchors, CI run ids/counts, exact public API, scope audit, and authority statement.**
 
 - [ ] **Step 5: Commit only that document as `docs: seal E14 verification record`.**
 
