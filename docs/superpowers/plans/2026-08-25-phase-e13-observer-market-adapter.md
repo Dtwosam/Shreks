@@ -1,204 +1,213 @@
-# Phase E13 Observer Market Replay Adapter Implementation Plan
+# Phase E13 Observer Market Replay Adapter Verification Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+## Status
 
-**Goal:** Build a strict read-only adapter from the Rust observer SQLite market history into deterministic B2-compatible market feature points without future leakage or invented evidence.
+Phase E13 behavior is frozen at:
 
-**Architecture:** Add an isolated `shreks_brain.observer_market` package. Immutable E13 models represent persisted candidate/snapshot/window evidence; `ObserverMarketStore` opens SQLite read-only, validates the required schema, resolves exact candidate identity, selects one caller-prioritized source/pair path, and reconstructs current/1m/5m/15m B2 market points. No safety, wallet, paper, registry, promotion, provider-network, signing, or live authority is added.
+`c7e5e43efa0f6cf0ea9e2b9d94ef589a77a4f1d2`
 
-**Tech Stack:** Python 3.12 standard library (`sqlite3`, `pathlib`, dataclasses), existing sealed B2 `MarketFeaturePoint`, pytest, GitHub Actions.
+Branch: `feat/phase-e13-observer-market-adapter`
 
-**Spec:** `docs/superpowers/specs/2026-08-25-phase-e13-observer-market-adapter-design.md`
+Stacked draft PR: #37, based exactly on sealed E12 head:
 
-## Global Constraints
+`2eb7a85606d23be70799f8f594bbc7c8164f0944`
 
-- Schema identifier is exactly `e13-observer-market-v1`.
-- SQLite access is read-only URI mode; a missing database path must not be created.
-- Provider priority, current staleness, and local-range lookback are caller supplied.
-- Current, anchors, local range, and pair metadata never use rows after `as_of_unix_ms`.
-- Anchors use the same source and pair path as the selected current row.
-- Missing valid anchors remain `None`; no interpolation or synthetic points.
-- No existing observer/storage, B2 feature behavior, paper execution, registry, promotion, provider network, Rust executor, signing/submission, or live path changes.
-- Phase F remains disabled.
+This record replaces the implementation plan after behavior verification. The seal commit must change only this document. E13 is not treated as immutable until the seal invariant and final exact-head GitHub Actions run are both verified.
 
----
+## Goal Proven
 
-### Task 1: Immutable E13 evidence models
+E13 adds a strict read-only bridge from the persisted Rust observer SQLite market history into deterministic B2-compatible market feature points.
 
-**Files:**
-- Create: `python/tests/test_observer_market_models.py`
-- Create: `python/src/shreks_brain/observer_market/models.py`
+The implemented boundary:
 
-**Interfaces:**
-- Produces `OBSERVER_MARKET_SCHEMA_VERSION`, `ObserverMarketReadPolicy`, `ObserverCandidateIdentity`, `ObserverMarketSnapshot`, and `ObservedMarketWindow`.
+- opens the existing observer database using SQLite URI `mode=ro`;
+- validates the required `token_candidates` and `market_snapshots` schema while tolerating additive future columns;
+- resolves exact candidate identity and fails closed on ambiguous candidate rows;
+- uses caller-supplied source priority, current staleness, and local-range lookback;
+- selects one source/pair path and never mixes anchors or local-range data across paths;
+- reconstructs current, 1m, 5m, and 15m observations using the sealed B2 anchor windows;
+- never uses rows after `as_of_unix_ms`;
+- leaves missing anchors as `None` rather than interpolating or inventing evidence;
+- preserves observed market values when converting to B2 `MarketFeaturePoint` objects;
+- fails closed when persisted market evidence violates the E13 model contract.
 
-- [ ] **Step 1: Write failing model tests**
+Schema identifier is exactly:
 
-Tests instantiate valid models and reject empty versions/sources, duplicate source priority, negative IDs/timestamps/counts, non-finite or negative market values, invalid pair-creation timestamps, mismatched window schema/policy/candidate/source/pair attribution, and future snapshot timestamps.
+`e13-observer-market-v1`
 
-- [ ] **Step 2: Run the focused tests**
+## Design and Plan Anchors
 
-Run: `cd python && python -m pytest tests/test_observer_market_models.py -q`
+- Design commit: `ee18355b2e6ca2fd4229912052cf3603b245b7f9` — `docs: design E13 observer market adapter`
+- Plan commit: `c2d80c4aedc0ffb855e2c60a285bee822fce7d3c` — `docs: plan E13 observer market adapter`
 
-Expected RED: import failure because `shreks_brain.observer_market` does not exist.
+## TDD Evidence
 
-- [ ] **Step 3: Implement minimal frozen/slotted models**
+### Task 1 — Immutable E13 evidence models
 
-Use strict validators consistent with existing project model conventions. `ObservedMarketWindow` stores the exact raw snapshots; B2 conversion happens later.
+Canonical corrected RED:
 
-- [ ] **Step 4: Run full Python tests**
+- commit `e4d45f77bd055555ed8e80841df5ac814f4136b8`
+- CI `32849364739`
+- Python failed during collection exactly because `shreks_brain.observer_market` did not exist
+- Rust GREEN
+- repository safety GREEN
 
-Run: `cd python && python -m pytest -q`
+Implementation:
 
-Expected GREEN.
+- `2e27bc2829c04ffdc03a2d73372f10b9a2d3c5f5` — `feat: add E13 observer market models`
 
-- [ ] **Step 5: Commit**
+The first GREEN candidate exposed a fixture-only timestamp contamination: an anchor fixture moved `observed_at_unix_ms` backward but left `source_observed_at_unix_ms` in the future relative to that row. Production correctly rejected the invalid snapshot. The fixture was corrected without weakening the model contract.
 
-Commit message: `feat: add E13 observer market models`
+Task 1 GREEN:
 
----
+- head `c931157113576eabf4ae59e6203a4c1ec6cec313`
+- CI `32849633558`
+- Python: `2117 passed in 7.43s`
+- Rust GREEN
+- repository safety GREEN
 
-### Task 2: Read-only schema and candidate resolution
+### Task 2 — Read-only schema and candidate resolution
 
-**Files:**
-- Create: `python/tests/test_observer_market_store.py`
-- Create: `python/src/shreks_brain/observer_market/store.py`
+Canonical corrected RED:
 
-**Interfaces:**
-- Produces `ObserverMarketReadError` and `ObserverMarketStore`.
-- `ObserverMarketStore.resolve_candidate(mint, *, pair_address=None, discovery_source=None) -> ObserverCandidateIdentity`.
+- commit `e82a0d42fb53d3979da9c4a14c5798291f459626`
+- CI `32849976828`
+- Python failed during collection exactly because `shreks_brain.observer_market.store` did not exist
+- Rust GREEN
+- repository safety GREEN
 
-- [ ] **Step 1: Write failing read-only/candidate tests**
+Implementation:
 
-Create temporary SQLite databases with only the exact required E13 schema. Prove:
+- `47579fa418be1a1079d31aaa97eb6852e0e0643d` — `feat: read observer candidates safely`
 
-- missing path raises and is not created;
-- missing required table/column fails closed;
-- future additive columns are tolerated;
-- one exact candidate resolves;
-- absent candidate fails;
-- duplicate mint candidates fail unless caller filters disambiguate;
-- returned values are strict E13 models.
+Task 2 GREEN:
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- head `47579fa418be1a1079d31aaa97eb6852e0e0643d`
+- CI `32850131896`
+- Python: `2125 passed in 8.11s`
+- Rust GREEN
+- repository safety GREEN
 
-Run: `cd python && python -m pytest tests/test_observer_market_store.py -q`
+### Task 3 — Deterministic current/anchor market replay
 
-Expected RED: `ObserverMarketStore` / store module missing.
+Canonical corrected RED:
 
-- [ ] **Step 3: Implement read-only open, schema inspection, and exact resolution**
+- commit `678cd30c3ec3c98fe4452ebfcb40457c28daa7cb`
+- CI `32850520055`
+- Python failed during collection exactly because `build_market_feature_points` was not implemented/exportable from the store module
+- Rust GREEN
+- repository safety GREEN
 
-Open using a `file:` URI with `mode=ro` and `uri=True`. Query `sqlite_master`/`PRAGMA table_info` without migrations or writes. Use parameterized SQL only.
+The pre-implementation replay fixture was corrected only to prevent a deliberately too-young 1m-anchor row from accidentally changing the independent local-range high assertion. The anchor contract itself was not weakened.
 
-- [ ] **Step 4: Run focused and full Python tests**
+Implementation:
 
-Run focused file, then `cd python && python -m pytest -q`.
+- `8909f6e13074762ffddddf6c1e47018413199455` — `feat: replay observer market windows`
 
-Expected GREEN.
+Task 3 GREEN:
 
-- [ ] **Step 5: Commit**
+- head `8909f6e13074762ffddddf6c1e47018413199455`
+- CI `32850716106`
+- Python: `2133 passed in 7.66s`
+- Rust GREEN
+- repository safety GREEN
 
-Commit message: `feat: read observer candidates safely`
+### Task 4 — Public API and authority firewall
 
----
+RED:
 
-### Task 3: Deterministic current/anchor market replay
+- commit `36c66d1ef4b919d89e6653439eeb079af9fbe7be`
+- CI `32850899777`
+- Python: `3 failed, 2134 passed in 6.90s`
+- failures were limited to the intentionally absent package-level `__all__` / public exports and consequent package file lookup
+- Rust GREEN
+- repository safety GREEN
 
-**Files:**
-- Modify: `python/tests/test_observer_market_store.py`
-- Modify: `python/src/shreks_brain/observer_market/store.py`
+Minimal export-only implementation:
 
-**Interfaces:**
-- `ObserverMarketStore.load_window(candidate_id, as_of_unix_ms, policy) -> ObservedMarketWindow`
-- `build_market_feature_points(window) -> tuple[MarketFeaturePoint, MarketFeaturePoint | None, MarketFeaturePoint | None, MarketFeaturePoint | None]`
+- `c7e5e43efa0f6cf0ea9e2b9d94ef589a77a4f1d2` — `feat: expose E13 observer market API`
 
-- [ ] **Step 1: Add failing window-selection tests**
+Behavior-head GREEN:
 
-Fixtures must include multiple providers, pair paths, equal-distance anchor ties, rows inside/outside every B2 age window, stale current rows, future rows, missing anchors, local-range rows, and nullable pair-created metadata.
+- head `c7e5e43efa0f6cf0ea9e2b9d94ef589a77a4f1d2`
+- CI `32852119612`
+- Python: `2137 passed in 7.93s`
+- Rust GREEN
+- repository safety GREEN
 
-Assert:
+The public API test also proves a fresh-process import does not load paper execution, registry, promotion, shadow, or related authority packages.
 
-- source priority chooses current path;
-- anchors never cross source or pair;
-- exact B2 windows are respected;
-- closest-to-target selection is deterministic;
-- tie-break is newer timestamp then lower row ID;
-- future rows never influence any output;
-- stale current fails closed using caller threshold;
-- missing anchors are `None`;
-- local high/low use only caller lookback and selected path;
-- pair-created fallback uses newest non-null historical value at/before as-of;
-- malformed persisted values fail closed;
-- B2 points preserve exact observed values.
+## Exact Public API
 
-- [ ] **Step 2: Run focused tests and verify RED**
+`shreks_brain.observer_market.__all__` is exactly:
 
-Run: `cd python && python -m pytest tests/test_observer_market_store.py -q`
+1. `OBSERVER_MARKET_SCHEMA_VERSION`
+2. `ObserverMarketReadPolicy`
+3. `ObserverCandidateIdentity`
+4. `ObserverMarketSnapshot`
+5. `ObservedMarketWindow`
+6. `ObserverMarketReadError`
+7. `ObserverMarketStore`
+8. `build_market_feature_points`
 
-Expected RED: window methods missing.
+`ObserverMarketStore` exposes only two public callable methods:
 
-- [ ] **Step 3: Implement minimal deterministic replay**
+- `resolve_candidate`
+- `load_window`
 
-Read only the bounded historical interval needed by current/anchors/local range. Never interpolate. Construct `ObserverMarketSnapshot` before any B2 conversion so database corruption is rejected at the E13 boundary.
+Neither method grants write, execution, promotion, signing, submission, or live-trading authority.
 
-- [ ] **Step 4: Run focused and full Python tests**
+## Cumulative Scope Audit
 
-Run focused file, then full suite.
+Compared sealed E12:
 
-Expected GREEN.
+`2eb7a85606d23be70799f8f594bbc7c8164f0944`
 
-- [ ] **Step 5: Commit**
+to E13 behavior head:
 
-Commit message: `feat: replay observer market windows`
+`c7e5e43efa0f6cf0ea9e2b9d94ef589a77a4f1d2`
 
----
+Result: `ahead_by=14`, `behind_by=0`, exactly 9 changed files.
 
-### Task 4: Public API, authority firewall, cumulative audit, and seal
+Changed files are exactly:
 
-**Files:**
-- Create: `python/src/shreks_brain/observer_market/__init__.py`
-- Create: `python/tests/test_observer_market_public_api.py`
-- Replace this plan with the final verification record after behavior is frozen.
+- `docs/superpowers/plans/2026-08-25-phase-e13-observer-market-adapter.md`
+- `docs/superpowers/specs/2026-08-25-phase-e13-observer-market-adapter-design.md`
+- `python/src/shreks_brain/observer_market/__init__.py`
+- `python/src/shreks_brain/observer_market/models.py`
+- `python/src/shreks_brain/observer_market/store.py`
+- `python/tests/test_observer_market_models.py`
+- `python/tests/test_observer_market_public_api.py`
+- `python/tests/test_observer_market_replay.py`
+- `python/tests/test_observer_market_store.py`
 
-**Interfaces:**
-- Public exports are exactly the E13 schema constant, five E13 models/errors/store symbols, and `build_market_feature_points`.
+No pre-existing Python trading behavior file changed. No Rust file changed. No observer writer/storage implementation changed. No provider networking path changed. No B2 feature arithmetic changed. No safety policy changed. No paper execution or ledger behavior changed. No E5 evaluation behavior changed. No E6 registry mutation changed. No E7 shadow behavior changed. No E8 promotion behavior changed. No E9/E10/E11/E12 sealed behavior changed. No runtime live-mode, signing, submission, or live executor path changed.
 
-- [ ] **Step 1: Write failing public-API/firewall tests**
+## Authority and Safety Boundary
 
-Assert exact `__all__`, fresh-process import success, no imports from paper execution, registry mutation, promotion application, provider-network clients, signing/submission, or live executor packages, and no public method capable of writes or live execution.
+E13 is evidence-only and read-only.
 
-- [ ] **Step 2: Verify RED**
+It does not:
 
-Run: `cd python && python -m pytest tests/test_observer_market_public_api.py -q`
+- write to the observer database;
+- migrate the observer schema;
+- fetch provider data over the network;
+- manufacture missing safety evidence;
+- manufacture missing market anchors;
+- make a trading decision;
+- execute or simulate a paper fill;
+- mutate a registry candidate;
+- promote or auto-promote a challenger;
+- sign or submit a transaction;
+- enable live mode;
+- grant any component live-money authority.
 
-Expected RED because package exports are absent.
+Phase F remains disabled.
 
-- [ ] **Step 3: Add minimal `__init__.py` exports**
+## Seal Invariant
 
-No other behavior changes.
+Behavior head is fixed at:
 
-- [ ] **Step 4: Run full repository verification**
+`c7e5e43efa0f6cf0ea9e2b9d94ef589a77a4f1d2`
 
-Run full Python suite, Rust/workspace CI, repository safety, and fresh-process import firewall through GitHub Actions.
-
-- [ ] **Step 5: Audit scope**
-
-Compare sealed E12 `2eb7a85606d23be70799f8f594bbc7c8164f0944` to E13 behavior head. Allowed changes only:
-
-- E13 design / verification docs;
-- `python/src/shreks_brain/observer_market/`;
-- `python/tests/test_observer_market_*.py`.
-
-Any other path blocks sealing.
-
-- [ ] **Step 6: Replace this plan with immutable verification record**
-
-Record behavior head, RED/GREEN anchors, CI run IDs, exact test counts, scope audit, authority boundary, and the statement that Phase F remains disabled.
-
-- [ ] **Step 7: Commit the seal document only**
-
-Commit message: `docs: seal E13 verification record`
-
-- [ ] **Step 8: Prove seal invariant and final CI**
-
-Behavior head -> seal candidate must be exactly one commit changing only this verification document. Final exact-head CI must be GREEN before the E13 head is treated as immutable.
+The seal candidate must be exactly one commit after that head and must modify only this verification document. After that commit, final exact-head CI must have all three lanes GREEN before the seal head is considered immutable.
