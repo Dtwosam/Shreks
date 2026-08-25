@@ -40,7 +40,7 @@ def _write_payload_tree(root: Path) -> None:
 
 def _build_archive(tmp_path: Path):
     staging = tmp_path / "staging"
-    staging.mkdir()
+    staging.mkdir(parents=True)
     _write_payload_tree(staging)
     manifest = release_bundle.build_release_manifest(staging, SOURCE_SHA, PLATFORM)
     manifest_payload = release_bundle.encode_release_manifest(manifest)
