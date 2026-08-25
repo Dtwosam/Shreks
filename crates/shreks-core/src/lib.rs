@@ -105,6 +105,22 @@ impl fmt::Display for ProviderId {
     }
 }
 
+/// Stable purpose attribution for read-only quote evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum QuotePurpose {
+    Entry,
+    Exit,
+}
+
+impl QuotePurpose {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Entry => "entry",
+            Self::Exit => "exit",
+        }
+    }
+}
+
 /// Economic venue where a token/pool/trade is occurring.
 ///
 /// This is deliberately separate from `ProviderId`: DEX Screener may provide
