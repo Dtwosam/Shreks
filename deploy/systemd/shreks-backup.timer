@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Shreks verified backup snapshot hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=10m
+AccuracySec=1m
+Unit=shreks-backup.service
+
+[Install]
+WantedBy=timers.target

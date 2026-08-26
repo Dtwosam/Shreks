@@ -1,0 +1,32 @@
+[Unit]
+Description=Shreks verified backup snapshot
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+
+[Service]
+Type=oneshot
+User=shreks
+Group=shreks
+WorkingDirectory=/opt/shreks/current
+EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -d /var/lib/shreks/backups
+ExecStartPre=/usr/bin/test -w /var/lib/shreks/backups
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.backup.runtime backup
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+PrivateNetwork=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/var/lib/shreks /etc/shreks
+ReadWritePaths=/var/lib/shreks/backups
+UMask=0077
