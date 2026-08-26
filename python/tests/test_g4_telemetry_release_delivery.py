@@ -39,7 +39,7 @@ _CORE_RUNTIME_UNITS = (
 
 
 def test_verified_release_payload_ships_telemetry_units() -> None:
-    static_paths = set(release_bundle._STATIC_RELEASE_PATHS)
+    static_paths = set(release_bundle._REQUIRED_STATIC_PAYLOAD_PATHS)
     for unit in _TELEMETRY_UNITS:
         assert f"deploy/systemd/{unit}" in static_paths
 
