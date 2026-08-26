@@ -51,9 +51,7 @@ def assemble_telemetry_snapshot(
             evaluation_policy=evaluation_policy,
         )
     except (TypeError, ValueError) as error:
-        raise TelemetrySnapshotError(
-            f"financial telemetry composition failed: {error}"
-        ) from error
+        raise TelemetrySnapshotError("financial telemetry composition failed") from error
 
     statuses = (system.status, trading.status, money.status, proof_risk.status)
     if LayerStatus.UNAVAILABLE in statuses:
@@ -82,7 +80,7 @@ def write_telemetry_snapshot(snapshot: TelemetrySnapshot, path: str | Path) -> N
     if not output.name:
         raise TelemetrySnapshotError("telemetry output path must name a file")
 
-    payload = encode_telemetry_snapshot(snapshot)
+    payload = encode_telemetry_snapshot(snapshot).encode("utf-8")
     parent = output.parent
     temporary = output.with_name(output.name + ".tmp")
 
@@ -113,9 +111,7 @@ def write_telemetry_snapshot(snapshot: TelemetrySnapshot, path: str | Path) -> N
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
-        raise TelemetrySnapshotError(
-            f"telemetry snapshot write failed: {error}"
-        ) from error
+        raise TelemetrySnapshotError("telemetry snapshot write failed") from error
 
 
 def _system_telemetry(sources: TelemetrySources) -> SystemTelemetry:
@@ -135,9 +131,7 @@ def _system_telemetry(sources: TelemetrySources) -> SystemTelemetry:
 
     latest_market = operational.latest_market_observed_at_unix_ms
     market_age = (
-        None
-        if latest_market is None
-        else sources.as_of_unix_ms - latest_market
+        None if latest_market is None else sources.as_of_unix_ms - latest_market
     )
     status = LayerStatus.HEALTHY if not errors else LayerStatus.DEGRADED
 
