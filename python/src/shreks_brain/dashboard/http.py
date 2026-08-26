@@ -14,6 +14,7 @@ from urllib.parse import unquote_to_bytes, urlsplit
 
 from .config import DashboardRuntimeConfig, load_dashboard_password
 from .models import DashboardSourceConfig
+from .page import render_dashboard_page
 from .source import load_dashboard_snapshot, load_dashboard_trade
 
 _SECURITY_HEADERS = (
@@ -29,6 +30,7 @@ _SECURITY_HEADERS = (
     ),
 )
 _JSON_CONTENT_TYPE = "application/json; charset=utf-8"
+_HTML_CONTENT_TYPE = "text/html; charset=utf-8"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +91,8 @@ class DashboardApplication:
         path = _request_path(target)
         if path is None:
             return _json_response(400, {"error": "BAD_REQUEST"})
+        if path == "/":
+            return _html_response(render_dashboard_page())
         if path == "/api/v1/snapshot":
             return self._snapshot_response(include_trades=False)
         if path == "/api/v1/trades":
@@ -277,3 +281,14 @@ def _json_response(
         *extra_headers,
     )
     return DashboardHTTPResponse(status=status, headers=tuple(headers), body=body)
+
+
+def _html_response(body: bytes) -> DashboardHTTPResponse:
+    if not isinstance(body, bytes):
+        raise TypeError("dashboard page must be bytes")
+    headers = (
+        ("Content-Type", _HTML_CONTENT_TYPE),
+        ("Content-Length", str(len(body))),
+        *_SECURITY_HEADERS,
+    )
+    return DashboardHTTPResponse(status=200, headers=tuple(headers), body=body)
