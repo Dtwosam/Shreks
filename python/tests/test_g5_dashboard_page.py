@@ -50,7 +50,7 @@ def test_page_is_dependency_free_mobile_operator_dashboard() -> None:
     assert "src=\"" not in lowered
 
 
-def test_page_uses_same_origin_read_only_fetches_and_safe_dom_writes() -> None:
+def test_page_uses_same_origin_fetches_and_safe_dom_writes() -> None:
     source = _page_source()
 
     assert 'fetch("/api/v1/snapshot", {credentials: "same-origin"})' in source
@@ -58,9 +58,17 @@ def test_page_uses_same_origin_read_only_fetches_and_safe_dom_writes() -> None:
     assert 'fetch(`/api/v1/trades/${encodeURIComponent(positionId)}`, {credentials: "same-origin"})' in source
     assert ".textContent" in source
     assert "innerHTML" not in source
-
-    for forbidden in ("POST", "PUT", "PATCH", "DELETE", "HALT NEW ENTRIES", "KILL SWITCH"):
-        assert forbidden not in source
+    for forbidden_method in ("PUT", "PATCH", "DELETE"):
+        assert f'method: "{forbidden_method}"' not in source
+    for forbidden_endpoint in (
+        "/api/v1/operator-controls/reset-kill-switch",
+        "/api/v1/operator-controls/clear-entry-halt",
+        "/api/v1/operator-controls/resume",
+        "/api/v1/operator-controls/live-enable",
+        "/api/v1/buy",
+        "/api/v1/sell",
+    ):
+        assert forbidden_endpoint not in source
 
 
 def test_page_displays_authoritative_server_metrics_without_profitability_formulas() -> None:
