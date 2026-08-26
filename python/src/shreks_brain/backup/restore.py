@@ -141,7 +141,7 @@ def restore_backup_bundle(
                 manifest.campaign_manifest_fingerprint_sha256
             ),
             checkpoint_sequence=checkpoint.sequence,
-            state_as_of_unix_ms=checkpoint.state.as_of_unix_ms,
+            state_as_of_unix_ms=checkpoint.state.last_cycle_at_unix_ms,
             verified_artifact_sha256={
                 record.role.value: record.sha256 for record in manifest.artifacts
             },
