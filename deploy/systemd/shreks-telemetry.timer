@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule Shreks read-only telemetry snapshots
+
+[Timer]
+Unit=shreks-telemetry.service
+OnBootSec=60s
+OnUnitActiveSec=60s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
