@@ -289,3 +289,40 @@ async fn durable_discovery_candidate_gets_exactly_seven_outcome_checkpoints_once
 
     cleanup_dir(&root);
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn due_candidate_discovered_outside_legacy_observer_backfills_missing_mint_state() {
+    let root = unique_test_dir("due-chain-backfill");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let discovered = candidate();
+    let candidate_id = db.upsert_candidate(&discovered).unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, discovered.discovered_at_unix_ms)
+        .unwrap();
+
+    let chain = Arc::new(FakeChain {
+        provider: ProviderId::Helius,
+        result: Ok(mint_state()),
+    });
+    let mut observer = Observer::new(db).with_chain_provider(chain);
+
+    let report = observer.run_cycle().await.unwrap();
+    assert_eq!(report.candidates_processed, 0);
+    assert_eq!(report.mint_states_stored, 1);
+    assert_eq!(report.provider_failures, 0);
+
+    let connection = Connection::open(&db_path).unwrap();
+    let decimals: i64 = connection
+        .query_row(
+            "SELECT decimals FROM token_mint_states WHERE candidate_id = ?1 ORDER BY observed_at_unix_ms DESC LIMIT 1",
+            [candidate_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(decimals, 6);
+
+    drop(connection);
+    drop(observer);
+    cleanup_dir(&root);
+}
