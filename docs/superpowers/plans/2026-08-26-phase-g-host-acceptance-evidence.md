@@ -1,264 +1,196 @@
-# Phase G Host Acceptance Evidence Implementation Plan
+# Phase G Host Acceptance Evidence Verification Record
+
+## Scope
+
+This is the final repository verification record for the **non-numbered Phase G host-acceptance evidence slice**. It is stacked exactly on sealed G8 and exists only to make the remaining physical-host Phase-G exit gates deterministic, secret-safe, and auditable.
+
+This is **not G9**. The supplied build order ends Phase G at G8.
+
+Repository CI proves the host-acceptance harness mechanics only. It does **not** prove that a physical VPS has been deployed, rebooted, process-killed, restored, or accepted.
+
+**LIVE TRADING: DISABLED.**
+
+## Immutable anchors
+
+- Sealed G8 base: `99c5de232eb36e6fdd7777d089453f16c03ef38a`
+- Frozen host-acceptance behavior: `d2b8a5d83d0b4444765036d02a2dc535a8a590be`
+- Frozen behavior CI: `32980518873`
+  - Python: **2608 passed in 13.83s**
+  - Rust/workspace: GREEN
+  - Repository safety: GREEN
+
+## TDD evidence
+
+### Task 1 — canonical evidence models and codec
+
+- RED commit: `0fe4c3a9f4838d081eea2116ee49505862d199dd`
+- RED CI: `32976902489`
+- RED failure: Python collection failed only because `shreks_brain.host_acceptance` did not exist; repository safety was GREEN and Rust was unaffected.
+- GREEN commit: `b90c5a92c474bd04d6f059c2ff8fa0da10f331bc`
+- GREEN CI: `32977273124`
+- Python: **2592 passed**; Rust/workspace and repository safety GREEN.
+
+Delivered:
+- immutable exact-schema host evidence models;
+- stable stage/status vocabularies;
+- canonical newline-terminated JSON;
+- strict exact-key decode;
+- SHA-256 evidence fingerprints;
+- fail-closed overall status semantics;
+- no host/process/network/trading authority.
+
+### Task 2 — read-only host collector
+
+- RED commit: `8667246ddca848a71faba54c9e0bd5dc7d820bce`
+- RED CI: `32977641851`
+- RED failure: Python collection failed only because `host_acceptance.collector` did not exist; repository safety GREEN.
+- GREEN commit: `1ac87ab35482ad0f9f987bbd6c30c686bb90c906`
+- GREEN CI: `32978030415`
+- Python: **2595 passed**; Rust/workspace and repository safety GREEN.
+
+Delivered:
+- exact active-release provenance observation;
+- read-only `systemctl show` / `systemctl is-enabled` service and timer observation;
+- read-only `ss -ltnH` dashboard listener observation;
+- sealed PAPER preflight reuse without advancing a cycle;
+- sealed G7 state loading;
+- sealed G8 bundle verification;
+- secret paths are metadata/stat-only and secret contents are never opened, hashed, printed, or persisted;
+- missing or failed required evidence never becomes PASS.
+
+### Task 3 — restart/reboot/restore continuity comparator
+
+- RED commit: `535f48fb47d983494b30a33676dd44ae1e76b77b`
+- RED CI: `32979273947`
+- RED failure: Python collection failed only because the comparator module did not exist.
+- GREEN implementation/export head: `a5cf68c2ddc881ba46d1131d101c33fd2ffa433d`
+- GREEN CI: `32979484270`
+- Python: **2603 passed**; Rust/workspace and repository safety GREEN.
+
+Delivered deterministic failure evidence for:
+- invalid source evidence fingerprints;
+- non-PASS before/after records;
+- invalid stage transitions;
+- host/release/PAPER-run/candidate/campaign identity changes;
+- PAPER cycle or ledger time regression;
+- ledger entry-count regression;
+- lost processed intent keys;
+- G7 risk-control continuity changes;
+- process restart with changed boot ID;
+- reboot with unchanged boot ID.
+
+`AFTER_RESTORE_DRILL` intentionally imposes no boot-ID relation while preserving all PAPER/release/G7 truth checks.
+
+The comparator has no filesystem, subprocess, network, profitability, trade, wallet, signing, submission, or live authority.
+
+### Task 4 — secret-safe operator CLI and physical-host runbook
+
+- RED test commits: `b3d3432e...` and `19532715...`
+- RED CI: `32979793208`
+- Python failed only because `host_acceptance.runtime` did not exist.
+- Rust failed on the intentionally absent host runbook plus an over-broad test-only authority marker; repository safety stayed GREEN.
+- Runtime implementation: `3ad1f2a63fcdfc24a1deff47091e0ee79537708c`
+- Physical runbook: `3d1c1484...`
+- Test-only authority-marker corrections: `6cb98d5aec1a98e727ccc9e3f7dda67d50b10872`, `d2b8a5d83d0b4444765036d02a2dc535a8a590be`
+- Frozen GREEN CI: `32980518873`
+- Python: **2608 passed in 13.83s**; Rust/workspace and repository safety GREEN.
+
+Delivered CLI authority is exactly:
+- `capture`: one read-only host evidence capture into canonical private `0600` output;
+- `compare`: one canonical before/after continuity assessment into private `0600` output.
+
+The parser exposes no restart, reboot, start, stop, enable, disable, kill, wallet, signing, submission, trade, or live command.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+Physical lifecycle actions remain explicit operator actions outside the routine harness.
 
-**Goal:** Build and seal a non-numbered Phase G host-acceptance evidence harness that turns the remaining physical-host exit gates into canonical, secret-safe before/after records without adding trading, lifecycle, wallet, or live authority.
+The physical-host runbook documents:
+- exact verified release provenance;
+- BASELINE capture;
+- actual process-kill/restart drill;
+- actual server reboot drill;
+- G8 isolated restore drill;
+- G6 real phone-delivery/retry evidence;
+- G7 halt/kill propagation and persistence evidence;
+- loopback-only dashboard evidence;
+- rollback and forward-recovery provenance;
+- explicit distinction between repository CI and physical-host acceptance.
 
-**Architecture:** Add a focused `shreks_brain.host_acceptance` package. Pure models/codec define the immutable evidence contract, a read-only collector reuses sealed G1-G8 APIs and allowlisted host probes, a pure comparator proves monotonic/no-loss restart/reboot/restore continuity, and a small CLI writes canonical private evidence files. Physical destructive drills remain outside the harness and outside repository CI.
+## Frozen scope audit
 
-**Tech Stack:** Python 3.12 standard library; existing Shreks PAPER/G7/G8 APIs; pytest; Rust repository contract tests for runbook/authority boundaries.
+Exact sealed G8 -> frozen host-acceptance comparison:
 
-**Spec:** `docs/superpowers/specs/2026-08-26-phase-g-host-acceptance-evidence-design.md`
+- ahead by: **15 commits**
+- behind by: **0**
+- changed files: **14**
+- all changed files are additions.
 
-## Global Constraints
+Changed files are exactly:
 
-- Base exactly sealed G8 `99c5de232eb36e6fdd7777d089453f16c03ef38a`.
-- This is not G9; the supplied build order ends Phase G at G8.
-- `LIVE TRADING: DISABLED` throughout.
-- Do not modify provider adapters, DB schema/migrations, strategy/setup/scoring/risk thresholds, sizing/slippage, fill/exit/accounting, profitability/proof formulas, promotion/registry, wallet/signing/submission, or live-execution behavior.
-- Routine capture and compare paths must not invoke `systemctl start|stop|restart|enable|disable`, reboot, shutdown, kill, package managers, network clients, or arbitrary shell commands.
-- Secret file contents are never opened, hashed, printed, or persisted by the harness.
-- Missing/failed required evidence never becomes PASS.
-- Repository CI may prove harness mechanics only; physical host acceptance remains pending until executed on the dedicated server.
-- Use TDD: every production behavior starts with a failing test and a committed RED state.
+1. `crates/shreks-observer/tests/phase_g_host_acceptance_runbook.rs`
+2. `deploy/systemd/PHASE_G_HOST_ACCEPTANCE.md`
+3. `docs/superpowers/plans/2026-08-26-phase-g-host-acceptance-evidence.md`
+4. `docs/superpowers/specs/2026-08-26-phase-g-host-acceptance-evidence-design.md`
+5. `python/src/shreks_brain/host_acceptance/__init__.py`
+6. `python/src/shreks_brain/host_acceptance/codec.py`
+7. `python/src/shreks_brain/host_acceptance/collector.py`
+8. `python/src/shreks_brain/host_acceptance/compare.py`
+9. `python/src/shreks_brain/host_acceptance/models.py`
+10. `python/src/shreks_brain/host_acceptance/runtime.py`
+11. `python/tests/test_phase_g_host_acceptance_collector.py`
+12. `python/tests/test_phase_g_host_acceptance_compare.py`
+13. `python/tests/test_phase_g_host_acceptance_models.py`
+14. `python/tests/test_phase_g_host_acceptance_runtime.py`
 
----
+No existing provider adapter, database schema/migration, strategy/setup/scoring implementation, trading-risk threshold, sizing/slippage formula, execution/fill/exit logic, accounting/ledger/checkpoint behavior, profitability/proof formula, registry/promotion authority, dashboard behavior, alert behavior, backup behavior, wallet/signing/submission path, transaction construction, or live-enable implementation changed.
 
-### Task 1: Canonical evidence models and codec
+No existing G1-G8 production file was modified.
 
-**Files:**
-- Create: `python/tests/test_phase_g_host_acceptance_models.py`
-- Create: `python/src/shreks_brain/host_acceptance/__init__.py`
-- Create: `python/src/shreks_brain/host_acceptance/models.py`
-- Create: `python/src/shreks_brain/host_acceptance/codec.py`
+## Repository-sealed behavior
 
-**Interfaces:**
-- Produces `HOST_ACCEPTANCE_SCHEMA_VERSION = "phase-g-host-acceptance-v1"`.
-- Produces exact enums `HostAcceptanceStage`, `HostCheckStatus`.
-- Produces immutable `SystemdUnitObservation`, `PaperRecoveryObservation`, `RiskControlObservation`, `ReleaseObservation`, `ProtectedPathObservation`, `DashboardExposureObservation`, `BackupObservation`, `HostResourceObservation`, and `HostAcceptanceRecord`.
-- Produces `encode_host_acceptance_record(record) -> str`, `decode_host_acceptance_record(payload) -> HostAcceptanceRecord`, and `fingerprint_host_acceptance_record(record) -> str`.
+The repository now has one deterministic evidence harness for proving that the sealed G1-G8 stack survives real host operations without losing PAPER truth or G7 safety state.
 
-- [ ] **Step 1: Write the failing model/codec tests**
+The harness:
+- cannot perform lifecycle actions;
+- cannot read secret values;
+- cannot alter PAPER/accounting state;
+- cannot alter G7 state;
+- cannot activate a restored G8 bundle;
+- cannot trade, sign, submit, promote, or enable live mode;
+- refuses to turn failed/unavailable evidence into PASS.
 
-Tests must define exact enum values, exact field validation, required unit ordering, no NaN/non-finite values, canonical UTF-8 JSON, exact-key decoding, canonical round trip, fingerprint validation, and overall PASS semantics. Include explicit tests that unknown keys/statuses/stages, malformed SHA-256 values, duplicate unit names, duplicate protected-path roles, and a required FAIL/UNAVAILABLE observation are rejected or keep overall status non-passing.
+## Physical-host evidence still required
 
-- [ ] **Step 2: Run full CI and verify RED**
+This repository seal **must not** be interpreted as physical Phase-G acceptance.
 
-Expected Python failure: `ModuleNotFoundError: No module named 'shreks_brain.host_acceptance'`. Rust and repository safety must stay GREEN.
+The following still must be executed on the actual dedicated Linux host:
 
-- [ ] **Step 3: Implement minimal models and codec**
+1. deploy an exact verified release through the sealed G2 path;
+2. capture a passing real BASELINE;
+3. perform an actual process-kill/restart drill and obtain a passing continuity comparison;
+4. perform an actual host reboot and obtain a passing continuity comparison;
+5. prove dashboard loopback-only exposure and intended private remote access;
+6. prove one real G6 notification reaches the intended phone and durable retry survives delivery failure;
+7. prove G7 halt and emergency-kill propagation, stale-revision rejection, restart persistence, and browser authority limits;
+8. produce a production-shaped G8 backup and complete an isolated verified restore drill;
+9. prove verified rollback and forward recovery;
+10. continue the real PAPER campaign until the separate after-cost profitability/proof gates have sufficient independent evidence.
 
-Use frozen dataclasses with slots, exact enum/type validation, canonical sorted JSON with `allow_nan=False`, newline termination, strict exact-key decoding, and the zero-fingerprint canonicalization rule from the design. Do not add host I/O yet.
+A physical-host PASS must be derived from the real-host evidence records, not from CI.
 
-- [ ] **Step 4: Run full CI to GREEN**
+## Free-host platform note
 
-All existing tests plus Task 1 tests must pass.
+The currently sealed G2 release builder is pinned to `x86_64-unknown-linux-gnu`. A free ARM64 VPS therefore requires a separately verified **host-platform compatibility slice** before deploying Shreks there; the deployment integrity path must not be bypassed by copying an ad-hoc ARM binary onto the server.
 
-- [ ] **Step 5: Commit GREEN**
+That compatibility work is operational packaging only and must preserve all sealed trading behavior.
 
-Commit message: `feat: add canonical Phase G host evidence contract`.
+## Seal requirements
 
----
+After this verification-record commit:
 
-### Task 2: Read-only host evidence collector
-
-**Files:**
-- Create: `python/tests/test_phase_g_host_acceptance_collector.py`
-- Create: `python/src/shreks_brain/host_acceptance/collector.py`
-- Modify: `python/src/shreks_brain/host_acceptance/__init__.py`
-
-**Interfaces:**
-- Consumes sealed `ObserverPaperCampaignRuntimeConfig` and `preflight_observer_paper_campaign_runtime()`.
-- Consumes sealed `load_operator_risk_control_state()`.
-- Consumes sealed `verify_backup_bundle()`.
-- Produces `HostAcceptanceCaptureConfig` with explicit absolute paths, stage, host label, expected release SHA, dashboard port, and PAPER interval.
-- Produces `collect_host_acceptance_record(config, *, command_runner=..., clock_unix_ms=..., boot_id_reader=..., resource_reader=...) -> HostAcceptanceRecord`.
-
-- [ ] **Step 1: Write the failing collector tests**
-
-Use temporary real files/SQLite fixtures plus an injected command runner. Cover:
-
-- exact release symlink under `/opt/shreks/releases` semantics through injected paths;
-- expected release SHA mismatch is FAIL;
-- all core + telemetry/dashboard/alerts/backup units/timers observed through `systemctl show` and `systemctl is-enabled` only;
-- command runner receives no shell string and no lifecycle verb;
-- sealed PAPER preflight returns run/candidate/manifest/ledger continuity fields without advancing a cycle;
-- G7 state loads through sealed decoder and reason text is omitted;
-- newest valid G8 completed bundle is selected using `verify_backup_bundle()` while malformed/unrelated directories are untouched;
-- secret paths are stat-only: monkeypatch secret `Path.read_bytes/read_text/open` to fail if called;
-- dashboard port passes for loopback-only listeners and fails on `0.0.0.0`, `[::]`, or non-loopback addresses;
-- missing required artifact/unit/listener/backup becomes FAIL/UNAVAILABLE, never PASS;
-- output record overall status is PASS only when all required checks pass.
-
-- [ ] **Step 2: Run full CI and verify RED**
-
-Expected Python failure: collector module/API missing. Rust and repository safety remain GREEN.
-
-- [ ] **Step 3: Implement minimal collector**
-
-Use no shell. Command construction is internal and allowlisted. Parse only the allowlisted `systemctl show` properties. Stat secret paths but never open them. Construct the sealed PAPER runtime config directly from explicit paths; call preflight with a sink that discards the status line. Use sealed G7/G8 loaders/verifiers. Host resource collection is observational and does not invent thresholds.
-
-- [ ] **Step 4: Run full CI to GREEN**
-
-All tests pass with no behavior changes outside the new package.
-
-- [ ] **Step 5: Commit GREEN**
-
-Commit message: `feat: collect read-only Phase G host evidence`.
-
----
-
-### Task 3: Restart/reboot/restore continuity comparator
-
-**Files:**
-- Create: `python/tests/test_phase_g_host_acceptance_compare.py`
-- Create: `python/src/shreks_brain/host_acceptance/compare.py`
-- Modify: `python/src/shreks_brain/host_acceptance/__init__.py`
-
-**Interfaces:**
-- Produces `HostContinuityVerdict` with exact values `PASS` and `FAIL`.
-- Produces immutable `HostContinuityFinding` and `HostContinuityAssessment`.
-- Produces `compare_host_acceptance_records(before, after) -> HostContinuityAssessment`.
-- Produces canonical assessment encoder/decoder if an assessment is persisted by Task 4.
-
-- [ ] **Step 1: Write failing comparator tests**
-
-Cover:
-
-- both records must independently be overall PASS;
-- release SHA/run ID/candidate version/campaign fingerprint unchanged;
-- after cycle time and ledger time cannot decrease;
-- ledger entry count cannot decrease;
-- every before processed intent key remains after;
-- exact G7 revision/halt/kill/fingerprint continuity;
-- `AFTER_PROCESS_RESTART` requires same boot ID;
-- `AFTER_REBOOT` requires different boot ID;
-- `AFTER_RESTORE_DRILL` does not impose boot-ID relation but retains all PAPER/G7 checks;
-- an unexpected stage transition fails;
-- comparator returns explicit findings rather than throwing for an ordinary continuity failure;
-- no profitability or live-state decision is produced.
-
-- [ ] **Step 2: Run full CI and verify RED**
-
-Expected failure: comparator module/API missing only.
-
-- [ ] **Step 3: Implement minimal pure comparator**
-
-No filesystem, subprocess, network, trading, or service-control imports. Treat any violation as a deterministic FAIL finding. Keep ordering stable for canonical output.
-
-- [ ] **Step 4: Run full CI to GREEN**
-
-All tests pass.
-
-- [ ] **Step 5: Commit GREEN**
-
-Commit message: `feat: prove Phase G host continuity`.
-
----
-
-### Task 4: Secret-safe CLI and physical-host runbook
-
-**Files:**
-- Create: `python/tests/test_phase_g_host_acceptance_runtime.py`
-- Create: `python/src/shreks_brain/host_acceptance/runtime.py`
-- Modify: `python/src/shreks_brain/host_acceptance/__init__.py`
-- Create: `crates/shreks-observer/tests/phase_g_host_acceptance_runbook.rs`
-- Create: `deploy/systemd/PHASE_G_HOST_ACCEPTANCE.md`
-
-**Interfaces:**
-- CLI `capture` consumes explicit paths and writes one private canonical evidence file.
-- CLI `compare BEFORE AFTER --output FILE` validates canonical inputs and writes one private canonical assessment file.
-- No lifecycle command exists in the parser.
-
-- [ ] **Step 1: Write failing Python CLI tests**
-
-Cover exact parser commands, required arguments, private atomic output mode `0600`, canonical records, nonzero exit for FAIL/UNAVAILABLE capture, nonzero exit for failed comparison, no secret value in stdout/stderr/output, and rejection of unknown/lifecycle-like subcommands.
-
-- [ ] **Step 2: Write failing Rust runbook/authority contract**
-
-Require the runbook to document:
-
-- exact sealed G8 base and that this is a non-numbered Phase-G exit slice;
-- installation/execution from the exact verified release;
-- baseline -> process restart -> after capture -> compare;
-- baseline -> host reboot -> after capture -> compare;
-- G8 verified backup + isolated restore drill -> capture -> compare;
-- G6 retry/delivery and G7 control drills referenced to their existing runbooks;
-- secret values never copied into evidence;
-- routine harness has no lifecycle authority;
-- no physical-host PASS may be claimed from CI alone;
-- rollback/release provenance evidence;
-- `LIVE TRADING: DISABLED` and F7 remains separately gated.
-
-The Rust test must also scan `python/src/shreks_brain/host_acceptance` for forbidden imports/markers covering wallet/signing/submission/live execution and for generated lifecycle command verbs in runtime/collector code.
-
-- [ ] **Step 3: Run full CI and verify RED**
-
-Python fails only on missing runtime; Rust fails only on missing runbook/authority evidence.
-
-- [ ] **Step 4: Implement runtime CLI and runbook**
-
-Use `argparse`, exact positive/absolute validation, canonical decoders, atomic temp-file + `os.replace`, `0600` output, and structured failure output that contains error type/reason code but not secret contents. Do not introduce a service/timer for the harness.
-
-- [ ] **Step 5: Run full CI to GREEN**
-
-All Python, Rust/workspace, and repository safety gates pass.
-
-- [ ] **Step 6: Commit GREEN**
-
-Commit message: `feat: add Phase G host acceptance operator workflow`.
-
----
-
-### Task 5: Audit, freeze, and repository seal
-
-**Files:**
-- Modify only at seal: `docs/superpowers/plans/2026-08-26-phase-g-host-acceptance-evidence.md`
-
-- [ ] **Step 1: Select frozen all-green behavior SHA**
-
-Record exact CI and exact Python test cardinality.
-
-- [ ] **Step 2: Compare sealed G8 -> frozen acceptance behavior**
-
-Audit every changed file. Prove no provider adapter, DB schema/migration, strategy/setup/scoring/risk threshold, sizing/slippage, execution/accounting, profitability/proof, promotion/registry, wallet/signing/submission, live-enable, or existing G1-G8 authority drift.
-
-- [ ] **Step 3: Replace this plan with the verification record in one docs-only commit**
-
-The record must distinguish repository-sealed harness mechanics from still-pending physical-host evidence.
-
-- [ ] **Step 4: Prove frozen -> seal is exactly one commit / one file / zero behind**
-
-The sole file must be this verification record.
-
-- [ ] **Step 5: Run exact-seal CI**
-
-Require the exact frozen Python test cardinality plus Rust/workspace and repository safety GREEN.
-
-- [ ] **Step 6: Update PR #50 with frozen/seal evidence**
-
-Keep it open, draft, and unmerged.
-
-- [ ] **Step 7: Re-fetch PR metadata**
-
-Prove state `open`, `draft=true`, `merged=false`, head exactly the seal SHA.
-
-## Physical-host evidence retained after repository seal
-
-The repository seal must not mark Phase G physically complete. Remaining host execution must include at least:
-
-1. exact sealed release deployed through the G2 path on the dedicated Linux host;
-2. passing baseline host-acceptance capture;
-3. actual process-kill/restart drill and passing continuity comparison;
-4. actual server reboot and passing continuity comparison;
-5. dashboard reachable only through the intended private/TLS path;
-6. real G6 notification delivery/retry evidence;
-7. real G7 halt and kill-control propagation evidence;
-8. production-shaped G8 backup plus isolated restore drill and passing continuity comparison;
-9. rollback to a prior verified release and forward recovery evidence;
-10. continued PAPER/proof evidence sufficient for the separate profitability gates.
-
-Only then can the Phase-G exit criterion be described as host-proven. F7 tiny-capital live remains separately disabled until every prior live-readiness/proof gate is satisfied.
+1. frozen behavior -> seal must be exactly **1 commit / 1 changed file / 0 behind**;
+2. the sole changed file must be this verification record;
+3. exact-seal CI must reproduce the frozen **2608 Python tests** with Rust/workspace and repository safety GREEN;
+4. PR #50 must remain **open, draft, and unmerged** at the exact seal SHA.
 
 **Profitability remains unproven until real PAPER evidence satisfies the sealed proof gates.**
 
