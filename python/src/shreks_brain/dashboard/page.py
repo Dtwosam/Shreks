@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-_DASHBOARD_HTML = b"""<!doctype html>
+_DASHBOARD_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -58,4 +58,4 @@ refresh();setInterval(refresh,15000);
 
 
 def render_dashboard_page() -> bytes:
-    return _DASHBOARD_HTML
+    return _DASHBOARD_HTML.encode("utf-8")
