@@ -93,7 +93,7 @@ def test_restore_to_empty_staging_preserves_paper_checkpoint_attribution_and_pre
         == manifest.campaign_manifest_fingerprint_sha256
     )
     assert result.checkpoint_sequence == source_checkpoint.sequence
-    assert result.state_as_of_unix_ms == source_checkpoint.state.as_of_unix_ms
+    assert result.state_as_of_unix_ms == source_checkpoint.state.last_cycle_at_unix_ms
     assert result.verified_artifact_sha256 == {
         record.role.value: record.sha256 for record in manifest.artifacts
     }
