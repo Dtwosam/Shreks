@@ -1,5 +1,7 @@
 use shreks_core::ProviderId;
-use shreks_providers::dexscreener::{parse_discovery_json, parse_token_pairs_json, token_pairs_url};
+use shreks_providers::dexscreener::{
+    parse_discovery_json, parse_token_pairs_json, parse_token_pairs_json_for_mint, token_pairs_url,
+};
 
 #[test]
 fn token_pairs_url_is_solanas_public_endpoint() {
@@ -48,6 +50,33 @@ fn parses_pair_market_data_into_shreks_types() {
     assert_eq!(pair.market_cap_usd, Some(200_000.0));
     assert_eq!(pair.pair_created_at_unix_ms, Some(1_787_486_400_000));
     assert_eq!(pair.observed_at_unix_ms, 1_787_486_500_000);
+}
+
+#[test]
+fn token_pair_normalization_drops_quote_side_pairs_for_requested_mint() {
+    let body = r#"[
+      {
+        "chainId":"solana",
+        "dexId":"pumpswap",
+        "pairAddress":"PairBase",
+        "baseToken":{"address":"Mint111"},
+        "quoteToken":{"address":"So11111111111111111111111111111111111111112"},
+        "priceUsd":"0.25"
+      },
+      {
+        "chainId":"solana",
+        "dexId":"meteora",
+        "pairAddress":"PairQuote",
+        "baseToken":{"address":"OtherMint222"},
+        "quoteToken":{"address":"Mint111"},
+        "priceUsd":"4.0"
+      }
+    ]"#;
+
+    let pairs = parse_token_pairs_json_for_mint(body, 123, "Mint111").expect("valid fixture");
+    assert_eq!(pairs.len(), 1);
+    assert_eq!(pairs[0].pair_address, "PairBase");
+    assert_eq!(pairs[0].base_mint, "Mint111");
 }
 
 #[test]
