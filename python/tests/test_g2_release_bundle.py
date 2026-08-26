@@ -26,8 +26,6 @@ PAYLOADS = {
     "deploy/systemd/shreks-observe.service": b"observe-unit\n",
     "deploy/systemd/shreks-paper-evidence.service": b"evidence-unit\n",
     "deploy/systemd/shreks-paper-campaign.service": b"campaign-unit\n",
-    "deploy/systemd/shreks-telemetry.service": b"telemetry-unit\n",
-    "deploy/systemd/shreks-telemetry.timer": b"telemetry-timer\n",
     "deploy/systemd/shreks.target": b"target-unit\n",
     "wheelhouse/shreks_brain-0.1.0-py3-none-any.whl": b"wheel-bytes",
 }

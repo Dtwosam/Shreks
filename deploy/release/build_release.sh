@@ -40,8 +40,6 @@ cp target/release/shreks-paper-evidence "$STAGING/target/release/shreks-paper-ev
 cp deploy/systemd/shreks-observe.service "$STAGING/deploy/systemd/shreks-observe.service"
 cp deploy/systemd/shreks-paper-evidence.service "$STAGING/deploy/systemd/shreks-paper-evidence.service"
 cp deploy/systemd/shreks-paper-campaign.service "$STAGING/deploy/systemd/shreks-paper-campaign.service"
-cp deploy/systemd/shreks-telemetry.service "$STAGING/deploy/systemd/shreks-telemetry.service"
-cp deploy/systemd/shreks-telemetry.timer "$STAGING/deploy/systemd/shreks-telemetry.timer"
 cp deploy/systemd/shreks.target "$STAGING/deploy/systemd/shreks.target"
 cp "${WHEELS[0]}" "$STAGING/wheelhouse/$(basename "${WHEELS[0]}")"
 

@@ -19,8 +19,6 @@ _REQUIRED_STATIC_PAYLOAD_PATHS = (
     "deploy/systemd/shreks-observe.service",
     "deploy/systemd/shreks-paper-campaign.service",
     "deploy/systemd/shreks-paper-evidence.service",
-    "deploy/systemd/shreks-telemetry.service",
-    "deploy/systemd/shreks-telemetry.timer",
     "deploy/systemd/shreks.target",
     "target/release/shreks-observe",
     "target/release/shreks-paper-evidence",
