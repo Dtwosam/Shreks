@@ -3,6 +3,12 @@ from .codec import (
     encode_host_acceptance_record,
     fingerprint_host_acceptance_record,
 )
+from .collector import (
+    HostAcceptanceCaptureConfig,
+    HostCommandResult,
+    ProtectedPathRequirement,
+    collect_host_acceptance_record,
+)
 from .models import (
     HOST_ACCEPTANCE_SCHEMA_VERSION,
     PHASE_G_REQUIRED_UNITS,
@@ -25,16 +31,20 @@ __all__ = [
     "PHASE_G_REQUIRED_UNITS",
     "BackupObservation",
     "DashboardExposureObservation",
+    "HostAcceptanceCaptureConfig",
     "HostAcceptanceRecord",
     "HostAcceptanceStage",
     "HostCheckStatus",
+    "HostCommandResult",
     "HostResourceObservation",
     "PaperRecoveryObservation",
     "ProtectedPathKind",
     "ProtectedPathObservation",
+    "ProtectedPathRequirement",
     "ReleaseObservation",
     "RiskControlObservation",
     "SystemdUnitObservation",
+    "collect_host_acceptance_record",
     "decode_host_acceptance_record",
     "encode_host_acceptance_record",
     "fingerprint_host_acceptance_record",
