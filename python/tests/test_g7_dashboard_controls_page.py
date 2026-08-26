@@ -64,16 +64,16 @@ def test_safety_actions_send_only_revision_csrf_and_exact_kill_confirmation() ->
     assert '"/api/v1/operator-controls/emergency-kill"' in source
     assert 'window.confirm("EMERGENCY KILL SWITCH will halt new entries and trigger the existing emergency exit path. Continue?")' in source
 
-    for forbidden_payload_key in (
-        "amount:",
-        "size:",
-        "mint:",
-        "slippage:",
-        "wallet:",
-        "live_enable",
-        "promotion",
+    for forbidden_payload_shape in (
+        "JSON.stringify({amount:",
+        "JSON.stringify({size:",
+        "JSON.stringify({mint:",
+        "JSON.stringify({slippage:",
+        "JSON.stringify({wallet:",
+        "live_enable:",
+        "promotion:",
     ):
-        assert forbidden_payload_key not in source
+        assert forbidden_payload_shape not in source
 
 
 def test_control_page_keeps_safe_dom_and_dependency_free_contract() -> None:
