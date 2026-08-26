@@ -208,11 +208,10 @@ def test_money_telemetry_copies_sealed_evaluator_metrics_and_calls_it_once(
     sources = replace(base, evaluated_trades=trades, optional_source_errors=())
     policy = _evaluation_policy(sources.state.ledger.starting_cash_usd)
     expected = evaluate_trading_performance(
-        candidate_version=sources.manifest.candidate.candidate_version,
-        model_version=sources.manifest.candidate.model_version,
         trades=trades,
         probability_observations=(),
         policy=policy,
+        candidate_version=sources.manifest.candidate.candidate_version,
     ).metrics
     calls = 0
     real_evaluator = financial_module.evaluate_trading_performance
