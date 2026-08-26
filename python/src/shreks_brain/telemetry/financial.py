@@ -131,7 +131,17 @@ def _compose_proof_risk(sources: TelemetrySources) -> ProofRiskTelemetry:
         source_errors.append("PAPER_ACCOUNTING_INCOMPLETE")
 
     deduped_errors = tuple(dict.fromkeys(source_errors))
-    status = LayerStatus.HEALTHY if not deduped_errors else LayerStatus.DEGRADED
+    optional_evidence_unavailable = any(
+        code.startswith("PROOF_ASSESSMENT_")
+        or code.startswith("PROMOTION_ASSESSMENT_")
+        for code in deduped_errors
+    )
+    if optional_evidence_unavailable:
+        status = LayerStatus.UNAVAILABLE
+    elif sources.accounting_status == "INCOMPLETE":
+        status = LayerStatus.DEGRADED
+    else:
+        status = LayerStatus.HEALTHY
 
     return ProofRiskTelemetry(
         status=status,
@@ -142,16 +152,12 @@ def _compose_proof_risk(sources: TelemetrySources) -> ProofRiskTelemetry:
         proof_pass_count=(
             None
             if proof is None
-            else sum(
-                gate.status is PaperProofGateStatus.PASS for gate in proof.gates
-            )
+            else sum(gate.status is PaperProofGateStatus.PASS for gate in proof.gates)
         ),
         proof_fail_count=(
             None
             if proof is None
-            else sum(
-                gate.status is PaperProofGateStatus.FAIL for gate in proof.gates
-            )
+            else sum(gate.status is PaperProofGateStatus.FAIL for gate in proof.gates)
         ),
         proof_insufficient_count=(
             None
@@ -161,12 +167,8 @@ def _compose_proof_risk(sources: TelemetrySources) -> ProofRiskTelemetry:
                 for gate in proof.gates
             )
         ),
-        promotion_decision=(
-            None if promotion is None else promotion.decision.value
-        ),
-        promotion_gate_count=(
-            None if promotion is None else len(promotion.gates)
-        ),
+        promotion_decision=(None if promotion is None else promotion.decision.value),
+        promotion_gate_count=(None if promotion is None else len(promotion.gates)),
         global_risk_halt=sources.manifest.global_risk_halt,
         accounting_integrity=sources.accounting_status,
         live_state="DISABLED",
