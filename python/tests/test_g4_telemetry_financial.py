@@ -29,10 +29,7 @@ from shreks_brain.promotion import (
 )
 from shreks_brain.telemetry import LayerStatus
 from shreks_brain.telemetry.financial import compose_financial_telemetry
-from shreks_brain.telemetry.sources import (
-    TelemetrySourceConfig,
-    collect_telemetry_sources,
-)
+from shreks_brain.telemetry.sources import TelemetrySourceConfig, collect_telemetry_sources
 
 from test_g4_telemetry_sources import _add_operational_tables
 from test_observer_campaign_runner import AS_OF
@@ -49,11 +46,7 @@ def _sources(tmp_path: Path):
     runtime = _runtime_config(tmp_path, max_cycles=1)
     _add_operational_tables(runtime.observer_database_path)
     return collect_telemetry_sources(
-        TelemetrySourceConfig(
-            runtime_config=runtime,
-            proof_path=tmp_path / "proof.json",
-            promotion_path=tmp_path / "promotion.json",
-        ),
+        TelemetrySourceConfig(runtime, tmp_path / "proof.json", tmp_path / "promotion.json"),
         as_of_unix_ms=AS_OF,
     )
 
@@ -112,7 +105,6 @@ def _proof_assessment(
     profit_factor: float,
     drawdown_pct: float,
     cost_burden_pct: float,
-    candidate_version: str | None = None,
     paper_run_id: str | None = None,
 ) -> CandidateProofAssessment:
     observed = {
@@ -136,15 +128,11 @@ def _proof_assessment(
     return CandidateProofAssessment(
         schema_version=PAPER_PROOF_SCHEMA_VERSION,
         policy_version="paper-proof-v1",
-        candidate_version=(
-            sources.manifest.candidate.candidate_version
-            if candidate_version is None
-            else candidate_version
-        ),
+        candidate_version=sources.manifest.candidate.candidate_version,
         candidate_fingerprint_sha256=sources.manifest.candidate.candidate_fingerprint_sha256,
         registry_fingerprint_sha256=SHA_A,
         e8_assessment_fingerprint_sha256=SHA_B,
-        paper_run_id=(sources.manifest.paper_run_id if paper_run_id is None else paper_run_id),
+        paper_run_id=sources.manifest.paper_run_id if paper_run_id is None else paper_run_id,
         paper_ledger_fingerprint_sha256=SHA_C,
         paper_evaluation_fingerprint_sha256=SHA_D,
         paper_trade_evidence_fingerprint_sha256=SHA_A,
@@ -161,7 +149,6 @@ def _promotion_assessment(
     evaluated_at_unix_ms: int,
     fingerprint: str,
     decision: PromotionDecision,
-    candidate_version: str | None = None,
 ) -> PromotionAssessment:
     statuses = {code: PromotionGateStatus.PASS for code in PromotionGateCode}
     if decision is PromotionDecision.INELIGIBLE:
@@ -181,11 +168,7 @@ def _promotion_assessment(
     return PromotionAssessment(
         schema_version=PROMOTION_SCHEMA_VERSION,
         policy_version="promotion-v1",
-        candidate_version=(
-            sources.manifest.candidate.candidate_version
-            if candidate_version is None
-            else candidate_version
-        ),
+        candidate_version=sources.manifest.candidate.candidate_version,
         candidate_fingerprint_sha256=sources.manifest.candidate.candidate_fingerprint_sha256,
         registry_fingerprint_sha256=SHA_A,
         evaluation_fingerprint_sha256=SHA_B,
@@ -199,10 +182,7 @@ def _promotion_assessment(
     )
 
 
-def test_money_telemetry_copies_sealed_evaluator_metrics_and_calls_it_once(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
+def test_money_telemetry_copies_sealed_evaluator_metrics_and_calls_it_once(tmp_path: Path, monkeypatch) -> None:
     base = _sources(tmp_path)
     trades = _trades(base.manifest.candidate.candidate_version)
     sources = replace(base, evaluated_trades=trades, optional_source_errors=())
@@ -222,107 +202,37 @@ def test_money_telemetry_copies_sealed_evaluator_metrics_and_calls_it_once(
         return real_evaluator(**kwargs)
 
     monkeypatch.setattr(financial_module, "evaluate_trading_performance", recording_evaluator)
-
     money, _proof_risk = compose_financial_telemetry(sources, evaluation_policy=policy)
 
     assert calls == 1
     assert money.status is LayerStatus.HEALTHY
     assert money.daily_loss_usd is None
     assert money.performance is not None
-    assert money.performance.trade_count == expected.trade_count
-    assert money.performance.net_pnl_usd == expected.net_pnl_usd
-    assert money.performance.net_expectancy_usd == expected.net_expectancy_usd
-    assert money.performance.net_expectancy_pct == expected.net_expectancy_pct
-    assert money.performance.profit_factor == expected.profit_factor
-    assert money.performance.maximum_drawdown_usd == expected.maximum_drawdown_usd
-    assert money.performance.maximum_drawdown_pct == expected.maximum_drawdown_pct
-    assert money.performance.turnover_usd == expected.turnover_usd
-    assert money.performance.execution_friction_usd == expected.execution_friction_usd
-    assert money.performance.explicit_cost_usd == expected.explicit_cost_usd
-    assert money.performance.total_cost_usd == expected.total_cost_usd
-    assert money.performance.cost_burden_pct == expected.cost_burden_pct
+    for name in (
+        "trade_count", "net_pnl_usd", "net_expectancy_usd", "net_expectancy_pct",
+        "profit_factor", "maximum_drawdown_usd", "maximum_drawdown_pct",
+        "turnover_usd", "execution_friction_usd", "explicit_cost_usd",
+        "total_cost_usd", "cost_burden_pct",
+    ):
+        assert getattr(money.performance, name) == getattr(expected, name)
 
 
-def test_proof_risk_copies_latest_matching_persisted_assessments_without_recomputing(
-    tmp_path: Path,
-) -> None:
+def test_proof_risk_copies_latest_matching_persisted_assessments_without_recomputing(tmp_path: Path) -> None:
     base = _sources(tmp_path)
-    older = _proof_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 2,
-        fingerprint=SHA_A,
-        trade_count=5,
-        distinct_mints=4,
-        expectancy_pct=0.5,
-        profit_factor=1.1,
-        drawdown_pct=9.0,
-        cost_burden_pct=2.0,
-    )
-    same_time_lower = _proof_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 1,
-        fingerprint=SHA_B,
-        trade_count=10,
-        distinct_mints=6,
-        expectancy_pct=1.0,
-        profit_factor=1.5,
-        drawdown_pct=6.0,
-        cost_burden_pct=1.0,
-    )
-    chosen = _proof_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 1,
-        fingerprint=SHA_C,
-        trade_count=11,
-        distinct_mints=7,
-        expectancy_pct=1.25,
-        profit_factor=1.8,
-        drawdown_pct=4.5,
-        cost_burden_pct=0.75,
-    )
-    unrelated = _proof_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 1,
-        fingerprint=SHA_D,
-        trade_count=999,
-        distinct_mints=999,
-        expectancy_pct=99.0,
-        profit_factor=99.0,
-        drawdown_pct=99.0,
-        cost_burden_pct=99.0,
-        paper_run_id="other-run",
-    )
-    future = _proof_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF + 1,
-        fingerprint=SHA_D,
-        trade_count=888,
-        distinct_mints=888,
-        expectancy_pct=88.0,
-        profit_factor=88.0,
-        drawdown_pct=88.0,
-        cost_burden_pct=88.0,
-    )
-    promotion_lower = _promotion_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 1,
-        fingerprint=SHA_B,
-        decision=PromotionDecision.INELIGIBLE,
-    )
-    promotion_chosen = _promotion_assessment(
-        base,
-        evaluated_at_unix_ms=AS_OF - 1,
-        fingerprint=SHA_C,
-        decision=PromotionDecision.ELIGIBLE,
-    )
+    older = _proof_assessment(base, evaluated_at_unix_ms=AS_OF - 2, fingerprint=SHA_A, trade_count=5, distinct_mints=4, expectancy_pct=0.5, profit_factor=1.1, drawdown_pct=9.0, cost_burden_pct=2.0)
+    lower = _proof_assessment(base, evaluated_at_unix_ms=AS_OF - 1, fingerprint=SHA_B, trade_count=10, distinct_mints=6, expectancy_pct=1.0, profit_factor=1.5, drawdown_pct=6.0, cost_burden_pct=1.0)
+    chosen = _proof_assessment(base, evaluated_at_unix_ms=AS_OF - 1, fingerprint=SHA_C, trade_count=11, distinct_mints=7, expectancy_pct=1.25, profit_factor=1.8, drawdown_pct=4.5, cost_burden_pct=0.75)
+    unrelated = _proof_assessment(base, evaluated_at_unix_ms=AS_OF - 1, fingerprint=SHA_D, trade_count=999, distinct_mints=999, expectancy_pct=99.0, profit_factor=99.0, drawdown_pct=99.0, cost_burden_pct=99.0, paper_run_id="other-run")
+    future = _proof_assessment(base, evaluated_at_unix_ms=AS_OF + 1, fingerprint=SHA_D, trade_count=888, distinct_mints=888, expectancy_pct=88.0, profit_factor=88.0, drawdown_pct=88.0, cost_burden_pct=88.0)
+    promotion_lower = _promotion_assessment(base, evaluated_at_unix_ms=AS_OF - 1, fingerprint=SHA_B, decision=PromotionDecision.INELIGIBLE)
+    promotion_chosen = _promotion_assessment(base, evaluated_at_unix_ms=AS_OF - 1, fingerprint=SHA_C, decision=PromotionDecision.ELIGIBLE)
     sources = replace(
         base,
-        proof_assessments=(older, same_time_lower, chosen, unrelated, future),
+        proof_assessments=(older, lower, chosen, unrelated, future),
         promotion_assessments=(promotion_lower, promotion_chosen),
         optional_source_errors=(),
     )
     policy = _evaluation_policy(sources.state.ledger.starting_cash_usd)
-
     _money, proof_risk = compose_financial_telemetry(sources, evaluation_policy=policy)
 
     assert proof_risk.status is LayerStatus.HEALTHY
@@ -345,25 +255,26 @@ def test_proof_risk_copies_latest_matching_persisted_assessments_without_recompu
     assert proof_risk.kill_switch_active is None
 
 
-def test_invalid_or_missing_optional_proof_sources_degrade_without_fabrication(
-    tmp_path: Path,
-) -> None:
+def test_missing_or_corrupt_optional_proof_sources_are_unavailable_without_fabrication(tmp_path: Path) -> None:
     base = _sources(tmp_path)
-    sources = replace(
+    policy = _evaluation_policy(base.state.ledger.starting_cash_usd)
+
+    _money, missing = compose_financial_telemetry(base, evaluation_policy=policy)
+    assert missing.status is LayerStatus.UNAVAILABLE
+    assert missing.source_errors == (
+        "PROOF_ASSESSMENT_UNAVAILABLE",
+        "PROMOTION_ASSESSMENT_UNAVAILABLE",
+    )
+
+    corrupt = replace(
         base,
         proof_assessments=(),
         promotion_assessments=(),
-        optional_source_errors=(
-            "PROOF_ASSESSMENT_INVALID",
-            "PROMOTION_ASSESSMENT_UNAVAILABLE",
-        ),
+        optional_source_errors=("PROOF_ASSESSMENT_INVALID", "PROMOTION_ASSESSMENT_UNAVAILABLE"),
     )
-    policy = _evaluation_policy(sources.state.ledger.starting_cash_usd)
-
-    _money, proof_risk = compose_financial_telemetry(sources, evaluation_policy=policy)
-
-    assert proof_risk.status is LayerStatus.DEGRADED
-    assert proof_risk.source_errors == sources.optional_source_errors
+    _money, proof_risk = compose_financial_telemetry(corrupt, evaluation_policy=policy)
+    assert proof_risk.status is LayerStatus.UNAVAILABLE
+    assert proof_risk.source_errors == corrupt.optional_source_errors
     assert proof_risk.proof_decision is None
     assert proof_risk.proof_trade_count is None
     assert proof_risk.proof_net_expectancy_pct is None
@@ -374,11 +285,8 @@ def test_invalid_or_missing_optional_proof_sources_degrade_without_fabrication(
     assert proof_risk.kill_switch_active is None
 
 
-def test_evaluation_policy_is_explicit_and_must_match_paper_starting_equity(
-    tmp_path: Path,
-) -> None:
+def test_evaluation_policy_is_explicit_and_must_match_paper_starting_equity(tmp_path: Path) -> None:
     sources = _sources(tmp_path)
     wrong = _evaluation_policy(sources.state.ledger.starting_cash_usd + 1.0)
-
     with pytest.raises(ValueError, match="starting equity"):
         compose_financial_telemetry(sources, evaluation_policy=wrong)
