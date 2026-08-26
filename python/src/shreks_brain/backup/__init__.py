@@ -6,6 +6,11 @@ from .models import (
     BackupManifest,
     BackupManifestError,
 )
+from .snapshot import (
+    BackupSnapshotError,
+    BackupSnapshotSources,
+    create_backup_snapshot,
+)
 from .verify import verify_backup_bundle
 
 __all__ = [
@@ -14,6 +19,9 @@ __all__ = [
     "BackupArtifactRole",
     "BackupManifest",
     "BackupManifestError",
+    "BackupSnapshotError",
+    "BackupSnapshotSources",
+    "create_backup_snapshot",
     "decode_backup_manifest",
     "encode_backup_manifest",
     "verify_backup_bundle",
