@@ -19,6 +19,7 @@ from test_g5_dashboard_http import _auth
 
 
 _CSRF = "g7-test-csrf-token-with-sufficient-entropy-shape"
+_KILL_CONFIRMATION = "EMERGENCY KILL SWITCH"
 
 
 def _controlled_application(tmp_path: Path):
@@ -117,6 +118,28 @@ def test_dashboard_halt_is_revision_checked_and_persists_fixed_audit_reason(tmp_
     assert persisted.last_reason == "authenticated dashboard halt"
 
 
+def test_dashboard_emergency_kill_requires_exact_confirmation_phrase(tmp_path: Path) -> None:
+    app, _config, state_path, auth = _controlled_application(tmp_path)
+    headers = _post_headers(auth)
+
+    missing = app.dispatch(
+        "POST",
+        "/api/v1/operator-controls/emergency-kill",
+        headers,
+        b'{"expected_revision":0}',
+    )
+    wrong = app.dispatch(
+        "POST",
+        "/api/v1/operator-controls/emergency-kill",
+        headers,
+        b'{"confirmation":"EMERGENCY KILL","expected_revision":0}',
+    )
+
+    assert missing.status == 400
+    assert wrong.status == 400
+    assert load_operator_risk_control_state(state_path).revision == 0
+
+
 def test_dashboard_emergency_kill_latches_existing_halt_and_persists_fixed_reason(tmp_path: Path) -> None:
     app, _config, state_path, auth = _controlled_application(tmp_path)
     headers = _post_headers(auth)
@@ -132,7 +155,11 @@ def test_dashboard_emergency_kill_latches_existing_halt_and_persists_fixed_reaso
         "POST",
         "/api/v1/operator-controls/emergency-kill",
         headers,
-        b'{"expected_revision":1}',
+        json.dumps(
+            {"confirmation": _KILL_CONFIRMATION, "expected_revision": 1},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8"),
     )
 
     assert response.status == 200
@@ -154,9 +181,10 @@ def test_dashboard_emergency_kill_latches_existing_halt_and_persists_fixed_reaso
         b'{"expected_revision":0,"reason":"browser supplied"}',
         b"not-json",
         b"[]",
+        b"x" * 257,
     ),
 )
-def test_dashboard_control_body_is_exact_and_malformed_requests_do_not_mutate(
+def test_dashboard_halt_body_is_exact_and_malformed_requests_do_not_mutate(
     tmp_path: Path,
     body: bytes,
 ) -> None:
@@ -167,6 +195,27 @@ def test_dashboard_control_body_is_exact_and_malformed_requests_do_not_mutate(
         "/api/v1/operator-controls/halt-new-entries",
         _post_headers(auth),
         body,
+    )
+
+    assert response.status == 400
+    assert load_operator_risk_control_state(state_path).revision == 0
+
+
+@pytest.mark.parametrize("content_type", (None, "text/plain", "application/x-www-form-urlencoded"))
+def test_dashboard_control_requires_application_json(
+    tmp_path: Path,
+    content_type: str | None,
+) -> None:
+    app, _config, state_path, auth = _controlled_application(tmp_path)
+    headers = {**auth, "X-Shreks-CSRF": _CSRF}
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+
+    response = app.dispatch(
+        "POST",
+        "/api/v1/operator-controls/halt-new-entries",
+        headers,
+        b'{"expected_revision":0}',
     )
 
     assert response.status == 400
@@ -201,7 +250,7 @@ def test_unauthenticated_control_post_is_rejected_before_csrf_or_state_access(tm
         "POST",
         "/api/v1/operator-controls/emergency-kill",
         {"Content-Type": "application/json", "X-Shreks-CSRF": _CSRF},
-        b'{"expected_revision":0}',
+        b'{"confirmation":"EMERGENCY KILL SWITCH","expected_revision":0}',
     )
 
     assert response.status == 401
