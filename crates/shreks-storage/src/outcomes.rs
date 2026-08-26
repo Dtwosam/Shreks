@@ -257,6 +257,24 @@ impl ShreksDb {
             .collect()
     }
 
+    /// Return whether any durable mint-state evidence already exists for a
+    /// candidate. The observer uses this to avoid spending Helius requests on
+    /// due candidates whose decimals and authority state are already known.
+    pub fn has_mint_state(&self, candidate_id: i64) -> Result<bool, StorageError> {
+        if candidate_id <= 0 {
+            return Err(StorageError::InvalidData(
+                "mint-state candidate_id must be positive".to_owned(),
+            ));
+        }
+
+        let exists: i64 = self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM token_mint_states WHERE candidate_id = ?1)",
+            [candidate_id],
+            |row| row.get(0),
+        )?;
+        Ok(exists != 0)
+    }
+
     /// Finalize every pending checkpoint for one candidate that is due and has
     /// a usable post-due price snapshot. Only snapshots observed no later than
     /// `completed_at_unix_ms` participate, preventing future-dated provider
