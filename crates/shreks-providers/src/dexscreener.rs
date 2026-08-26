@@ -172,6 +172,18 @@ pub fn parse_token_pairs_json(
         .collect())
 }
 
+pub fn parse_token_pairs_json_for_mint(
+    body: &str,
+    observed_at_unix_ms: i64,
+    requested_mint: &str,
+) -> Result<Vec<PairMarketData>, ProviderError> {
+    let pairs = parse_token_pairs_json(body, observed_at_unix_ms)?;
+    Ok(pairs
+        .into_iter()
+        .filter(|pair| pair.base_mint == requested_mint)
+        .collect())
+}
+
 pub struct DexScreenerProvider {
     client: reqwest::Client,
 }
@@ -248,7 +260,7 @@ impl MarketDataProvider for DexScreenerProvider {
         }
 
         let body = self.get_text(&token_pairs_url(token_mint)).await?;
-        parse_token_pairs_json(&body, unix_time_ms()?)
+        parse_token_pairs_json_for_mint(&body, unix_time_ms()?, token_mint)
     }
 }
 
