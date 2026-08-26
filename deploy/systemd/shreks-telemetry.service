@@ -1,0 +1,23 @@
+[Unit]
+Description=Shreks read-only telemetry snapshot
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+
+[Service]
+Type=oneshot
+User=shreks
+Group=shreks
+WorkingDirectory=/opt/shreks/current
+EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -d /var/lib/shreks/telemetry
+ExecStartPre=/usr/bin/test -w /var/lib/shreks/telemetry
+ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.runtime --preflight
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.runtime
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shreks/telemetry
+UMask=0077
