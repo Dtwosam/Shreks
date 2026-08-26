@@ -50,6 +50,7 @@ _MAX_CONTROL_BODY_BYTES = 256
 _MAX_REQUEST_BODY_BYTES = 4096
 _DASHBOARD_HALT_REASON = "authenticated dashboard halt"
 _DASHBOARD_KILL_REASON = "authenticated dashboard emergency kill"
+_KILL_CONFIRMATION = "EMERGENCY KILL SWITCH"
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,7 +212,11 @@ class DashboardApplication:
             return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
         if not self._valid_csrf(headers):
             return _json_response(403, {"error": "CSRF_REQUIRED"})
-        expected_revision = _control_expected_revision(headers, body)
+        expected_revision = _control_expected_revision(
+            headers,
+            body,
+            emergency_kill=(path == _KILL_PATH),
+        )
         if expected_revision is None:
             return _json_response(400, {"error": "BAD_REQUEST"})
         try:
@@ -392,6 +397,8 @@ def _header_value(headers: Mapping[str, str], name: str) -> str | None:
 def _control_expected_revision(
     headers: Mapping[str, str],
     body: object,
+    *,
+    emergency_kill: bool,
 ) -> int | None:
     if type(body) is not bytes or not body or len(body) > _MAX_CONTROL_BODY_BYTES:
         return None
@@ -402,7 +409,16 @@ def _control_expected_revision(
         document = json.loads(body.decode("utf-8"), parse_constant=_reject_json_constant)
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         return None
-    if type(document) is not dict or set(document) != {"expected_revision"}:
+    if type(document) is not dict:
+        return None
+    expected_keys = (
+        {"confirmation", "expected_revision"}
+        if emergency_kill
+        else {"expected_revision"}
+    )
+    if set(document) != expected_keys:
+        return None
+    if emergency_kill and document["confirmation"] != _KILL_CONFIRMATION:
         return None
     value = document["expected_revision"]
     if isinstance(value, bool) or type(value) is not int or value < 0:
