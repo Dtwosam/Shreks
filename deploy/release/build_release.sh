@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SOURCE_SHA="${1:-${SOURCE_SHA:-}}"
-PLATFORM="x86_64-unknown-linux-gnu"
+PLATFORM="${PLATFORM:-x86_64-unknown-linux-gnu}"
 RELEASE_OUT="${RELEASE_OUT:-dist/release}"
 WHEEL_OUT="dist/release-wheel"
 STAGING="$RELEASE_OUT/staging"
@@ -12,9 +12,28 @@ if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   exit 2
 fi
 
+case "$PLATFORM" in
+  x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)
+    ;;
+  *)
+    echo "unsupported release platform: $PLATFORM" >&2
+    exit 2
+    ;;
+esac
+
 ACTUAL_SHA="$(git rev-parse HEAD)"
 if [[ "$ACTUAL_SHA" != "$SOURCE_SHA" ]]; then
   echo "checked-out source SHA does not match requested release SHA" >&2
+  exit 2
+fi
+
+RUST_HOST="$(rustc -vV | sed -n 's/^host: //p')"
+if [[ -z "$RUST_HOST" ]]; then
+  echo "unable to determine native Rust host" >&2
+  exit 2
+fi
+if [[ "$RUST_HOST" != "$PLATFORM" ]]; then
+  echo "requested release platform does not match native Rust host: requested=$PLATFORM native=$RUST_HOST" >&2
   exit 2
 fi
 
