@@ -99,6 +99,8 @@ systemctl is-enabled shreks.target
 
 The G4 telemetry timer is intentionally independent of `shreks.target`. It schedules a read-only oneshot snapshot once per minute and is enabled under `timers.target`. **telemetry failure does not stop shreks.target** and is not part of deployment success/rollback health gating.
 
+The two telemetry unit files are a G4 host-bootstrap artifact. Install or update them only from the exact sealed G4 source being deployed. The sealed G2 v1 release-bundle schema and root-owned core release manager remain unchanged so pre-G4 verified releases stay valid rollback points. Do not treat telemetry-unit installation as a bypass around G2's verified core release path.
+
 Verify the three core processes and the independent telemetry timer:
 
 ```sh
@@ -178,7 +180,9 @@ Critically, **do not bypass the campaign preflight** and **do not launch the cam
 
 ## Upgrade and rollback
 
-Build/test the intended sealed commit first. G2's root-owned release manager stops `shreks.target`, installs the core and telemetry unit files from the verified release, atomically repoints `/opt/shreks/current`, reloads systemd, starts the target, and requires observer, paper evidence, paper campaign, and target to all be active. A failed core child triggers rollback; rollback is not considered successful until every restored core child and the target are active again. Telemetry units are versioned and restored with the release, but telemetry activity is not a release health gate.
+Build/test the intended sealed commit first. G2's root-owned release manager continues to own the verified core code rollout: it stops `shreks.target`, installs the four core systemd units from the verified v1 release, atomically repoints `/opt/shreks/current`, reloads systemd, starts the target, and requires observer, paper evidence, paper campaign, and target to all be active. A failed core child triggers rollback; rollback is not considered successful until every restored core child and the target are active again.
+
+G4 telemetry supervision is deliberately outside that core health/rollback contract. On first G4 host enablement, install the telemetry service/timer from the exact sealed G4 source after the verified G4 code release is active, then enable the timer. If rolling back to a pre-G4 code release, disable the telemetry timer because that older Python release does not contain the telemetry runtime. This monitoring transition never substitutes for or weakens the G2 core rollback path.
 
 Do not replace or delete the persistent database, E11 evidence, campaign manifest, telemetry history/output directory, or protected environment file during a code rollback. Preserve evidence history. If recovery or reconciliation fails, keep paper/live execution disabled and investigate before resuming autonomous operation.
 
