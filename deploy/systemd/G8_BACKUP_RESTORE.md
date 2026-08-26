@@ -16,7 +16,7 @@ The G8 bundle contains:
 - the durable G7 operator risk-control state;
 - the durable G6 alert state when configured and present.
 
-Secrets are not backed up. Dashboard credentials, Telegram bot tokens, provider keys, wallet material, private keys, and seed material must be recovered separately from the operator's protected secret-management process. Derived telemetry is intentionally excluded because it can be regenerated.
+secrets are not backed up. Dashboard credentials, Telegram bot tokens, provider keys, wallet material, private keys, and seed material must be recovered separately from the operator's protected secret-management process. Derived telemetry is intentionally excluded because it can be regenerated.
 
 ## Host directories and permissions
 
