@@ -10,6 +10,13 @@ import time
 from types import FrameType
 
 from shreks_brain.paper_loop import PaperLoopState
+from shreks_brain.risk_control import (
+    RiskControlStateError,
+    load_operator_risk_control_state,
+)
+from shreks_brain.risk_control.paper_runtime import (
+    ControlledObserverPaperCampaignCoordinatorRunner,
+)
 
 from .coordinator import (
     ObserverCampaignCoordinatorError,
@@ -137,8 +144,21 @@ def run_observer_paper_campaign_runtime(
     while not event.is_set():
         as_of_unix_ms = _runtime_timestamp(clock)
         try:
-            result = bootstrap.runner.run_cycle(as_of_unix_ms, as_of_unix_ms)
-            evaluated_trade_count = len(bootstrap.runner.evaluated_trades())
+            cycle_runner: ObserverPaperCampaignCoordinatorRunner
+            if config.risk_control_path is None:
+                cycle_runner = bootstrap.runner
+            else:
+                halt_new_entries, kill_switch_active = _current_operator_controls(
+                    config.risk_control_path
+                )
+                cycle_runner = _controlled_runner(
+                    config,
+                    bootstrap.manifest,
+                    halt_new_entries=halt_new_entries,
+                    kill_switch_active=kill_switch_active,
+                )
+            result = cycle_runner.run_cycle(as_of_unix_ms, as_of_unix_ms)
+            evaluated_trade_count = len(cycle_runner.evaluated_trades())
         except (ObserverCampaignCoordinatorError, OSError, TypeError, ValueError) as error:
             raise ObserverPaperCampaignRuntimeError(
                 "paper campaign cycle failed closed"
@@ -161,6 +181,39 @@ def run_observer_paper_campaign_runtime(
             break
 
     return completed_cycles
+
+
+def _current_operator_controls(path) -> tuple[bool, bool]:
+    try:
+        state = load_operator_risk_control_state(path)
+    except (RiskControlStateError, OSError, TypeError, ValueError):
+        # Missing/corrupt configured state blocks entries but does not invent an
+        # emergency liquidation signal. The next cycle re-reads the file.
+        return True, False
+    return state.halt_new_entries, state.kill_switch_active
+
+
+def _controlled_runner(
+    config: ObserverPaperCampaignRuntimeConfig,
+    manifest: ObserverPaperCampaignRuntimeManifest,
+    *,
+    halt_new_entries: bool,
+    kill_switch_active: bool,
+) -> ControlledObserverPaperCampaignCoordinatorRunner:
+    return ControlledObserverPaperCampaignCoordinatorRunner(
+        config.observer_database_path,
+        config.evidence_path,
+        manifest.candidate,
+        manifest.paper_run_id,
+        manifest.initial_state,
+        manifest.policy_bundle,
+        manifest.risk_environment,
+        manifest.selection_policy,
+        recent_performance=manifest.recent_performance,
+        global_risk_halt=manifest.global_risk_halt,
+        operator_entry_halt_active=halt_new_entries,
+        operator_kill_switch_active=kill_switch_active,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
