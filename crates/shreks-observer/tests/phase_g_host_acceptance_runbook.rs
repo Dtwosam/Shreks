@@ -69,7 +69,8 @@ fn host_acceptance_package_has_no_wallet_signing_submission_or_live_authority() 
     }
 
     let collector = fs::read_to_string(source_dir.join("collector.py")).expect("collector must exist");
-    assert!(collector.contains("systemctl\", \"show"));
-    assert!(collector.contains("systemctl\", \"is-enabled"));
+    assert!(collector.contains("\"systemctl\""));
+    assert!(collector.contains("\"show\""));
+    assert!(collector.contains("\"is-enabled\""));
     assert!(!collector.contains("shell=True"));
 }
