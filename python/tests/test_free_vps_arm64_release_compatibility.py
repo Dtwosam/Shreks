@@ -153,3 +153,16 @@ def test_ci_has_native_arm64_release_build_job():
     assert "PLATFORM: aarch64-unknown-linux-gnu" in workflow
     assert "deploy/release/build_release.sh" in workflow
     assert "release_bundle.py verify" in workflow
+
+
+def test_sealed_release_workflow_can_build_the_selected_native_platform():
+    workflow = (_REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "platform:" in workflow
+    assert "x86_64-unknown-linux-gnu" in workflow
+    assert "aarch64-unknown-linux-gnu" in workflow
+    assert "ubuntu-24.04-arm" in workflow
+    assert "PLATFORM: ${{ inputs.platform }}" in workflow
+    assert "deploy/release/build_release.sh" in workflow
