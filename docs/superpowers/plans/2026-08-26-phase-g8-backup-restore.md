@@ -1,191 +1,228 @@
-# Phase G8 Backup and Restore Proof Implementation Plan
+# Phase G8 Backup and Restore Proof Verification Record
 
-**Base:** sealed G7 `8d31368eaefd50560855b4ef69050760c1134bee`  
+**Base sealed G7:** `8d31368eaefd50560855b4ef69050760c1134bee`  
+**Base exact-seal CI:** `32969491598` — 2531 Python tests, Rust/workspace GREEN, repository safety GREEN  
+**Frozen G8 behavior:** `45ecdab878dd286ebf7f9970c6512730831fdea0`  
+**Frozen G8 CI:** `32974180534` — 2585 Python tests, Rust/workspace GREEN, repository safety GREEN  
 **Branch:** `feat/phase-g8-backup-restore`  
+**PR:** #49, stacked on sealed G7  
 **Design:** `docs/superpowers/specs/2026-08-26-phase-g8-backup-restore-design.md`
 
 **LIVE TRADING: DISABLED.**
 
-## Goal
+## Seal conclusion
 
-Implement and seal a fail-closed local backup/restore layer for authoritative PAPER and operational safety state. The implementation must preserve sealed G7 behavior, add no live/trading/service-control authority, require no paid infrastructure, and prove staged restore through the existing PAPER preflight.
+G8 repository behavior is frozen at `45ecdab878dd286ebf7f9970c6512730831fdea0`. The frozen implementation adds a fail-closed local backup/restore proof for authoritative PAPER truth and operational safety state without adding trading authority, wallet authority, signing/submission authority, live-enable authority, or automated service-control authority.
 
-## Task 1 — Strict bundle manifest and verifier
+The frozen CI run `32974180534` completed successfully with exactly **2585 Python tests passing**, Rust/workspace GREEN, and repository safety GREEN.
 
-### RED
+Profitability remains unproven until real PAPER evidence satisfies the sealed proof gates.
 
-Add `python/tests/test_g8_backup_manifest.py` proving the new contract is absent and defining:
+## G7 -> frozen G8 geometry and file audit
 
-- exact schema/version and canonical JSON round-trip;
-- exact logical artifact-role vocabulary;
-- unique roles and paths;
-- SHA-256 and non-negative byte-size validation;
-- normalized safe relative paths only;
-- rejection of absolute paths, `..`, duplicate/ambiguous paths, unknown roles, extra keys, NaN/non-canonical JSON;
-- required role set and optional alert-state semantics;
-- no secret/telemetry artifact role;
-- verifier rejects missing, extra, symlinked, size-mismatched, and hash-mismatched artifacts;
-- SQLite artifact must pass integrity/quick-check.
+GitHub compare from sealed G7 `8d31368eaefd50560855b4ef69050760c1134bee` to frozen G8 `45ecdab878dd286ebf7f9970c6512730831fdea0` proves:
 
-Commit RED and confirm Python fails only because the G8 backup package is absent; Rust and repository safety remain green.
+- status: `ahead`;
+- ahead: **27 commits**;
+- behind: **0 commits**;
+- total commits: **27**;
+- changed files: **19**;
+- PR additions at freeze: **3314**;
+- PR deletions at freeze: **0**.
 
-### GREEN
+Every changed path was audited:
 
-Implement:
+1. `.env.example` — bounded G8 operational backup settings only.
+2. `crates/shreks-observer/tests/g8_backup_systemd.rs` — host sandbox/authority/runbook contract tests.
+3. `deploy/systemd/G8_BACKUP_RESTORE.md` — operator backup/recovery runbook.
+4. `deploy/systemd/shreks-backup.service` — isolated no-network oneshot backup service.
+5. `deploy/systemd/shreks-backup.timer` — independent hourly persistent timer.
+6. `docs/superpowers/plans/2026-08-26-phase-g8-backup-restore.md` — implementation plan, replaced by this verification record at seal.
+7. `docs/superpowers/specs/2026-08-26-phase-g8-backup-restore-design.md` — G8 design record.
+8. `python/src/shreks_brain/backup/__init__.py` — explicit G8 public API.
+9. `python/src/shreks_brain/backup/config.py` — bounded operational configuration.
+10. `python/src/shreks_brain/backup/manifest.py` — strict canonical bundle manifest codec.
+11. `python/src/shreks_brain/backup/models.py` — immutable G8 bundle models and role vocabulary.
+12. `python/src/shreks_brain/backup/restore.py` — verified staging-only restore.
+13. `python/src/shreks_brain/backup/runtime.py` — backup/verify/restore CLI and bounded retention.
+14. `python/src/shreks_brain/backup/snapshot.py` — online coherent snapshot creation.
+15. `python/src/shreks_brain/backup/verify.py` — read-only bundle verification and SQLite integrity proof.
+16. `python/tests/test_g8_backup_manifest.py` — strict manifest/verifier contract.
+17. `python/tests/test_g8_backup_restore.py` — staging restore and authority contract.
+18. `python/tests/test_g8_backup_runtime.py` — config/CLI/retention contract.
+19. `python/tests/test_g8_backup_snapshot.py` — online snapshot/coherence contract.
 
-- `python/src/shreks_brain/backup/__init__.py`
-- `models.py`
-- `manifest.py`
-- `verify.py`
+No provider adapter changed. No operational database schema or migration changed. No strategy/setup/scoring formula changed. No risk threshold, sizing, slippage, fill, exit, accounting, profitability, proof, promotion, or registry formula changed. No wallet, signer, transaction-builder, transaction-submission, or live-execution file changed. No existing G7 safety-state model or command vocabulary changed.
 
-Keep the API pure/read-only except verification reads. Run full CI to GREEN.
+## Frozen behavior proof
 
-## Task 2 — Online snapshot creator and coherence retry
+### 1. Strict bundle manifest and verifier
 
-### RED
+The sealed G8 bundle schema is `g8-backup-bundle-v1` with explicit artifact roles for:
 
-Add `python/tests/test_g8_backup_snapshot.py` covering:
+- authoritative operational SQLite;
+- E11 evidence;
+- immutable PAPER campaign manifest;
+- G7 operator risk-control state;
+- optional G6 alert state.
 
-- SQLite WAL-mode source with committed data captured through `sqlite3.Connection.backup()`;
-- no raw `-wal` or `-shm` bundle artifacts;
-- source database/files unchanged by snapshot;
-- exact bytes of E11, campaign manifest, G7 risk state, and configured alert state;
-- telemetry, password/token/API-key/private-key paths never copied;
-- private directory/file permissions;
-- temporary bundle is not treated as completed;
-- final publication only after all verification succeeds;
-- bounded retry when staged PAPER preflight detects cross-file incoherence;
-- no retry forever and no fabricated success;
-- failed attempts clean only invocation-owned temporary paths.
+The verifier enforces canonical schema decoding, exact allowed role vocabulary, unique roles and paths, SHA-256 hashes, byte sizes, normalized safe relative paths, required core roles, exact file-set matching, symlink rejection, traversal rejection, and SQLite `quick_check` integrity.
 
-RED must fail only because snapshot runtime does not exist.
+Secrets and derived telemetry are not representable as G8 artifact roles.
 
-### GREEN
+Task 1 TDD evidence:
 
-Implement `snapshot.py` using:
+- RED commit: `4a5e1740af36f71cdb9c8afdbd0457810eaa7e09`;
+- RED CI: `32970451524`, Python failed only because `shreks_brain.backup` did not exist;
+- GREEN behavior head: `3f08b080b3f4f9cd552a8da67c4012a271bebc1b`;
+- GREEN CI: `32970644473`, **2557 Python tests**, Rust/workspace GREEN, repository safety GREEN.
 
-- private temp directory inside backup root;
-- online SQLite backup;
-- exact fixed-role file copies;
-- strict artifact hashing/manifest creation;
-- existing PAPER preflight against staged DB/E11/manifest/risk state;
-- bounded capture attempts;
-- atomic publish after successful verification.
+### 2. Online coherent snapshot creation
 
-Run full CI to GREEN.
+Snapshot creation:
 
-## Task 3 — Staging-only restore and restart-equivalence proof
+- rejects unsafe/symlinked sources;
+- captures SQLite through `sqlite3.Connection.backup()` rather than raw DB/WAL copying;
+- preserves committed WAL-backed truth while the source remains live;
+- normalizes only the staged SQLite copy to single-file `DELETE` journaling;
+- copies exact E11, campaign-manifest, G7 control, and configured G6 alert bytes;
+- validates staged campaign and G7 state;
+- runs the existing read-only PAPER preflight against staged DB/E11/manifest/G7 state;
+- retries only bounded defined coherence/preflight failures;
+- publishes atomically only after verification;
+- uses private bundle directory/file permissions;
+- never stops, starts, restarts, or otherwise controls Shreks services.
 
-### RED
+A real GREEN-candidate failure exposed a WAL edge case: the online backup retained WAL journal mode and staged preflight could create untracked sidecars. The fix normalized only the staged copy after the online backup. The authoritative source database remains untouched and WAL-backed.
 
-Add `python/tests/test_g8_backup_restore.py` covering:
+Task 2 TDD evidence:
 
-- restore only to empty target;
-- no overwrite of existing target files;
-- corrupt/partial/tampered bundle rejection before restore;
-- path traversal/symlink rejection;
-- restored SQLite quick-check;
-- restored campaign manifest fingerprint/run ID match bundle metadata;
-- restored PAPER checkpoint/ledger/position/processed-intent state is identical;
-- E11 evidence survives exactly and PAPER preflight passes;
-- G7 halt/kill revision/state survives exactly;
-- G6 pending alert queue/state survives exactly;
-- source bundle remains unchanged;
-- restore code never references systemctl/live/wallet/signing/submission.
+- RED commit: `d99ff293df78c5c2080a22f8571cd1482cda40f2`;
+- RED CI: `32970854199`, Python failed only because the snapshot API was absent;
+- intermediate candidate CI: `32971057075`, one live-WAL test failed while 2563 tests passed;
+- WAL normalization fix: `097360d4bed83411bc5ef7f2ce6519eb7efe8fe7`;
+- GREEN CI: `32971379622`, **2564 Python tests**, Rust/workspace GREEN, repository safety GREEN.
 
-### GREEN
+### 3. Staging-only restore
 
-Implement `restore.py` with fixed destination filenames and private permissions. Invoke existing PAPER preflight against staged restored paths. Return a typed immutable verification result; do not install into live host paths.
+Restore behavior:
 
-Run full CI to GREEN.
+- verifies the complete source bundle before touching staging;
+- accepts only a real empty, non-symlink staging target;
+- copies to fixed private staging filenames;
+- preserves SQLite checkpoint truth, E11 bytes, campaign attribution/fingerprint, G7 control state, and optional G6 alert bytes;
+- validates the staged campaign and G7 state;
+- runs the existing read-only PAPER preflight;
+- reads the restored PAPER checkpoint for typed verification output;
+- leaves the source bundle bit-for-bit unchanged;
+- refuses tampered bundles before staging artifacts are created;
+- cleans only known G8-created staging artifacts after defined restore failure;
+- contains no service-control, live, wallet, private-key, seed, signing, submission, or subprocess authority.
 
-## Task 4 — Config, runtime CLI, and bounded retention
+During implementation, tests initially referenced nonexistent `OperatorRiskControlSource.HOST`. The test was corrected to sealed G7 `HOST_CLI`; production G7 behavior was not widened. A second mismatch used nonexistent `PaperLoopState.as_of_unix_ms`; G8 was aligned to the sealed field `last_cycle_at_unix_ms` rather than modifying PAPER state.
 
-### RED
+Task 3 TDD evidence:
 
-Add `python/tests/test_g8_backup_runtime.py` covering:
+- RED commit: `e3a5fe218a27f2a3e5d8fd5e8706a3f78c489b6a`;
+- RED CI: `32971597321`, failed because `shreks_brain.backup.restore` did not exist;
+- implementation head: `7ed9204c99e82b81217799689f766415f9ad493d`;
+- fixture-alignment head: `94527458c9c3a36146c420c51cfa946f7366f6c1`;
+- final field-alignment head: `c506a734b49941dfd068ec96b2179963de760645`;
+- GREEN CI: `32972755114`, **2572 Python tests**, Rust/workspace GREEN, repository safety GREEN.
 
-- `SHREKS_BACKUP_ROOT` path validation;
-- bounded positive `SHREKS_BACKUP_RETENTION_COUNT`;
-- bounded positive `SHREKS_BACKUP_MAX_CAPTURE_ATTEMPTS`;
-- reuse of existing authoritative DB/E11/manifest/risk/alert path configuration;
-- no backup namespace strategy/risk/live keys;
-- backup command produces one verified bundle or exits nonzero;
-- verify command is read-only;
-- restore command requires explicit bundle + empty staging target;
-- retention runs only after successful publish;
-- retention removes oldest verified completed bundles only;
-- malformed/unrelated directories are never deleted;
-- newest completed bundle is never deleted;
-- runtime status output contains no secret values.
+### 4. Bounded runtime config, CLI, and retention
 
-### GREEN
+The G8-specific environment namespace accepts only:
 
-Implement:
+- `SHREKS_BACKUP_ROOT`;
+- `SHREKS_BACKUP_RETENTION_COUNT`, bounded 1 through 10000;
+- `SHREKS_BACKUP_MAX_CAPTURE_ATTEMPTS`, bounded 1 through 100.
 
-- `config.py`
-- `runtime.py`
+G8 reuses the existing sealed operational DB/E11/campaign/G7-control/optional-G6-alert paths. Unknown `SHREKS_BACKUP_*` keys are rejected, including strategy, risk, live, or private-key settings.
 
-Use deterministic structured status output and bounded retention. Run full CI to GREEN.
+The CLI exposes only `backup`, `verify`, and explicit staging `restore`. Retention runs only after successful publication, considers only successfully verified completed bundle directories, removes oldest eligible bundles to the configured bound, never deletes the newest completed bundle, and leaves malformed or unrelated directories untouched.
 
-## Task 5 — systemd isolation and operator runbook
+An intermediate GREEN candidate exposed an incorrect exact-type check against `Path`; Linux correctly produced `PosixPath`. G8 was fixed to the intended `isinstance(value, Path)` invariant without changing runtime semantics.
 
-### RED
+Task 4 TDD evidence:
 
-Add `crates/shreks-observer/tests/g8_backup_systemd.rs` requiring:
+- RED commit: `69d2e12d17a89b75a17ffb895793add93b47593a`;
+- RED CI: `32973043527`, Python failed only because `backup.config` did not exist;
+- initial candidate CI: `32973230467`, 2583 tests passed and two failed only on the pathlib concrete-type check;
+- portability fix: `c5a3b1b6bd682a47e307c3923a2e7c0a50d8ea52`;
+- GREEN CI: `32973371724`, **2585 Python tests**, Rust/workspace GREEN, repository safety GREEN.
 
-- `deploy/systemd/shreks-backup.service` and `.timer`;
-- oneshot under `shreks` user/group;
-- release Python runtime;
-- read-only `/var/lib/shreks` and `/etc/shreks` plus only `ReadWritePaths=/var/lib/shreks/backups`;
-- no network/IP access;
-- hardening flags consistent with existing independent services;
-- no `PartOf=shreks.target`, no lifecycle dependency on PAPER/dashboard/alerts;
-- hourly persistent timer with bounded randomized delay;
-- no `systemctl`, live, wallet, signing, submission, reboot, shutdown authority;
-- `.env.example` contains only the G8 operational keys;
-- runbook documents backup initialization, capacity, verification, staging restore, separate secret recovery, manual service stop/install/preflight/start, G7 state preservation, optional off-host copy, rollback, and future onchain reconciliation;
-- LIVE TRADING remains disabled.
+### 5. Isolated systemd backup and recovery runbook
 
-### GREEN
+The G8 backup service is an independent `Type=oneshot` unit under the `shreks` user/group. It uses the release Python runtime, mounts Shreks state read-only, and grants write authority only to `/var/lib/shreks/backups`.
 
-Add:
+The service has:
 
-- `.env.example` G8 keys;
-- `deploy/systemd/shreks-backup.service`;
-- `deploy/systemd/shreks-backup.timer`;
-- `deploy/systemd/G8_BACKUP_RESTORE.md`;
-- only minimal existing README integration if needed.
+- `PrivateNetwork=true`;
+- `RestrictAddressFamilies=AF_UNIX`;
+- `NoNewPrivileges=true`;
+- private tmp/devices;
+- strict system/home/kernel/control-group hardening;
+- no dependency or coupling to PAPER, dashboard, alerts, or `shreks.target`.
 
-Run full CI to GREEN.
+The timer is independent, hourly, persistent, and randomized within a bounded delay.
 
-## Task 6 — Audit, freeze, and seal
+The runbook separates application staging restore from host activation. The application never calls `systemctl`. Manual recovery requires an operator to stop the PAPER writer, inspect and preflight staged state, install active files deliberately, re-run active-path preflight, preserve any G7 halt/kill latch exactly, and only then restart PAPER.
 
-1. Select the final all-green behavior SHA as frozen G8 behavior.
-2. Record frozen CI and exact Python test cardinality.
-3. Compare sealed G7 -> frozen G8 and audit every changed file.
-4. Prove no provider adapter, DB schema/migration, strategy/scoring/risk threshold, sizing/slippage, profitability/proof formula, promotion, wallet/signing/submission, or live-enable drift.
-5. Replace this plan file with the G8 verification record in one docs-only commit.
-6. Prove frozen -> seal is exactly one commit / one file.
-7. Run exact-seal CI and require exact frozen Python cardinality plus Rust/workspace and repository safety GREEN.
-8. Update the G8 draft PR with frozen/seal evidence.
-9. Re-fetch PR metadata and prove open / draft / unmerged.
-10. Do not merge G7 or G8. Do not enable live trading.
+The runbook also documents private modes, disk-capacity checks, separate secret recovery, optional verified off-host copy, rollback evidence preservation, and mandatory future onchain reconciliation before any live-money recovery.
+
+Task 5 TDD evidence:
+
+- RED commit: `07814dced2050aa93e1932e76e80f6cbfa8cede6`;
+- RED CI: `32973551104`, Python and repository safety remained GREEN while Rust failed only because the G8 runbook file was absent;
+- first complete host candidate: `f9bda5f80d0a77d5b6f15506a6be437813b530bb`;
+- candidate CI: `32973990493`, Python/safety GREEN and 4/5 G8 host tests passed; the sole failure was case-sensitive runbook evidence wording;
+- wording-only fix: `45ecdab878dd286ebf7f9970c6512730831fdea0`;
+- final frozen CI: `32974180534`, **2585 Python tests**, Rust/workspace GREEN, repository safety GREEN.
+
+## Authority firewall conclusion
+
+The G8 diff does not create a new trading or lifecycle authority path.
+
+- Backup code reads authoritative PAPER/safety state and writes only G8 backup/staging storage chosen for the operation.
+- Restore code cannot install into active host state automatically.
+- G8 application code cannot stop/start/restart services.
+- The systemd backup service has no IP network access and one writable backup directory.
+- The service is not coupled to the PAPER target or PAPER lifecycle.
+- Secrets are deliberately excluded from bundle roles and the G8 service.
+- G8 does not modify strategy selection, scoring, trading risk, fills, exits, accounting, proof, promotion, wallet, signer, submission, or live-execution behavior.
+
+No audit defect required reopening frozen G8 behavior.
+
+## Repository seal operation
+
+This verification record is the only file permitted to change after frozen behavior `45ecdab878dd286ebf7f9970c6512730831fdea0`.
+
+Post-commit seal requirements:
+
+1. frozen G8 -> seal must be exactly **1 commit / 1 file**;
+2. the sole file must be this verification record;
+3. exact-seal CI must complete successfully;
+4. exact-seal Python cardinality must remain exactly **2585 passed**;
+5. Rust/workspace must remain GREEN;
+6. repository safety must remain GREEN;
+7. PR #49 must remain open, draft, and unmerged on sealed G7.
 
 ## Real-host evidence retained after repository seal
 
-Repository CI cannot prove physical disk/reboot/operator recovery. Before any future live-money enablement, host proof must include:
+Repository seal proves implementation behavior and authority boundaries, not physical-host recovery. Before any future live-money enablement, host evidence must still prove:
 
-- actual WAL-mode production-shaped online backup;
-- permissions and available-disk/retention monitoring;
-- destructive restore into an isolated host/sandbox from a selected bundle;
-- PAPER preflight and restart-equivalence after installed restore;
-- G7 halt/kill state preservation;
-- pending G6 alert preservation;
-- host reboot and timer persistence;
-- optional off-host/offline copy retrieval if that operational practice is adopted;
-- separate host-secret recovery procedure;
-- for future LIVE, onchain balance/position reconciliation before enabling any live authority.
+- the units and timer installed on the actual Linux VPS;
+- writable backup storage, available-disk checks, and retention behavior on the real filesystem;
+- a production-shaped online backup while the PAPER database is WAL-backed;
+- at least one selected bundle verified after creation;
+- a destructive recovery drill into an isolated host/sandbox, followed by PAPER preflight and restart-equivalence proof;
+- preservation of G7 halt/kill state;
+- preservation of pending G6 alert state when included;
+- timer persistence across host reboot;
+- retrieval and re-verification of an off-host copy if off-host storage is adopted;
+- separate protected recovery of host secrets;
+- for any future LIVE system, onchain reconciliation before any execution authority may resume.
 
 **Profitability remains unproven until real PAPER evidence satisfies the sealed proof gates.**
 
