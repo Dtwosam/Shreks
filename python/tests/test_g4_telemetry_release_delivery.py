@@ -41,11 +41,13 @@ _CORE_RUNTIME_UNITS = (
 def test_verified_release_payload_ships_telemetry_units() -> None:
     static_paths = set(release_bundle._REQUIRED_STATIC_PAYLOAD_PATHS)
     for unit in _TELEMETRY_UNITS:
-        assert f"deploy/systemd/{unit}" in static_paths
+        relative = f"deploy/systemd/{unit}"
+        assert relative in static_paths
 
     build_script = (_RELEASE_DIR / "build_release.sh").read_text(encoding="utf-8")
     for unit in _TELEMETRY_UNITS:
-        assert f'copy_static "deploy/systemd/{unit}"' in build_script
+        relative = f"deploy/systemd/{unit}"
+        assert f'cp {relative} "$STAGING/{relative}"' in build_script
 
 
 def test_release_manager_installs_telemetry_but_health_gates_only_core_paper_runtime() -> None:
