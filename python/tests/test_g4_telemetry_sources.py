@@ -76,8 +76,8 @@ def test_collect_sources_reads_operational_campaign_and_e11_without_mutation(tmp
     assert sources.operational.candidate_count == 2
     assert sources.operational.latest_ingestion_checkpoint_at_unix_ms == AS_OF - 20
     assert sources.operational.latest_market_observed_at_unix_ms is not None
-    assert sources.operational.holder_distribution_count == 0
-    assert sources.operational.paper_quote_count == 0
+    assert sources.operational.holder_distribution_count == 2
+    assert sources.operational.paper_quote_count == 4
     assert sources.evaluated_trades == ()
     assert sources.proof_assessments == ()
     assert sources.promotion_assessments == ()
