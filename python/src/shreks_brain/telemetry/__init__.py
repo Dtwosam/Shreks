@@ -1,4 +1,4 @@
-from .codec import encode_telemetry_snapshot
+from .codec import decode_telemetry_snapshot, encode_telemetry_snapshot
 from .models import (
     G4_TELEMETRY_SCHEMA_VERSION,
     LayerStatus,
@@ -19,5 +19,6 @@ __all__ = [
     "TelemetrySnapshot",
     "TradingPerformanceTelemetry",
     "TradingTelemetry",
+    "decode_telemetry_snapshot",
     "encode_telemetry_snapshot",
 ]

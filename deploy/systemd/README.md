@@ -80,6 +80,27 @@ SHREKS_TELEMETRY_CALIBRATION_BUCKET_COUNT=<explicit-integer-2-through-100>
 
 The telemetry evaluation policy does not set trading thresholds or starting capital. Starting equity is taken from the restored PAPER ledger, while profitability/proof observations are copied from the sealed evaluation/proof path. Missing proof/promotion evidence is reported as unavailable rather than fabricated.
 
+### G5 private read-only dashboard configuration
+
+G5 adds a separate authenticated operator view over the sealed G4 telemetry and persisted PAPER evidence. It has no trade, risk, promotion, signing, submission, wallet, or filesystem-mutation authority. Configure only the dashboard transport/read-side values:
+
+```text
+SHREKS_DASHBOARD_BIND_HOST=127.0.0.1
+SHREKS_DASHBOARD_PORT=<explicit-port-1024-through-65535>
+SHREKS_DASHBOARD_USERNAME=<operator-username>
+SHREKS_DASHBOARD_PASSWORD_FILE=/etc/shreks/dashboard-password
+SHREKS_DASHBOARD_TELEMETRY_PATH=/var/lib/shreks/telemetry/current.json
+SHREKS_DASHBOARD_MAX_TRADES=<explicit-integer-1-through-500>
+```
+
+Create the password outside GitHub and outside the release tree, then install it separately as a protected host secret. Ownership/mode should be `root:shreks 0640`:
+
+```sh
+sudo install -o root -g shreks -m 0640 dashboard-password /etc/shreks/dashboard-password
+```
+
+The dashboard listener is **loopback only**. Do not bind it to a public interface and do not expose its **plain HTTP port** directly to the public Internet. For phone or remote access, terminate HTTPS with a **same-host TLS reverse proxy** that forwards only to loopback, or use an **authenticated private overlay/tunnel**. Keep the dashboard's own Basic authentication enabled behind either transport.
+
 ## Install and start
 
 ```sh
@@ -88,10 +109,12 @@ sudo install -o root -g root -m 0644 deploy/systemd/shreks-paper-evidence.servic
 sudo install -o root -g root -m 0644 deploy/systemd/shreks-paper-campaign.service /etc/systemd/system/shreks-paper-campaign.service
 sudo install -o root -g root -m 0644 deploy/systemd/shreks-telemetry.service /etc/systemd/system/shreks-telemetry.service
 sudo install -o root -g root -m 0644 deploy/systemd/shreks-telemetry.timer /etc/systemd/system/shreks-telemetry.timer
+sudo install -o root -g root -m 0644 deploy/systemd/shreks-dashboard.service /etc/systemd/system/shreks-dashboard.service
 sudo install -o root -g root -m 0644 deploy/systemd/shreks.target /etc/systemd/system/shreks.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now shreks.target
 sudo systemctl enable --now shreks-telemetry.timer
+sudo systemctl enable --now shreks-dashboard.service
 systemctl is-enabled shreks.target
 ```
 
@@ -101,17 +124,21 @@ The G4 telemetry timer is intentionally independent of `shreks.target`. It sched
 
 The two telemetry unit files are a G4 host-bootstrap artifact. Install or update them only from the exact sealed G4 source being deployed. The sealed G2 v1 release-bundle schema and root-owned core release manager remain unchanged so pre-G4 verified releases stay valid rollback points. Do not treat telemetry-unit installation as a bypass around G2's verified core release path.
 
-Verify the three core processes and the independent telemetry timer:
+The G5 dashboard service is also intentionally independent of `shreks.target`; enable it separately with `systemctl enable --now shreks-dashboard.service`. Its listener is constrained to localhost by both the validated dashboard configuration and systemd network policy. **dashboard failure cannot stop the PAPER runtime**. G5 is read-only: there are **no operator controls until G7**, and a dashboard outage must not mutate or restart authoritative trading state.
+
+Verify the three core processes and the independent telemetry/dashboard services:
 
 ```sh
 systemctl status shreks-observe
 systemctl status shreks-paper-evidence
 systemctl status shreks-paper-campaign
 systemctl status shreks-telemetry.timer
+systemctl status shreks-dashboard.service
 journalctl -u shreks-observe
 journalctl -u shreks-paper-evidence
 journalctl -u shreks-paper-campaign
 journalctl -u shreks-telemetry.service
+journalctl -u shreks-dashboard.service
 ```
 
 A crash or reboot restarts failed core services automatically. Each core service uses `Restart=on-failure` with a five-second delay and a bounded five-restarts-per-five-minutes start limit. Persistent release/config/state paths are required before service startup, and each core service verifies `/var/lib/shreks` exists and is writable before entering its runtime.
@@ -119,6 +146,8 @@ A crash or reboot restarts failed core services automatically. Each core service
 The paper campaign has an additional fail-closed recovery gate: systemd runs the runtime with `--preflight` before `ExecStart`. The preflight loads and validates the same manifest, checkpoint, evidence attribution, and accounting/restart state used by the autonomous PAPER runtime without executing a cycle. If recovery is uncertain, preflight exits nonzero and the campaign does not start.
 
 The telemetry service also runs a read-only `--preflight` before writing `/var/lib/shreks/telemetry/current.json`. Failure leaves the previous snapshot intact and is visible through the telemetry service journal; it does not weaken PAPER safety or stop the core target.
+
+The dashboard service has no writable runtime path. It reads the protected password, G4 telemetry, and configured PAPER evidence through the release's read-only dashboard source and serves only authenticated GET routes. Its restart policy is bounded independently from the core PAPER target.
 
 ## Crash/reboot health evidence
 
@@ -145,7 +174,7 @@ journalctl -b -u shreks-paper-evidence.service
 journalctl -b -u shreks-paper-campaign.service
 ```
 
-A target-level `active` result alone is not enough. All three core child services must be active; G2/G3 release activation and rollback also gate success on each child plus `shreks.target` independently. Telemetry is monitored separately because reporting failure must not become execution authority.
+A target-level `active` result alone is not enough. All three core child services must be active; G2/G3 release activation and rollback also gate success on each child plus `shreks.target` independently. Telemetry is monitored separately because reporting failure must not become execution authority. The G5 dashboard is monitored separately for the same reason.
 
 ## Persistent-state and release provenance checks
 
@@ -154,6 +183,7 @@ Before treating a restarted host as safe for unattended PAPER operation, confirm
 ```sh
 readlink -f /opt/shreks/current
 test -r /etc/shreks/paper-campaign.json
+test -r /etc/shreks/dashboard-password
 test -r /var/lib/shreks/shreks.db
 test -r /var/lib/shreks/paper-evaluation-e11.json
 test -r /var/lib/shreks/telemetry/current.json
@@ -161,7 +191,7 @@ test -r /var/lib/shreks/telemetry/current.json
 
 The resolved `/opt/shreks/current` target must be the expected verified release SHA. Do not create a fresh SQLite database, E11 ledger, checkpoint namespace, or campaign manifest just to make a restart pass. If the expected durable state is missing, corrupt, contradictory, or cannot be reconciled, keep autonomous entries halted and repair/recover the evidence rather than resetting history.
 
-Before treating a restarted runtime as healthy, also confirm the observer is advancing, the paper-evidence daemon is completing bounded cycles, `shreks-paper-campaign` is emitting PAPER status records, the shared database and E11 evidence are durable, and provider-failure counts are not silently rising. The telemetry timer should continue producing private snapshots, but a telemetry failure alone does not change trading state.
+Before treating a restarted runtime as healthy, also confirm the observer is advancing, the paper-evidence daemon is completing bounded cycles, `shreks-paper-campaign` is emitting PAPER status records, the shared database and E11 evidence are durable, and provider-failure counts are not silently rising. The telemetry timer should continue producing private snapshots, but a telemetry failure alone does not change trading state. Dashboard health is observational only and cannot repair, halt, promote, or execute anything.
 
 ## Start-limit failures
 
@@ -178,14 +208,18 @@ Do not use `reset-failed` as a retry loop. If the campaign preflight still fails
 
 Critically, **do not bypass the campaign preflight** and **do not launch the campaign runtime manually** with the Python module or a direct process command. Manual launch would bypass systemd's `ExecStartPre`, mount/readiness checks, restart limits, target membership, and the auditable restart counters that G3 relies on.
 
+For the independently supervised dashboard, inspect `systemctl status shreks-dashboard.service` and `journalctl -u shreks-dashboard.service` before resetting a start-limit failure. Do not work around failed authentication, unreadable evidence, or non-loopback configuration by weakening the unit hardening.
+
 ## Upgrade and rollback
 
 Build/test the intended sealed commit first. G2's root-owned release manager continues to own the verified core code rollout: it stops `shreks.target`, installs the four core systemd units from the verified v1 release, atomically repoints `/opt/shreks/current`, reloads systemd, starts the target, and requires observer, paper evidence, paper campaign, and target to all be active. A failed core child triggers rollback; rollback is not considered successful until every restored core child and the target are active again.
 
 G4 telemetry supervision is deliberately outside that core health/rollback contract. On first G4 host enablement, install the telemetry service/timer from the exact sealed G4 source after the verified G4 code release is active, then enable the timer. If rolling back to a pre-G4 code release, disable the telemetry timer because that older Python release does not contain the telemetry runtime. This monitoring transition never substitutes for or weakens the G2 core rollback path.
 
-Do not replace or delete the persistent database, E11 evidence, campaign manifest, telemetry history/output directory, or protected environment file during a code rollback. Preserve evidence history. If recovery or reconciliation fails, keep paper/live execution disabled and investigate before resuming autonomous operation.
+G5 dashboard supervision is also outside the core health/rollback contract. Install or update `shreks-dashboard.service` only from the exact verified G5 source after its code release is active. If rolling back to a pre-G5 release, disable the dashboard service because that release does not contain the dashboard runtime. Dashboard failure must never be treated as permission to bypass a PAPER proof, risk, recovery, or deployment gate.
 
-G4 adds read-only four-layer telemetry and independent monitoring supervision only. It does not add a dashboard, alerts, auto-remediation, promotion authority, transaction construction, signing, submission, wallet handling, or live execution.
+Do not replace or delete the persistent database, E11 evidence, campaign manifest, telemetry history/output directory, protected dashboard password, or protected environment file during a code rollback. Preserve evidence history. If recovery or reconciliation fails, keep paper/live execution disabled and investigate before resuming autonomous operation.
+
+G4 adds read-only four-layer telemetry and independent monitoring supervision. G5 adds a private authenticated read-only dashboard over that evidence. Neither phase adds alerts, auto-remediation, promotion authority, transaction construction, signing, submission, wallet handling, or live execution.
 
 **LIVE TRADING: DISABLED**
