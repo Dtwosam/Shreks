@@ -1,3 +1,9 @@
+from .config import (
+    DashboardRuntimeConfig,
+    DashboardRuntimeConfigError,
+    load_dashboard_password,
+    load_dashboard_runtime_config,
+)
 from .models import (
     DashboardEvidenceAvailability,
     DashboardLedgerEvent,
@@ -15,11 +21,15 @@ from .source import (
 __all__ = (
     "DashboardEvidenceAvailability",
     "DashboardLedgerEvent",
+    "DashboardRuntimeConfig",
+    "DashboardRuntimeConfigError",
     "DashboardSnapshotSource",
     "DashboardSourceConfig",
     "DashboardSourceError",
     "DashboardTradeDetail",
     "DashboardTradeSummary",
+    "load_dashboard_password",
+    "load_dashboard_runtime_config",
     "load_dashboard_snapshot",
     "load_dashboard_trade",
 )
