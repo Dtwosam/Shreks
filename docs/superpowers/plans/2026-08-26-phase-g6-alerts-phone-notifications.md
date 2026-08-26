@@ -1,672 +1,353 @@
-# Phase G6 Alerts and Phone Notifications Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** Build reliable outbound phone alerts over sealed telemetry/PAPER evidence with durable dedup/retry state and no trading/control authority.
-
-**Architecture:** Add a standard-library-only `shreks_brain.alerts` package. An independent systemd oneshot+timer cycle collects read-only telemetry, provider, PAPER-ledger, and core-service health facts; derives stable alert events; durably queues them in alert-only state; and sends pending events through an outbound-only Telegram `sendMessage` adapter. No inbound Telegram updates or trading/risk mutations exist.
-
-**Tech Stack:** Python 3.12 standard library (`json`, `sqlite3`, `subprocess`, `urllib.request`, filesystem primitives), existing Shreks telemetry/PAPER modules, pytest, Rust systemd contract tests, systemd.
-
-**Spec:** `docs/superpowers/specs/2026-08-26-phase-g6-alerts-phone-notifications-design.md`
-
-## Global Constraints
-
-- Base exactly on sealed G5 `a5961c293b4a22ce17ae1033f7d39cc014c7e59f`.
-- LIVE TRADING remains disabled.
-- No new production Python dependency.
-- Telegram is outbound `sendMessage` only; no incoming updates/webhooks/commands/buttons.
-- No transaction, signing, wallet, live, promotion, registry, risk, or PAPER-cycle authority.
-- No invented financial/proof/risk calculations.
-- Provider names/failure counts come from the existing read-only `provider_health` table.
-- Alert state under `/var/lib/shreks/alerts` is the only G6 persistent write path.
-- Existing `SHREKS_PAPER_CAMPAIGN_*` paths remain authoritative and are reused.
-- Secrets never enter GitHub, alert state, messages, logs, or exception text.
-- G6 service/timer remain independent of `shreks.target`.
-
----
-
-## File map
-
-Create:
-
-- `python/src/shreks_brain/alerts/__init__.py` — narrow public event/config interfaces only.
-- `python/src/shreks_brain/alerts/models.py` — immutable alert/event/source/state models and enums.
-- `python/src/shreks_brain/alerts/state.py` — strict canonical state codec + atomic alert-state persistence.
-- `python/src/shreks_brain/alerts/config.py` — strict runtime config and protected Telegram token-file loader.
-- `python/src/shreks_brain/alerts/source.py` — read-only telemetry/provider/PAPER/systemd fact collection.
-- `python/src/shreks_brain/alerts/detector.py` — transition/dedup event derivation only.
-- `python/src/shreks_brain/alerts/telegram.py` — outbound HTTPS `sendMessage` adapter only.
-- `python/src/shreks_brain/alerts/runtime.py` — one bounded G6 cycle + CLI.
-- `python/tests/test_g6_alert_models_state.py`
-- `python/tests/test_g6_alert_config.py`
-- `python/tests/test_g6_alert_source.py`
-- `python/tests/test_g6_alert_detector.py`
-- `python/tests/test_g6_telegram.py`
-- `python/tests/test_g6_alert_runtime.py`
-- `python/tests/test_g6_alert_authority.py`
-- `crates/shreks-observer/tests/g6_alerts_systemd.rs`
-- `deploy/systemd/shreks-alerts.service`
-- `deploy/systemd/shreks-alerts.timer`
-
-Modify:
-
-- `.env.example` — add G6 non-secret operational keys only.
-- `deploy/systemd/README.md` — G6 Telegram secret, enablement, retry, and no-control runbook.
-- `docs/superpowers/plans/2026-08-26-phase-g6-alerts-phone-notifications.md` — replaced by final verification record at seal.
-
----
-
-### Task 1: Immutable alert models and durable state codec
-
-**Files:**
-- Create: `python/src/shreks_brain/alerts/models.py`
-- Create: `python/src/shreks_brain/alerts/state.py`
-- Create: `python/src/shreks_brain/alerts/__init__.py`
-- Create: `python/tests/test_g6_alert_models_state.py`
-
-**Interfaces:**
-
-Produce:
-
-```python
-class AlertSeverity(StrEnum):
-    INFO = "INFO"
-    WARNING = "WARNING"
-    CRITICAL = "CRITICAL"
-
-class AlertCode(StrEnum):
-    CORE_RUNTIME_STOPPED = "CORE_RUNTIME_STOPPED"
-    SYSTEMD_HEALTH_UNAVAILABLE = "SYSTEMD_HEALTH_UNAVAILABLE"
-    TELEMETRY_SOURCE_UNAVAILABLE = "TELEMETRY_SOURCE_UNAVAILABLE"
-    MARKET_DATA_STALE = "MARKET_DATA_STALE"
-    PROVIDER_FAILURE_PERSISTENT = "PROVIDER_FAILURE_PERSISTENT"
-    CHECKPOINT_UNAVAILABLE = "CHECKPOINT_UNAVAILABLE"
-    PAPER_SOURCE_UNAVAILABLE = "PAPER_SOURCE_UNAVAILABLE"
-    ACCOUNTING_NOT_RECONCILED = "ACCOUNTING_NOT_RECONCILED"
-    GLOBAL_RISK_HALT_ACTIVE = "GLOBAL_RISK_HALT_ACTIVE"
-    KILL_SWITCH_ACTIVE = "KILL_SWITCH_ACTIVE"
-    POSITION_OPENED = "POSITION_OPENED"
-    POSITION_CLOSED = "POSITION_CLOSED"
-    EXECUTION_DEGRADED = "EXECUTION_DEGRADED"
-    PAPER_PROOF_SUFFICIENT = "PAPER_PROOF_SUFFICIENT"
-    CHALLENGER_PROOF_FAILED = "CHALLENGER_PROOF_FAILED"
-    ALERTING_STARTED = "ALERTING_STARTED"
-
-@dataclass(frozen=True, slots=True)
-class AlertEvent:
-    event_id: str
-    code: AlertCode
-    severity: AlertSeverity
-    observed_at_unix_ms: int
-    title: str
-    lines: tuple[str, ...]
-
-@dataclass(frozen=True, slots=True)
-class AlertState:
-    schema_version: str
-    initialized: bool
-    highest_ledger_sequence: int
-    last_proof_decision: str | None
-    active_condition_keys: tuple[str, ...]
-    pending_events: tuple[AlertEvent, ...]
-    last_observed_at_unix_ms: int | None
-```
-
-State schema constant: `G6_ALERT_STATE_SCHEMA_VERSION = "g6-alert-state-v1"`.
-
-State functions:
-
-```python
-def encode_alert_state(state: AlertState) -> bytes: ...
-def decode_alert_state(payload: bytes | str) -> AlertState: ...
-def load_alert_state(path: Path) -> AlertState | None: ...
-def write_alert_state(path: Path, state: AlertState) -> None: ...
-```
-
-- [ ] **Step 1: Write RED model/codec tests**
-
-Require exact enum values, frozen/slot dataclasses, non-empty bounded strings, unique pending `event_id` values, sorted/unique `active_condition_keys`, non-negative timestamps/sequences, exact schema version, canonical UTF-8 JSON with trailing newline, exact-key rejection, unknown enum rejection, non-canonical whitespace rejection, non-finite rejection, and state round trip.
-
-Also require `load_alert_state(missing_path) is None`, corrupt existing state raises a stable state error, and no decoder silently repairs invalid state.
-
-- [ ] **Step 2: Write RED atomic-persistence tests**
-
-Patch `os.replace`/`os.fsync` where needed and require:
-
-- same-directory temporary file;
-- mode `0600`;
-- flush/fsync before replace;
-- no final-file mutation if encode/write fails;
-- temporary cleanup on failure;
-- state payload contains no token-like field names.
-
-- [ ] **Step 3: Run RED**
-
-Run:
-
-```sh
-python -m pytest python/tests/test_g6_alert_models_state.py -q
-```
-
-Expected: missing `shreks_brain.alerts`.
-
-- [ ] **Step 4: Implement minimal models/state layer**
-
-Keep validation helpers private. The state module is the only G6 package module allowed to perform filesystem writes.
-
-- [ ] **Step 5: Run Task 1 + full Python gates**
-
-```sh
-python -m pytest python/tests/test_g6_alert_models_state.py -q
-python -m pytest python/tests -q
-```
-
-- [ ] **Step 6: Commit Task 1 GREEN**
-
-Commit message: `feat: add durable G6 alert state`.
-
----
-
-### Task 2: Strict G6 runtime config and protected Telegram secret
-
-**Files:**
-- Create: `python/src/shreks_brain/alerts/config.py`
-- Create: `python/tests/test_g6_alert_config.py`
-- Modify: `python/src/shreks_brain/alerts/__init__.py`
-- Modify: `.env.example`
-
-**Interfaces:**
-
-```python
-@dataclass(frozen=True, slots=True)
-class AlertRuntimeConfig:
-    telemetry_path: Path
-    state_path: Path
-    telegram_chat_id: str
-    telegram_bot_token_file: Path
-    market_stale_ms: int
-    provider_failure_min_consecutive: int
-    paper_runtime_config: ObserverPaperCampaignRuntimeConfig
-
-class AlertRuntimeConfigError(ValueError): ...
-
-def load_alert_runtime_config(
-    env: Mapping[str, str] | None = None,
-    *,
-    base_directory: str | os.PathLike[str] | None = None,
-) -> AlertRuntimeConfig: ...
-
-def load_telegram_bot_token(config: AlertRuntimeConfig) -> bytes: ...
-```
-
-Allowed G6 keys exactly:
-
-```text
-SHREKS_ALERTS_TELEGRAM_CHAT_ID
-SHREKS_ALERTS_TELEGRAM_BOT_TOKEN_FILE
-SHREKS_ALERTS_STATE_PATH
-SHREKS_ALERTS_MARKET_STALE_MS
-SHREKS_ALERTS_PROVIDER_FAILURE_MIN_CONSECUTIVE
-SHREKS_ALERTS_TELEMETRY_PATH
-```
-
-- [ ] **Step 1: Write RED config tests**
-
-Require:
-
-- unknown `SHREKS_ALERTS_*` key rejection;
-- telemetry/state/token paths resolve deterministically;
-- state path names a file and parent path is explicit;
-- chat ID non-empty, bounded, no ASCII control characters;
-- stale threshold canonical integer `>= 1`;
-- provider consecutive threshold canonical integer `>= 1`;
-- token file missing/symlink/directory/empty/oversized/world-readable/group-or-world-writable rejection;
-- one optional trailing CRLF stripped from token;
-- embedded newline rejected;
-- config dataclass has no token value/provider API keys/wallet secrets;
-- existing PAPER runtime config is reused.
-
-- [ ] **Step 2: Run RED**
-
-```sh
-python -m pytest python/tests/test_g6_alert_config.py -q
-```
-
-Expected: missing `alerts.config`.
-
-- [ ] **Step 3: Implement minimal config/token loader**
-
-Token maximum size: `4096` bytes. Require exact file permissions no weaker than the G5 protected-secret rules.
-
-`.env.example` adds non-secret G6 keys and only the token-file path, never a token value.
-
-- [ ] **Step 4: Run Task 2 + full Python gates**
-
-- [ ] **Step 5: Commit Task 2 GREEN**
-
-Commit message: `feat: add G6 alert runtime configuration`.
-
----
-
-### Task 3: Read-only telemetry/provider/PAPER/systemd source
-
-**Files:**
-- Create: `python/src/shreks_brain/alerts/source.py`
-- Create: `python/tests/test_g6_alert_source.py`
-- Modify: `python/src/shreks_brain/alerts/models.py`
-- Modify: `python/src/shreks_brain/alerts/__init__.py`
-
-**Interfaces:**
-
-Add immutable source models:
-
-```python
-@dataclass(frozen=True, slots=True)
-class AlertProviderHealth:
-    provider: str
-    status: str
-    observed_at_unix_ms: int
-    consecutive_failures: int
-
-@dataclass(frozen=True, slots=True)
-class AlertSystemdHealth:
-    active_units: tuple[str, ...]
-    inactive_units: tuple[str, ...]
-
-@dataclass(frozen=True, slots=True)
-class AlertSourceSnapshot:
-    observed_at_unix_ms: int
-    telemetry: TelemetrySnapshot | None
-    telemetry_error_code: str | None
-    providers: tuple[AlertProviderHealth, ...]
-    paper_ledger_entries: tuple[PaperLedgerEntry, ...] | None
-    paper_error_code: str | None
-    systemd: AlertSystemdHealth | None
-    systemd_error_code: str | None
-```
-
-Source function:
-
-```python
-def collect_alert_source(
-    config: AlertRuntimeConfig,
-    *,
-    observed_at_unix_ms: int,
-    systemctl_runner: Callable[[tuple[str, ...]], tuple[int, str]] | None = None,
-) -> AlertSourceSnapshot: ...
-```
-
-Required core units:
-
-```text
-shreks.target
-shreks-observe.service
-shreks-paper-evidence.service
-shreks-paper-campaign.service
-shreks-telemetry.timer
-```
-
-- [ ] **Step 1: Write RED telemetry/PAPER tests**
-
-Require canonical telemetry decode, read-only PAPER bootstrap, ledger tuple copied without mutation, source failure represented only by stable error code, and source collection never calls `run_cycle` or a store write API.
-
-- [ ] **Step 2: Write RED provider-SQL tests**
-
-Seed `provider_health(provider,status,observed_at_unix_ms,latency_ms,detail,consecutive_failures)` and require lexical provider ordering, exact persisted status/failure count, `mode=ro`, `PRAGMA query_only=ON`, and unchanged DB bytes/mtime after collection.
-
-- [ ] **Step 3: Write RED systemd tests**
-
-Inject a fake runner. Require exact `systemctl is-active <unit>` reads only, active/inactive classification, and stable unavailable code on command/response failure. Assert no `start`, `stop`, `restart`, `enable`, `disable`, `reset-failed`, or `daemon-reload` argument can be generated.
-
-- [ ] **Step 4: Run RED**
-
-```sh
-python -m pytest python/tests/test_g6_alert_source.py -q
-```
-
-- [ ] **Step 5: Implement minimal read-only source layer**
-
-Use SQLite URI `?mode=ro` + query-only. Default systemd runner uses `subprocess.run(..., check=False, capture_output=True, text=True, timeout=5)` with absolute `/usr/bin/systemctl` and no shell.
-
-- [ ] **Step 6: Run Task 3 + full gates**
-
-- [ ] **Step 7: Commit Task 3 GREEN**
-
-Commit message: `feat: collect read-only G6 alert sources`.
-
----
-
-### Task 4: Alert detector, transition rules, and first-run suppression
-
-**Files:**
-- Create: `python/src/shreks_brain/alerts/detector.py`
-- Create: `python/tests/test_g6_alert_detector.py`
-- Modify: `python/src/shreks_brain/alerts/__init__.py`
-
-**Interfaces:**
-
-```python
-@dataclass(frozen=True, slots=True)
-class AlertDetectionResult:
-    state: AlertState
-    queued_event_ids: tuple[str, ...]
-
-
-def detect_alert_events(
-    config: AlertRuntimeConfig,
-    previous: AlertState | None,
-    source: AlertSourceSnapshot,
-) -> AlertDetectionResult: ...
-```
-
-Stable condition keys are strings such as:
-
-```text
-CORE_RUNTIME_STOPPED
-SYSTEMD_HEALTH_UNAVAILABLE
-TELEMETRY_SOURCE_UNAVAILABLE
-MARKET_DATA_STALE
-PROVIDER_FAILURE_PERSISTENT:<provider>
-CHECKPOINT_UNAVAILABLE
-PAPER_SOURCE_UNAVAILABLE
-ACCOUNTING_NOT_RECONCILED
-GLOBAL_RISK_HALT_ACTIVE
-KILL_SWITCH_ACTIVE
-```
-
-Ledger event IDs use persisted sequence, for example `ledger:42:POSITION_CLOSED`.
-Proof transition IDs include the authoritative telemetry generation timestamp and decision, for example `proof:1712345678901:SUFFICIENT`.
-
-- [ ] **Step 1: Write RED first-run tests**
-
-When `previous is None`:
-
-- set highest ledger sequence to current maximum;
-- do not queue historical position/execution events;
-- baseline current proof decision;
-- queue `ALERTING_STARTED`;
-- still queue current CRITICAL conditions (core stopped, accounting unreconciled, global risk halt, kill switch);
-- do not mark a queued critical condition active until it exists durably in the returned state/pending queue.
-
-- [ ] **Step 2: Write RED condition-transition tests**
-
-Require one event on inactive→active transition and no repeat while active for:
-
-- stopped core unit(s);
-- telemetry unavailable;
-- stale market age `> market_stale_ms`;
-- provider `status != healthy` with `consecutive_failures >= threshold`;
-- checkpoint missing;
-- PAPER source unavailable;
-- accounting not reconciled;
-- global risk halt true;
-- kill switch true.
-
-When a condition clears, remove its active key so a later reactivation can alert again. Recovery messages are not required.
-
-- [ ] **Step 3: Write RED ledger-event tests**
-
-For ledger sequences above `highest_ledger_sequence`:
-
-- `POSITION_OPENED` / `POSITION_INCREASED` -> `POSITION_OPENED` INFO;
-- `POSITION_CLOSED` -> `POSITION_CLOSED` INFO with exact `realized_pnl_delta_usd` text;
-- `SLIPPAGE_EXCEEDS_INTENT`, terminal `PARTIAL`, or terminal failed execution -> `EXECUTION_DEGRADED` WARNING;
-- no alternate PnL/slippage formula appears.
-
-Advance the cursor to the highest observed sequence while queuing each stable event exactly once.
-
-- [ ] **Step 4: Write RED proof-transition tests**
-
-Require:
-
-- non-`SUFFICIENT` -> `SUFFICIENT` queues `PAPER_PROOF_SUFFICIENT`;
-- non-`FAILED` -> `FAILED` queues `CHALLENGER_PROOF_FAILED`;
-- unchanged decision queues nothing;
-- missing proof decision does not invent one.
-
-- [ ] **Step 5: Run RED**
-
-```sh
-python -m pytest python/tests/test_g6_alert_detector.py -q
-```
-
-- [ ] **Step 6: Implement minimal detector**
-
-All event text must be bounded, plain, and include `LIVE TRADING: DISABLED`. Internal exception text never enters events.
-
-- [ ] **Step 7: Run Task 4 + full gates**
-
-- [ ] **Step 8: Commit Task 4 GREEN**
-
-Commit message: `feat: detect G6 critical alert transitions`.
-
----
-
-### Task 5: Outbound-only Telegram sender and durable runtime queue
-
-**Files:**
-- Create: `python/src/shreks_brain/alerts/telegram.py`
-- Create: `python/src/shreks_brain/alerts/runtime.py`
-- Create: `python/tests/test_g6_telegram.py`
-- Create: `python/tests/test_g6_alert_runtime.py`
-
-**Interfaces:**
-
-```python
-class TelegramAlertError(RuntimeError): ...
-
-def format_alert_message(event: AlertEvent) -> str: ...
-
-def send_telegram_alert(
-    *,
-    chat_id: str,
-    bot_token: bytes,
-    event: AlertEvent,
-    opener: Callable[..., object] | None = None,
-    timeout_seconds: float = 10.0,
-) -> None: ...
-
-class AlertRuntimeError(RuntimeError): ...
-
-def run_alert_cycle(
-    config: AlertRuntimeConfig,
-    *,
-    observed_at_unix_ms: int | None = None,
-    source_loader=collect_alert_source,
-    sender=send_telegram_alert,
-) -> int: ...
-```
-
-CLI: `python -m shreks_brain.alerts.runtime`.
-
-- [ ] **Step 1: Write RED Telegram request tests**
-
-With a mocked opener require:
-
-- HTTPS URL host is exactly `api.telegram.org`;
-- path is `/bot<TOKEN>/sendMessage`;
-- POST JSON contains exactly `chat_id` and `text`;
-- `Content-Type: application/json`;
-- bounded timeout;
-- response must be JSON object with exact boolean `ok` true;
-- HTTP/network/JSON/`ok=false` errors raise generic `TelegramAlertError`;
-- exception string never contains token, full token URL, chat ID, or response body;
-- no `getUpdates`, webhook, callback, reply markup, or command path exists.
-
-- [ ] **Step 2: Write RED message-format tests**
-
-Require deterministic plain text beginning `SHREKS [SEVERITY] CODE`, bounded below Telegram's text limit, no parse mode, and `LIVE TRADING: DISABLED` present.
-
-- [ ] **Step 3: Write RED runtime queue/retry tests**
-
-Cycle order must be:
-
-1. load state;
-2. collect source;
-3. detect/queue;
-4. write updated state **before any send**;
-5. send first pending event;
-6. on success remove only that event and write state;
-7. continue;
-8. on failure retain failed + later events and return/raise non-zero failure.
-
-Use a sender that succeeds for event 1 and fails event 2; reload the state and prove event 1 is absent while event 2+ remain. Next successful cycle must not resend event 1.
-
-- [ ] **Step 4: Run RED**
-
-```sh
-python -m pytest python/tests/test_g6_telegram.py python/tests/test_g6_alert_runtime.py -q
-```
-
-- [ ] **Step 5: Implement minimal sender/runtime**
-
-Do not implement internal network retries. Timer cycles own retry cadence.
-
-- [ ] **Step 6: Run Task 5 + full gates**
-
-- [ ] **Step 7: Commit Task 5 GREEN**
-
-Commit message: `feat: send durable Telegram alert queue`.
-
----
-
-### Task 6: Authority firewall, systemd production units, and runbook
-
-**Files:**
-- Create: `python/tests/test_g6_alert_authority.py`
-- Create: `crates/shreks-observer/tests/g6_alerts_systemd.rs`
-- Create: `deploy/systemd/shreks-alerts.service`
-- Create: `deploy/systemd/shreks-alerts.timer`
-- Modify: `deploy/systemd/README.md`
-
-**Interfaces:**
-- No new trading authority interface.
-- systemd service runs `python -m shreks_brain.alerts.runtime`.
-
-- [ ] **Step 1: Write RED Python authority tests**
-
-AST/source checks require:
-
-- package exports contain no trade/control mutation verbs;
-- no import of live executor, transaction builder, signer/submission, wallet secret, registry mutation, promotion mutation, or risk mutation APIs;
-- no `run_cycle` call under alerts;
-- no incoming HTTP server/socket listener;
-- no Telegram `getUpdates`, webhook, callback-query, or command handler;
-- filesystem write calls under alerts appear only in `state.py`;
-- `subprocess` use appears only in `source.py` and generated command is read-only systemctl inspection.
-
-- [ ] **Step 2: Write RED Rust systemd tests**
-
-Require `shreks-alerts.service`:
-
-```text
-Description=Shreks outbound alert notifications
-After=network-online.target
-Wants=network-online.target
-User=shreks
-Group=shreks
-WorkingDirectory=/opt/shreks/current
-EnvironmentFile=/etc/shreks/shreks.env
-Environment=PYTHONDONTWRITEBYTECODE=1
-RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
-ExecStartPre=/usr/bin/test -r /etc/shreks/telegram-bot-token
-ExecStartPre=/usr/bin/test -d /var/lib/shreks/alerts
-ExecStartPre=/usr/bin/test -w /var/lib/shreks/alerts
-ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.alerts.runtime
-NoNewPrivileges=true
-PrivateTmp=true
-PrivateDevices=true
-ProtectSystem=strict
-ProtectHome=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-ReadWritePaths=/var/lib/shreks/alerts
-UMask=0077
-```
-
-Forbid:
-
-```text
-PartOf=shreks.target
-WantedBy=shreks.target
-Requires=shreks.target
-SHREKS_MODE=live
---live
-submit_transaction
-sign_transaction
-wallet-command
-getUpdates
-setWebhook
-```
-
-Require `shreks-alerts.timer`:
-
-```text
-Unit=shreks-alerts.service
-OnBootSec=90s
-OnUnitActiveSec=60s
-AccuracySec=5s
-Persistent=true
-WantedBy=timers.target
-```
-
-Also prove `shreks.target` does not mention alert units.
-
-- [ ] **Step 3: Write RED runbook assertions**
-
-Require documentation for:
-
-- separate `/etc/shreks/telegram-bot-token` installation as `root:shreks 0640`;
-- bot token never stored in env/GitHub;
-- Telegram is outbound notifications only;
-- no commands/trading control through Telegram;
-- install/enable timer independently of `shreks.target`;
-- alert-state path and retry behavior;
-- `systemctl status shreks-alerts.timer` / `journalctl -u shreks-alerts.service`;
-- alert failure cannot stop PAPER runtime;
-- `LIVE TRADING: DISABLED`.
-
-- [ ] **Step 4: Run RED**
-
-Run authority test and targeted Rust test; expected Rust failure is only absent G6 units/runbook entries.
-
-- [ ] **Step 5: Implement units/runbook**
-
-Do not add alert units to `shreks.target` or the G2 core release health contract.
-
-- [ ] **Step 6: Run Task 6 + full gates**
-
-```sh
-python -m pytest python/tests -q
-cargo test --workspace
-```
-
-Repository safety must remain GREEN in CI.
-
-- [ ] **Step 7: Commit Task 6 GREEN / freeze behavior**
-
-This commit becomes the frozen G6 behavior SHA if the final audit finds no defect.
-
----
-
-## Final audit and seal
-
-- [ ] Compare sealed G5 `a5961c293b4a22ce17ae1033f7d39cc014c7e59f` -> frozen G6 behavior.
-- [ ] Record commit/file geometry and inspect every changed file.
-- [ ] Confirm no provider mutation, storage/schema migration, strategy/scoring/risk/execution/ledger/accounting/checkpoint/proof/promotion/live mutation drift.
-- [ ] Confirm alerts read provider/PAPER/systemd evidence only and write only alert state.
-- [ ] Confirm Telegram is outbound-only and has no command/control path.
-- [ ] Confirm secret token values cannot enter state, repo, messages, logs, or exception text.
-- [ ] Confirm partial-send retry semantics do not lose or duplicate acknowledged events.
-- [ ] Confirm alert units remain independent of `shreks.target`.
-- [ ] Replace this plan with a verification record in one docs-only commit.
-- [ ] Prove behavior -> seal is exactly 1 commit / 1 file.
-- [ ] Run exact-seal CI and require identical full Python cardinality to frozen behavior plus Rust/workspace and repository safety GREEN.
-- [ ] Update stacked draft PR with base/frozen/seal SHAs, CI IDs, scope proof, known evidence gaps, and remaining real-host Telegram delivery proof.
-- [ ] Keep PR draft/open/unmerged.
-
-Real phone delivery is not proven until a host-owned bot token/chat target are configured and a message is observed on the operator's phone.
-
-Profitability remains unproven until real PAPER campaign evidence satisfies sealed proof gates.
+# Phase G6 Alerts and Phone Notifications Verification Record
+
+**Phase:** G6 — Alerts and phone notifications  
+**Repository:** `Dtwosam/Shreks`  
+**Branch:** `feat/phase-g6-alerts-phone-notifications`  
+**Stacked PR:** `#47`  
+**Base:** sealed G5 `a5961c293b4a22ce17ae1033f7d39cc014c7e59f`  
+**Frozen G6 behavior:** `1f9caf3e56000f0fb80612b0b2ee801f03e118a8`  
+**Design:** `docs/superpowers/specs/2026-08-26-phase-g6-alerts-phone-notifications-design.md`
 
 **LIVE TRADING: DISABLED.**
+
+## Verification result
+
+G6 repository behavior is **VERIFIED** for the scoped outbound alert and phone-notification subsystem.
+
+The implementation adds durable outbound alerts over sealed telemetry, persisted provider/PAPER evidence, and read-only systemd health. It does not add inbound Telegram commands, trading/control authority, auto-remediation, live execution, promotion mutation, risk mutation, transaction construction/signing/submission, wallet handling, or a second profitability/risk/proof engine.
+
+This record seals repository behavior only. Real-host installation, Telegram credential provisioning, external connectivity, and receipt of an actual notification on the intended phone remain physical deployment evidence and are explicitly not claimed by repository CI.
+
+## Base proof
+
+G6 is stacked directly on the sealed G5 commit:
+
+- G5 seal: `a5961c293b4a22ce17ae1033f7d39cc014c7e59f`
+- G5 exact-seal CI: `32955319338`
+- G5 exact-seal Python tests: **2406 passed**
+- G5 exact-seal Rust/workspace: GREEN
+- G5 exact-seal repository safety: GREEN
+
+No G5 behavior was rewritten or rebased into G6.
+
+## Frozen behavior proof
+
+Frozen G6 behavior:
+
+- SHA: `1f9caf3e56000f0fb80612b0b2ee801f03e118a8`
+- CI: `32960623418`
+- CI status: completed / success
+- Python tests: **2477 passed**
+- Rust/workspace: GREEN
+- Repository safety: GREEN
+
+The frozen behavior SHA is the final behavior-bearing commit. The seal commit containing this record is documentation-only.
+
+## G5 -> frozen G6 geometry
+
+GitHub compare from sealed G5 to frozen G6 reported:
+
+- status: ahead
+- commits: **28**
+- changed files: **22**
+- behind: **0**
+- PR additions at freeze: **4620**
+- PR deletions at freeze: **6**
+
+Changed files inspected during the final audit:
+
+1. `.env.example`
+2. `crates/shreks-observer/tests/g6_alerts_systemd.rs`
+3. `deploy/systemd/README.md`
+4. `deploy/systemd/shreks-alerts.service`
+5. `deploy/systemd/shreks-alerts.timer`
+6. `docs/superpowers/plans/2026-08-26-phase-g6-alerts-phone-notifications.md`
+7. `docs/superpowers/specs/2026-08-26-phase-g6-alerts-phone-notifications-design.md`
+8. `python/src/shreks_brain/alerts/__init__.py`
+9. `python/src/shreks_brain/alerts/config.py`
+10. `python/src/shreks_brain/alerts/detector.py`
+11. `python/src/shreks_brain/alerts/models.py`
+12. `python/src/shreks_brain/alerts/runtime.py`
+13. `python/src/shreks_brain/alerts/source.py`
+14. `python/src/shreks_brain/alerts/state.py`
+15. `python/src/shreks_brain/alerts/telegram.py`
+16. `python/tests/test_g6_alert_authority.py`
+17. `python/tests/test_g6_alert_config.py`
+18. `python/tests/test_g6_alert_detector.py`
+19. `python/tests/test_g6_alert_models_state.py`
+20. `python/tests/test_g6_alert_runtime.py`
+21. `python/tests/test_g6_alert_source.py`
+22. `python/tests/test_g6_telegram.py`
+
+No existing provider adapter, database/storage schema or migration, strategy, setup, scoring, risk-engine, execution, ledger, accounting, checkpoint, proof, promotion, registry, wallet, signing, submission, live-execution, or core `shreks.target` file changed.
+
+## Verified behavior
+
+### 1. Durable alert event/state model
+
+G6 introduces immutable alert-only models and a strict canonical state codec.
+
+Verified properties:
+
+- stable `AlertCode` and `AlertSeverity` vocabularies;
+- bounded printable event identifiers/titles/lines;
+- canonical finite JSON with exact keys and stable ordering;
+- unknown schema/fields, malformed values, non-canonical encoding, and non-finite JSON fail closed;
+- missing state is treated only as first installation;
+- corrupt existing state fails closed rather than silently resetting history;
+- state files are written atomically through a temporary file plus replace/fsync;
+- state file mode is private (`0600`);
+- failed atomic replacement preserves the previous state.
+
+The only persistent write authority added by G6 is its own alert queue/state under the configured alert-state path.
+
+### 2. Strict operational config and secret boundary
+
+G6-specific environment configuration is limited to:
+
+- `SHREKS_ALERTS_TELEGRAM_CHAT_ID`
+- `SHREKS_ALERTS_TELEGRAM_BOT_TOKEN_FILE`
+- `SHREKS_ALERTS_STATE_PATH`
+- `SHREKS_ALERTS_MARKET_STALE_MS`
+- `SHREKS_ALERTS_PROVIDER_FAILURE_MIN_CONSECUTIVE`
+- `SHREKS_ALERTS_TELEMETRY_PATH`
+
+Existing `SHREKS_PAPER_CAMPAIGN_*` paths remain authoritative for PAPER evidence restore/read access.
+
+Verified properties:
+
+- unknown alert keys fail closed;
+- integer thresholds require canonical positive values;
+- configured paths resolve safely;
+- Telegram chat ID is operational configuration, not a control channel;
+- bot token value is never part of `AlertRuntimeConfig`;
+- token is loaded only from the protected host-only file;
+- token-file symlinks, directories, missing/empty/oversized/non-printable content, world-readable permissions, and unsafe group/world write permissions are rejected;
+- repository `.env.example` contains only the token-file path, never a populated token.
+
+Repository safety is GREEN.
+
+### 3. Read-only observation sources
+
+The G6 collector reads four independent evidence surfaces:
+
+1. canonical G4 telemetry;
+2. persisted provider health from the observer SQLite database opened read-only/query-only;
+3. restored PAPER ledger entries through the existing campaign runtime bootstrap without executing a cycle;
+4. core systemd health through exact `/usr/bin/systemctl is-active <unit>` calls.
+
+Verified properties:
+
+- telemetry is decoded through the strict canonical decoder;
+- provider queries use read-only SQLite and do not repair/mutate the table;
+- PAPER restore reads existing ledger state and never calls `run_cycle`;
+- systemd observation never invokes start/stop/restart/enable/disable/reset-failed/daemon-reload;
+- independent source failures become stable unavailable error codes rather than leaking internal exceptions or being treated as healthy;
+- missing/broken provider health cannot silently become a healthy provider verdict;
+- source collection does not mutate authoritative database, PAPER, telemetry, or service state.
+
+### 4. Transition/dedup detector
+
+G6 derives alert transitions only from authoritative persisted/read-side facts and configured notification thresholds.
+
+Verified current condition alerts include:
+
+- core PAPER runtime not fully active;
+- systemd-health source unavailable;
+- telemetry unavailable;
+- market data stale relative to the explicit G6 notification threshold;
+- named provider persistent failure at the explicit consecutive-failure threshold;
+- ingestion/checkpoint unavailable;
+- PAPER evidence unavailable;
+- accounting not reconciled/valid;
+- authoritative global risk halt active;
+- authoritative kill-switch state active.
+
+Verified persisted event alerts include:
+
+- PAPER position opened/increased;
+- PAPER position closed with exact persisted realized-PnL delta;
+- terminal partial/failed execution and persisted `SLIPPAGE_EXCEEDS_INTENT` degradation evidence;
+- PAPER proof transition to `SUFFICIENT`;
+- challenger/proof transition to `FAILED`.
+
+Important non-authority properties:
+
+- first install baselines existing ledger/proof history rather than spamming historical events;
+- current critical conditions may still be surfaced on first install;
+- recurring conditions re-fire only after clear/re-entry rather than every timer tick;
+- event identifiers/order are deterministic;
+- existing pending events remain durable until the runtime acknowledges delivery;
+- G6 does not compute a second PnL, drawdown, slippage threshold, daily-loss policy, risk verdict, profitability verdict, or proof formula;
+- future live-money transaction alerts remain dormant because no sealed live execution path exists.
+
+Every alert message retains `LIVE TRADING: DISABLED`.
+
+### 5. Outbound-only Telegram transport
+
+The first notification transport is a dependency-free HTTPS Telegram `sendMessage` adapter.
+
+Verified properties:
+
+- destination host is exactly `api.telegram.org`;
+- method is HTTPS `POST` to `/bot<TOKEN>/sendMessage`;
+- request body is bounded JSON containing only `chat_id` and deterministic plain-text `text`;
+- no `parse_mode`, buttons, callback markup, incoming update polling, webhook registration, or command parser exists;
+- timeout is finite, positive, and bounded;
+- success requires a JSON object with exact boolean `ok: true`;
+- transport/HTTP/response failures become the generic `TelegramAlertError("telegram alert delivery failed")`;
+- token, token-bearing URL, chat ID, and response/error body are not included in the public exception text;
+- runtime main catches alert failures and exits nonzero without printing a secret-bearing traceback.
+
+No external production Python dependency was added.
+
+### 6. Durable send/acknowledgement semantics
+
+The one-shot runtime uses write-before-send ordering:
+
+1. load previous alert state;
+2. collect read-only source snapshot;
+3. detect transitions/events;
+4. persist the complete updated pending queue;
+5. load the protected bot token only if a send is required;
+6. send the first pending event;
+7. after successful send only, remove that one event and persist the acknowledgement;
+8. continue in queue order;
+9. on the first delivery failure, stop and leave that failed event plus every later event queued.
+
+Verified consequences:
+
+- acknowledged events are not resent on the next successful cycle;
+- a crash/failure before acknowledgement cannot silently lose an unsent event;
+- no in-process exponential retry storm exists;
+- retry cadence is delegated to the independent systemd timer;
+- deleting/resetting authoritative PAPER evidence is never used to repair alert delivery.
+
+### 7. Authority firewall
+
+The G6 authority tests verify that the alert package:
+
+- exports no trading/control mutation API;
+- imports no live executor, transaction builder, signer, submission, wallet, registry-mutation, promotion-mutation, or risk-mutation subsystem;
+- never calls a trading/PAPER `run_cycle`;
+- creates no HTTP/TCP listener;
+- contains no Telegram `getUpdates`, `setWebhook`, callback-query, command-handler, or reply-markup path;
+- confines direct filesystem-write primitives to `state.py`;
+- confines `subprocess` use to `source.py`;
+- confines systemd subprocess generation to `systemctl is-active`.
+
+This is in addition to the final changed-file audit showing that no pre-existing trading-authority file changed.
+
+### 8. Independent hardened systemd supervision
+
+`deploy/systemd/shreks-alerts.service` is verified to:
+
+- run as `shreks:shreks`;
+- run as `Type=oneshot`;
+- use `/opt/shreks/current/.venv/bin/python -m shreks_brain.alerts.runtime`;
+- read `/etc/shreks/shreks.env` and protected `/etc/shreks/telegram-bot-token`;
+- require the dedicated `/var/lib/shreks/alerts` directory;
+- keep the release tree and Shreks state read-only except `ReadWritePaths=/var/lib/shreks/alerts`;
+- use `ProtectSystem=strict` and additional process/kernel hardening;
+- allow only AF_UNIX/AF_INET/AF_INET6 for required outbound HTTPS/system interaction;
+- remain independent of `shreks.target`;
+- contain no live/wallet/signing/submission/control command.
+
+`deploy/systemd/shreks-alerts.timer` is verified to:
+
+- schedule the alert service after boot;
+- retry once per minute through `OnUnitActiveSec=60s`;
+- use a bounded `AccuracySec=5s`;
+- persist timer scheduling across reboot;
+- enable independently under `timers.target`.
+
+`shreks.target` was not modified and does not require or want the alert service/timer. Alert failure therefore cannot stop the core PAPER target.
+
+### 9. Deployment/runbook boundary
+
+The systemd runbook now documents:
+
+- `/var/lib/shreks/alerts` as the only G6 writable runtime directory;
+- `/var/lib/shreks/alerts/state.json` as the durable queue/state;
+- `/etc/shreks/telegram-bot-token` as a protected `root:shreks 0640` host secret;
+- that the token is never stored in the environment file or GitHub;
+- exact G6 non-secret environment keys;
+- independent installation/enablement via `systemctl enable --now shreks-alerts.timer`;
+- service/timer status and journal inspection commands;
+- queue-preservation behavior after failed delivery;
+- rollback rules for pre-G6 releases;
+- that alert failure cannot stop the PAPER runtime;
+- that Telegram has no command/trading-control authority;
+- that real phone delivery remains unproven until an actual host message is observed.
+
+## TDD / CI evidence retained
+
+The implementation was built through explicit RED -> GREEN gates:
+
+- Task 1 RED: `9b89dc4c82467b3bce9356eb2ffa7b02ae64a3ad`; CI `32957675293` failed only because `shreks_brain.alerts` did not yet exist.
+- Task 1 GREEN/fix: `b0fafe9573e064083b3d67ffd953c37038b50c97`; CI `32958014706`; **2422 Python tests passed**, Rust/workspace GREEN, repository safety GREEN.
+- Task 2 RED: `7f6f1889baf95a6888eb67fb7a9eb89851fcb091`; CI `32958186684` failed only because `shreks_brain.alerts.config` did not yet exist.
+- Task 2 GREEN: `e6ffb12a6aa97dfacfbaae0ecfe87e5b821d65a5`; CI `32958343842`; **2451 Python tests passed**, Rust/workspace GREEN, repository safety GREEN.
+- Task 3 RED: `861b6a6ac6e4c8560207cfe57ff6b2e497484913`; CI `32958525820` failed only because `shreks_brain.alerts.source` did not yet exist.
+- Task 3 GREEN: `2f29fcdfeb343e11f8861cbb871b5d333cf6267e`; CI `32958717827`; **2459 Python tests passed**, Rust/workspace GREEN, repository safety GREEN.
+- Task 4 RED: `0220f91ddfe164d80e4e94b22bc2cffc76bb3123`; CI `32958982377` failed only because `shreks_brain.alerts.detector` did not yet exist.
+- Task 4 GREEN: `e23c5c615223dae107366fced34f7288a9729913`; CI `32959191156`; **2464 Python tests passed**, Rust/workspace GREEN, repository safety GREEN.
+- Task 5 RED: through `5d22cb9c4c15968fe6648bc984efee27005fe135`; CI `32959877078` failed only because `shreks_brain.alerts.telegram` and `shreks_brain.alerts.runtime` did not yet exist.
+- Task 5 first GREEN candidate: `18cb5badc92bebf7a2dc44d2c16bad9831fba73f`; CI `32960008535`; implementation tests exposed only an invalid test fixture (`AlertSourceSnapshot` violated its own invariant), not a runtime behavior defect.
+- Task 5 corrected GREEN: `a652300d759f62a1861fcbb0b12bf3914b16c11a`; CI `32960134368`; **2472 Python tests passed**, Rust/workspace GREEN, repository safety GREEN. The runtime implementation itself was unchanged by the fixture fix.
+- Task 6 RED: through `7e180154307fe8b795155267e2f592a8a20e075c`; CI `32960321780`; Python authority tests GREEN, repository safety GREEN, Rust failed only because the intentionally absent G6 service/timer/runbook contract had not yet been implemented. The independent PAPER-target assertion already passed.
+- Task 6/frozen GREEN: `1f9caf3e56000f0fb80612b0b2ee801f03e118a8`; CI `32960623418`; **2477 Python tests passed**, Rust/workspace GREEN, repository safety GREEN.
+
+## Scope-drift audit
+
+Final file-by-file and compare inspection found no G6 mutation drift in:
+
+- provider adapters or provider policy;
+- database/storage schemas or migrations;
+- strategy/setup/scoring logic;
+- risk engine or risk policy;
+- PAPER/live execution logic;
+- ledger/accounting/checkpoint implementation;
+- proof or promotion policy/mutation;
+- registry mutation;
+- wallet/private-key handling;
+- transaction construction, signing, or submission;
+- live execution;
+- core `shreks.target` membership or release health gating.
+
+The only existing non-document/config file modified outside tests is `.env.example`, and it adds only G6 alert operational keys. Every production Python module is new under `python/src/shreks_brain/alerts/`. The two systemd production files are new independent G6 units.
+
+## Known deployment/evidence gates not claimed by repository CI
+
+Before treating G6 phone notification delivery as physically proven on a host, capture real deployment evidence that:
+
+1. `/var/lib/shreks/alerts` exists with the intended ownership/permissions;
+2. `/etc/shreks/telegram-bot-token` is installed as `root:shreks 0640` and contains the intended bot token;
+3. the configured Telegram chat ID points to the intended private operator destination;
+4. `shreks-alerts.timer` is enabled and active independently from `shreks.target`;
+5. a controlled test alert is received on the intended phone;
+6. service/journal output contains no token-bearing URL or secret material;
+7. a simulated delivery failure leaves the failed/later event(s) in `/var/lib/shreks/alerts/state.json` and a later successful timer cycle drains them in order;
+8. PAPER runtime health remains independent if alert delivery is unavailable.
+
+These are host/integration checks, not missing repository behavior.
+
+## Profitability / live-state statement
+
+G6 adds observability delivery, not profitability evidence. The existence or success of alerts does not prove the strategy is profitable. Profitability remains unproven until real PAPER evidence passes the sealed proof gates.
+
+G6 does not enable live execution, transaction signing/submission, wallet handling, or Telegram control authority.
+
+**LIVE TRADING: DISABLED.**
+
+## Seal post-commit requirements
+
+After committing this verification record:
+
+1. compare frozen behavior `1f9caf3e56000f0fb80612b0b2ee801f03e118a8` to the seal commit;
+2. require exactly **1 commit / 1 changed file**, this verification record only;
+3. run exact-seal CI on the seal SHA;
+4. require exact-seal Python cardinality to remain **2477 passed**;
+5. require Rust/workspace GREEN and repository safety GREEN;
+6. update draft PR #47 with frozen/seal evidence and retained real-host gates;
+7. keep PR #47 **open, draft, and unmerged**.
