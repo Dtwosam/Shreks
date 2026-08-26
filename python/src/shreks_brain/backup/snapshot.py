@@ -123,16 +123,13 @@ def create_backup_snapshot(
                 raise BackupSnapshotError("completed backup destination already exists")
             os.replace(temporary, destination)
             os.chmod(destination, 0o700)
-            verify_backup_bundle(destination)
             return destination
         except BackupSnapshotError as error:
             last_error = error
             _cleanup_owned_temporary(root, temporary)
-        except Exception as error:
-            last_error = BackupSnapshotError("backup capture failed closed")
+        except Exception:
             _cleanup_owned_temporary(root, temporary)
-            if isinstance(error, (KeyboardInterrupt, SystemExit)):
-                raise
+            raise
 
     raise BackupSnapshotError(
         f"backup capture did not produce a coherent snapshot after {max_capture_attempts} attempt(s)"
@@ -269,7 +266,10 @@ def _capture_once(
     )
     manifest_path = temporary / "manifest.json"
     _write_private(manifest_path, encode_backup_manifest(manifest))
-    verify_backup_bundle(temporary)
+    try:
+        verify_backup_bundle(temporary)
+    except BackupManifestError as error:
+        raise BackupSnapshotError("staged backup bundle verification failed") from error
     return f"{created_at_unix_ms}-{staged_manifest.manifest_fingerprint_sha256[:12]}"
 
 
@@ -323,14 +323,41 @@ def _online_sqlite_backup(source_path: Path, destination_path: Path) -> None:
             row = destination.execute("PRAGMA quick_check").fetchone()
             if row is None or row[0] != "ok":
                 raise BackupSnapshotError("staged SQLite quick_check did not return ok")
+
+            journal_mode_row = destination.execute("PRAGMA journal_mode=DELETE").fetchone()
+            if (
+                journal_mode_row is None
+                or not isinstance(journal_mode_row[0], str)
+                or journal_mode_row[0].lower() != "delete"
+            ):
+                raise BackupSnapshotError(
+                    "staged SQLite copy could not be normalized to single-file journaling"
+                )
+            destination.commit()
         finally:
             destination.close()
             source.close()
+
+        _remove_staged_sqlite_sidecars(destination_path)
         os.chmod(destination_path, 0o600)
     except BackupSnapshotError:
         raise
     except (OSError, sqlite3.Error) as error:
         raise BackupSnapshotError("SQLite online backup failed") from error
+
+
+def _remove_staged_sqlite_sidecars(destination_path: Path) -> None:
+    for suffix in ("-wal", "-shm"):
+        sidecar = Path(f"{destination_path}{suffix}")
+        if sidecar.is_symlink():
+            raise BackupSnapshotError("staged SQLite sidecar is unexpectedly a symlink")
+        try:
+            if sidecar.exists():
+                sidecar.unlink()
+        except OSError as error:
+            raise BackupSnapshotError(
+                "staged SQLite sidecar could not be removed after DELETE normalization"
+            ) from error
 
 
 def _copy_exact(source: Path, destination: Path) -> None:
