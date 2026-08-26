@@ -112,7 +112,7 @@ def test_manifest_requires_exact_schema_keys_and_supported_platform(tmp_path: Pa
         {**raw, "extra": True},
         {key: value for key, value in raw.items() if key != "platform"},
         {**raw, "schema_version": "g2-release-manifest-v999"},
-        {**raw, "platform": "aarch64-unknown-linux-gnu"},
+        {**raw, "platform": "powerpc64le-unknown-linux-gnu"},
     ):
         payload = json.dumps(mutated, sort_keys=True, separators=(",", ":")).encode() + b"\n"
         with pytest.raises(release_bundle.ReleaseBundleError):

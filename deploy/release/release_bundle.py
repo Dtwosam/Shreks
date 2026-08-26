@@ -14,6 +14,12 @@ import tarfile
 
 RELEASE_MANIFEST_SCHEMA_VERSION = "g2-release-manifest-v1"
 SUPPORTED_PLATFORM = "x86_64-unknown-linux-gnu"
+SUPPORTED_PLATFORMS = frozenset(
+    (
+        SUPPORTED_PLATFORM,
+        "aarch64-unknown-linux-gnu",
+    )
+)
 
 _REQUIRED_STATIC_PAYLOAD_PATHS = (
     "deploy/systemd/shreks-observe.service",
@@ -59,7 +65,7 @@ def release_tag_for_sha(source_sha: str) -> str:
 
 
 def _validate_platform(value: str) -> str:
-    if value != SUPPORTED_PLATFORM:
+    if value not in SUPPORTED_PLATFORMS:
         raise ReleaseBundleError(f"unsupported release platform: {value!r}")
     return value
 
