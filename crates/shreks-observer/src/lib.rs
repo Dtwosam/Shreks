@@ -417,8 +417,10 @@ impl Observer {
             }
             self.observe_market_data(candidate_id, &mint, &mut report, &mut health)
                 .await?;
-            self.observe_chain_data(candidate_id, &mint, &mut report, &mut health)
-                .await?;
+            if !self.db.has_mint_state(candidate_id)? {
+                self.observe_chain_data(candidate_id, &mint, &mut report, &mut health)
+                    .await?;
+            }
         }
 
         let observed_at = unix_time_ms()?;
