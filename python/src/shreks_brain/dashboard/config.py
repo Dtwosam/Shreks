@@ -133,7 +133,7 @@ def _base_directory(value: str | os.PathLike[str] | None) -> Path:
 
 def _required_text(env: Mapping[str, str], key: str) -> str:
     value = env.get(key)
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str):
         raise DashboardRuntimeConfigError(f"required dashboard value is missing: {key}")
     return value
 
