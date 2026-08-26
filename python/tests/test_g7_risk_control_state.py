@@ -255,7 +255,7 @@ def test_host_reset_is_two_step_and_cannot_clear_halt_while_kill_is_active(tmp_p
             path,
             OperatorRiskControlCommand.CLEAR_ENTRY_HALT,
             expected_revision=7,
-            observed_at_unix_ms=40,
+            observed_at_unix_ms=1_800_000_000_040,
             source=OperatorRiskControlSource.HOST_CLI,
             reason="validated recovery",
         )
@@ -264,7 +264,7 @@ def test_host_reset_is_two_step_and_cannot_clear_halt_while_kill_is_active(tmp_p
         path,
         OperatorRiskControlCommand.RESET_KILL_SWITCH,
         expected_revision=7,
-        observed_at_unix_ms=41,
+        observed_at_unix_ms=1_800_000_000_041,
         source=OperatorRiskControlSource.HOST_CLI,
         reason="validated emergency recovery",
     )
@@ -276,7 +276,7 @@ def test_host_reset_is_two_step_and_cannot_clear_halt_while_kill_is_active(tmp_p
         path,
         OperatorRiskControlCommand.CLEAR_ENTRY_HALT,
         expected_revision=8,
-        observed_at_unix_ms=42,
+        observed_at_unix_ms=1_800_000_000_042,
         source=OperatorRiskControlSource.HOST_CLI,
         reason="validated resume after separate review",
     )
