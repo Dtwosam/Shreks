@@ -135,6 +135,14 @@ def assess_entry_risk(
             RiskReasonCode.KILL_SWITCH_ACTIVE,
             "global kill switch is active",
         )
+    if context.operator_entry_halt_active:
+        return _reject(
+            decision,
+            policy,
+            execution_mode,
+            RiskReasonCode.OPERATOR_ENTRY_HALT_ACTIVE,
+            "operator entry halt is active",
+        )
     if context.data_healthy is None:
         return _reject(
             decision,

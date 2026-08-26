@@ -31,6 +31,7 @@ class RiskReasonCode(StrEnum):
     HALTED_MODE = "HALTED_MODE"
     LIVE_MODE_DISABLED = "LIVE_MODE_DISABLED"
     KILL_SWITCH_ACTIVE = "KILL_SWITCH_ACTIVE"
+    OPERATOR_ENTRY_HALT_ACTIVE = "OPERATOR_ENTRY_HALT_ACTIVE"
     DATA_HEALTH_UNKNOWN = "DATA_HEALTH_UNKNOWN"
     DATA_HEALTH_DEGRADED = "DATA_HEALTH_DEGRADED"
     EXECUTION_HEALTH_UNKNOWN = "EXECUTION_HEALTH_UNKNOWN"
@@ -148,6 +149,7 @@ class RiskContext:
     execution_healthy: bool | None
     kill_switch_active: bool
     active_intent_keys: frozenset[str]
+    operator_entry_halt_active: bool = False
 
     def __post_init__(self) -> None:
         _require_non_negative_int("as_of_unix_ms", self.as_of_unix_ms)
@@ -182,6 +184,7 @@ class RiskContext:
         _require_optional_bool("data_healthy", self.data_healthy)
         _require_optional_bool("execution_healthy", self.execution_healthy)
         _require_bool("kill_switch_active", self.kill_switch_active)
+        _require_bool("operator_entry_halt_active", self.operator_entry_halt_active)
         if not isinstance(self.active_intent_keys, frozenset):
             raise ValueError("active_intent_keys must be a frozenset")
         if not all(

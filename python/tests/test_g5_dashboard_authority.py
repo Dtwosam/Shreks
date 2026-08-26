@@ -36,19 +36,22 @@ def test_dashboard_exports_no_mutation_or_control_authority() -> None:
         assert not any(fragment in lowered for fragment in forbidden_fragments), exported
 
 
-def test_dashboard_source_imports_no_execution_or_mutation_authority() -> None:
-    forbidden_modules = (
+def test_dashboard_source_imports_only_risk_control_as_mutation_authority() -> None:
+    forbidden_prefixes = (
         "shreks_brain.execution",
         "shreks_brain.live",
         "shreks_brain.registry",
         "shreks_brain.promotion",
         "shreks_brain.risk",
+    )
+    forbidden_fragments = (
         "wallet_secret",
         "wallet_secrets",
         "transaction_builder",
         "transaction_submission",
         "signer",
     )
+    observed_risk_control = False
     for path in _python_sources():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         imported: list[str] = []
@@ -59,13 +62,23 @@ def test_dashboard_source_imports_no_execution_or_mutation_authority() -> None:
                 imported.append(node.module or "")
         for module in imported:
             lowered = module.lower()
-            assert not any(forbidden in lowered for forbidden in forbidden_modules), (
+            if lowered == "shreks_brain.risk_control" or lowered.startswith(
+                "shreks_brain.risk_control."
+            ):
+                observed_risk_control = True
+                continue
+            assert not any(
+                lowered == prefix or lowered.startswith(prefix + ".")
+                for prefix in forbidden_prefixes
+            ), (path.name, module)
+            assert not any(fragment in lowered for fragment in forbidden_fragments), (
                 path.name,
                 module,
             )
+    assert observed_risk_control
 
 
-def test_dashboard_has_no_filesystem_write_calls() -> None:
+def test_dashboard_has_no_direct_filesystem_write_calls() -> None:
     forbidden_markers = (
         ".write_text(",
         ".write_bytes(",
@@ -86,13 +99,25 @@ def test_dashboard_has_no_filesystem_write_calls() -> None:
             assert marker not in source, (path.name, marker)
 
 
-def test_http_router_is_get_only_before_any_application_route() -> None:
+def test_http_router_allows_only_exact_g7_safety_post_routes() -> None:
     source = (_DASHBOARD_ROOT / "http.py").read_text(encoding="utf-8")
-    guard = 'if method != "GET":'
-    first_route = 'if path == "/":'
-    assert guard in source
-    assert first_route in source
-    assert source.index(guard) < source.index(first_route)
-    for method in ("POST", "PUT", "PATCH", "DELETE"):
+    assert '_HALT_PATH = "/api/v1/operator-controls/halt-new-entries"' in source
+    assert '_KILL_PATH = "/api/v1/operator-controls/emergency-kill"' in source
+    assert 'if method == "POST":' in source
+    assert "if path not in (_HALT_PATH, _KILL_PATH):" in source
+    assert 'if method != "GET":' in source
+    first_get_route = 'if path == "/":'
+    assert first_get_route in source
+    assert source.index('if method != "GET":') < source.index(first_get_route)
+    for method in ("PUT", "PATCH", "DELETE"):
         assert f'if method == "{method}"' not in source
         assert f'if method in ("{method}"' not in source
+    for forbidden_route in (
+        "reset-kill-switch",
+        "clear-entry-halt",
+        "/resume",
+        "live-enable",
+        "/buy",
+        "/sell",
+    ):
+        assert forbidden_route not in source

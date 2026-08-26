@@ -150,10 +150,12 @@ def test_runtime_config_public_shape_has_no_provider_credentials_or_trading_poli
         "manifest_path",
         "cycle_interval_seconds",
         "max_cycles",
+        "risk_control_path",
     }
+    trading_policy_fields = field_names - {"risk_control_path"}
     assert not any(
         word in name.lower()
-        for name in field_names
+        for name in trading_policy_fields
         for word in (
             "key",
             "secret",

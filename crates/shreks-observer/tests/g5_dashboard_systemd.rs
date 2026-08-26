@@ -10,14 +10,14 @@ fn repo_path(relative: &str) -> PathBuf {
 
 fn dashboard_service() -> String {
     fs::read_to_string(repo_path("deploy/systemd/shreks-dashboard.service"))
-        .expect("G5 dashboard service must exist")
+        .expect("G5/G7 dashboard service must exist")
 }
 
 #[test]
-fn dashboard_service_is_loopback_read_only_and_restart_bounded() {
+fn dashboard_service_is_loopback_hardened_and_restart_bounded() {
     let service = dashboard_service();
     for required in [
-        "Description=Shreks private read-only operator dashboard",
+        "Description=Shreks private operator dashboard with safety controls",
         "After=network-online.target",
         "Wants=network-online.target",
         "User=shreks",
@@ -42,6 +42,7 @@ fn dashboard_service_is_loopback_read_only_and_restart_bounded() {
         "IPAddressDeny=any",
         "IPAddressAllow=localhost",
         "ReadOnlyPaths=/var/lib/shreks /etc/shreks",
+        "ReadWritePaths=/var/lib/shreks/risk",
         "UMask=0077",
         "WantedBy=multi-user.target",
     ] {
@@ -49,7 +50,9 @@ fn dashboard_service_is_loopback_read_only_and_restart_bounded() {
     }
 
     for forbidden in [
-        "ReadWritePaths=",
+        "ReadWritePaths=/var/lib/shreks\n",
+        "ReadWritePaths=/etc/shreks",
+        "ReadWritePaths=/opt/shreks",
         "PartOf=shreks.target",
         "WantedBy=shreks.target",
         "Requires=shreks.target",
@@ -75,7 +78,7 @@ fn paper_target_does_not_depend_on_dashboard() {
 }
 
 #[test]
-fn dashboard_runbook_keeps_remote_access_private_and_controls_deferred() {
+fn dashboard_runbook_keeps_remote_access_private_and_g5_history_intact() {
     for required in [
         "/etc/shreks/dashboard-password",
         "root:shreks 0640",

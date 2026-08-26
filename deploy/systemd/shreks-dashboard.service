@@ -1,5 +1,5 @@
 [Unit]
-Description=Shreks private read-only operator dashboard
+Description=Shreks private operator dashboard with safety controls
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=60s
@@ -14,6 +14,8 @@ WorkingDirectory=/opt/shreks/current
 EnvironmentFile=/etc/shreks/shreks.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/bin/test -r /etc/shreks/dashboard-password
+ExecStartPre=/usr/bin/test -r /var/lib/shreks/risk/operator-control.json
+ExecStartPre=/usr/bin/test -w /var/lib/shreks/risk
 ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.dashboard.runtime
 Restart=on-failure
 RestartSec=5s
@@ -34,6 +36,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 IPAddressDeny=any
 IPAddressAllow=localhost
 ReadOnlyPaths=/var/lib/shreks /etc/shreks
+ReadWritePaths=/var/lib/shreks/risk
 UMask=0077
 
 [Install]

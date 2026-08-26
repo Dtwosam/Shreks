@@ -2,15 +2,27 @@ from __future__ import annotations
 
 import base64
 import binascii
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import secrets
 import socket
+import time
 from typing import Any
 from urllib.parse import unquote_to_bytes, urlsplit
+
+from shreks_brain.risk_control import (
+    OperatorRiskControlCommand,
+    OperatorRiskControlSource,
+    RiskControlCommandError,
+    RiskControlConflictError,
+    RiskControlStateError,
+    apply_operator_risk_control_command,
+    load_operator_risk_control_state,
+)
 
 from .config import DashboardRuntimeConfig, load_dashboard_password
 from .models import DashboardSourceConfig
@@ -31,6 +43,14 @@ _SECURITY_HEADERS = (
 )
 _JSON_CONTENT_TYPE = "application/json; charset=utf-8"
 _HTML_CONTENT_TYPE = "text/html; charset=utf-8"
+_CONTROL_STATE_PATH = "/api/v1/operator-controls"
+_HALT_PATH = "/api/v1/operator-controls/halt-new-entries"
+_KILL_PATH = "/api/v1/operator-controls/emergency-kill"
+_MAX_CONTROL_BODY_BYTES = 256
+_MAX_REQUEST_BODY_BYTES = 4096
+_DASHBOARD_HALT_REASON = "authenticated dashboard halt"
+_DASHBOARD_KILL_REASON = "authenticated dashboard emergency kill"
+_KILL_CONFIRMATION = "EMERGENCY KILL SWITCH"
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,27 +74,54 @@ class DashboardHTTPResponse:
 
 
 class DashboardApplication:
-    """Authenticated, read-only request dispatcher for the G5 operator dashboard."""
+    """Authenticated operator dashboard with narrowly scoped G7 safety controls."""
 
-    __slots__ = ("_config", "_source_config", "_expected_credentials")
+    __slots__ = (
+        "_config",
+        "_source_config",
+        "_expected_credentials",
+        "_csrf_token",
+        "_clock_unix_ms",
+    )
 
-    def __init__(self, config: DashboardRuntimeConfig, password: bytes) -> None:
+    def __init__(
+        self,
+        config: DashboardRuntimeConfig,
+        password: bytes,
+        *,
+        csrf_token: str | None = None,
+        clock_unix_ms: Callable[[], int] | None = None,
+    ) -> None:
         if type(config) is not DashboardRuntimeConfig:
             raise TypeError("config must be an exact DashboardRuntimeConfig")
         if not isinstance(password, bytes) or not password or b"\r" in password or b"\n" in password:
             raise ValueError("dashboard password bytes are invalid")
+        token = secrets.token_urlsafe(32) if csrf_token is None else csrf_token
+        if (
+            type(token) is not str
+            or len(token) < 32
+            or len(token) > 256
+            or token.strip() != token
+            or any(ord(character) < 33 or ord(character) > 126 for character in token)
+        ):
+            raise ValueError("dashboard CSRF token is invalid")
+        if clock_unix_ms is not None and not callable(clock_unix_ms):
+            raise TypeError("clock_unix_ms must be callable or None")
         self._config = config
         self._source_config = DashboardSourceConfig(
             telemetry_path=config.telemetry_path,
             paper_runtime_config=config.paper_runtime_config,
         )
         self._expected_credentials = config.username.encode("ascii") + b":" + bytes(password)
+        self._csrf_token = token
+        self._clock_unix_ms = _wall_clock_unix_ms if clock_unix_ms is None else clock_unix_ms
 
     def dispatch(
         self,
         method: str,
         target: str,
         headers: Mapping[str, str],
+        body: bytes = b"",
     ) -> DashboardHTTPResponse:
         if not self._authorized(headers):
             return _json_response(
@@ -82,21 +129,33 @@ class DashboardApplication:
                 {"error": "AUTH_REQUIRED"},
                 extra_headers=(("WWW-Authenticate", 'Basic realm="Shreks Operator", charset="UTF-8"'),),
             )
+        path = _request_path(target)
+        if path is None:
+            return _json_response(400, {"error": "BAD_REQUEST"})
+
+        if method == "POST":
+            if path not in (_HALT_PATH, _KILL_PATH):
+                return _json_response(
+                    405,
+                    {"error": "METHOD_NOT_ALLOWED"},
+                    extra_headers=(("Allow", "GET"),),
+                )
+            return self._control_command_response(path, headers, body)
+
         if method != "GET":
             return _json_response(
                 405,
                 {"error": "METHOD_NOT_ALLOWED"},
                 extra_headers=(("Allow", "GET"),),
             )
-        path = _request_path(target)
-        if path is None:
-            return _json_response(400, {"error": "BAD_REQUEST"})
         if path == "/":
             return _html_response(render_dashboard_page())
         if path == "/api/v1/snapshot":
             return self._snapshot_response(include_trades=False)
         if path == "/api/v1/trades":
             return self._snapshot_response(include_trades=True)
+        if path == _CONTROL_STATE_PATH:
+            return self._control_state_response()
         prefix = "/api/v1/trades/"
         if path.startswith(prefix):
             position_id = _decode_position_id(path[len(prefix):])
@@ -128,18 +187,79 @@ class DashboardApplication:
             }
         return _json_response(200, _jsonable(payload))
 
-    def _authorized(self, headers: Mapping[str, str]) -> bool:
+    def _control_state_response(self) -> DashboardHTTPResponse:
+        path = self._config.paper_runtime_config.risk_control_path
+        if path is None:
+            return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
         try:
-            authorization = next(
-                (
-                    value
-                    for name, value in headers.items()
-                    if isinstance(name, str) and name.lower() == "authorization"
-                ),
-                None,
+            state = load_operator_risk_control_state(path)
+        except (RiskControlStateError, OSError, TypeError, ValueError):
+            return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
+        payload = _jsonable(state)
+        if not isinstance(payload, dict):
+            return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
+        payload["csrf_token"] = self._csrf_token
+        return _json_response(200, payload)
+
+    def _control_command_response(
+        self,
+        path: str,
+        headers: Mapping[str, str],
+        body: bytes,
+    ) -> DashboardHTTPResponse:
+        state_path = self._config.paper_runtime_config.risk_control_path
+        if state_path is None:
+            return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
+        if not self._valid_csrf(headers):
+            return _json_response(403, {"error": "CSRF_REQUIRED"})
+        expected_revision = _control_expected_revision(
+            headers,
+            body,
+            emergency_kill=(path == _KILL_PATH),
+        )
+        if expected_revision is None:
+            return _json_response(400, {"error": "BAD_REQUEST"})
+        try:
+            observed_at_unix_ms = self._control_timestamp()
+            if path == _HALT_PATH:
+                command = OperatorRiskControlCommand.HALT_NEW_ENTRIES
+                reason = _DASHBOARD_HALT_REASON
+            else:
+                command = OperatorRiskControlCommand.EMERGENCY_KILL_SWITCH
+                reason = _DASHBOARD_KILL_REASON
+            state = apply_operator_risk_control_command(
+                state_path,
+                command,
+                expected_revision=expected_revision,
+                observed_at_unix_ms=observed_at_unix_ms,
+                source=OperatorRiskControlSource.DASHBOARD,
+                reason=reason,
             )
-        except Exception:
+        except RiskControlConflictError:
+            return _json_response(409, {"error": "REVISION_CONFLICT"})
+        except RiskControlCommandError:
+            return _json_response(400, {"error": "CONTROL_REJECTED"})
+        except (RiskControlStateError, OSError, TypeError, ValueError):
+            return _json_response(503, {"error": "CONTROL_UNAVAILABLE"})
+        return _json_response(200, _jsonable(state))
+
+    def _control_timestamp(self) -> int:
+        try:
+            value = self._clock_unix_ms()
+        except Exception as error:
+            raise RiskControlStateError("dashboard control clock failed") from error
+        if isinstance(value, bool) or type(value) is not int or value < 0:
+            raise RiskControlStateError("dashboard control clock is invalid")
+        return value
+
+    def _valid_csrf(self, headers: Mapping[str, str]) -> bool:
+        supplied = _header_value(headers, "x-shreks-csrf")
+        if type(supplied) is not str:
             return False
+        return hmac.compare_digest(supplied.encode("utf-8"), self._csrf_token.encode("utf-8"))
+
+    def _authorized(self, headers: Mapping[str, str]) -> bool:
+        authorization = _header_value(headers, "authorization")
         if not isinstance(authorization, str) or not authorization.startswith("Basic "):
             return False
         encoded = authorization[6:]
@@ -198,13 +318,37 @@ def _handler_for(application: DashboardApplication) -> type[BaseHTTPRequestHandl
 
         def _dispatch(self) -> None:
             request_headers = {name: value for name, value in self.headers.items()}
-            response = application.dispatch(self.command, self.path, request_headers)
+            body = self._request_body()
+            if body is None:
+                response = _json_response(400, {"error": "BAD_REQUEST"})
+            else:
+                response = application.dispatch(
+                    self.command,
+                    self.path,
+                    request_headers,
+                    body,
+                )
             self.send_response(response.status)
             for name, value in response.headers:
                 self.send_header(name, value)
             self.end_headers()
             if self.command != "HEAD" and response.body:
                 self.wfile.write(response.body)
+
+        def _request_body(self) -> bytes | None:
+            raw_length = self.headers.get("Content-Length")
+            if raw_length is None:
+                return b""
+            try:
+                length = int(raw_length, 10)
+            except (TypeError, ValueError):
+                return None
+            if length < 0 or length > _MAX_REQUEST_BODY_BYTES:
+                return None
+            try:
+                return self.rfile.read(length)
+            except OSError:
+                return None
 
         def log_message(self, _format: str, *args: object) -> None:
             return
@@ -234,6 +378,60 @@ def _decode_position_id(segment: str) -> str | None:
     if not value or "/" in value or value.strip() != value:
         return None
     return value
+
+
+def _header_value(headers: Mapping[str, str], name: str) -> str | None:
+    try:
+        values = [
+            value
+            for header_name, value in headers.items()
+            if isinstance(header_name, str) and header_name.lower() == name
+        ]
+    except Exception:
+        return None
+    if len(values) != 1 or type(values[0]) is not str:
+        return None
+    return values[0]
+
+
+def _control_expected_revision(
+    headers: Mapping[str, str],
+    body: object,
+    *,
+    emergency_kill: bool,
+) -> int | None:
+    if type(body) is not bytes or not body or len(body) > _MAX_CONTROL_BODY_BYTES:
+        return None
+    content_type = _header_value(headers, "content-type")
+    if content_type is None or content_type.split(";", 1)[0].strip().lower() != "application/json":
+        return None
+    try:
+        document = json.loads(body.decode("utf-8"), parse_constant=_reject_json_constant)
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+        return None
+    if type(document) is not dict:
+        return None
+    expected_keys = (
+        {"confirmation", "expected_revision"}
+        if emergency_kill
+        else {"expected_revision"}
+    )
+    if set(document) != expected_keys:
+        return None
+    if emergency_kill and document["confirmation"] != _KILL_CONFIRMATION:
+        return None
+    value = document["expected_revision"]
+    if isinstance(value, bool) or type(value) is not int or value < 0:
+        return None
+    return value
+
+
+def _reject_json_constant(_value: str) -> None:
+    raise ValueError("non-finite JSON constants are forbidden")
+
+
+def _wall_clock_unix_ms() -> int:
+    return time.time_ns() // 1_000_000
 
 
 def _jsonable(value: Any) -> Any:
