@@ -22,8 +22,8 @@ class DashboardSourceConfig:
     paper_runtime_config: ObserverPaperCampaignRuntimeConfig
 
     def __post_init__(self) -> None:
-        if type(self.telemetry_path) is not Path:
-            raise ValueError("telemetry_path must be an exact Path")
+        if not isinstance(self.telemetry_path, Path):
+            raise ValueError("telemetry_path must be a Path")
         if type(self.paper_runtime_config) is not ObserverPaperCampaignRuntimeConfig:
             raise ValueError(
                 "paper_runtime_config must be an exact ObserverPaperCampaignRuntimeConfig"
