@@ -404,7 +404,7 @@ impl Observer {
             .await?;
             self.observe_chain_data(
                 *candidate_id,
-                candidate,
+                &candidate.mint,
                 &mut report,
                 &mut health,
             )
@@ -416,6 +416,8 @@ impl Observer {
                 continue;
             }
             self.observe_market_data(candidate_id, &mint, &mut report, &mut health)
+                .await?;
+            self.observe_chain_data(candidate_id, &mint, &mut report, &mut health)
                 .await?;
         }
 
@@ -832,7 +834,7 @@ impl Observer {
     async fn observe_chain_data(
         &mut self,
         candidate_id: i64,
-        candidate: &DiscoveredToken,
+        token_mint: &str,
         report: &mut ObserverCycleReport,
         health: &mut HashMap<ProviderId, CycleHealth>,
     ) -> Result<(), ObserverError> {
@@ -841,20 +843,20 @@ impl Observer {
             self.ensure_health(health, provider_id)?;
             self.pacer.wait(PacingLane::Chain(provider_id)).await;
 
-            match provider.token_mint_state(&candidate.mint).await {
+            match provider.token_mint_state(token_mint).await {
                 Ok(state) => {
                     health
                         .get_mut(&provider_id)
                         .expect("health initialized before provider call")
                         .record_success();
-                    if state.provider != provider_id || state.mint != candidate.mint {
+                    if state.provider != provider_id || state.mint != token_mint {
                         report.provider_failures = report.provider_failures.saturating_add(1);
                         record_synthetic_failure(
                             health,
                             provider_id,
                             format!(
                                 "mint-state identity mismatch for requested mint {}",
-                                candidate.mint
+                                token_mint
                             ),
                         );
                         continue;
