@@ -243,8 +243,8 @@ def _reject_constant(_value: str) -> None:
 
 
 def _require_path(path: object) -> Path:
-    if type(path) is not Path:
-        raise AlertStateError("alert state path must be an exact Path")
+    if not isinstance(path, Path):
+        raise AlertStateError("alert state path must be a Path")
     if not path.name:
         raise AlertStateError("alert state path must name a file")
     return path
