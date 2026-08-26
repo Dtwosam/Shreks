@@ -2,6 +2,7 @@
 
 from .integration import (
     apply_operator_controls_to_exit_context,
+    apply_operator_controls_to_paper_cycle,
     apply_operator_controls_to_risk_context,
 )
 from .models import (
@@ -31,6 +32,7 @@ __all__ = (
     "RiskControlConflictError",
     "RiskControlStateError",
     "apply_operator_controls_to_exit_context",
+    "apply_operator_controls_to_paper_cycle",
     "apply_operator_controls_to_risk_context",
     "apply_operator_risk_control_command",
     "decode_operator_risk_control_state",
