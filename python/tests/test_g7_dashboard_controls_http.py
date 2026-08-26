@@ -27,7 +27,7 @@ def _controlled_application(tmp_path: Path):
     state_path.parent.mkdir()
     initialize_operator_risk_control_state(state_path, observed_at_unix_ms=100)
     env, password_file = _env(tmp_path)
-    env["SHREKS_PAPER_CAMPAIGN_RISK_CONTROL_PATH"] = str(state_path)
+    env["SHREKS_RISK_CONTROL_STATE_PATH"] = str(state_path)
     config = load_dashboard_runtime_config(env)
     password = password_file.read_bytes().rstrip(b"\r\n")
     app = DashboardApplication(
