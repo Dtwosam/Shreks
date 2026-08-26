@@ -4,6 +4,7 @@ from .config import (
     load_alert_runtime_config,
     load_telegram_bot_token,
 )
+from .detector import AlertDetectionResult, detect_alert_events
 from .models import (
     AlertCode,
     AlertEvent,
@@ -25,6 +26,7 @@ from .state import (
 
 __all__ = (
     "AlertCode",
+    "AlertDetectionResult",
     "AlertEvent",
     "AlertProviderHealth",
     "AlertRuntimeConfig",
@@ -38,6 +40,7 @@ __all__ = (
     "G6_ALERT_STATE_SCHEMA_VERSION",
     "collect_alert_source",
     "decode_alert_state",
+    "detect_alert_events",
     "encode_alert_state",
     "load_alert_runtime_config",
     "load_alert_state",
