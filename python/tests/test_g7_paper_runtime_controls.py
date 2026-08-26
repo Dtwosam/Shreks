@@ -33,7 +33,7 @@ def _controlled_config(tmp_path: Path, *, max_cycles: int, state_path: Path):
 
 def test_runtime_config_accepts_optional_operator_risk_control_path(tmp_path: Path) -> None:
     env = dict(VALID_ENV)
-    env["SHREKS_PAPER_CAMPAIGN_RISK_CONTROL_PATH"] = "control/operator-risk-control.json"
+    env["SHREKS_RISK_CONTROL_STATE_PATH"] = "control/operator-risk-control.json"
 
     config = load_observer_paper_campaign_runtime_config(env, base_directory=tmp_path)
 
