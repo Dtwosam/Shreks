@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const README: &str = include_str!("../../../deploy/systemd/README.md");
+const G7_RUNBOOK: &str = include_str!("../../../deploy/systemd/G7_OPERATOR_CONTROLS.md");
 const ENV_EXAMPLE: &str = include_str!("../../../.env.example");
 const SHREKS_TARGET: &str = include_str!("../../../deploy/systemd/shreks.target");
 
@@ -106,6 +106,6 @@ fn runbook_initializes_protects_resets_and_preserves_g7_control_state() {
         "browser controls are disabled",
         "LIVE TRADING: DISABLED",
     ] {
-        assert!(README.contains(required), "missing G7 runbook evidence: {required}");
+        assert!(G7_RUNBOOK.contains(required), "missing G7 runbook evidence: {required}");
     }
 }
