@@ -37,6 +37,10 @@ _RUNTIME_BINARY_PATHS = (
     "target/release/shreks-paper-evidence",
 )
 _CONTROL_MANIFEST_PATH = "RELEASE_MANIFEST.json"
+_HOST_PLATFORM_BY_MACHINE = {
+    "x86_64": "x86_64-unknown-linux-gnu",
+    "aarch64": "aarch64-unknown-linux-gnu",
+}
 
 
 class ReleaseManagerError(RuntimeError):
@@ -52,6 +56,22 @@ class ReleasePaths:
 
 def _default_command_runner(command: tuple[str, ...]) -> None:
     subprocess.run(command, check=True)
+
+
+def _host_release_platform() -> str:
+    machine = os.uname().machine
+    try:
+        return _HOST_PLATFORM_BY_MACHINE[machine]
+    except KeyError as exc:
+        raise ReleaseManagerError(f"unsupported host architecture: {machine!r}") from exc
+
+
+def _require_manifest_matches_host(manifest: ReleaseManifest) -> None:
+    host_platform = _host_release_platform()
+    if manifest.platform != host_platform:
+        raise ReleaseManagerError(
+            f"release platform {manifest.platform!r} does not match host platform {host_platform!r}"
+        )
 
 
 def _sha256_file(path: Path) -> str:
@@ -92,6 +112,7 @@ def _verify_stored_release(release_dir: Path) -> ReleaseManifest:
         raise ReleaseManagerError("stored release directory permissions must be 0755")
 
     manifest = _load_manifest(release_dir / _CONTROL_MANIFEST_PATH, "stored release")
+    _require_manifest_matches_host(manifest)
     if release_dir.name != manifest.source_sha:
         raise ReleaseManagerError("stored release directory does not match source SHA")
 
@@ -207,6 +228,8 @@ def stage_release(
         manifest = verify_release_archive(archive_path, checksum_path, manifest_path)
     except (OSError, ReleaseBundleError) as exc:
         raise ReleaseManagerError("release bundle verification failed") from exc
+
+    _require_manifest_matches_host(manifest)
 
     releases_dir = Path(paths.releases_dir)
     release_dir = releases_dir / manifest.source_sha
