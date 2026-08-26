@@ -1,0 +1,40 @@
+[Unit]
+Description=Shreks private read-only operator dashboard
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+
+[Service]
+Type=simple
+User=shreks
+Group=shreks
+WorkingDirectory=/opt/shreks/current
+EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -r /etc/shreks/dashboard-password
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.dashboard.runtime
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectProc=invisible
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ReadOnlyPaths=/var/lib/shreks /etc/shreks
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
