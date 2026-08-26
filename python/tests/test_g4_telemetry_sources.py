@@ -15,8 +15,33 @@ from test_observer_campaign_runtime import _runtime_config
 from test_observer_campaign_runner import AS_OF, RUN_ID
 
 
+def _add_operational_tables(database_path: Path) -> None:
+    with sqlite3.connect(database_path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE provider_health (
+                provider TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                observed_at_unix_ms INTEGER NOT NULL,
+                latency_ms INTEGER,
+                detail TEXT,
+                consecutive_failures INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE ingestion_checkpoints (
+                provider TEXT NOT NULL,
+                stream TEXT NOT NULL,
+                cursor TEXT,
+                updated_at_unix_ms INTEGER NOT NULL,
+                PRIMARY KEY (provider, stream)
+            );
+            """
+        )
+        connection.commit()
+
+
 def test_collect_sources_reads_operational_campaign_and_e11_without_mutation(tmp_path: Path) -> None:
     runtime = _runtime_config(tmp_path, max_cycles=1)
+    _add_operational_tables(runtime.observer_database_path)
     proof_path = tmp_path / "proof.json"
     promotion_path = tmp_path / "promotion.json"
     evidence_path = runtime.evidence_path
@@ -69,7 +94,9 @@ def test_collect_sources_reads_operational_campaign_and_e11_without_mutation(tmp
 def test_operational_sqlite_is_opened_read_only_and_missing_db_is_not_created(
     tmp_path: Path,
 ) -> None:
-    runtime = _runtime_config(tmp_path / "seed", max_cycles=1)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    runtime = _runtime_config(seed, max_cycles=1)
     missing = tmp_path / "missing" / "observer.sqlite"
     config = TelemetrySourceConfig(
         runtime_config=type(runtime)(
@@ -93,6 +120,7 @@ def test_corrupt_optional_proof_and_promotion_sources_are_reported_not_fabricate
     tmp_path: Path,
 ) -> None:
     runtime = _runtime_config(tmp_path, max_cycles=1)
+    _add_operational_tables(runtime.observer_database_path)
     proof_path = tmp_path / "proof.json"
     promotion_path = tmp_path / "promotion.json"
     proof_path.write_text("{broken", encoding="utf-8")
