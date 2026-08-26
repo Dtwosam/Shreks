@@ -100,6 +100,7 @@ def test_risk_enum_contract_is_stable() -> None:
         "HALTED_MODE",
         "LIVE_MODE_DISABLED",
         "KILL_SWITCH_ACTIVE",
+        "OPERATOR_ENTRY_HALT_ACTIVE",
         "DATA_HEALTH_UNKNOWN",
         "DATA_HEALTH_DEGRADED",
         "EXECUTION_HEALTH_UNKNOWN",
@@ -224,6 +225,7 @@ def test_risk_context_preserves_missing_optional_evidence(field_name: str) -> No
         ("data_healthy", "yes"),
         ("execution_healthy", 1),
         ("kill_switch_active", 1),
+        ("operator_entry_halt_active", 1),
         ("active_intent_keys", set()),
         ("active_intent_keys", frozenset({""})),
     ),
@@ -237,6 +239,7 @@ def test_risk_context_rejects_invalid_present_values(
 
 def test_risk_context_is_frozen() -> None:
     context = _context()
+    assert context.operator_entry_halt_active is False
     with pytest.raises(FrozenInstanceError):
         context.kill_switch_active = True  # type: ignore[misc]
 
