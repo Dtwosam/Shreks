@@ -50,10 +50,11 @@ class BackupRuntimeConfig:
             "risk_control_path",
         ):
             value = getattr(self, name)
-            if type(value) is not Path or not value.is_absolute():
+            if not isinstance(value, Path) or not value.is_absolute():
                 raise BackupRuntimeConfigError(f"{name} must be an absolute Path")
         if self.alert_state_path is not None and (
-            type(self.alert_state_path) is not Path or not self.alert_state_path.is_absolute()
+            not isinstance(self.alert_state_path, Path)
+            or not self.alert_state_path.is_absolute()
         ):
             raise BackupRuntimeConfigError(
                 "alert_state_path must be an absolute Path when supplied"
