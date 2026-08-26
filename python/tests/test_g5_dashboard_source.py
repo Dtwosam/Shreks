@@ -110,12 +110,18 @@ def _fake_bootstrap():
     )
 
 
+def _runtime_fixture(tmp_path: Path):
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    return _runtime_config(runtime_root, max_cycles=1)
+
+
 def _source_config(tmp_path: Path) -> DashboardSourceConfig:
     telemetry_path = tmp_path / "telemetry.json"
     telemetry_path.write_text(encode_telemetry_snapshot(_snapshot()), encoding="utf-8")
     return DashboardSourceConfig(
         telemetry_path=telemetry_path,
-        paper_runtime_config=_runtime_config(tmp_path / "runtime", max_cycles=1),
+        paper_runtime_config=_runtime_fixture(tmp_path),
     )
 
 
@@ -204,7 +210,7 @@ def test_corrupt_or_incoherent_required_sources_fail_closed(tmp_path: Path, monk
 
 
 def test_real_runtime_source_reads_do_not_mutate_authoritative_inputs(tmp_path: Path) -> None:
-    runtime = _runtime_config(tmp_path / "runtime", max_cycles=1)
+    runtime = _runtime_fixture(tmp_path)
     _add_operational_tables(runtime.observer_database_path)
     telemetry_path = tmp_path / "telemetry.json"
     telemetry_path.write_text(encode_telemetry_snapshot(_snapshot()), encoding="utf-8")
