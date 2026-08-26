@@ -7,15 +7,24 @@ on:
         description: Exact sealed 40-character source commit
         required: true
         type: string
+      platform:
+        description: Native Linux GNU release platform
+        required: true
+        default: x86_64-unknown-linux-gnu
+        type: choice
+        options:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.platform == 'aarch64-unknown-linux-gnu' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
+      PLATFORM: ${{ inputs.platform }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Validate requested source SHA
@@ -26,6 +35,14 @@ jobs:
             echo "source_sha must be exactly 40 lowercase hex characters" >&2
             exit 2
           fi
+          case "$PLATFORM" in
+            x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)
+              ;;
+            *)
+              echo "unsupported release platform: $PLATFORM" >&2
+              exit 2
+              ;;
+          esac
 
       - name: Checkout exact source SHA
         uses: actions/checkout@v7
@@ -100,7 +117,7 @@ jobs:
           gh release create "$TAG" \
             --target "$SOURCE_SHA" \
             --title "$TAG" \
-            --notes "Verified Shreks release for sealed source SHA $SOURCE_SHA." \
+            --notes "Verified Shreks release for sealed source SHA $SOURCE_SHA on $PLATFORM." \
             "dist/release/shreks-release-$SOURCE_SHA.tar.gz" \
             "dist/release/shreks-release-$SOURCE_SHA.tar.gz.sha256" \
             "dist/release/RELEASE_MANIFEST.json"
