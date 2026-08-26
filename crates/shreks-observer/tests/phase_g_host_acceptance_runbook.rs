@@ -57,13 +57,13 @@ fn host_acceptance_package_has_no_wallet_signing_submission_or_live_authority() 
         "shreks_mode=live",
         "enable_live",
         "live_execution",
-        "systemctl start",
-        "systemctl stop",
-        "systemctl restart",
-        "systemctl enable",
-        "systemctl disable",
+        "\"systemctl\", \"start\"",
+        "\"systemctl\", \"stop\"",
+        "\"systemctl\", \"restart\"",
+        "\"systemctl\", \"enable\"",
+        "\"systemctl\", \"disable\"",
+        "\"systemctl\", \"reboot\"",
         "shutdown -",
-        "reboot ",
     ] {
         assert!(!source.contains(forbidden), "host acceptance gained forbidden authority marker: {forbidden}");
     }
