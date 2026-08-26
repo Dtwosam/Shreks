@@ -49,7 +49,7 @@ def _latched_bundle(tmp_path: Path):
         OperatorRiskControlCommand.EMERGENCY_KILL_SWITCH,
         expected_revision=0,
         observed_at_unix_ms=_CREATED_AT - 1,
-        source=OperatorRiskControlSource.HOST,
+        source=OperatorRiskControlSource.HOST_CLI,
         reason=_KILL_REASON,
     )
     latched_risk = sources.risk_control_path.read_bytes()
