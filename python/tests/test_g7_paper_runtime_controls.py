@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pytest
 
-from shreks_brain.observer_campaign.coordinator import ObserverPaperCampaignCoordinatorRunner
 from shreks_brain.observer_campaign.runtime import run_observer_paper_campaign_runtime
 from shreks_brain.observer_campaign.runtime_config import (
     load_observer_paper_campaign_runtime_config,
@@ -15,6 +14,9 @@ from shreks_brain.risk_control import (
     OperatorRiskControlSource,
     apply_operator_risk_control_command,
     initialize_operator_risk_control_state,
+)
+from shreks_brain.risk_control.paper_runtime import (
+    ControlledObserverPaperCampaignCoordinatorRunner,
 )
 
 from test_observer_campaign_runner import AS_OF
@@ -48,27 +50,17 @@ def test_configured_control_state_is_reread_on_every_paper_cycle(
     state_path.parent.mkdir()
     initialize_operator_risk_control_state(state_path, observed_at_unix_ms=0)
     config = _controlled_config(tmp_path, max_cycles=2, state_path=state_path)
-    real_run_cycle = ObserverPaperCampaignCoordinatorRunner.run_cycle
+    real_run_cycle = ControlledObserverPaperCampaignCoordinatorRunner.run_cycle
     observed_controls: list[tuple[bool, bool]] = []
 
-    def recording_run_cycle(
-        self,
-        as_of_unix_ms: int,
-        created_at_unix_ms: int,
-        *,
-        operator_entry_halt_active: bool = False,
-        operator_kill_switch_active: bool = False,
-    ):
+    def recording_run_cycle(self, as_of_unix_ms: int, created_at_unix_ms: int):
         observed_controls.append(
-            (operator_entry_halt_active, operator_kill_switch_active)
+            (
+                self.operator_entry_halt_active,
+                self.operator_kill_switch_active,
+            )
         )
-        result = real_run_cycle(
-            self,
-            as_of_unix_ms,
-            created_at_unix_ms,
-            operator_entry_halt_active=operator_entry_halt_active,
-            operator_kill_switch_active=operator_kill_switch_active,
-        )
+        result = real_run_cycle(self, as_of_unix_ms, created_at_unix_ms)
         if len(observed_controls) == 1:
             apply_operator_risk_control_command(
                 state_path,
@@ -81,7 +73,7 @@ def test_configured_control_state_is_reread_on_every_paper_cycle(
         return result
 
     monkeypatch.setattr(
-        ObserverPaperCampaignCoordinatorRunner,
+        ControlledObserverPaperCampaignCoordinatorRunner,
         "run_cycle",
         recording_run_cycle,
     )
@@ -113,30 +105,20 @@ def test_configured_emergency_kill_reaches_runtime_as_halt_and_kill(
         reason="authenticated dashboard emergency kill",
     )
     config = _controlled_config(tmp_path, max_cycles=1, state_path=state_path)
-    real_run_cycle = ObserverPaperCampaignCoordinatorRunner.run_cycle
+    real_run_cycle = ControlledObserverPaperCampaignCoordinatorRunner.run_cycle
     observed_controls: list[tuple[bool, bool]] = []
 
-    def recording_run_cycle(
-        self,
-        as_of_unix_ms: int,
-        created_at_unix_ms: int,
-        *,
-        operator_entry_halt_active: bool = False,
-        operator_kill_switch_active: bool = False,
-    ):
+    def recording_run_cycle(self, as_of_unix_ms: int, created_at_unix_ms: int):
         observed_controls.append(
-            (operator_entry_halt_active, operator_kill_switch_active)
+            (
+                self.operator_entry_halt_active,
+                self.operator_kill_switch_active,
+            )
         )
-        return real_run_cycle(
-            self,
-            as_of_unix_ms,
-            created_at_unix_ms,
-            operator_entry_halt_active=operator_entry_halt_active,
-            operator_kill_switch_active=operator_kill_switch_active,
-        )
+        return real_run_cycle(self, as_of_unix_ms, created_at_unix_ms)
 
     monkeypatch.setattr(
-        ObserverPaperCampaignCoordinatorRunner,
+        ControlledObserverPaperCampaignCoordinatorRunner,
         "run_cycle",
         recording_run_cycle,
     )
@@ -162,30 +144,20 @@ def test_unavailable_configured_control_state_fails_closed_entries_without_fake_
     if corrupt:
         state_path.write_text("{not-json}\n", encoding="utf-8")
     config = _controlled_config(tmp_path, max_cycles=1, state_path=state_path)
-    real_run_cycle = ObserverPaperCampaignCoordinatorRunner.run_cycle
+    real_run_cycle = ControlledObserverPaperCampaignCoordinatorRunner.run_cycle
     observed_controls: list[tuple[bool, bool]] = []
 
-    def recording_run_cycle(
-        self,
-        as_of_unix_ms: int,
-        created_at_unix_ms: int,
-        *,
-        operator_entry_halt_active: bool = False,
-        operator_kill_switch_active: bool = False,
-    ):
+    def recording_run_cycle(self, as_of_unix_ms: int, created_at_unix_ms: int):
         observed_controls.append(
-            (operator_entry_halt_active, operator_kill_switch_active)
+            (
+                self.operator_entry_halt_active,
+                self.operator_kill_switch_active,
+            )
         )
-        return real_run_cycle(
-            self,
-            as_of_unix_ms,
-            created_at_unix_ms,
-            operator_entry_halt_active=operator_entry_halt_active,
-            operator_kill_switch_active=operator_kill_switch_active,
-        )
+        return real_run_cycle(self, as_of_unix_ms, created_at_unix_ms)
 
     monkeypatch.setattr(
-        ObserverPaperCampaignCoordinatorRunner,
+        ControlledObserverPaperCampaignCoordinatorRunner,
         "run_cycle",
         recording_run_cycle,
     )
