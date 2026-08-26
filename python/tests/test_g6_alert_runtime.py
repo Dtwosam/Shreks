@@ -15,6 +15,15 @@ from shreks_brain.alerts.models import (
 from shreks_brain.alerts.runtime import run_alert_cycle
 from shreks_brain.alerts.state import load_alert_state, write_alert_state
 from shreks_brain.observer_campaign.runtime_config import ObserverPaperCampaignRuntimeConfig
+from shreks_brain.telemetry import (
+    G4_TELEMETRY_SCHEMA_VERSION,
+    LayerStatus,
+    MoneyTelemetry,
+    ProofRiskTelemetry,
+    SystemTelemetry,
+    TelemetrySnapshot,
+    TradingTelemetry,
+)
 
 
 def _config(tmp_path: Path) -> AlertRuntimeConfig:
@@ -70,10 +79,85 @@ def _state() -> AlertState:
     )
 
 
+def _telemetry(observed_at_unix_ms: int) -> TelemetrySnapshot:
+    return TelemetrySnapshot(
+        schema_version=G4_TELEMETRY_SCHEMA_VERSION,
+        generated_at_unix_ms=observed_at_unix_ms,
+        mode="PAPER",
+        overall_status=LayerStatus.HEALTHY,
+        system=SystemTelemetry(
+            status=LayerStatus.HEALTHY,
+            observed_at_unix_ms=observed_at_unix_ms,
+            source_errors=(),
+            provider_count=0,
+            unhealthy_provider_count=0,
+            latest_market_observed_at_unix_ms=observed_at_unix_ms,
+            market_age_ms=0,
+            latest_ingestion_checkpoint_at_unix_ms=observed_at_unix_ms,
+            paper_last_cycle_at_unix_ms=observed_at_unix_ms,
+            accounting_status="VALID",
+            host_metrics_available=False,
+        ),
+        trading=TradingTelemetry(
+            status=LayerStatus.HEALTHY,
+            observed_at_unix_ms=observed_at_unix_ms,
+            source_errors=(),
+            candidate_count=0,
+            holder_distribution_count=0,
+            paper_quote_count=0,
+            terminal_paper_entry_count=0,
+            open_position_count=0,
+            closed_position_count=0,
+            pending_entry=False,
+            candidate_version=None,
+            candidate_mint=None,
+            paper_run_id=None,
+            historical_score_count=None,
+            historical_decision_count=None,
+        ),
+        money=MoneyTelemetry(
+            status=LayerStatus.HEALTHY,
+            observed_at_unix_ms=observed_at_unix_ms,
+            source_errors=(),
+            starting_cash_usd=100.0,
+            cash_balance_usd=100.0,
+            realized_pnl_usd=0.0,
+            unrealized_pnl_usd=None,
+            accumulated_costs_usd=0.0,
+            open_cost_basis_usd=0.0,
+            open_position_count=0,
+            daily_loss_usd=None,
+            performance=None,
+        ),
+        proof_risk=ProofRiskTelemetry(
+            status=LayerStatus.HEALTHY,
+            observed_at_unix_ms=observed_at_unix_ms,
+            source_errors=(),
+            proof_decision=None,
+            proof_gate_count=0,
+            proof_pass_count=0,
+            proof_fail_count=0,
+            proof_insufficient_count=0,
+            promotion_decision=None,
+            promotion_gate_count=0,
+            global_risk_halt=False,
+            accounting_integrity="VALID",
+            live_state="DISABLED",
+            kill_switch_active=False,
+            proof_trade_count=None,
+            proof_distinct_mint_count=None,
+            proof_net_expectancy_pct=None,
+            proof_profit_factor=None,
+            proof_maximum_drawdown_pct=None,
+            proof_cost_burden_pct=None,
+        ),
+    )
+
+
 def _source(observed_at_unix_ms: int) -> AlertSourceSnapshot:
     return AlertSourceSnapshot(
         observed_at_unix_ms=observed_at_unix_ms,
-        telemetry=None,
+        telemetry=_telemetry(observed_at_unix_ms),
         telemetry_error_code=None,
         providers=(),
         paper_ledger_entries=(),
