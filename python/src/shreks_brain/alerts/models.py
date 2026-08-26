@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from shreks_brain.paper import PaperLedgerEntry
+from shreks_brain.telemetry import TelemetrySnapshot
+
 
 G6_ALERT_STATE_SCHEMA_VERSION = "g6-alert-state-v1"
 _MAX_EVENT_ID_CHARS = 256
@@ -110,6 +113,82 @@ class AlertState:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class AlertProviderHealth:
+    provider: str
+    status: str
+    observed_at_unix_ms: int
+    consecutive_failures: int
+
+    def __post_init__(self) -> None:
+        _require_bounded_text("provider", self.provider, 128)
+        _require_bounded_text("provider status", self.status, 128)
+        _require_non_negative_int("provider observed_at_unix_ms", self.observed_at_unix_ms)
+        _require_non_negative_int("provider consecutive_failures", self.consecutive_failures)
+
+
+@dataclass(frozen=True, slots=True)
+class AlertSystemdHealth:
+    active_units: tuple[str, ...]
+    inactive_units: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        for name in ("active_units", "inactive_units"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple):
+                raise ValueError(f"{name} must be a tuple")
+            for value in values:
+                _require_bounded_text(name, value, 256)
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} must be unique")
+        if set(self.active_units) & set(self.inactive_units):
+            raise ValueError("systemd active and inactive units must not overlap")
+
+
+@dataclass(frozen=True, slots=True)
+class AlertSourceSnapshot:
+    observed_at_unix_ms: int
+    telemetry: TelemetrySnapshot | None
+    telemetry_error_code: str | None
+    providers: tuple[AlertProviderHealth, ...]
+    paper_ledger_entries: tuple[PaperLedgerEntry, ...] | None
+    paper_error_code: str | None
+    systemd: AlertSystemdHealth | None
+    systemd_error_code: str | None
+
+    def __post_init__(self) -> None:
+        _require_non_negative_int("observed_at_unix_ms", self.observed_at_unix_ms)
+        if self.telemetry is not None and type(self.telemetry) is not TelemetrySnapshot:
+            raise ValueError("telemetry must be an exact TelemetrySnapshot when supplied")
+        _require_optional_error_code("telemetry_error_code", self.telemetry_error_code)
+        if self.telemetry is None and self.telemetry_error_code is None:
+            raise ValueError("missing telemetry requires an error code")
+        if self.telemetry is not None and self.telemetry_error_code is not None:
+            raise ValueError("available telemetry cannot carry an error code")
+        if not isinstance(self.providers, tuple) or not all(
+            type(provider) is AlertProviderHealth for provider in self.providers
+        ):
+            raise ValueError("providers must contain exact AlertProviderHealth values")
+        provider_names = tuple(provider.provider for provider in self.providers)
+        if provider_names != tuple(sorted(provider_names)) or len(provider_names) != len(set(provider_names)):
+            raise ValueError("providers must be uniquely sorted by provider name")
+        if self.paper_ledger_entries is not None and (
+            not isinstance(self.paper_ledger_entries, tuple)
+            or not all(type(entry) is PaperLedgerEntry for entry in self.paper_ledger_entries)
+        ):
+            raise ValueError("paper_ledger_entries must contain exact PaperLedgerEntry values")
+        _require_optional_error_code("paper_error_code", self.paper_error_code)
+        if self.paper_ledger_entries is None and self.paper_error_code is None:
+            raise ValueError("missing PAPER ledger requires an error code")
+        if self.systemd is not None and type(self.systemd) is not AlertSystemdHealth:
+            raise ValueError("systemd must be an exact AlertSystemdHealth when supplied")
+        _require_optional_error_code("systemd_error_code", self.systemd_error_code)
+        if self.systemd is None and self.systemd_error_code is None:
+            raise ValueError("missing systemd health requires an error code")
+        if self.systemd is not None and self.systemd_error_code is not None:
+            raise ValueError("available systemd health cannot carry an error code")
+
+
 def _require_non_negative_int(name: str, value: object) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValueError(f"{name} must be a non-negative integer")
@@ -124,3 +203,9 @@ def _require_bounded_text(name: str, value: object, maximum: int) -> None:
         or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise ValueError(f"{name} must be bounded printable text")
+
+
+def _require_optional_error_code(name: str, value: object) -> None:
+    if value is None:
+        return
+    _require_bounded_text(name, value, 128)
