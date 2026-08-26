@@ -13,6 +13,7 @@ _E11_PATH_KEY = "SHREKS_PAPER_CAMPAIGN_E11_PATH"
 _MANIFEST_PATH_KEY = "SHREKS_PAPER_CAMPAIGN_MANIFEST_PATH"
 _INTERVAL_SECONDS_KEY = "SHREKS_PAPER_CAMPAIGN_INTERVAL_SECONDS"
 _MAX_CYCLES_KEY = "SHREKS_PAPER_CAMPAIGN_MAX_CYCLES"
+_RISK_CONTROL_PATH_KEY = "SHREKS_PAPER_CAMPAIGN_RISK_CONTROL_PATH"
 _ALLOWED_ENV_KEYS = frozenset(
     {
         _OBSERVER_DB_PATH_KEY,
@@ -20,6 +21,7 @@ _ALLOWED_ENV_KEYS = frozenset(
         _MANIFEST_PATH_KEY,
         _INTERVAL_SECONDS_KEY,
         _MAX_CYCLES_KEY,
+        _RISK_CONTROL_PATH_KEY,
     }
 )
 
@@ -35,6 +37,7 @@ class ObserverPaperCampaignRuntimeConfig:
     manifest_path: Path
     cycle_interval_seconds: float
     max_cycles: int | None
+    risk_control_path: Path | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -47,6 +50,14 @@ class ObserverPaperCampaignRuntimeConfig:
                 raise ObserverPaperCampaignRuntimeConfigError(
                     f"{name} must be an absolute Path"
                 )
+
+        if self.risk_control_path is not None and (
+            not isinstance(self.risk_control_path, Path)
+            or not self.risk_control_path.is_absolute()
+        ):
+            raise ObserverPaperCampaignRuntimeConfigError(
+                "risk_control_path must be an absolute Path when supplied"
+            )
 
         if (
             isinstance(self.cycle_interval_seconds, bool)
@@ -98,6 +109,7 @@ def load_observer_paper_campaign_runtime_config(
     manifest_path = _required_path(source, _MANIFEST_PATH_KEY, base)
     cycle_interval_seconds = _positive_interval(source, _INTERVAL_SECONDS_KEY)
     max_cycles = _optional_cycle_limit(source, _MAX_CYCLES_KEY)
+    risk_control_path = _optional_path(source, _RISK_CONTROL_PATH_KEY, base)
 
     return ObserverPaperCampaignRuntimeConfig(
         observer_database_path=observer_database_path,
@@ -105,6 +117,7 @@ def load_observer_paper_campaign_runtime_config(
         manifest_path=manifest_path,
         cycle_interval_seconds=cycle_interval_seconds,
         max_cycles=max_cycles,
+        risk_control_path=risk_control_path,
     )
 
 
@@ -130,7 +143,27 @@ def _required_path(
         raise ObserverPaperCampaignRuntimeConfigError(
             f"required runtime environment value is missing: {key}"
         )
+    return _resolve_path(value, key, base_directory)
 
+
+def _optional_path(
+    env: Mapping[str, str],
+    key: str,
+    base_directory: Path,
+) -> Path | None:
+    value = env.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ObserverPaperCampaignRuntimeConfigError(
+            f"runtime path is malformed for {key}"
+        )
+    if not value.strip():
+        return None
+    return _resolve_path(value, key, base_directory)
+
+
+def _resolve_path(value: str, key: str, base_directory: Path) -> Path:
     try:
         path = Path(value.strip()).expanduser()
         if not path.is_absolute():
