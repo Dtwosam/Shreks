@@ -9,6 +9,15 @@ from .collector import (
     ProtectedPathRequirement,
     collect_host_acceptance_record,
 )
+from .compare import (
+    HOST_CONTINUITY_SCHEMA_VERSION,
+    HostContinuityAssessment,
+    HostContinuityFinding,
+    HostContinuityVerdict,
+    compare_host_acceptance_records,
+    decode_host_continuity_assessment,
+    encode_host_continuity_assessment,
+)
 from .models import (
     HOST_ACCEPTANCE_SCHEMA_VERSION,
     PHASE_G_REQUIRED_UNITS,
@@ -28,6 +37,7 @@ from .models import (
 
 __all__ = [
     "HOST_ACCEPTANCE_SCHEMA_VERSION",
+    "HOST_CONTINUITY_SCHEMA_VERSION",
     "PHASE_G_REQUIRED_UNITS",
     "BackupObservation",
     "DashboardExposureObservation",
@@ -36,6 +46,9 @@ __all__ = [
     "HostAcceptanceStage",
     "HostCheckStatus",
     "HostCommandResult",
+    "HostContinuityAssessment",
+    "HostContinuityFinding",
+    "HostContinuityVerdict",
     "HostResourceObservation",
     "PaperRecoveryObservation",
     "ProtectedPathKind",
@@ -45,7 +58,10 @@ __all__ = [
     "RiskControlObservation",
     "SystemdUnitObservation",
     "collect_host_acceptance_record",
+    "compare_host_acceptance_records",
     "decode_host_acceptance_record",
+    "decode_host_continuity_assessment",
     "encode_host_acceptance_record",
+    "encode_host_continuity_assessment",
     "fingerprint_host_acceptance_record",
 ]
