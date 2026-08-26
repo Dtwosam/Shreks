@@ -9,6 +9,7 @@ from shreks_brain.decision import (
     TradeDecision,
 )
 from shreks_brain.observer_campaign.assembler import _exit_execution_context
+from shreks_brain.regime import MarketRegime
 from shreks_brain.risk.engine import assess_entry_risk
 from shreks_brain.risk.models import (
     RiskContext,
@@ -16,9 +17,12 @@ from shreks_brain.risk.models import (
     RiskReasonCode,
     RiskState,
 )
+from shreks_brain.risk_control import (
+    apply_operator_controls_to_exit_context,
+    apply_operator_controls_to_risk_context,
+)
 from shreks_brain.runtime import RuntimeMode
 from shreks_brain.safety import SafetyDecision
-from shreks_brain.regime import MarketRegime
 from shreks_brain.setups import SetupState
 
 
@@ -97,46 +101,53 @@ def _reason(context: RiskContext) -> RiskReasonCode:
 
 
 def test_operator_entry_halt_blocks_only_new_entries_with_stable_reason() -> None:
-    context = replace(_context(), operator_entry_halt_active=True)
+    context = apply_operator_controls_to_risk_context(
+        _context(), halt_new_entries=True, kill_switch_active=False
+    )
     assert _reason(context) is RiskReasonCode.OPERATOR_ENTRY_HALT_ACTIVE
 
 
 def test_emergency_kill_retains_existing_kill_switch_precedence() -> None:
-    context = replace(
-        _context(),
-        operator_entry_halt_active=True,
-        kill_switch_active=True,
+    context = apply_operator_controls_to_risk_context(
+        _context(), halt_new_entries=True, kill_switch_active=True
     )
+    assert context.operator_entry_halt_active is True
     assert _reason(context) is RiskReasonCode.KILL_SWITCH_ACTIVE
 
 
 def test_legacy_context_default_remains_entry_eligible() -> None:
-    context = replace(_context(), operator_entry_halt_active=False)
-    result = assess_entry_risk(_decision(), context, _policy(), RuntimeMode.PAPER)
+    result = assess_entry_risk(_decision(), _context(), _policy(), RuntimeMode.PAPER)
     assert result.state is RiskState.APPROVED
 
 
 def test_entry_halt_does_not_fabricate_global_exit_halt() -> None:
-    context = _exit_execution_context(
-        1_000_000,
-        999_900,
-        None,
-        None,
-        False,
-        operator_entry_halt_active=True,
-        operator_kill_switch_active=False,
+    base = _exit_execution_context(1_000_000, 999_900, None, None, False)
+    context = apply_operator_controls_to_exit_context(
+        base, halt_new_entries=True, kill_switch_active=False
     )
     assert context.global_halt_active is False
 
 
 def test_emergency_kill_feeds_existing_global_halt_exit_path() -> None:
-    context = _exit_execution_context(
-        1_000_000,
-        999_900,
-        None,
-        None,
-        False,
-        operator_entry_halt_active=True,
-        operator_kill_switch_active=True,
+    base = _exit_execution_context(1_000_000, 999_900, None, None, False)
+    context = apply_operator_controls_to_exit_context(
+        base, halt_new_entries=True, kill_switch_active=True
     )
     assert context.global_halt_active is True
+
+
+def test_control_adapters_are_monotonic_over_existing_safety_state() -> None:
+    risk = apply_operator_controls_to_risk_context(
+        replace(_context(), kill_switch_active=True),
+        halt_new_entries=False,
+        kill_switch_active=False,
+    )
+    assert risk.kill_switch_active is True
+
+    exit_context = _exit_execution_context(1_000_000, 999_900, None, None, True)
+    exit_context = apply_operator_controls_to_exit_context(
+        exit_context,
+        halt_new_entries=False,
+        kill_switch_active=False,
+    )
+    assert exit_context.global_halt_active is True
