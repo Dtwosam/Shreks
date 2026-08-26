@@ -182,11 +182,26 @@ impl ChainDataProvider for CountingChain {
 }
 
 #[tokio::test(start_paused = true)]
-async fn due_candidate_gets_one_market_pass_even_when_all_horizons_are_overdue_and_no_chain_call() {
-    let root = unique_test_dir("dedupe-no-chain");
+async fn due_candidate_with_existing_mint_state_gets_one_market_pass_and_no_chain_call() {
+    let root = unique_test_dir("dedupe-existing-chain-state");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    seed_candidate(&db, "mint-due", 0);
+    let candidate_id = seed_candidate(&db, "mint-due", 0);
+    db.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "mint-due".to_owned(),
+            owner_program: "TokenProgram".to_owned(),
+            supply: 1,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 1,
+            observed_at_unix_ms: 1,
+        },
+    )
+    .unwrap();
 
     let market = Arc::new(CountingMarket::default());
     let chain = Arc::new(CountingChain::default());
