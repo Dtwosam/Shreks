@@ -1,39 +1,43 @@
-# Free VPS ARM64 Release Compatibility Implementation Plan
+# Free VPS ARM64 Release Compatibility Verification Record
 
-**Goal:** Extend the sealed G2 release integrity path to build, verify, publish, and install exact ARM64 Linux releases for Oracle Always Free Ampere A1 without changing trading behavior.
+## Seal inputs
 
-**Base:** sealed Phase-G host acceptance `fed57c3a5d8d13ccd08306c41d4d915498b39b42`.
+- Base: sealed Phase-G host acceptance `fed57c3a5d8d13ccd08306c41d4d915498b39b42`.
+- Frozen behavior: `b7177a0988b4c41f955afaaa7b399402c84a79a6`.
+- Frozen CI: `32988789042` — GREEN.
+  - Repository safety: GREEN.
+  - Rust/workspace tests: GREEN.
+  - Python: **2614 passed**.
+  - ARM64 release build: GREEN on GitHub-hosted `ubuntu-24.04-arm`, including native build and release-bundle verification.
 
-## Task 1 — RED platform contract
+## Verified compatibility behavior
 
-Add tests proving:
-- release manifests accept exactly x86_64 and aarch64 Linux GNU triples;
-- arbitrary platforms remain rejected;
-- release manager rejects a manifest whose platform does not match the host;
-- unknown host architectures fail closed;
-- build script requires requested platform to equal the native Rust host triple;
-- CI contains a standard `ubuntu-24.04-arm` ARM release-build job;
-- the manual sealed-release workflow can select the exact native target platform and ARM runner.
+- Release manifests accept exactly `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`; arbitrary platform strings fail closed.
+- `deploy/release/build_release.sh` keeps the x86_64 default, accepts an explicit `PLATFORM`, and requires the requested platform to match the native Rust host triple before compiling.
+- `deploy/release/release_manager.py` maps only `x86_64` and `aarch64` Linux hosts to supported release triples, rejects unknown host architectures, rejects incoming manifest/host mismatches before staging, and revalidates stored releases against the current host before reuse or activation.
+- CI contains a native ARM64 release-build proof on `ubuntu-24.04-arm`.
+- The manual sealed-release workflow selects the exact supported platform and corresponding native GitHub runner while preserving the existing immutable source-SHA release tag and deployment contract.
+- Historical G2 release-manager tests remain architecture-independent so the full suite can execute without falsely binding fixtures to the CI runner architecture.
 
-Keep historical G2 release-manager fixtures architecture-independent so the full Python suite can execute on both x86_64 and ARM64 runners.
+## Scope audit
 
-Run CI and record intended failures only.
+Exact comparison from the host-acceptance seal to the frozen behavior is **13 commits / 10 changed files / 0 behind**. The changed files are restricted to release packaging/verification, release/CI workflows, compatibility tests, and design/verification documentation:
 
-## Task 2 — GREEN dual-platform release path
+- `.github/workflows/ci.yml`
+- `.github/workflows/release.yml`
+- `deploy/release/build_release.sh`
+- `deploy/release/release_bundle.py`
+- `deploy/release/release_manager.py`
+- `docs/superpowers/plans/2026-08-26-free-vps-arm64-release-compatibility.md`
+- `docs/superpowers/specs/2026-08-26-free-vps-arm64-release-compatibility-design.md`
+- `python/tests/conftest.py`
+- `python/tests/test_free_vps_arm64_release_compatibility.py`
+- `python/tests/test_g2_release_bundle.py`
 
-Implement:
-- exact two-platform release-manifest allowlist;
-- backwards-compatible x86 default plus explicit `PLATFORM` build input;
-- native Rust host/platform equality gate;
-- exact host architecture mapping and install-time manifest platform gate;
-- stored-release host-platform revalidation before reuse/activation;
-- ARM64 release-build CI on GitHub's standard ARM runner;
-- manual sealed-release platform choice with native x86_64/ARM64 runner selection, preserving the immutable release tag and existing deployment contract.
+No provider adapter, strategy/setup/scoring implementation, risk threshold, sizing/slippage formula, execution/fill/exit path, ledger/accounting/checkpoint behavior, profitability/proof formula, registry/promotion authority, dashboard, alerts, backup implementation, wallet/signing/submission path, transaction construction, or live-enable behavior changed.
 
-Run full CI including the ARM release build.
+## Seal contract
 
-## Task 3 — audit and seal
-
-Audit the compatibility diff against the host-acceptance seal. No trading/runtime authority drift is permitted. Freeze all-green behavior, replace this plan with a verification record in one docs-only seal commit, prove 1-commit/1-file seal geometry, rerun exact-seal CI including ARM64 release build, and keep the stacked PR draft/open/unmerged.
+This commit is documentation-only and replaces the implementation plan with this verification record. The required seal geometry is exactly one commit and this one file beyond frozen behavior. Exact-seal CI must repeat repository safety, Rust/workspace, Python, and native ARM64 release-build verification before this slice is considered sealed for deployment.
 
 **LIVE TRADING: DISABLED.**
