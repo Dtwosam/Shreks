@@ -271,9 +271,11 @@ impl Observer {
     /// Run observation cycles until shutdown is signaled.
     ///
     /// A full provider cycle starts immediately and then follows the configured
-    /// interval. Between cycles, realtime Pump signals can wake the observer
-    /// solely for a durable inbox write; they never trigger transaction fetches
-    /// or market calls on the realtime path.
+    /// interval. Shutdown remains selectable while provider work is in flight so
+    /// a runtime stop cannot be held hostage by a slow external request. Between
+    /// cycles, realtime Pump signals can wake the observer solely for a durable
+    /// inbox write; they never trigger transaction fetches or market calls on the
+    /// realtime path.
     pub async fn run_until_shutdown<F>(
         &mut self,
         cycle_interval: Duration,
@@ -285,12 +287,15 @@ impl Observer {
         tokio::pin!(shutdown);
         let mut completed_cycles = 0usize;
 
-        self.run_cycle().await?;
-        completed_cycles = completed_cycles.saturating_add(1);
-
         loop {
-            let next_cycle = Instant::now() + cycle_interval;
+            let cycle_result = tokio::select! {
+                _ = &mut shutdown => return Ok(completed_cycles),
+                result = self.run_cycle() => result,
+            };
+            cycle_result?;
+            completed_cycles = completed_cycles.saturating_add(1);
 
+            let next_cycle = Instant::now() + cycle_interval;
             loop {
                 tokio::select! {
                     _ = sleep_until(next_cycle) => break,
@@ -307,9 +312,6 @@ impl Observer {
                     }
                 }
             }
-
-            self.run_cycle().await?;
-            completed_cycles = completed_cycles.saturating_add(1);
         }
     }
 
