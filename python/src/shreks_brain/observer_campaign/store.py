@@ -343,10 +343,13 @@ class ObserverCampaignStore:
                     global_risk_halt,
                 )
                 assessment = assess_safety(safety_inputs, safety_policy)
-                if safety_inputs.critical_data_observed_at_unix_ms is not None:
-                    consumed_timestamps.append(
-                        safety_inputs.critical_data_observed_at_unix_ms
-                    )
+                safety_observed_at = safety_inputs.critical_data_observed_at_unix_ms
+                safety_inside_window = (
+                    safety_observed_at is not None
+                    and safety_observed_at > window_started_at
+                )
+                if safety_inside_window:
+                    consumed_timestamps.append(safety_observed_at)
 
                 entry_identity = ObserverPaperQuoteIdentity(
                     candidate_id=candidate.candidate_id,
@@ -360,11 +363,17 @@ class ObserverCampaignStore:
                     slippage_bps=policy.slippage_bps,
                 )
                 entry_quote = self.latest_paper_quote(entry_identity, as_of_unix_ms)
-                if entry_quote is not None:
+                entry_quote_inside_window = (
+                    entry_quote is not None
+                    and entry_quote.quoted_at_unix_ms > window_started_at
+                )
+                if entry_quote_inside_window:
                     consumed_timestamps.append(entry_quote.quoted_at_unix_ms)
 
                 if (
                     assessment.decision is SafetyDecision.PASS
+                    and safety_inside_window
+                    and entry_quote_inside_window
                     and entry_quote is not None
                     and entry_quote.route_available
                 ):
