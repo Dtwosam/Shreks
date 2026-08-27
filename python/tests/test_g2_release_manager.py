@@ -333,7 +333,6 @@ def test_successful_activation_atomically_points_current_and_installs_units(tmp_
     assert paths.current_link.is_symlink()
     assert paths.current_link.resolve() == release_dir.resolve()
     assert runner.calls == [
-        ("systemctl", "stop", "shreks.target"),
         ("systemctl", "daemon-reload"),
         ("systemctl", "start", "shreks.target"),
         *(("systemctl", "is-active", "--quiet", unit) for unit in HEALTH_UNITS),
