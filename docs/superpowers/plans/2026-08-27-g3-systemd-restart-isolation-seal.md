@@ -82,6 +82,11 @@ Merged main:
 - merge commit `a47a5af21693a63e2d892d4961ff77aed01cf76d`
 - merged-main CI run `33118613459`: Rust, Python, repository safety, and native ARM64 release build all passed.
 
+Seal commit and CI:
+
+- seal commit `cb72f76b901bd170b565a53a7269a20247c27908` — `seal: isolate systemd member restarts`
+- seal CI run `33118794390`: Rust, Python, repository safety, and native ARM64 release build all passed.
+
 ## Scope audit
 
 Code delta is intentionally narrow:
@@ -91,21 +96,64 @@ Code delta is intentionally narrow:
 
 No observer provider code, PAPER strategy logic, accounting, safety policy, risk policy, execution authority, database schema, release verifier, or deployment verifier was changed.
 
-## Remaining physical-host acceptance boundary
+## Physical-host acceptance — PASSED
 
-This seal is eligible for release/deployment only after its own seal CI is green.
+The exact sealed release was built and deployed through the verified ARM64 delivery path:
 
-After deployment to the production VPS, physical acceptance must directly restart `shreks-observe.service` and prove all of the following in the same observation window:
+- immutable release tag: `shreks-cb72f76b901bd170b565a53a7269a20247c27908`;
+- release workflow run `33119367333` completed successfully, including exact sealed-source checkout, Rust tests, Python tests, release-bundle verification, duplicate-tag rejection, and immutable GitHub release creation;
+- deploy workflow run `33119585249` completed successfully, including exact release validation, local asset verification before host contact, transfer, and host release-manager invocation;
+- production `/opt/shreks/current` resolved exactly to `/opt/shreks/releases/cb72f76b901bd170b565a53a7269a20247c27908`.
 
-1. `/opt/shreks/current` resolves to this exact sealed release.
-2. `shreks.target`, evidence, campaign, and observer are active before the drill.
-3. observer restart completes below the unchanged 30-second timeout with no SIGKILL/timeout signature.
-4. `shreks.target` remains active throughout/after the member restart.
-5. evidence and campaign remain active and do not undergo a restart caused by the observer drill; capture their main PIDs before and after to prove sibling continuity.
-6. observer main PID changes as expected for the direct restart.
-7. all four core runtime units are active after the drill.
-8. persistent PAPER state remains readable/continuous; no state reset or fresh database is used to make acceptance pass.
+The loaded production target contract showed:
 
-Until that physical restart-isolation drill passes, the supervision topology is not considered host-sealed.
+```ini
+Wants=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service
+```
+
+and no old core-member `Requires=` line.
+
+Before the direct observer restart, all four core units were active. Continuity markers were captured:
+
+- `TARGET_ACTIVE_ENTER_BEFORE=108265317556`;
+- `EVIDENCE_PID_BEFORE=23277`;
+- `CAMPAIGN_PID_BEFORE=23733`.
+
+`systemctl restart shreks-observe.service` then returned `RESTART_RC=0` with `RESTART_SECONDS=0`.
+
+After the observer-only restart:
+
+- `shreks-observe.service=active`;
+- `shreks-paper-evidence.service=active`;
+- `shreks-paper-campaign.service=active`;
+- `shreks.target=active`;
+- `TARGET_ACTIVE_ENTER_AFTER=108265317556`, exactly unchanged;
+- `EVIDENCE_PID_AFTER=23277`, exactly unchanged;
+- `CAMPAIGN_PID_AFTER=23733`, exactly unchanged.
+
+The observer reported:
+
+- `Result=success`;
+- `NRestarts=0`;
+- `ExecMainCode=0`;
+- `ExecMainStatus=0`;
+- `ActiveState=active`;
+- `SubState=running`.
+
+Its journal recorded a clean stop of PID `23275` and immediate start of PID `23800`, proving the observer process itself changed while its siblings did not. The same journal contained no `stop-sigterm` timeout, `SIGKILL`, `status=9/KILL`, or timeout-result signature.
+
+The sibling/target journal for the same observation window contained no entries and specifically no target, paper-evidence, or paper-campaign stop event. The host acceptance script therefore reported:
+
+```text
+No timeout/SIGKILL signatures detected
+No sibling/target teardown detected
+G3 PRODUCTION SUPERVISION ACCEPTANCE PASSED
+```
+
+Persistent PAPER continuity was preserved operationally during the drill: paper-evidence and paper-campaign remained continuously active with the same main PIDs before and after the observer restart, the target active-enter timestamp did not change, and no database, E11, checkpoint, manifest, or other durable state reset/reinitialization action was performed to make acceptance pass.
+
+This closes the production physical-host acceptance boundary for G3 member-restart isolation.
+
+**G3 PRODUCTION SUPERVISION ACCEPTANCE: PASSED.**
 
 **LIVE TRADING: DISABLED.**
