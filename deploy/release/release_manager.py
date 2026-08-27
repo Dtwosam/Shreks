@@ -91,6 +91,18 @@ def _load_manifest(path: Path, context: str) -> ReleaseManifest:
         raise ReleaseManagerError(f"{context} manifest verification failed") from exc
 
 
+def _is_allowed_runtime_venv_symlink(venv_dir: Path, path: Path) -> bool:
+    if path != venv_dir / "lib64":
+        return False
+    try:
+        if os.readlink(path) != "lib":
+            return False
+    except OSError:
+        return False
+    lib_dir = venv_dir / "lib"
+    return not lib_dir.is_symlink() and lib_dir.is_dir()
+
+
 def _verify_runtime_venv(release_dir: Path) -> None:
     venv_dir = release_dir / ".venv"
     python = venv_dir / "bin" / "python"
@@ -100,7 +112,7 @@ def _verify_runtime_venv(release_dir: Path) -> None:
         raise ReleaseManagerError("stored release Python executable is missing or symlinked")
 
     for path in venv_dir.rglob("*"):
-        if path.is_symlink():
+        if path.is_symlink() and not _is_allowed_runtime_venv_symlink(venv_dir, path):
             raise ReleaseManagerError("symlinks are not allowed inside stored release virtualenv")
 
 
