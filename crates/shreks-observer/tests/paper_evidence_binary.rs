@@ -10,6 +10,7 @@ fn paper_evidence_binary_wires_only_the_bounded_read_only_evidence_path() {
         "HeliusProvider::new",
         "JupiterProvider::new",
         "SafetyEvidenceCollector::new",
+        "with_chain_provider",
         "run_paper_evidence_cycle",
         "tokio::time::sleep",
         "tokio::signal::ctrl_c",
@@ -37,6 +38,7 @@ fn paper_evidence_binary_wires_only_the_bounded_read_only_evidence_path() {
 fn paper_evidence_binary_logs_counts_not_provider_keys() {
     let source = include_str!("../src/bin/shreks-paper-evidence/main.rs");
     assert!(source.contains("candidates_selected"));
+    assert!(source.contains("mint_states_stored"));
     assert!(source.contains("holder_snapshots_stored"));
     assert!(source.contains("entry_quote_snapshots_stored"));
     assert!(source.contains("exit_quote_snapshots_stored"));

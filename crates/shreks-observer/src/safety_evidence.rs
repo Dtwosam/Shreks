@@ -2,9 +2,9 @@ use std::{error::Error, fmt, sync::Arc};
 
 use shreks_core::{
     QuotePurpose, QuoteRequest, QuoteSnapshot, TokenDistributionRequest, TokenHolderDistribution,
-    MAX_TOKEN_DISTRIBUTION_PAGE_SIZE,
+    TokenMintState, MAX_TOKEN_DISTRIBUTION_PAGE_SIZE,
 };
-use shreks_providers::{DistributionDataProvider, QuoteProvider};
+use shreks_providers::{ChainDataProvider, DistributionDataProvider, QuoteProvider};
 use shreks_storage::{ShreksDb, StorageError};
 
 /// Caller-supplied, versioned recipe for one bounded read-only safety probe.
@@ -19,10 +19,12 @@ pub struct SafetyEvidenceProbe {
 /// Counts from one explicitly invoked evidence collection pass.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SafetyEvidenceCycleReport {
+    pub mint_states_stored: usize,
     pub holder_snapshots_stored: usize,
     pub quote_snapshots_stored: usize,
     pub entry_quote_snapshots_stored: usize,
     pub exit_quote_snapshots_stored: usize,
+    pub chain_provider_failures: usize,
     pub distribution_provider_failures: usize,
     pub quote_provider_failures: usize,
     pub entry_quote_provider_failures: usize,
@@ -65,6 +67,7 @@ impl From<StorageError> for SafetyEvidenceError {
 /// Construction is caller-controlled; no default runtime path creates one.
 pub struct SafetyEvidenceCollector {
     db: ShreksDb,
+    chain_providers: Vec<Arc<dyn ChainDataProvider>>,
     distribution_providers: Vec<Arc<dyn DistributionDataProvider>>,
     quote_providers: Vec<Arc<dyn QuoteProvider>>,
 }
@@ -77,12 +80,20 @@ impl SafetyEvidenceCollector {
     ) -> Self {
         Self {
             db,
+            chain_providers: Vec::new(),
             distribution_providers,
             quote_providers,
         }
     }
 
-    /// Collect and persist read-only holder/exitability evidence for exactly
+    /// Attach one bounded read-only chain provider for missing mint-state truth.
+    /// Existing durable mint state suppresses repeat chain calls.
+    pub fn with_chain_provider(mut self, provider: Arc<dyn ChainDataProvider>) -> Self {
+        self.chain_providers.push(provider);
+        self
+    }
+
+    /// Collect and persist read-only mint/holder/exitability evidence for exactly
     /// one candidate. Provider failures remain unknown evidence, never false
     /// facts. Storage failures are fatal because losing audit truth is unsafe.
     pub async fn collect_candidate(
@@ -93,6 +104,25 @@ impl SafetyEvidenceCollector {
     ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
         validate_probe(candidate_id, candidate_mint, probe)?;
         let mut report = SafetyEvidenceCycleReport::default();
+
+        if !self.db.has_mint_state(candidate_id)? {
+            for provider in &self.chain_providers {
+                let provider_id = provider.provider_id();
+                match provider.token_mint_state(candidate_mint).await {
+                    Ok(result)
+                        if mint_state_identity_matches(provider_id, candidate_mint, &result) =>
+                    {
+                        self.db.insert_mint_state(candidate_id, &result)?;
+                        report.mint_states_stored = report.mint_states_stored.saturating_add(1);
+                        break;
+                    }
+                    Ok(_) | Err(_) => {
+                        report.chain_provider_failures =
+                            report.chain_provider_failures.saturating_add(1);
+                    }
+                }
+            }
+        }
 
         for provider in &self.distribution_providers {
             let provider_id = provider.provider_id();
@@ -266,6 +296,14 @@ fn validate_quote_request(request: &QuoteRequest) -> Result<(), SafetyEvidenceEr
     )
     .map(|_| ())
     .map_err(|error| SafetyEvidenceError::InvalidProbe(error.to_string()))
+}
+
+fn mint_state_identity_matches(
+    provider_id: shreks_core::ProviderId,
+    candidate_mint: &str,
+    result: &TokenMintState,
+) -> bool {
+    result.provider == provider_id && result.mint == candidate_mint
 }
 
 fn distribution_identity_matches(
