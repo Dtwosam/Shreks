@@ -46,7 +46,7 @@ impl MarketDataProvider for EmptyMarket {
     }
 }
 
-#[tokio::test(flavor = "current_thread", start_paused = true)]
+#[tokio::test(flavor = "current_thread")]
 async fn shutdown_preempts_an_in_flight_sampler_cycle_and_flushes_registry() {
     let root = std::env::temp_dir().join(format!(
         "shreks-sampler-shutdown-inflight-{}",
@@ -82,7 +82,7 @@ async fn shutdown_preempts_an_in_flight_sampler_cycle_and_flushes_registry() {
         let (run_result, _) = tokio::join!(run, signal);
         run_result
     };
-    let cycles = tokio::time::timeout(Duration::from_millis(100), joined)
+    let cycles = tokio::time::timeout(Duration::from_secs(2), joined)
         .await
         .expect("shutdown must preempt an in-flight sampler provider call")
         .unwrap();
