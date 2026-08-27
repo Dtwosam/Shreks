@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import sqlite3
 
+from shreks_brain.observer_market import ObserverMarketReadPolicy
 from shreks_brain.paper import PaperQuote
 from shreks_brain.paper_loop import (
     FreshLaunchSetupInput,
@@ -105,6 +106,7 @@ _REQUIRED_COLUMNS = {
             "id",
             "candidate_id",
             "observed_at_unix_ms",
+            "source",
             "pair_created_at_unix_ms",
         }
     ),
@@ -141,11 +143,16 @@ class ObserverCampaignCandidateStore:
         as_of_unix_ms: int,
         policy: ObserverPaperCampaignSelectionPolicy,
         pair_age_window_ms: tuple[int, int] | None = None,
+        market_read_policy: ObserverMarketReadPolicy | None = None,
     ) -> tuple[ObserverCampaignCandidate, ...]:
         _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
         if type(policy) is not ObserverPaperCampaignSelectionPolicy:
             raise ObserverCampaignCoordinatorError(
                 "policy must be an exact ObserverPaperCampaignSelectionPolicy"
+            )
+        if market_read_policy is not None and type(market_read_policy) is not ObserverMarketReadPolicy:
+            raise ObserverCampaignCoordinatorError(
+                "market_read_policy must be an exact ObserverMarketReadPolicy or None"
             )
         if pair_age_window_ms is not None:
             if not isinstance(pair_age_window_ms, tuple) or len(pair_age_window_ms) != 2:
@@ -221,6 +228,17 @@ class ObserverCampaignCandidateStore:
                 ).fetchall()
             candidates = tuple(_candidate_from_row(row) for row in rows)
             _reject_ambiguous_mints(candidates)
+            if market_read_policy is not None:
+                candidates = tuple(
+                    candidate
+                    for candidate in candidates
+                    if _has_current_market_snapshot(
+                        connection,
+                        candidate.candidate_id,
+                        as_of_unix_ms,
+                        market_read_policy,
+                    )
+                )
             return candidates[: policy.max_entry_candidates]
         except ObserverCampaignCoordinatorError:
             raise
@@ -379,6 +397,7 @@ def assemble_observer_paper_campaign_cycle(
             int(policy_bundle.fresh_launch_policy.min_age_seconds * 1000),
             int(policy_bundle.fresh_launch_policy.max_age_seconds * 1000),
         ),
+        market_read_policy=policy_bundle.market_read_policy,
     )
     selected = _merge_selected_candidates(required, recent)
 
@@ -534,6 +553,29 @@ def _insert_unique(mapping: dict[str, object], key: str, value: object, label: s
         raise ObserverCampaignCoordinatorError(
             f"conflicting duplicate {label} for '{key}'"
         )
+
+
+def _has_current_market_snapshot(
+    connection: sqlite3.Connection,
+    candidate_id: int,
+    as_of_unix_ms: int,
+    policy: ObserverMarketReadPolicy,
+) -> bool:
+    minimum_observed_at = max(0, as_of_unix_ms - policy.max_current_age_ms)
+    for source in policy.source_priority:
+        row = connection.execute(
+            """SELECT 1
+               FROM market_snapshots
+               WHERE candidate_id = ?
+                 AND source = ?
+                 AND observed_at_unix_ms BETWEEN ? AND ?
+               ORDER BY observed_at_unix_ms DESC, id ASC
+               LIMIT 1""",
+            (candidate_id, source, minimum_observed_at, as_of_unix_ms),
+        ).fetchone()
+        if row is not None:
+            return True
+    return False
 
 
 def _candidate_from_row(row: tuple[object, ...]) -> ObserverCampaignCandidate:
