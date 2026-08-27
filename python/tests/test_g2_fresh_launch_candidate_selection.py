@@ -21,21 +21,20 @@ from test_observer_campaign_runner import (
 )
 
 
-def test_fresh_launch_entry_slot_skips_expired_recently_active_candidate(tmp_path) -> None:
-    database = tmp_path / "observer.db"
-    _seed_two_candidates(database)
-
+def _set_pair_created_at(database, candidate_id: int, created_at_unix_ms: int) -> None:
     connection = sqlite3.connect(database)
     connection.execute(
         """UPDATE market_snapshots
-           SET pair_created_at_unix_ms = 200000
-           WHERE candidate_id = 1"""
+           SET pair_created_at_unix_ms = ?
+           WHERE candidate_id = ?""",
+        (created_at_unix_ms, candidate_id),
     )
-    connection.execute(
-        """UPDATE market_snapshots
-           SET pair_created_at_unix_ms = 0
-           WHERE candidate_id = 2"""
-    )
+    connection.commit()
+    connection.close()
+
+
+def _make_candidate_two_most_recent(database, pair_created_at_unix_ms: int) -> None:
+    connection = sqlite3.connect(database)
     connection.execute(
         """INSERT INTO market_snapshots
            (id, candidate_id, observed_at_unix_ms, source, source_observed_at_unix_ms,
@@ -44,20 +43,26 @@ def test_fresh_launch_entry_slot_skips_expired_recently_active_candidate(tmp_pat
             pair_created_at_unix_ms)
            SELECT 999, candidate_id, ?, source, ? - 1,
                   venue, pair_address, price_usd, liquidity_usd, volume_m5_usd,
-                  volume_h1_usd, buys_m5, sells_m5, buys_h1, sells_h1,
-                  0
+                  volume_h1_usd, buys_m5, sells_m5, buys_h1, sells_h1, ?
            FROM market_snapshots
            WHERE candidate_id = 2
              AND observed_at_unix_ms <= ?
            ORDER BY observed_at_unix_ms DESC, id DESC
            LIMIT 1""",
-        (AS_OF - 100, AS_OF - 100, AS_OF),
+        (
+            AS_OF - 100,
+            AS_OF - 100,
+            pair_created_at_unix_ms,
+            AS_OF,
+        ),
     )
     connection.commit()
     connection.close()
 
+
+def _fresh_launch_template():
     template = _bundle()
-    template = replace(
+    return replace(
         template,
         fresh_launch_policy=replace(
             template.fresh_launch_policy,
@@ -66,11 +71,13 @@ def test_fresh_launch_entry_slot_skips_expired_recently_active_candidate(tmp_pat
         ),
     )
 
-    cycle, audit = assemble_observer_paper_campaign_cycle(
+
+def _assemble_one(database):
+    return assemble_observer_paper_campaign_cycle(
         database,
         _state(),
         AS_OF,
-        template,
+        _fresh_launch_template(),
         _environment(),
         ObserverPaperCampaignSelectionPolicy(
             recent_lookback_ms=100_000,
@@ -79,8 +86,49 @@ def test_fresh_launch_entry_slot_skips_expired_recently_active_candidate(tmp_pat
         global_risk_halt=False,
     )
 
+
+def test_fresh_launch_entry_slot_skips_expired_recently_active_candidate(tmp_path) -> None:
+    database = tmp_path / "observer.db"
+    _seed_two_candidates(database)
+
+    _set_pair_created_at(database, 1, AS_OF - 800_000)
+    _set_pair_created_at(database, 2, AS_OF - 1_000_000)
+    _make_candidate_two_most_recent(database, AS_OF - 1_000_000)
+
+    cycle, audit = _assemble_one(database)
+
     assert audit.selected_candidate_ids == (1,)
     assert audit.selected_mints == (MINT,)
     assert audit.ranked_entry_mints == (MINT,)
     assert tuple(item.mint for item in cycle.entry_candidates) == (MINT,)
     assert SECOND_MINT not in audit.selected_mints
+
+
+def test_fresh_launch_entry_slot_prefers_in_window_candidate_over_too_young(tmp_path) -> None:
+    database = tmp_path / "observer.db"
+    _seed_two_candidates(database)
+
+    _set_pair_created_at(database, 1, AS_OF - 800_000)
+    _set_pair_created_at(database, 2, AS_OF - 30_000)
+    _make_candidate_two_most_recent(database, AS_OF - 30_000)
+
+    cycle, audit = _assemble_one(database)
+
+    assert audit.selected_candidate_ids == (1,)
+    assert audit.selected_mints == (MINT,)
+    assert tuple(item.mint for item in cycle.entry_candidates) == (MINT,)
+
+
+def test_fresh_launch_entry_slot_uses_too_young_candidate_when_no_in_window_exists(tmp_path) -> None:
+    database = tmp_path / "observer.db"
+    _seed_two_candidates(database)
+
+    _set_pair_created_at(database, 1, AS_OF - 1_000_000)
+    _set_pair_created_at(database, 2, AS_OF - 30_000)
+    _make_candidate_two_most_recent(database, AS_OF - 30_000)
+
+    cycle, audit = _assemble_one(database)
+
+    assert audit.selected_candidate_ids == (2,)
+    assert audit.selected_mints == (SECOND_MINT,)
+    assert tuple(item.mint for item in cycle.entry_candidates) == (SECOND_MINT,)
