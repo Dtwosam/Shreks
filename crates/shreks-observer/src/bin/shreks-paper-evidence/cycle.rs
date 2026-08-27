@@ -74,7 +74,9 @@ pub async fn run_paper_evidence_cycle(
     let candidates = store.fresh_launch_candidates(
         as_of_unix_ms,
         config.candidate_lookback_ms,
+        config.max_pair_age_ms,
         config.preferred_min_pair_age_ms,
+        &config.market_sources,
         config.max_candidates,
     )?;
     let mut aggregate = PaperEvidenceCycleReport {
