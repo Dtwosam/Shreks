@@ -1,6 +1,6 @@
 use std::{error::Error, fmt, path::Path};
 
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 
 const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
     ("token_candidates", &["id", "mint"]),
