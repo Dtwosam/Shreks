@@ -9,6 +9,9 @@ pub struct PaperEvidenceRuntimeConfig {
     pub db_path: PathBuf,
     pub cycle_interval: Duration,
     pub candidate_lookback_ms: i64,
+    pub max_pair_age_ms: i64,
+    pub preferred_min_pair_age_ms: i64,
+    pub market_sources: Vec<String>,
     pub max_candidates: usize,
     pub probe_policy_version: String,
     pub quote_asset_mint: String,
@@ -56,16 +59,32 @@ impl PaperEvidenceRuntimeConfig {
             &lookup,
             "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS",
         )?;
-        let candidate_lookback_ms_u64 = lookback_seconds.checked_mul(1_000).ok_or_else(|| {
-            PaperEvidenceRuntimeConfigError::new(
-                "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS is too large",
-            )
-        })?;
-        let candidate_lookback_ms = i64::try_from(candidate_lookback_ms_u64).map_err(|_| {
-            PaperEvidenceRuntimeConfigError::new(
-                "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS is too large",
-            )
-        })?;
+        let max_pair_age_seconds = parse_positive_u64(
+            &lookup,
+            "SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS",
+        )?;
+        let preferred_min_pair_age_seconds = parse_non_negative_u64(
+            &lookup,
+            "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+        )?;
+        if preferred_min_pair_age_seconds > max_pair_age_seconds {
+            return Err(PaperEvidenceRuntimeConfigError::new(
+                "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS must be <= SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS",
+            ));
+        }
+        let candidate_lookback_ms = seconds_to_i64_ms(
+            lookback_seconds,
+            "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS",
+        )?;
+        let max_pair_age_ms = seconds_to_i64_ms(
+            max_pair_age_seconds,
+            "SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS",
+        )?;
+        let preferred_min_pair_age_ms = seconds_to_i64_ms(
+            preferred_min_pair_age_seconds,
+            "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+        )?;
+        let market_sources = parse_market_sources(&lookup)?;
         let max_candidates = parse_positive_usize(
             &lookup,
             "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
@@ -102,6 +121,9 @@ impl PaperEvidenceRuntimeConfig {
             db_path,
             cycle_interval: Duration::from_secs(cycle_interval_seconds),
             candidate_lookback_ms,
+            max_pair_age_ms,
+            preferred_min_pair_age_ms,
+            market_sources,
             max_candidates,
             probe_policy_version,
             quote_asset_mint,
@@ -228,6 +250,21 @@ where
         })
 }
 
+fn parse_non_negative_u64<F>(
+    lookup: &F,
+    name: &'static str,
+) -> Result<u64, PaperEvidenceRuntimeConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let raw = required(lookup, name)?;
+    raw.parse::<u64>().map_err(|_| {
+        PaperEvidenceRuntimeConfigError::new(format!(
+            "{name} must be a non-negative integer; got '{raw}'"
+        ))
+    })
+}
+
 fn parse_positive_usize<F>(
     lookup: &F,
     name: &'static str,
@@ -244,6 +281,44 @@ where
                 "{name} must be a positive integer; got '{raw}'"
             ))
         })
+}
+
+fn parse_market_sources<F>(
+    lookup: &F,
+) -> Result<Vec<String>, PaperEvidenceRuntimeConfigError>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    const NAME: &str = "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES";
+    let raw = required(lookup, NAME)?;
+    let mut sources = Vec::new();
+    for value in raw.split(',') {
+        let source = value.trim();
+        if source.is_empty() {
+            return Err(PaperEvidenceRuntimeConfigError::new(format!(
+                "{NAME} must be a comma-separated list of non-empty source ids"
+            )));
+        }
+        if sources.iter().any(|existing| existing == source) {
+            return Err(PaperEvidenceRuntimeConfigError::new(format!(
+                "{NAME} must not contain duplicate source ids"
+            )));
+        }
+        sources.push(source.to_owned());
+    }
+    Ok(sources)
+}
+
+fn seconds_to_i64_ms(
+    seconds: u64,
+    name: &'static str,
+) -> Result<i64, PaperEvidenceRuntimeConfigError> {
+    let milliseconds = seconds.checked_mul(1_000).ok_or_else(|| {
+        PaperEvidenceRuntimeConfigError::new(format!("{name} is too large"))
+    })?;
+    i64::try_from(milliseconds).map_err(|_| {
+        PaperEvidenceRuntimeConfigError::new(format!("{name} is too large"))
+    })
 }
 
 fn parse_slippage_bps<F>(lookup: &F) -> Result<u16, PaperEvidenceRuntimeConfigError>

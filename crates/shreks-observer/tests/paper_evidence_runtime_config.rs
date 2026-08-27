@@ -9,7 +9,13 @@ fn valid_env() -> HashMap<&'static str, &'static str> {
     HashMap::from([
         ("SHREKS_DB_PATH", "data/shreks.db"),
         ("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", "30"),
-        ("SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS", "900"),
+        ("SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS", "120"),
+        ("SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS", "1800"),
+        (
+            "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+            "60",
+        ),
+        ("SHREKS_PAPER_EVIDENCE_MARKET_SOURCES", "dexscreener"),
         ("SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES", "16"),
         ("SHREKS_PAPER_PROBE_POLICY_VERSION", "paper-probe-v1"),
         (
@@ -39,7 +45,10 @@ fn valid_config_builds_exact_bidirectional_probe_without_exposing_keys() {
 
     assert_eq!(config.db_path.to_string_lossy(), "data/shreks.db");
     assert_eq!(config.cycle_interval.as_secs(), 30);
-    assert_eq!(config.candidate_lookback_ms, 900_000);
+    assert_eq!(config.candidate_lookback_ms, 120_000);
+    assert_eq!(config.max_pair_age_ms, 1_800_000);
+    assert_eq!(config.preferred_min_pair_age_ms, 60_000);
+    assert_eq!(config.market_sources, vec!["dexscreener".to_owned()]);
     assert_eq!(config.max_candidates, 16);
 
     let candidate_mint = "Candidate111111111111111111111111111111111";
@@ -82,6 +91,9 @@ fn missing_or_blank_required_runtime_inputs_fail_closed() {
         "SHREKS_DB_PATH",
         "SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS",
         "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES",
         "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
         "SHREKS_PAPER_PROBE_POLICY_VERSION",
         "SHREKS_PAPER_QUOTE_ASSET_MINT",
@@ -111,6 +123,11 @@ fn invalid_numeric_runtime_inputs_fail_closed() {
     for (name, invalid_values) in [
         ("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS", &["0", "-1", "nope"][..]),
+        ("SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS", &["0", "-1", "nope"][..]),
+        (
+            "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+            &["-1", "nope"][..],
+        ),
         ("SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_ENTRY_INPUT_AMOUNT", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_EXIT_INPUT_AMOUNT", &["0", "-1", "nope"][..]),
@@ -124,6 +141,35 @@ fn invalid_numeric_runtime_inputs_fail_closed() {
             let error = from_map(&values).unwrap_err();
             assert!(error.to_string().contains(name), "{name}={invalid}: {error}");
         }
+    }
+}
+
+#[test]
+fn preferred_pair_age_cannot_exceed_max_pair_age() {
+    let mut values = valid_env();
+    values.insert("SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS", "59");
+    values.insert(
+        "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+        "60",
+    );
+    let error = from_map(&values).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS")
+    );
+}
+
+#[test]
+fn malformed_market_sources_fail_closed() {
+    for invalid in ["dexscreener,", "dexscreener,,meteora", "dexscreener,dexscreener"] {
+        let mut values = valid_env();
+        values.insert("SHREKS_PAPER_EVIDENCE_MARKET_SOURCES", invalid);
+        let error = from_map(&values).unwrap_err();
+        assert!(
+            error.to_string().contains("SHREKS_PAPER_EVIDENCE_MARKET_SOURCES"),
+            "{invalid}: {error}"
+        );
     }
 }
 
@@ -154,6 +200,9 @@ fn repository_env_example_declares_paper_evidence_inputs_without_secret_values()
     for name in [
         "SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS",
         "SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+        "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES",
         "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
         "SHREKS_PAPER_PROBE_POLICY_VERSION",
         "SHREKS_PAPER_QUOTE_ASSET_MINT",
