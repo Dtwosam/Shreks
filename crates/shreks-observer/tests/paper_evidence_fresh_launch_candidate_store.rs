@@ -34,9 +34,14 @@ fn candidate(mint: &str, discovered_at_unix_ms: i64) -> DiscoveredToken {
     }
 }
 
-fn snapshot(mint: &str, observed_at_unix_ms: i64, pair_created_at_unix_ms: i64) -> PairMarketData {
+fn snapshot_from(
+    provider: ProviderId,
+    mint: &str,
+    observed_at_unix_ms: i64,
+    pair_created_at_unix_ms: i64,
+) -> PairMarketData {
     PairMarketData {
-        provider: ProviderId::DexScreener,
+        provider,
         venue: VenueId::PumpSwap,
         chain_id: "solana".to_owned(),
         dex_id: "pumpswap".to_owned(),
@@ -62,9 +67,23 @@ fn snapshot(mint: &str, observed_at_unix_ms: i64, pair_created_at_unix_ms: i64) 
     }
 }
 
+fn snapshot(mint: &str, observed_at_unix_ms: i64, pair_created_at_unix_ms: i64) -> PairMarketData {
+    snapshot_from(
+        ProviderId::DexScreener,
+        mint,
+        observed_at_unix_ms,
+        pair_created_at_unix_ms,
+    )
+}
+
+fn dex_sources() -> Vec<String> {
+    vec!["dexscreener".to_owned()]
+}
+
 #[test]
 fn fresh_launch_candidates_prioritize_entry_window_then_too_young_and_exclude_expired() {
     const AS_OF: i64 = 2_000_000;
+    const MARKET_LOOKBACK_MS: i64 = 60_000;
     const MAX_PAIR_AGE_MS: i64 = 1_800_000;
     const PREFERRED_MIN_PAIR_AGE_MS: i64 = 60_000;
 
@@ -97,8 +116,10 @@ fn fresh_launch_candidates_prioritize_entry_window_then_too_young_and_exclude_ex
     let selected = store
         .fresh_launch_candidates(
             AS_OF,
+            MARKET_LOOKBACK_MS,
             MAX_PAIR_AGE_MS,
             PREFERRED_MIN_PAIR_AGE_MS,
+            &dex_sources(),
             2,
         )
         .unwrap();
@@ -138,12 +159,72 @@ fn fresh_launch_candidates_use_too_young_when_entry_window_is_empty() {
 
     let store = EvidenceCandidateStore::open(&db_path).unwrap();
     let selected = store
-        .fresh_launch_candidates(AS_OF, 1_800_000, 60_000, 2)
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            2,
+        )
         .unwrap();
 
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].candidate_id, too_young);
     assert_eq!(selected[0].mint, "MintTooYoung");
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn fresh_launch_candidates_skip_stale_or_disallowed_market_sources() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("market-contract");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let eligible = db.upsert_candidate(&candidate("MintEligible", 100)).unwrap();
+    let stale = db.upsert_candidate(&candidate("MintStale", 200)).unwrap();
+    let wrong_source = db.upsert_candidate(&candidate("MintWrongSource", 300)).unwrap();
+
+    db.insert_market_snapshot(
+        eligible,
+        &snapshot("MintEligible", AS_OF - 10_000, AS_OF - 600_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        stale,
+        &snapshot("MintStale", AS_OF - 61_000, AS_OF - 500_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        wrong_source,
+        &snapshot_from(
+            ProviderId::Meteora,
+            "MintWrongSource",
+            AS_OF - 100,
+            AS_OF - 400_000,
+        ),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            3,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, eligible);
+    assert_eq!(selected[0].mint, "MintEligible");
 
     cleanup_dir(&root);
 }
