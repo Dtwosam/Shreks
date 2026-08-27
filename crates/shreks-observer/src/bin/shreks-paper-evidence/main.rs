@@ -2,7 +2,12 @@ mod candidate_store;
 mod config;
 mod cycle;
 
-use std::{error::Error, io, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    error::Error,
+    io,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use candidate_store::EvidenceCandidateStore;
 use config::PaperEvidenceRuntimeConfig;
@@ -11,6 +16,7 @@ use shreks_observer::SafetyEvidenceCollector;
 use shreks_providers::{
     helius::HeliusProvider,
     jupiter::JupiterProvider,
+    ChainDataProvider,
     DistributionDataProvider,
     QuoteProvider,
 };
@@ -33,15 +39,17 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .jupiter_api_key()
         .expect("provider gate must leave Jupiter enabled");
 
-    let distribution_provider: Arc<dyn DistributionDataProvider> =
-        Arc::new(HeliusProvider::new(helius_key)?);
+    let helius_provider = Arc::new(HeliusProvider::new(helius_key)?);
+    let chain_provider: Arc<dyn ChainDataProvider> = helius_provider.clone();
+    let distribution_provider: Arc<dyn DistributionDataProvider> = helius_provider;
     let quote_provider: Arc<dyn QuoteProvider> =
         Arc::new(JupiterProvider::new(jupiter_key)?);
     let collector = SafetyEvidenceCollector::new(
         evidence_db,
         vec![distribution_provider],
         vec![quote_provider],
-    );
+    )
+    .with_chain_provider(chain_provider);
 
     eprintln!(
         "Shreks paper evidence starting: db={} interval={}s lookback={}ms max_candidates={} probe_policy={} providers=helius+jupiter",
@@ -62,13 +70,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .await?;
         let provider_failures = report
-            .distribution_provider_failures
+            .chain_provider_failures
+            .saturating_add(report.distribution_provider_failures)
             .saturating_add(report.quote_provider_failures);
 
         eprintln!(
-            "Shreks paper evidence cycle: as_of={} candidates_selected={} holder_snapshots_stored={} quote_snapshots_stored={} entry_quote_snapshots_stored={} exit_quote_snapshots_stored={} provider_failures={}",
+            "Shreks paper evidence cycle: as_of={} candidates_selected={} mint_states_stored={} holder_snapshots_stored={} quote_snapshots_stored={} entry_quote_snapshots_stored={} exit_quote_snapshots_stored={} provider_failures={}",
             as_of_unix_ms,
             report.candidates_selected,
+            report.mint_states_stored,
             report.holder_snapshots_stored,
             report.quote_snapshots_stored,
             report.entry_quote_snapshots_stored,
