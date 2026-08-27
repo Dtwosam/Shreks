@@ -296,23 +296,17 @@ def assemble_observer_paper_cycle(
             window.candidate.mint,
             as_of_unix_ms,
         )
-        if (entry_evidence is not None or exit_evidence is not None) and token_decimals is None:
-            raise ObserverPaperAssemblyError(
-                "token decimals are required to reconstruct persisted paper quotes"
-            )
 
         entry_quote: PaperQuote | None = None
         exit_quote: PaperQuote | None = None
-        if entry_evidence is not None:
-            assert token_decimals is not None
+        if entry_evidence is not None and token_decimals is not None:
             entry_quote = build_entry_paper_quote(
                 window,
                 entry_evidence,
                 token_decimals,
                 bundle.quote_asset,
             )
-        if exit_evidence is not None:
-            assert token_decimals is not None
+        if exit_evidence is not None and token_decimals is not None:
             exit_quote = build_exit_paper_quote(
                 window,
                 exit_evidence,
@@ -399,7 +393,7 @@ def assemble_observer_paper_cycle(
                 execution_context=_exit_execution_context(
                     as_of_unix_ms,
                     window.current.observed_at_unix_ms,
-                    exit_evidence,
+                    exit_evidence if exit_quote is not None else None,
                     exit_quote,
                     global_risk_halt,
                 ),
