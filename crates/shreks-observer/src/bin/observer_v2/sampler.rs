@@ -171,9 +171,23 @@ impl HighResolutionSampler {
                     self.flush_registry()?;
                     return Ok(cycles);
                 }
-                _ = sleep(RUNTIME_LOOP_INTERVAL) => {
-                    self.run_cycle_at(unix_time_ms()?).await?;
+                _ = sleep(RUNTIME_LOOP_INTERVAL) => {}
+            }
+
+            let now_unix_ms = unix_time_ms()?;
+            let cycle_result = tokio::select! {
+                _ = &mut shutdown => None,
+                result = self.run_cycle_at(now_unix_ms) => Some(result),
+            };
+
+            match cycle_result {
+                Some(result) => {
+                    result?;
                     cycles = cycles.saturating_add(1);
+                }
+                None => {
+                    self.flush_registry()?;
+                    return Ok(cycles);
                 }
             }
         }
