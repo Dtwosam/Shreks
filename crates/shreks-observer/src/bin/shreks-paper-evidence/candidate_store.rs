@@ -6,7 +6,11 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
     ("token_candidates", &["id", "mint"]),
     (
         "market_snapshots",
-        &["candidate_id", "observed_at_unix_ms"],
+        &[
+            "candidate_id",
+            "observed_at_unix_ms",
+            "pair_created_at_unix_ms",
+        ],
     ),
 ];
 
