@@ -175,9 +175,9 @@ fn missing_schema_and_malformed_candidate_rows_fail_closed() {
     connection
         .execute_batch(
             "CREATE TABLE token_candidates (id INTEGER, mint TEXT);\n\
-             CREATE TABLE market_snapshots (candidate_id INTEGER, observed_at_unix_ms INTEGER, pair_created_at_unix_ms INTEGER);\n\
+             CREATE TABLE market_snapshots (candidate_id INTEGER, observed_at_unix_ms INTEGER, source TEXT, pair_created_at_unix_ms INTEGER);\n\
              INSERT INTO token_candidates (id, mint) VALUES (-1, '   ');\n\
-             INSERT INTO market_snapshots (candidate_id, observed_at_unix_ms, pair_created_at_unix_ms) VALUES (-1, 900, NULL);",
+             INSERT INTO market_snapshots (candidate_id, observed_at_unix_ms, source, pair_created_at_unix_ms) VALUES (-1, 900, 'dexscreener', NULL);",
         )
         .unwrap();
     drop(connection);
