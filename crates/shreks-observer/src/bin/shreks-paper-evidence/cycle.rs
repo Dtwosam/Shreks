@@ -8,10 +8,12 @@ use crate::config::{PaperEvidenceRuntimeConfig, PaperEvidenceRuntimeConfigError}
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PaperEvidenceCycleReport {
     pub candidates_selected: usize,
+    pub mint_states_stored: usize,
     pub holder_snapshots_stored: usize,
     pub quote_snapshots_stored: usize,
     pub entry_quote_snapshots_stored: usize,
     pub exit_quote_snapshots_stored: usize,
+    pub chain_provider_failures: usize,
     pub distribution_provider_failures: usize,
     pub quote_provider_failures: usize,
     pub entry_quote_provider_failures: usize,
@@ -90,6 +92,9 @@ pub async fn run_paper_evidence_cycle(
             .collect_candidate(candidate.candidate_id, &candidate.mint, &probe)
             .await?;
 
+        aggregate.mint_states_stored = aggregate
+            .mint_states_stored
+            .saturating_add(report.mint_states_stored);
         aggregate.holder_snapshots_stored = aggregate
             .holder_snapshots_stored
             .saturating_add(report.holder_snapshots_stored);
@@ -102,6 +107,9 @@ pub async fn run_paper_evidence_cycle(
         aggregate.exit_quote_snapshots_stored = aggregate
             .exit_quote_snapshots_stored
             .saturating_add(report.exit_quote_snapshots_stored);
+        aggregate.chain_provider_failures = aggregate
+            .chain_provider_failures
+            .saturating_add(report.chain_provider_failures);
         aggregate.distribution_provider_failures = aggregate
             .distribution_provider_failures
             .saturating_add(report.distribution_provider_failures);
