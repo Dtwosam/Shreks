@@ -12,7 +12,7 @@ use shreks_core::{
     DiscoveredToken, ProviderId, QuoteRequest, TokenDistributionRequest, TokenMintState, VenueId,
 };
 use shreks_observer::{SafetyEvidenceCollector, SafetyEvidenceProbe};
-use shreks_providers::{ChainDataProvider, ProviderError};
+use shreks_providers::{ChainDataProvider, ProviderError, ProviderErrorKind};
 use shreks_storage::ShreksDb;
 
 const WSOL: &str = "So11111111111111111111111111111111111111112";
@@ -55,6 +55,7 @@ fn probe(mint: &str) -> SafetyEvidenceProbe {
 
 struct RecordingChainProvider {
     requests: Arc<Mutex<Vec<String>>>,
+    fail: bool,
 }
 
 #[async_trait]
@@ -65,6 +66,13 @@ impl ChainDataProvider for RecordingChainProvider {
 
     async fn token_mint_state(&self, mint: &str) -> Result<TokenMintState, ProviderError> {
         self.requests.lock().unwrap().push(mint.to_owned());
+        if self.fail {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::Unavailable,
+                "test mint state unavailable",
+            ));
+        }
         Ok(TokenMintState {
             provider: ProviderId::Helius,
             mint: mint.to_owned(),
@@ -97,6 +105,7 @@ async fn selected_paper_candidate_backfills_missing_mint_state_once() {
     let collector = SafetyEvidenceCollector::new(db, vec![], vec![]).with_chain_provider(
         Arc::new(RecordingChainProvider {
             requests: Arc::clone(&requests),
+            fail: false,
         }),
     );
 
@@ -118,6 +127,34 @@ async fn selected_paper_candidate_backfills_missing_mint_state_once() {
     assert_eq!(second.mint_states_stored, 0);
     assert_eq!(second.chain_provider_failures, 0);
     assert_eq!(table_count(&db_path, "token_mint_states"), 1);
+    assert_eq!(requests.lock().unwrap().as_slice(), &["MintFresh".to_owned()]);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn mint_state_provider_failure_stays_unknown_and_is_counted() {
+    let root = unique_test_dir("provider-failure");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("MintFresh")).unwrap();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+
+    let collector = SafetyEvidenceCollector::new(db, vec![], vec![]).with_chain_provider(
+        Arc::new(RecordingChainProvider {
+            requests: Arc::clone(&requests),
+            fail: true,
+        }),
+    );
+
+    let report = collector
+        .collect_candidate(candidate_id, "MintFresh", &probe("MintFresh"))
+        .await
+        .unwrap();
+
+    assert_eq!(report.mint_states_stored, 0);
+    assert_eq!(report.chain_provider_failures, 1);
+    assert_eq!(table_count(&db_path, "token_mint_states"), 0);
     assert_eq!(requests.lock().unwrap().as_slice(), &["MintFresh".to_owned()]);
 
     cleanup_dir(&root);
