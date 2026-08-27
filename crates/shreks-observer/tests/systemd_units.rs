@@ -70,8 +70,11 @@ fn paper_campaign_service_preflights_recovery_before_sealed_runtime() {
 }
 
 #[test]
-fn target_requires_all_runtime_services_and_starts_on_host_boot() {
+fn target_starts_all_runtime_services_without_cascading_member_restart_into_target_shutdown() {
     assert!(SHREKS_TARGET.contains(
+        "Wants=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service"
+    ));
+    assert!(!SHREKS_TARGET.contains(
         "Requires=shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service"
     ));
     assert!(SHREKS_TARGET.contains("After=network-online.target"));
