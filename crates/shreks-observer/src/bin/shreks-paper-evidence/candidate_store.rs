@@ -9,6 +9,7 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
         &[
             "candidate_id",
             "observed_at_unix_ms",
+            "source",
             "pair_created_at_unix_ms",
         ],
     ),
@@ -129,10 +130,13 @@ impl EvidenceCandidateStore {
     pub fn fresh_launch_candidates(
         &self,
         as_of_unix_ms: i64,
+        current_market_lookback_ms: i64,
         max_pair_age_ms: i64,
         preferred_min_pair_age_ms: i64,
+        market_sources: &[String],
         limit: usize,
     ) -> Result<Vec<EvidenceProbeCandidate>, EvidenceCandidateStoreError> {
+        validate_window(as_of_unix_ms, current_market_lookback_ms)?;
         validate_window(as_of_unix_ms, max_pair_age_ms)?;
         if preferred_min_pair_age_ms < 0 {
             return Err(EvidenceCandidateStoreError::InvalidData(
@@ -144,17 +148,20 @@ impl EvidenceCandidateStore {
                 "preferred_min_pair_age_ms cannot exceed max_pair_age_ms".to_owned(),
             ));
         }
+        validate_market_sources(market_sources)?;
         if limit == 0 {
             return Ok(Vec::new());
         }
 
-        let minimum_observed_at_unix_ms = as_of_unix_ms.saturating_sub(max_pair_age_ms).max(0);
+        let pair_evidence_cutoff = as_of_unix_ms.saturating_sub(max_pair_age_ms).max(0);
+        let current_market_cutoff = as_of_unix_ms
+            .saturating_sub(current_market_lookback_ms)
+            .max(0);
         let oldest_allowed_created_at_unix_ms =
             as_of_unix_ms.saturating_sub(max_pair_age_ms).max(0);
         let preferred_created_at_ceiling = as_of_unix_ms
             .saturating_sub(preferred_min_pair_age_ms)
             .max(0);
-        let sqlite_limit = sqlite_limit(limit)?;
 
         let mut statement = self
             .connection
@@ -176,19 +183,17 @@ impl EvidenceCandidateStore {
                           ELSE 1
                       END ASC,
                       latest_market_observed_at_unix_ms DESC,
-                      tc.id ASC
-                   LIMIT ?5"#,
+                      tc.id ASC"#,
             )
             .map_err(EvidenceCandidateStoreError::Sqlite)?;
 
         let rows = statement
             .query_map(
                 params![
-                    minimum_observed_at_unix_ms,
+                    pair_evidence_cutoff,
                     as_of_unix_ms,
                     oldest_allowed_created_at_unix_ms,
                     preferred_created_at_ceiling,
-                    sqlite_limit
                 ],
                 |row| {
                     Ok((
@@ -200,8 +205,58 @@ impl EvidenceCandidateStore {
             )
             .map_err(EvidenceCandidateStoreError::Sqlite)?;
 
-        collect_candidates(rows, minimum_observed_at_unix_ms, as_of_unix_ms)
+        let candidates = collect_candidates(rows, pair_evidence_cutoff, as_of_unix_ms)?;
+        let mut selected = Vec::new();
+        for candidate in candidates {
+            if has_current_market_snapshot(
+                &self.connection,
+                candidate.candidate_id,
+                current_market_cutoff,
+                as_of_unix_ms,
+                market_sources,
+            )? {
+                selected.push(candidate);
+                if selected.len() == limit {
+                    break;
+                }
+            }
+        }
+        Ok(selected)
     }
+}
+
+fn has_current_market_snapshot(
+    connection: &Connection,
+    candidate_id: i64,
+    minimum_observed_at_unix_ms: i64,
+    as_of_unix_ms: i64,
+    market_sources: &[String],
+) -> Result<bool, EvidenceCandidateStoreError> {
+    for source in market_sources {
+        let found = connection
+            .query_row(
+                r#"SELECT 1
+                   FROM market_snapshots
+                   WHERE candidate_id = ?1
+                     AND source = ?2
+                     AND observed_at_unix_ms BETWEEN ?3 AND ?4
+                   ORDER BY observed_at_unix_ms DESC, id ASC
+                   LIMIT 1"#,
+                params![
+                    candidate_id,
+                    source,
+                    minimum_observed_at_unix_ms,
+                    as_of_unix_ms,
+                ],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(EvidenceCandidateStoreError::Sqlite)?;
+        if found.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn validate_window(
@@ -217,6 +272,27 @@ fn validate_window(
         return Err(EvidenceCandidateStoreError::InvalidData(
             "lookback_ms must be positive".to_owned(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_market_sources(market_sources: &[String]) -> Result<(), EvidenceCandidateStoreError> {
+    if market_sources.is_empty() {
+        return Err(EvidenceCandidateStoreError::InvalidData(
+            "market_sources must not be empty".to_owned(),
+        ));
+    }
+    for (index, source) in market_sources.iter().enumerate() {
+        if source.trim().is_empty() {
+            return Err(EvidenceCandidateStoreError::InvalidData(
+                "market_sources must not contain blank values".to_owned(),
+            ));
+        }
+        if market_sources[..index].iter().any(|existing| existing == source) {
+            return Err(EvidenceCandidateStoreError::InvalidData(
+                "market_sources must not contain duplicates".to_owned(),
+            ));
+        }
     }
     Ok(())
 }
