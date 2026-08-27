@@ -82,7 +82,7 @@ fn snapshot(mint: &str, observed_at_unix_ms: i64) -> PairMarketData {
         transactions: Vec::new(),
         fdv_usd: None,
         market_cap_usd: None,
-        pair_created_at_unix_ms: None,
+        pair_created_at_unix_ms: Some(9_000),
         observed_at_unix_ms,
     }
 }
@@ -93,6 +93,10 @@ fn runtime_config(db_path: &Path, max_candidates: usize) -> PaperEvidenceRuntime
         ("SHREKS_DB_PATH", db),
         ("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", "30".to_owned()),
         ("SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS", "1".to_owned()),
+        (
+            "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
+            "0".to_owned(),
+        ),
         (
             "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
             max_candidates.to_string(),
