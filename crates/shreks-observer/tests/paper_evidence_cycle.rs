@@ -93,9 +93,14 @@ fn runtime_config(db_path: &Path, max_candidates: usize) -> PaperEvidenceRuntime
         ("SHREKS_DB_PATH", db),
         ("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", "30".to_owned()),
         ("SHREKS_PAPER_EVIDENCE_LOOKBACK_SECONDS", "1".to_owned()),
+        ("SHREKS_PAPER_EVIDENCE_MAX_PAIR_AGE_SECONDS", "2".to_owned()),
         (
             "SHREKS_PAPER_EVIDENCE_PREFERRED_MIN_PAIR_AGE_SECONDS",
             "0".to_owned(),
+        ),
+        (
+            "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES",
+            "dexscreener".to_owned(),
         ),
         (
             "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
