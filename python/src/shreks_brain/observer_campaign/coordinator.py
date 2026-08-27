@@ -105,6 +105,7 @@ _REQUIRED_COLUMNS = {
             "id",
             "candidate_id",
             "observed_at_unix_ms",
+            "pair_created_at_unix_ms",
         }
     ),
 }
@@ -139,30 +140,85 @@ class ObserverCampaignCandidateStore:
         *,
         as_of_unix_ms: int,
         policy: ObserverPaperCampaignSelectionPolicy,
+        pair_age_window_ms: tuple[int, int] | None = None,
     ) -> tuple[ObserverCampaignCandidate, ...]:
         _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
         if type(policy) is not ObserverPaperCampaignSelectionPolicy:
             raise ObserverCampaignCoordinatorError(
                 "policy must be an exact ObserverPaperCampaignSelectionPolicy"
             )
+        if pair_age_window_ms is not None:
+            if not isinstance(pair_age_window_ms, tuple) or len(pair_age_window_ms) != 2:
+                raise ObserverCampaignCoordinatorError(
+                    "pair_age_window_ms must be a (minimum, maximum) tuple or None"
+                )
+            minimum_pair_age_ms, maximum_pair_age_ms = pair_age_window_ms
+            _require_non_negative_int("minimum_pair_age_ms", minimum_pair_age_ms)
+            _require_non_negative_int("maximum_pair_age_ms", maximum_pair_age_ms)
+            if minimum_pair_age_ms > maximum_pair_age_ms:
+                raise ObserverCampaignCoordinatorError(
+                    "minimum_pair_age_ms cannot exceed maximum_pair_age_ms"
+                )
         cutoff = max(0, as_of_unix_ms - policy.recent_lookback_ms)
 
         connection = self._connect()
         try:
-            rows = connection.execute(
-                """SELECT
-                       candidate.id,
-                       candidate.mint,
-                       MAX(snapshot.observed_at_unix_ms) AS latest_market_observed_at
-                    FROM token_candidates AS candidate
-                    JOIN market_snapshots AS snapshot
-                      ON snapshot.candidate_id = candidate.id
-                    WHERE candidate.discovered_at_unix_ms <= ?
-                      AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
-                    GROUP BY candidate.id, candidate.mint
-                    ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
-                (as_of_unix_ms, cutoff, as_of_unix_ms),
-            ).fetchall()
+            if pair_age_window_ms is None:
+                rows = connection.execute(
+                    """SELECT
+                           candidate.id,
+                           candidate.mint,
+                           MAX(snapshot.observed_at_unix_ms) AS latest_market_observed_at
+                        FROM token_candidates AS candidate
+                        JOIN market_snapshots AS snapshot
+                          ON snapshot.candidate_id = candidate.id
+                        WHERE candidate.discovered_at_unix_ms <= ?
+                          AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                        GROUP BY candidate.id, candidate.mint
+                        ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
+                    (as_of_unix_ms, cutoff, as_of_unix_ms),
+                ).fetchall()
+            else:
+                minimum_pair_age_ms, maximum_pair_age_ms = pair_age_window_ms
+                oldest_allowed_created_at = max(
+                    0,
+                    as_of_unix_ms - maximum_pair_age_ms,
+                )
+                preferred_created_at_ceiling = max(
+                    0,
+                    as_of_unix_ms - minimum_pair_age_ms,
+                )
+                rows = connection.execute(
+                    """SELECT
+                           candidate.id,
+                           candidate.mint,
+                           MAX(snapshot.observed_at_unix_ms) AS latest_market_observed_at
+                        FROM token_candidates AS candidate
+                        JOIN market_snapshots AS snapshot
+                          ON snapshot.candidate_id = candidate.id
+                        WHERE candidate.discovered_at_unix_ms <= ?
+                          AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                        GROUP BY candidate.id, candidate.mint
+                        HAVING COUNT(snapshot.pair_created_at_unix_ms) > 0
+                           AND MIN(snapshot.pair_created_at_unix_ms)
+                               = MAX(snapshot.pair_created_at_unix_ms)
+                           AND MAX(snapshot.pair_created_at_unix_ms) BETWEEN ? AND ?
+                        ORDER BY
+                           CASE
+                               WHEN MAX(snapshot.pair_created_at_unix_ms) <= ? THEN 0
+                               ELSE 1
+                           END ASC,
+                           latest_market_observed_at DESC,
+                           candidate.id ASC""",
+                    (
+                        as_of_unix_ms,
+                        cutoff,
+                        as_of_unix_ms,
+                        oldest_allowed_created_at,
+                        as_of_unix_ms,
+                        preferred_created_at_ceiling,
+                    ),
+                ).fetchall()
             candidates = tuple(_candidate_from_row(row) for row in rows)
             _reject_ambiguous_mints(candidates)
             return candidates[: policy.max_entry_candidates]
@@ -319,6 +375,10 @@ def assemble_observer_paper_campaign_cycle(
     recent = store.recent_candidates(
         as_of_unix_ms=as_of_unix_ms,
         policy=selection_policy,
+        pair_age_window_ms=(
+            int(policy_bundle.fresh_launch_policy.min_age_seconds * 1000),
+            int(policy_bundle.fresh_launch_policy.max_age_seconds * 1000),
+        ),
     )
     selected = _merge_selected_candidates(required, recent)
 
