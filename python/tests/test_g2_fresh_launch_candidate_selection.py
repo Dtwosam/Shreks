@@ -25,9 +25,13 @@ def _set_pair_created_at(database, candidate_id: int, created_at_unix_ms: int) -
     connection = sqlite3.connect(database)
     connection.execute(
         """UPDATE market_snapshots
-           SET pair_created_at_unix_ms = ?
+           SET pair_created_at_unix_ms =
+               CASE
+                   WHEN observed_at_unix_ms >= ? THEN ?
+                   ELSE NULL
+               END
            WHERE candidate_id = ?""",
-        (created_at_unix_ms, candidate_id),
+        (created_at_unix_ms, created_at_unix_ms, candidate_id),
     )
     connection.commit()
     connection.close()
