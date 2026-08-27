@@ -412,7 +412,8 @@ def activate_release(
         return
 
     try:
-        _systemctl(command_runner, "stop", "shreks.target")
+        if previous is not None:
+            _systemctl(command_runner, "stop", "shreks.target")
         _install_units(release_dir, paths.systemd_dir)
         _atomic_switch(paths.current_link, release_dir)
         _systemctl(command_runner, "daemon-reload")
