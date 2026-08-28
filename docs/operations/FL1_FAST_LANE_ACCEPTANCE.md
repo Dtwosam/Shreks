@@ -10,11 +10,16 @@ The routine workflow is read-only with respect to Shreks runtime state. It does 
 
 Use the existing verified GitHub-to-VPS release path. `/opt/shreks/current` must resolve to `/opt/shreks/releases/<40-character-sha>` and that directory must contain its verified `RELEASE_MANIFEST.json`.
 
+Create a private operator-owned evidence directory first so every precondition and measurement can be retained without changing runtime ownership:
+
 ```bash
-readlink -f /opt/shreks/current
-cat /opt/shreks/current/RELEASE_MANIFEST.json
-systemctl is-active shreks.target
-systemctl is-active shreks-observe.service
+umask 077
+EVIDENCE_DIR="$HOME/shreks-fast-lane-acceptance-$(date +%Y%m%dT%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+readlink -f /opt/shreks/current | tee "$EVIDENCE_DIR/current-release.txt"
+cat /opt/shreks/current/RELEASE_MANIFEST.json | tee "$EVIDENCE_DIR/RELEASE_MANIFEST.json"
+systemctl is-active shreks.target | tee "$EVIDENCE_DIR/target-precondition.txt"
+systemctl is-active shreks-observe.service | tee "$EVIDENCE_DIR/observer-precondition.txt"
 ```
 
 The resolved release SHA and the manifest `source_sha` must match exactly. The release manifest must include `target/release/shreks-fast-lane-acceptance`; a locally compiled, copied, edited, or unmanifested reporter is not valid production evidence.
@@ -25,13 +30,7 @@ Use the authoritative persistent observer database:
 /var/lib/shreks/shreks.db
 ```
 
-Create a private evidence directory owned by the service identity. This does not modify the runtime database:
-
-```bash
-sudo install -d -o shreks -g shreks -m 0700 /var/lib/shreks/fast-lane-acceptance
-```
-
-Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, or any signing material into this directory.
+Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, or any signing material into the evidence directory.
 
 ## 2. Evidence boundary
 
@@ -72,7 +71,6 @@ Choose a window long enough to observe both Pump bonding-curve and PumpSwap traf
 Capture the starting wall clock and database/WAL sizes:
 
 ```bash
-EVIDENCE_DIR=/var/lib/shreks/fast-lane-acceptance
 DB=/var/lib/shreks/shreks.db
 START_MS="$(date +%s%3N)"
 START_ISO="$(date --iso-8601=seconds)"
@@ -109,10 +107,10 @@ df -h /var/lib/shreks /opt/shreks | tee "$EVIDENCE_DIR/filesystem.txt"
 Capture observer logs for the same interval:
 
 ```bash
-journalctl -u shreks-observe.service --since "$START_ISO" --until "$END_ISO" --no-pager | tee "$EVIDENCE_DIR/observer-window.log"
+sudo journalctl -u shreks-observe.service --since "$START_ISO" --until "$END_ISO" --no-pager | tee "$EVIDENCE_DIR/observer-window.log"
 ```
 
-Run the reporter as the unprivileged runtime identity. Its stdout is the canonical database-backed acceptance record for this interval:
+Run the reporter as the unprivileged runtime identity. The operator shell opens the private evidence file, while the reporter itself retains only the `shreks` user's database access:
 
 ```bash
 sudo -u shreks /opt/shreks/current/target/release/shreks-fast-lane-acceptance \
