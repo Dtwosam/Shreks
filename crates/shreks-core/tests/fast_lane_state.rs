@@ -40,7 +40,7 @@ fn trade_event(
         Some("wallet-1".to_owned()),
         100 + sequence,
         occurred_at_unix_ms,
-        occurred_at_unix_ms + 5,
+        occurred_at_unix_ms,
         base_quantity,
         quote_quantity,
         price_quote,
@@ -191,7 +191,7 @@ fn state_rejects_market_mismatch_and_non_monotonic_event_order() {
     ));
     assert!(matches!(
         backward_time,
-        Err(FastStateError::EventTimeMovedBackward {
+        Err(FastStateError::ObservationTimeMovedBackward {
             last: 2_000,
             incoming: 1_999
         })
@@ -208,7 +208,7 @@ fn state_rejects_market_mismatch_and_non_monotonic_event_order() {
             0.5,
             0.1,
         ))
-        .expect("same occurrence time is valid when sequence increases");
+        .expect("same observation time is valid when sequence increases");
 }
 
 #[test]
@@ -343,7 +343,7 @@ fn fast_event_constructors_reject_invalid_identity_time_and_economics() {
 }
 
 #[test]
-fn snapshot_rejects_time_before_the_latest_accepted_event() {
+fn snapshot_rejects_time_before_the_latest_observation() {
     let market = pump_market();
     let mut state = FastMarketState::with_default_windows(market.clone());
     state
@@ -361,8 +361,8 @@ fn snapshot_rejects_time_before_the_latest_accepted_event() {
 
     assert!(matches!(
         state.snapshot(4_999),
-        Err(FastStateError::SnapshotBeforeLastEvent {
-            last_event_at_unix_ms: 5_000,
+        Err(FastStateError::SnapshotBeforeLastObservation {
+            last_observed_at_unix_ms: 5_000,
             as_of_unix_ms: 4_999
         })
     ));
