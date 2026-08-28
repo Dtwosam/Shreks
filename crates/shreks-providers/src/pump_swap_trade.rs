@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
-use shreks_core::ProviderId;
+use shreks_core::{
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, ProviderId, VenueId,
+};
 
 use crate::{pump::PUMP_AMM_PROGRAM_ID, ProviderError, ProviderErrorKind};
 
@@ -72,6 +74,91 @@ pub fn parse_pump_swap_trade_logs(
     }
 
     Ok(output)
+}
+
+/// Convert one verified PumpSwap event into the provider-neutral FastEvent
+/// contract. Market identity must come from verified Pump graduation lifecycle
+/// evidence; the event payload itself intentionally does not invent mint data.
+/// `quote_amount_raw` is the executed market quote quantity. The separate
+/// fee-adjusted `user_quote_amount_raw` is not used for FL1 market state.
+#[allow(clippy::too_many_arguments)]
+pub fn pump_swap_trade_evidence_to_fast_event(
+    evidence: &PumpSwapTradeEvidence,
+    signature: &str,
+    ordinal: u32,
+    sequence: u64,
+    slot: u64,
+    observed_at_unix_ms: i64,
+    mint: &str,
+    quote_mint: &str,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> Result<FastEvent, ProviderError> {
+    if evidence.base_amount_raw == 0 {
+        return Err(invalid_response(
+            "PumpSwap trade event base amount must be positive",
+        ));
+    }
+    if evidence.quote_amount_raw == 0 {
+        return Err(invalid_response(
+            "PumpSwap trade event quote amount must be positive",
+        ));
+    }
+    if evidence.timestamp_unix_seconds < 0 {
+        return Err(invalid_response(
+            "PumpSwap trade event timestamp must be non-negative",
+        ));
+    }
+
+    let base_scale = decimal_scale(base_decimals)?;
+    let quote_scale = decimal_scale(quote_decimals)?;
+    let base_quantity = evidence.base_amount_raw as f64 / base_scale;
+    let quote_quantity = evidence.quote_amount_raw as f64 / quote_scale;
+    let price_quote = quote_quantity / base_quantity;
+
+    let occurred_at_unix_ms = evidence
+        .timestamp_unix_seconds
+        .checked_mul(1_000)
+        .ok_or_else(|| invalid_response("PumpSwap trade timestamp milliseconds overflow"))?;
+    if observed_at_unix_ms < occurred_at_unix_ms {
+        return Err(invalid_response(format!(
+            "PumpSwap trade observed timestamp {observed_at_unix_ms} precedes occurrence {occurred_at_unix_ms}"
+        )));
+    }
+
+    let id = FastEventId::new(signature, ordinal)
+        .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent id: {error}")))?;
+    let market = FastMarketKey::new(mint, quote_mint, VenueId::PumpSwap)
+        .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent market: {error}")))?;
+    FastEvent::new(
+        id,
+        sequence,
+        ProviderId::Helius,
+        market,
+        if evidence.is_buy {
+            FastEventKind::Buy
+        } else {
+            FastEventKind::Sell
+        },
+        Some(evidence.user.clone()),
+        slot,
+        occurred_at_unix_ms,
+        observed_at_unix_ms,
+        base_quantity,
+        quote_quantity,
+        price_quote,
+    )
+    .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent economics: {error}")))
+}
+
+fn decimal_scale(decimals: u8) -> Result<f64, ProviderError> {
+    let scale = 10_f64.powi(i32::from(decimals));
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err(invalid_response(format!(
+            "invalid PumpSwap trade decimal scale for {decimals} decimals"
+        )));
+    }
+    Ok(scale)
 }
 
 fn decode_trade_event_prefix(
