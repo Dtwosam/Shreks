@@ -3,10 +3,12 @@ use std::time::Duration;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use shreks_core::ProviderId;
 use shreks_providers::{
     pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, WRAPPED_SOL_MINT},
     pump_realtime::{
-        forward_pump_realtime_signals, PumpRealtimeLogStream, PumpRealtimeLogStreamConfig,
+        forward_pump_realtime_signals, PumpRealtimeFailoverStream, PumpRealtimeLogStream,
+        PumpRealtimeLogStreamConfig,
     },
     pump_trade::PUMP_TRADE_EVENT_DISCRIMINATOR,
 };
@@ -139,6 +141,13 @@ fn trade_notification(signature: &str, slot: u64) -> String {
     .to_string()
 }
 
+async fn unavailable_ws_endpoint() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    format!("ws://{address}")
+}
+
 #[tokio::test]
 async fn realtime_stream_uses_one_socket_for_pump_and_pumpswap_subscriptions() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -164,11 +173,108 @@ async fn realtime_stream_uses_one_socket_for_pump_and_pumpswap_subscriptions() {
     .expect("realtime notification before timeout")
     .expect("valid realtime stream event");
 
+    assert_eq!(realtime.provider, ProviderId::Helius);
     assert_eq!(realtime.signature, "trade-1");
     assert_eq!(realtime.slot, 77);
     assert!(realtime.lifecycle.is_none());
     assert_eq!(realtime.trades.len(), 1);
     assert_eq!(realtime.trades[0].token_amount_raw, 500_000_000);
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_aware_stream_preserves_alchemy_source_identity() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut socket = accept_pump_subscriptions(&listener).await;
+        socket
+            .send(Message::Text(trade_notification("alchemy-trade", 88).into()))
+            .await
+            .unwrap();
+    });
+
+    let config = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Alchemy,
+        format!("ws://{address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5));
+    let mut stream = PumpRealtimeLogStream::new(config);
+    let realtime = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("realtime notification before timeout")
+    .expect("valid realtime stream event");
+
+    assert_eq!(realtime.provider, ProviderId::Alchemy);
+    assert_eq!(realtime.signature, "alchemy-trade");
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn realtime_stream_returns_after_bounded_connection_failures() {
+    let config = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Helius,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(2);
+    let mut stream = PumpRealtimeLogStream::new(config);
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("bounded retries must finish")
+    .expect_err("unavailable endpoint must fail");
+
+    assert_eq!(error.provider, ProviderId::Helius);
+    assert!(error.is_retryable());
+}
+
+#[tokio::test]
+async fn failover_stream_rotates_from_unavailable_helius_to_alchemy() {
+    let alchemy_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let alchemy_address = alchemy_listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut socket = accept_pump_subscriptions(&alchemy_listener).await;
+        socket
+            .send(Message::Text(trade_notification("fallback-trade", 99).into()))
+            .await
+            .unwrap();
+    });
+
+    let helius = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Helius,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+    let alchemy = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Alchemy,
+        format!("ws://{alchemy_address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+
+    let mut stream = PumpRealtimeFailoverStream::new(vec![helius, alchemy]).unwrap();
+    let realtime = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("fallback notification before timeout")
+    .expect("secondary provider should succeed");
+
+    assert_eq!(realtime.provider, ProviderId::Alchemy);
+    assert_eq!(realtime.signature, "fallback-trade");
     server.await.unwrap();
 }
 

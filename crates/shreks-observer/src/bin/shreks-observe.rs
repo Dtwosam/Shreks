@@ -30,7 +30,7 @@ use shreks_providers::{
     helius::HeliusProvider,
     meteora::MeteoraProvider,
     pump_realtime::{
-        forward_pump_realtime_signals, PumpRealtimeLogStream, PumpRealtimeLogStreamConfig,
+        forward_pump_realtime_signals, PumpRealtimeFailoverStream, PumpRealtimeLogStreamConfig,
     },
     DiscoveryProvider, ProviderError,
 };
@@ -70,13 +70,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut sampler = build_high_resolution_sampler(sampler_db, &runtime.providers)?;
     sampler.restore_registry()?;
 
-    // One confirmed Pump websocket feeds both lifecycle signals and raw trade
-    // economics. Dedicated WAL connections persist raw evidence immediately and
-    // normalize it into the canonical FastEvent journal once verified decimals exist.
-    let pump_realtime_tasks = if let Some(api_key) = runtime.providers.helius_api_key() {
+    // One active standard-Solana websocket carries both Pump lanes. Helius is
+    // preferred when configured; Alchemy is the free secondary. Provider
+    // exhaustion rotates sources before the durability lane is allowed to fail.
+    let realtime_configs = build_pump_realtime_configs(&runtime.providers)?;
+    let pump_realtime_tasks = if realtime_configs.is_empty() {
+        None
+    } else {
         let writer_db = ShreksDb::open(&runtime.db_path)?;
         let normalizer_db = ShreksDb::open(&runtime.db_path)?;
-        let stream = PumpRealtimeLogStream::new(PumpRealtimeLogStreamConfig::helius(api_key)?);
+        let stream = PumpRealtimeFailoverStream::new(realtime_configs)?;
         let (sender, receiver) = mpsc::channel(PUMP_REALTIME_CHANNEL_CAPACITY);
 
         let forwarder = tokio::spawn(async move {
@@ -91,8 +94,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let normalizer = tokio::spawn(run_fast_event_normalizer(normalizer_db));
 
         Some((forwarder, writer, normalizer))
-    } else {
-        None
     };
 
     let (observer_cycles, sampler_cycles) =
@@ -114,6 +115,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "Shreks observe stopped: legacy_cycles={observer_cycles} v2_sampler_cycles={sampler_cycles}"
     );
     Ok(())
+}
+
+fn build_pump_realtime_configs(
+    config: &ProviderConfig,
+) -> Result<Vec<PumpRealtimeLogStreamConfig>, ProviderError> {
+    let mut configs = Vec::new();
+    if let Some(api_key) = config.helius_api_key() {
+        configs.push(PumpRealtimeLogStreamConfig::helius(api_key)?);
+    }
+    if let Some(api_key) = config.alchemy_api_key() {
+        configs.push(PumpRealtimeLogStreamConfig::alchemy(api_key)?);
+    }
+    Ok(configs)
 }
 
 fn build_lifecycle_observer(
@@ -215,9 +229,9 @@ async fn run_observation_with_realtime(
             Ok(cycles)
         }
         writer_result = &mut writer => {
-            // The realtime durability lane is mandatory whenever Helius realtime
-            // is configured. Any writer exit means the process can no longer prove
-            // it is collecting Pump evidence, so fail closed and let systemd restart.
+            // The realtime durability lane is mandatory whenever any realtime
+            // provider is configured. Any writer exit means the process can no
+            // longer prove it is collecting Pump evidence, so fail closed.
             forwarder.abort();
             let _ = forwarder.await;
             normalizer.abort();

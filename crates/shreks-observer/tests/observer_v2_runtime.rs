@@ -55,10 +55,13 @@ fn lifecycle_observer_has_pump_only_market_evidence_without_v2_duplication() {
 }
 
 #[test]
-fn production_uses_one_realtime_pump_stream_and_the_durable_writer() {
+fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
     for required in [
-        "PumpRealtimeLogStream",
+        "PumpRealtimeFailoverStream",
         "PumpRealtimeLogStreamConfig",
+        "build_pump_realtime_configs",
+        "PumpRealtimeLogStreamConfig::helius",
+        "PumpRealtimeLogStreamConfig::alchemy",
         "forward_pump_realtime_signals",
         "Observer::run_pump_realtime_writer",
         "PUMP_REALTIME_CHANNEL_CAPACITY",
@@ -70,9 +73,30 @@ fn production_uses_one_realtime_pump_stream_and_the_durable_writer() {
     }
 
     assert_eq!(
-        OBSERVE_SOURCE.matches("PumpRealtimeLogStream::new").count(),
+        OBSERVE_SOURCE
+            .matches("PumpRealtimeFailoverStream::new")
+            .count(),
         1,
-        "production must create exactly one Pump realtime websocket stream"
+        "production must create exactly one ordered Pump realtime failover source"
+    );
+
+    let start = OBSERVE_SOURCE
+        .find("fn build_pump_realtime_configs")
+        .expect("realtime config builder must exist");
+    let end = OBSERVE_SOURCE[start..]
+        .find("fn build_lifecycle_observer")
+        .map(|offset| start + offset)
+        .expect("lifecycle builder must follow realtime config builder");
+    let builder = &OBSERVE_SOURCE[start..end];
+    let helius = builder
+        .find("PumpRealtimeLogStreamConfig::helius")
+        .expect("Helius realtime config must be present");
+    let alchemy = builder
+        .find("PumpRealtimeLogStreamConfig::alchemy")
+        .expect("Alchemy realtime config must be present");
+    assert!(
+        helius < alchemy,
+        "Helius must remain primary and Alchemy must be the ordered fallback"
     );
 
     for forbidden in [

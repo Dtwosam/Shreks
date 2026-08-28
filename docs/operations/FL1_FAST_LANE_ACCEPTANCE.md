@@ -30,6 +30,10 @@ Use the authoritative persistent observer database:
 /var/lib/shreks/shreks.db
 ```
 
+FL1 realtime may be configured with `HELIUS_API_KEY` as primary and `ALCHEMY_API_KEY` as the secondary standard-Solana websocket source. Keys belong only in protected host runtime configuration. Never print either key, put either value in this runbook, copy either value into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
+
+When accepting the provider-failover fix after a natural Helius quota failure, keep the failure natural: do not deliberately exhaust credits, block networking, corrupt credentials, or restart services merely to manufacture failover. If Helius is already returning `429` / `max usage reached`, that is valid real-world primary-provider failure evidence and the representative window should prove that the configured fallback continues FL1 ingestion.
+
 Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, or any signing material into the evidence directory.
 
 ## 2. Evidence boundary
@@ -53,6 +57,38 @@ It reports:
 
 The reporter does not perform provider calls and cannot measure an attempted duplicate delivery that was rejected before it became a second durable row. Do not invent a duplicate-attempt count from SQLite.
 
+### Provider-provenance evidence
+
+FL1 raw and canonical rows retain the actual realtime provider ID. Capture a read-only provider breakdown for the same half-open interval `[START_MS, END_MS)` without exposing credentials:
+
+```bash
+sudo -u shreks python3 - "$DB" "$START_MS" "$END_MS" > "$EVIDENCE_DIR/provider-counts.txt" <<'PY'
+import sqlite3
+import sys
+
+path, start_ms, end_ms = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+queries = [
+    ("pump_raw", "pump_trade_evidence", "observed_at_unix_ms"),
+    ("pumpswap_raw", "pump_swap_trade_evidence", "observed_at_unix_ms"),
+    ("canonical", "fast_events", "observed_at_unix_ms"),
+]
+for label, table, time_column in queries:
+    print(f"[{label}]")
+    rows = connection.execute(
+        f"SELECT provider, COUNT(*) FROM {table} "
+        f"WHERE {time_column} >= ? AND {time_column} < ? "
+        "GROUP BY provider ORDER BY provider",
+        (start_ms, end_ms),
+    ).fetchall()
+    for provider, count in rows:
+        print(f"{provider}={count}")
+connection.close()
+PY
+```
+
+This query is evidence-only and must remain `mode=ro`. Provider counts must agree with the raw/canonical activity in the acceptance report. If Helius is naturally quota-exhausted during the window, accepted fallback evidence should contain `alchemy` rows rather than relabeling them as Helius.
+
 ### Host-only evidence
 
 Capture these separately over the same physical-host interval:
@@ -61,7 +97,7 @@ Capture these separately over the same physical-host interval:
 - observer PID, CPU, and RSS;
 - host memory and filesystem headroom;
 - database/WAL size before and after the interval for DB/WAL growth;
-- observer provider/reconnect journal lines, including any disconnect/reconnect instability;
+- observer provider/reconnect journal lines, including any disconnect/reconnect instability or quota exhaustion;
 - exact release SHA and exact interval timestamps.
 
 Provider/reconnect logs are the source for reconnect behavior and any visible attempted duplicate/replay overlap. If the logs do not expose a trustworthy attempted duplicate count, record that metric as unavailable rather than fabricating it.
@@ -122,7 +158,9 @@ sudo -u shreks /opt/shreks/current/target/release/shreks-observe fast-lane-accep
   > "$EVIDENCE_DIR/fast-lane-report.txt"
 ```
 
-The command must exit `0`. A nonzero exit means missing/incompatible schema, invalid timing, unreadable storage evidence, or another fail-closed condition; investigate it rather than overriding it.
+Then capture the provider-provenance breakdown from Section 2 using the same `DB`, `START_MS`, and `END_MS` values.
+
+The acceptance command must exit `0`. A nonzero exit means missing/incompatible schema, invalid timing, unreadable storage evidence, or another fail-closed condition; investigate it rather than overriding it.
 
 ## 5. Database-backed acceptance checks
 
@@ -140,7 +178,9 @@ Also require:
 - source, normalization, and end-to-end latency summaries have nonzero sample counts when their source rows exist;
 - no reported latency is negative or invalid;
 - pending Pump/PumpSwap rows are explainable by known metadata/lifecycle resolution and do not show an unexplained persistent or monotonically growing backlog across repeated representative windows;
-- p50/p95/p99/max values are retained as measured evidence, not silently converted into a pass threshold that was never specified.
+- p50/p95/p99/max values are retained as measured evidence, not silently converted into a pass threshold that was never specified;
+- `provider-counts.txt` contains only recognized realtime provenance (`helius` and/or `alchemy`) for FL1 rows and is consistent with the report's activity counts;
+- when the window naturally includes Helius quota exhaustion, `provider-counts.txt` proves continued `alchemy` raw/canonical progress rather than a stalled lane or falsely relabeled source.
 
 A single pending row is not automatically a failure: delayed mint decimals or verified PumpSwap lifecycle mapping can be legitimate. The failure condition is unexplained persistence/growth, integrity errors, or evidence that normalization cannot catch up under real load.
 
@@ -153,11 +193,15 @@ Require:
 - `ActiveState=active` and a healthy observer substate at both ends;
 - no unexplained increase in `NRestarts`;
 - no crash loop or persistent provider/reconnect churn;
-- reconnects, if they occur naturally, recover without evidence loss or sequence corruption;
+- reconnects or provider rotation, if they occur naturally, recover without evidence loss or sequence corruption;
+- a primary-provider `429` / `max usage reached` condition does not leave the observer falsely healthy while raw/canonical progress has stopped;
+- if all configured realtime providers are unavailable, the realtime lane exits fail-closed so the observer cannot continue presenting a healthy ingestion state;
 - CPU and RSS remain stable enough for continuous operation with meaningful headroom;
 - `free -h` shows memory headroom rather than sustained exhaustion/swap pressure;
 - `df -h` shows enough free space for continued database/WAL growth;
 - `storage-before.txt` and `storage-after.txt` show DB/WAL growth compatible with the measured event rate and available disk headroom.
+
+A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Alchemy fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, or ingestion/canonicalization stalls.
 
 Do not turn one quiet snapshot into a resource-capacity claim. If CPU/RSS or DB/WAL growth is uncertain, repeat the acceptance interval under representative load and retain both evidence sets.
 
@@ -165,7 +209,7 @@ Do not turn one quiet snapshot into a resource-capacity claim. If CPU/RSS or DB/
 
 The FL1 journal is idempotent by durable event identity. That means an attempted duplicate arriving during websocket replay can be rejected before it creates another raw/canonical row. SQLite therefore proves the absence of duplicated durable economic identities, not the number of duplicate attempts received from the network.
 
-Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect occurred, verify the database report still has `sequence_integrity_violations=0`, no unexplained backlog jump, and continued canonical event progress after recovery. If no reconnect occurred naturally, record that fact; do not manufacture a destructive restart drill for this FL1.5 routine acceptance.
+Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect or provider rotation occurred, verify the database report still has `sequence_integrity_violations=0`, no unexplained backlog jump, truthful provider provenance, and continued canonical event progress after recovery. If no reconnect/failover occurred naturally, record that fact; do not manufacture a destructive restart or quota-exhaustion drill for this FL1.5 routine acceptance.
 
 ## 8. FL1.5 hold / exit rule
 
@@ -177,6 +221,9 @@ Use provider/reconnect journal evidence to assess whether reconnect behavior is 
 - the reporter rejects a timing invariant or schema invariant;
 - Pump or PumpSwap representative traffic is absent from the chosen window;
 - canonical progress stalls or pending backlog is persistently unexplained/growing;
+- provider provenance is missing, unrecognized, contradictory, or inconsistent with the reported FL1 activity;
+- Helius quota exhaustion occurs without a working configured fallback, or all configured realtime providers are exhausted/unavailable;
+- the observer remains nominally healthy while realtime raw/canonical progress has stopped;
 - the observer crashes/restarts unexpectedly or provider/reconnect behavior is unstable;
 - CPU/RSS, memory, disk, or DB/WAL growth leaves inadequate production headroom;
 - the evidence interval, release SHA, or host-only records are missing;
