@@ -30,6 +30,16 @@ fn observer_binary() -> &'static str {
     env!("CARGO_BIN_EXE_shreks-observe")
 }
 
+fn acceptance_command() -> Command {
+    let mut command = Command::new(observer_binary());
+    command
+        .env_clear()
+        // The legacy observer path must fail immediately on this value. The
+        // acceptance subcommand is required to dispatch before runtime config.
+        .env("SHREKS_OBSERVER_INTERVAL_SECONDS", "0");
+    command
+}
+
 #[test]
 fn acceptance_dispatch_precedes_runtime_and_provider_configuration() {
     let dispatch = OBSERVER_SOURCE
@@ -52,16 +62,15 @@ fn acceptance_dispatch_precedes_runtime_and_provider_configuration() {
 }
 
 #[test]
-fn observer_acceptance_subcommand_emits_the_stable_report_without_runtime_env() {
+fn observer_acceptance_subcommand_emits_the_stable_report_without_valid_runtime_env() {
     let root = unique_test_dir("output");
     let db_path = root.join("shreks.db");
     drop(ShreksDb::open(&db_path).unwrap());
 
-    let output = Command::new(observer_binary())
+    let output = acceptance_command()
         .arg("fast-lane-acceptance")
         .arg(&db_path)
         .args(["0", "1000"])
-        .env_clear()
         .output()
         .unwrap();
     assert!(
@@ -131,11 +140,7 @@ fn observer_acceptance_subcommand_fails_closed_on_bad_arguments() {
         vec!["fast-lane-acceptance", "db", "not-a-number", "1000"],
         vec!["fast-lane-acceptance", "db", "0", "1000", "extra"],
     ] {
-        let output = Command::new(observer_binary())
-            .args(args)
-            .env_clear()
-            .output()
-            .unwrap();
+        let output = acceptance_command().args(args).output().unwrap();
         assert!(!output.status.success());
     }
 }
