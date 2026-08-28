@@ -1,5 +1,7 @@
 use rusqlite::{params, OptionalExtension};
-use shreks_core::ProviderId;
+use shreks_core::{
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, ProviderId, VenueId,
+};
 
 use crate::{ShreksDb, StorageError};
 
@@ -25,6 +27,14 @@ pub struct PumpTradeEvidenceWrite {
     pub virtual_quote_reserves_raw: u64,
     pub real_quote_reserves_raw: u64,
     pub ix_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredFastEvent {
+    pub event: FastEvent,
+    pub source_observed_at_unix_ms: i64,
+    pub base_decimals: u8,
+    pub quote_decimals: u8,
 }
 
 impl ShreksDb {
@@ -135,6 +145,230 @@ impl ShreksDb {
         rows.into_iter().map(decode_stored_trade).collect()
     }
 
+    /// Return raw Pump events that have not yet been normalized into canonical
+    /// FastEvents. The bounded oldest-first order is stable across restarts.
+    pub fn pending_pump_trade_evidence(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("Pump pending-trade limit exceeds i64".to_owned())
+        })?;
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                   p.mint, p.quote_mint, p.user, p.is_buy,
+                   p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                   p.timestamp_unix_seconds,
+                   p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                   p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                   p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                   p.ix_name
+               FROM pump_trade_evidence AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+               ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
+               LIMIT ?1"#,
+        )?;
+        let rows = statement
+            .query_map([limit], decode_trade_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_stored_trade).collect()
+    }
+
+    /// Resolve one mint's verified decimals across all normalized candidate
+    /// identities. Missing evidence stays unresolved; contradictory evidence
+    /// fails closed instead of choosing a value by recency.
+    pub fn verified_mint_decimals(&self, mint: &str) -> Result<Option<u8>, StorageError> {
+        validate_nonempty(mint, "mint")?;
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT DISTINCT s.decimals
+               FROM token_mint_states AS s
+               JOIN token_candidates AS c ON c.id = s.candidate_id
+               WHERE c.mint = ?1
+               ORDER BY s.decimals ASC"#,
+        )?;
+        let decimals = statement
+            .query_map([mint], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        match decimals.as_slice() {
+            [] => Ok(None),
+            [value] => u8::try_from(*value)
+                .map(Some)
+                .map_err(|_| StorageError::InvalidData(format!(
+                    "verified decimals for mint '{mint}' were outside u8 range"
+                ))),
+            values => Err(StorageError::InvalidData(format!(
+                "contradictory verified decimals for mint '{mint}': {values:?}"
+            ))),
+        }
+    }
+
+    /// Return the next durable append sequence. Sequence is derived from the
+    /// persisted journal, so restart cannot reset or renumber accepted events.
+    pub fn next_fast_event_sequence(&self) -> Result<u64, StorageError> {
+        let last: i64 = self.connection.query_row(
+            "SELECT COALESCE(MAX(sequence), 0) FROM fast_events",
+            [],
+            |row| row.get(0),
+        )?;
+        let next = last.checked_add(1).ok_or_else(|| {
+            StorageError::InvalidData("FastEvent sequence exhausted SQLite integer range".to_owned())
+        })?;
+        u64::try_from(next).map_err(|_| {
+            StorageError::InvalidData("FastEvent next sequence was negative".to_owned())
+        })
+    }
+
+    /// Append one canonical FastEvent linked to immutable Pump raw evidence.
+    ///
+    /// Canonical `observed_at_unix_ms` is the time the normalized event became
+    /// usable. `source_observed_at_unix_ms` preserves the earlier raw websocket
+    /// observation and must exactly match the immutable source row. Replaying
+    /// the same identity is idempotent even if the caller proposes the next
+    /// unused sequence; conflicting canonical economics fail closed.
+    pub fn record_fast_event(
+        &self,
+        event: &FastEvent,
+        source_observed_at_unix_ms: i64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> Result<bool, StorageError> {
+        if source_observed_at_unix_ms < 0 {
+            return Err(StorageError::InvalidData(
+                "FastEvent source observation timestamp must be non-negative".to_owned(),
+            ));
+        }
+        if source_observed_at_unix_ms > event.observed_at_unix_ms {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent source observation {source_observed_at_unix_ms} is later than canonical observation {}",
+                event.observed_at_unix_ms
+            )));
+        }
+
+        let source = self
+            .pump_trade_evidence_by_identity(&event.id.signature, event.id.ordinal)?
+            .ok_or_else(|| {
+                StorageError::InvalidData(format!(
+                    "FastEvent source Pump evidence '{}' ordinal {} is missing",
+                    event.id.signature, event.id.ordinal
+                ))
+            })?;
+        if source.observed_at_unix_ms != source_observed_at_unix_ms {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent source observation mismatch for '{}' ordinal {}: stored {}, supplied {}",
+                event.id.signature,
+                event.id.ordinal,
+                source.observed_at_unix_ms,
+                source_observed_at_unix_ms
+            )));
+        }
+
+        let sequence = i64::try_from(event.sequence).map_err(|_| {
+            StorageError::InvalidData("FastEvent sequence exceeds SQLite integer range".to_owned())
+        })?;
+        let ordinal = i64::from(event.id.ordinal);
+        let kind = fast_event_kind_str(event.kind);
+
+        let changed = self.connection.execute(
+            r#"INSERT OR IGNORE INTO fast_events (
+                   sequence, signature, ordinal, provider, slot,
+                   source_observed_at_unix_ms, occurred_at_unix_ms, observed_at_unix_ms,
+                   mint, quote_mint, venue, kind, actor,
+                   base_quantity, quote_quantity, price_quote,
+                   base_decimals, quote_decimals
+               ) VALUES (
+                   ?1, ?2, ?3, ?4, ?5,
+                   ?6, ?7, ?8,
+                   ?9, ?10, ?11, ?12, ?13,
+                   ?14, ?15, ?16,
+                   ?17, ?18
+               )"#,
+            params![
+                sequence,
+                event.id.signature,
+                ordinal,
+                event.provider.as_str(),
+                event.slot.to_string(),
+                source_observed_at_unix_ms,
+                event.occurred_at_unix_ms,
+                event.observed_at_unix_ms,
+                event.market.mint,
+                event.market.quote_mint,
+                event.market.venue.as_str(),
+                kind,
+                event.actor,
+                event.base_quantity,
+                event.quote_quantity,
+                event.price_quote,
+                i64::from(base_decimals),
+                i64::from(quote_decimals),
+            ],
+        )?;
+
+        if changed == 1 {
+            return Ok(true);
+        }
+
+        let existing = self
+            .fast_event_by_identity(&event.id.signature, event.id.ordinal)?
+            .ok_or_else(|| {
+                StorageError::InvalidData(format!(
+                    "FastEvent insert for '{}' ordinal {} collided with another sequence",
+                    event.id.signature, event.id.ordinal
+                ))
+            })?;
+
+        if same_canonical_event(
+            &existing,
+            event,
+            source_observed_at_unix_ms,
+            base_decimals,
+            quote_decimals,
+        ) {
+            return Ok(false);
+        }
+
+        Err(StorageError::InvalidData(format!(
+            "conflicting FastEvent for signature '{}' ordinal {}",
+            event.id.signature, event.id.ordinal
+        )))
+    }
+
+    /// Replay one market's canonical journal in durable sequence order.
+    pub fn fast_events_for_market(
+        &self,
+        mint: &str,
+        quote_mint: &str,
+        venue: VenueId,
+    ) -> Result<Vec<StoredFastEvent>, StorageError> {
+        validate_nonempty(mint, "FastEvent mint")?;
+        validate_nonempty(quote_mint, "FastEvent quote mint")?;
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   sequence, signature, ordinal, provider, slot,
+                   source_observed_at_unix_ms, occurred_at_unix_ms, observed_at_unix_ms,
+                   mint, quote_mint, venue, kind, actor,
+                   base_quantity, quote_quantity, price_quote,
+                   base_decimals, quote_decimals
+               FROM fast_events
+               WHERE mint = ?1 AND quote_mint = ?2 AND venue = ?3
+               ORDER BY sequence ASC"#,
+        )?;
+        let rows = statement
+            .query_map(params![mint, quote_mint, venue.as_str()], decode_fast_event_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_stored_fast_event).collect()
+    }
+
     fn pump_trade_evidence_by_identity(
         &self,
         signature: &str,
@@ -159,6 +393,29 @@ impl ShreksDb {
             )
             .optional()?;
         raw.map(decode_stored_trade).transpose()
+    }
+
+    fn fast_event_by_identity(
+        &self,
+        signature: &str,
+        ordinal: u32,
+    ) -> Result<Option<StoredFastEvent>, StorageError> {
+        let raw = self
+            .connection
+            .query_row(
+                r#"SELECT
+                       sequence, signature, ordinal, provider, slot,
+                       source_observed_at_unix_ms, occurred_at_unix_ms, observed_at_unix_ms,
+                       mint, quote_mint, venue, kind, actor,
+                       base_quantity, quote_quantity, price_quote,
+                       base_decimals, quote_decimals
+                   FROM fast_events
+                   WHERE signature = ?1 AND ordinal = ?2"#,
+                params![signature, i64::from(ordinal)],
+                decode_fast_event_row,
+            )
+            .optional()?;
+        raw.map(decode_stored_fast_event).transpose()
     }
 }
 
@@ -185,6 +442,27 @@ type RawTradeRow = (
     String,
 );
 
+type RawFastEventRow = (
+    i64,
+    String,
+    i64,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    f64,
+    f64,
+    f64,
+    i64,
+    i64,
+);
+
 fn decode_trade_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawTradeRow> {
     Ok((
         row.get(0)?,
@@ -207,6 +485,29 @@ fn decode_trade_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawTradeRow> {
         row.get(17)?,
         row.get(18)?,
         row.get(19)?,
+    ))
+}
+
+fn decode_fast_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawFastEventRow> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+        row.get(10)?,
+        row.get(11)?,
+        row.get(12)?,
+        row.get(13)?,
+        row.get(14)?,
+        row.get(15)?,
+        row.get(16)?,
+        row.get(17)?,
     ))
 }
 
@@ -289,6 +590,72 @@ fn decode_stored_trade(raw: RawTradeRow) -> Result<PumpTradeEvidenceWrite, Stora
     })
 }
 
+fn decode_stored_fast_event(raw: RawFastEventRow) -> Result<StoredFastEvent, StorageError> {
+    let (
+        sequence,
+        signature,
+        ordinal,
+        provider,
+        slot,
+        source_observed_at_unix_ms,
+        occurred_at_unix_ms,
+        observed_at_unix_ms,
+        mint,
+        quote_mint,
+        venue,
+        kind,
+        actor,
+        base_quantity,
+        quote_quantity,
+        price_quote,
+        base_decimals,
+        quote_decimals,
+    ) = raw;
+
+    let sequence = u64::try_from(sequence).map_err(|_| {
+        StorageError::InvalidData("stored FastEvent sequence was not positive u64".to_owned())
+    })?;
+    let ordinal = u32::try_from(ordinal).map_err(|_| {
+        StorageError::InvalidData("stored FastEvent ordinal was outside u32 range".to_owned())
+    })?;
+    let base_decimals = u8::try_from(base_decimals).map_err(|_| {
+        StorageError::InvalidData("stored FastEvent base decimals were outside u8 range".to_owned())
+    })?;
+    let quote_decimals = u8::try_from(quote_decimals).map_err(|_| {
+        StorageError::InvalidData("stored FastEvent quote decimals were outside u8 range".to_owned())
+    })?;
+    let id = FastEventId::new(signature, ordinal).map_err(|error| {
+        StorageError::InvalidData(format!("stored FastEvent identity is invalid: {error}"))
+    })?;
+    let market = FastMarketKey::new(mint, quote_mint, parse_venue_id(&venue)?).map_err(|error| {
+        StorageError::InvalidData(format!("stored FastEvent market is invalid: {error}"))
+    })?;
+    let event = FastEvent::new(
+        id,
+        sequence,
+        parse_provider_id(&provider)?,
+        market,
+        parse_fast_event_kind(&kind)?,
+        actor,
+        parse_u64_text(&slot, "FastEvent slot")?,
+        occurred_at_unix_ms,
+        observed_at_unix_ms,
+        base_quantity,
+        quote_quantity,
+        price_quote,
+    )
+    .map_err(|error| {
+        StorageError::InvalidData(format!("stored FastEvent economics are invalid: {error}"))
+    })?;
+
+    Ok(StoredFastEvent {
+        event,
+        source_observed_at_unix_ms,
+        base_decimals,
+        quote_decimals,
+    })
+}
+
 fn validate_trade_evidence(evidence: &PumpTradeEvidenceWrite) -> Result<(), StorageError> {
     validate_nonempty(&evidence.signature, "Pump trade signature")?;
     validate_nonempty(&evidence.mint, "Pump trade mint")?;
@@ -334,6 +701,60 @@ fn same_economic_event(
         && stored.ix_name == incoming.ix_name
 }
 
+fn same_canonical_event(
+    stored: &StoredFastEvent,
+    incoming: &FastEvent,
+    source_observed_at_unix_ms: i64,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> bool {
+    let existing = &stored.event;
+    existing.id == incoming.id
+        && existing.provider == incoming.provider
+        && existing.market == incoming.market
+        && existing.kind == incoming.kind
+        && existing.actor == incoming.actor
+        && existing.slot == incoming.slot
+        && existing.occurred_at_unix_ms == incoming.occurred_at_unix_ms
+        && existing.observed_at_unix_ms == incoming.observed_at_unix_ms
+        && existing.base_quantity == incoming.base_quantity
+        && existing.quote_quantity == incoming.quote_quantity
+        && existing.price_quote == incoming.price_quote
+        && stored.source_observed_at_unix_ms == source_observed_at_unix_ms
+        && stored.base_decimals == base_decimals
+        && stored.quote_decimals == quote_decimals
+}
+
+fn fast_event_kind_str(kind: FastEventKind) -> &'static str {
+    match kind {
+        FastEventKind::Buy => "buy",
+        FastEventKind::Sell => "sell",
+    }
+}
+
+fn parse_fast_event_kind(value: &str) -> Result<FastEventKind, StorageError> {
+    match value {
+        "buy" => Ok(FastEventKind::Buy),
+        "sell" => Ok(FastEventKind::Sell),
+        other => Err(StorageError::InvalidData(format!(
+            "unknown stored FastEvent kind '{other}'"
+        ))),
+    }
+}
+
+fn parse_venue_id(value: &str) -> Result<VenueId, StorageError> {
+    match value {
+        "pump_fun_bonding_curve" => Ok(VenueId::PumpFunBondingCurve),
+        "pump_swap" => Ok(VenueId::PumpSwap),
+        "meteora_dlmm" => Ok(VenueId::MeteoraDlmm),
+        "meteora_damm_v2" => Ok(VenueId::MeteoraDammV2),
+        "other_solana" => Ok(VenueId::OtherSolana),
+        other => Err(StorageError::InvalidData(format!(
+            "unknown venue id '{other}' in FastEvent storage"
+        ))),
+    }
+}
+
 fn validate_nonempty(value: &str, field: &str) -> Result<(), StorageError> {
     if value.trim().is_empty() {
         return Err(StorageError::InvalidData(format!(
@@ -356,7 +777,7 @@ fn parse_provider_id(value: &str) -> Result<ProviderId, StorageError> {
         "jupiter" => Ok(ProviderId::Jupiter),
         "meteora" => Ok(ProviderId::Meteora),
         other => Err(StorageError::InvalidData(format!(
-            "unknown provider id '{other}' in Pump trade evidence"
+            "unknown provider id '{other}' in Fast Lane storage"
         ))),
     }
 }
