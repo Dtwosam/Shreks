@@ -15,16 +15,20 @@ use shreks_observer::{
 use shreks_providers::{
     config::ProviderConfig,
     dexscreener::DexScreenerProvider,
-    forward_pump_signals,
     helius::HeliusProvider,
     meteora::MeteoraProvider,
-    pump::{PumpLogStream, PumpLogStreamConfig},
+    pump_realtime::{
+        forward_pump_realtime_signals, PumpRealtimeLogStream, PumpRealtimeLogStreamConfig,
+    },
     DiscoveryProvider, ProviderError,
 };
 use shreks_storage::ShreksDb;
-use tokio::{sync::{mpsc, watch}, task::JoinError};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinError,
+};
 
-const PUMP_SIGNAL_CHANNEL_CAPACITY: usize = 4_096;
+const PUMP_REALTIME_CHANNEL_CAPACITY: usize = 4_096;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -39,27 +43,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
     );
 
     // Observer V2 deliberately uses a second connection to the same WAL database.
-    // The legacy observer retains Pump/chain truth; V2 owns public discovery and
+    // The lifecycle observer retains Pump/chain truth; V2 owns public discovery and
     // dense market-path sampling so free-tier requests are not duplicated.
     let observer_db = ShreksDb::open(&runtime.db_path)?;
     let sampler_db = ShreksDb::open(&runtime.db_path)?;
-    let mut observer = build_lifecycle_observer(observer_db, &runtime.providers)?;
+    let observer = build_lifecycle_observer(observer_db, &runtime.providers)?;
     let mut sampler = build_high_resolution_sampler(sampler_db, &runtime.providers)?;
     sampler.restore_registry()?;
 
-    let pump_forwarder = if let Some(api_key) = runtime.providers.helius_api_key() {
-        let stream = PumpLogStream::new(PumpLogStreamConfig::helius(api_key)?);
-        let (sender, receiver) = mpsc::channel(PUMP_SIGNAL_CHANNEL_CAPACITY);
-        observer = observer.with_pump_signal_receiver(receiver);
+    // One confirmed Pump websocket feeds both lifecycle signals and raw trade
+    // economics. A dedicated WAL connection persists that evidence immediately;
+    // the slow lifecycle observer later verifies the durable inbox normally.
+    let pump_realtime_tasks = if let Some(api_key) = runtime.providers.helius_api_key() {
+        let writer_db = ShreksDb::open(&runtime.db_path)?;
+        let stream = PumpRealtimeLogStream::new(PumpRealtimeLogStreamConfig::helius(api_key)?);
+        let (sender, receiver) = mpsc::channel(PUMP_REALTIME_CHANNEL_CAPACITY);
 
-        Some(tokio::spawn(async move {
-            if let Err(error) = forward_pump_signals(stream, sender).await {
+        let forwarder = tokio::spawn(async move {
+            if let Err(error) = forward_pump_realtime_signals(stream, sender).await {
                 eprintln!(
                     "Shreks Pump realtime stream stopped: provider={} kind={:?}: {}",
                     error.provider, error.kind, error.message
                 );
             }
-        }))
+        });
+        let writer = tokio::spawn(Observer::run_pump_realtime_writer(writer_db, receiver));
+
+        Some((forwarder, writer))
     } else {
         None
     };
@@ -71,12 +81,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .await;
 
-    if let Some(forwarder) = pump_forwarder {
+    // Stop the producer first. Dropping its sender closes the bounded channel;
+    // the writer then drains every envelope already accepted by this process.
+    let realtime_writer_result = if let Some((forwarder, writer)) = pump_realtime_tasks {
         forwarder.abort();
         let _ = forwarder.await;
-    }
+        Some(writer.await)
+    } else {
+        None
+    };
 
     let (observer_cycles, sampler_cycles) = observation_result?;
+
+    if let Some(writer_result) = realtime_writer_result {
+        let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
+        eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
+    }
+
     eprintln!(
         "Shreks observe stopped: legacy_cycles={observer_cycles} v2_sampler_cycles={sampler_cycles}"
     );
