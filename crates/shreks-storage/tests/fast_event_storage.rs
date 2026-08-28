@@ -101,7 +101,7 @@ fn canonical_fast_event_sequence_is_stable_restart_safe_and_replay_ordered() {
     let root = unique_test_dir("restart");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 11);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 12);
 
     let raw_one = raw_trade("sig-a", 0, 1_100);
     let raw_two = raw_trade("sig-b", 0, 1_200);
