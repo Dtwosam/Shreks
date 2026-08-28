@@ -23,6 +23,22 @@ CREATE TABLE fast_events (
         ON DELETE RESTRICT
 );
 
+CREATE TRIGGER trg_fast_events_contiguous_sequence
+BEFORE INSERT ON fast_events
+FOR EACH ROW
+WHEN NOT EXISTS (
+         SELECT 1
+         FROM fast_events
+         WHERE signature = NEW.signature AND ordinal = NEW.ordinal
+     )
+     AND NEW.sequence != (
+         SELECT COALESCE(MAX(sequence), 0) + 1
+         FROM fast_events
+     )
+BEGIN
+    SELECT RAISE(ABORT, 'fast_events sequence must append contiguously');
+END;
+
 CREATE INDEX idx_fast_events_market_sequence
     ON fast_events (mint, quote_mint, venue, sequence);
 
