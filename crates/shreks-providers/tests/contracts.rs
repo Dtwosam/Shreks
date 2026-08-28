@@ -6,6 +6,7 @@ fn provider_identifiers_are_stable() {
     assert_eq!(ProviderId::DexScreener.as_str(), "dexscreener");
     assert_eq!(ProviderId::Helius.as_str(), "helius");
     assert_eq!(ProviderId::Alchemy.as_str(), "alchemy");
+    assert_eq!(ProviderId::Chainstack.as_str(), "chainstack");
     assert_eq!(ProviderId::Jupiter.as_str(), "jupiter");
     assert_eq!(ProviderId::Meteora.as_str(), "meteora");
 }

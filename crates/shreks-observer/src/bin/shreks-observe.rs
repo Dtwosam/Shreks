@@ -71,8 +71,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     sampler.restore_registry()?;
 
     // One active standard-Solana websocket carries both Pump lanes. Helius is
-    // preferred when configured; Alchemy is the free secondary. Provider
-    // exhaustion rotates sources before the durability lane is allowed to fail.
+    // preferred when configured; Chainstack is the proven free fallback and Alchemy
+    // remains tertiary. Provider exhaustion rotates sources before durability may fail.
     let realtime_configs = build_pump_realtime_configs(&runtime.providers)?;
     let pump_realtime_tasks = if realtime_configs.is_empty() {
         None
@@ -123,6 +123,9 @@ fn build_pump_realtime_configs(
     let mut configs = Vec::new();
     if let Some(api_key) = config.helius_api_key() {
         configs.push(PumpRealtimeLogStreamConfig::helius(api_key)?);
+    }
+    if let Some(endpoint) = config.chainstack_solana_wss_url() {
+        configs.push(PumpRealtimeLogStreamConfig::chainstack(endpoint)?);
     }
     if let Some(api_key) = config.alchemy_api_key() {
         configs.push(PumpRealtimeLogStreamConfig::alchemy(api_key)?);

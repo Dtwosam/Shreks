@@ -141,6 +141,9 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
         transactions.push(ProviderId::Helius);
         realtime.push(ProviderId::Helius);
     }
+    if config.chainstack_enabled() {
+        realtime.push(ProviderId::Chainstack);
+    }
     if config.alchemy_enabled() {
         realtime.push(ProviderId::Alchemy);
     }
@@ -291,9 +294,12 @@ fn increment_trade_rows(current: usize) -> Result<usize, ObserverError> {
 }
 
 fn validate_realtime_identity(notification: &PumpRealtimeNotification) -> Result<(), ObserverError> {
-    if !matches!(notification.provider, ProviderId::Helius | ProviderId::Alchemy) {
+    if !matches!(
+        notification.provider,
+        ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy
+    ) {
         return Err(ObserverError::Storage(StorageError::InvalidData(
-            "Pump realtime notification provider must be Helius or Alchemy".to_owned(),
+            "Pump realtime notification provider must be Helius, Chainstack, or Alchemy".to_owned(),
         )));
     }
     if notification.signature.trim().is_empty() {

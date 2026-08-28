@@ -61,6 +61,7 @@ fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
         "PumpRealtimeLogStreamConfig",
         "build_pump_realtime_configs",
         "PumpRealtimeLogStreamConfig::helius",
+        "PumpRealtimeLogStreamConfig::chainstack",
         "PumpRealtimeLogStreamConfig::alchemy",
         "forward_pump_realtime_signals",
         "Observer::run_pump_realtime_writer",
@@ -91,12 +92,15 @@ fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
     let helius = builder
         .find("PumpRealtimeLogStreamConfig::helius")
         .expect("Helius realtime config must be present");
+    let chainstack = builder
+        .find("PumpRealtimeLogStreamConfig::chainstack")
+        .expect("Chainstack realtime config must be present");
     let alchemy = builder
         .find("PumpRealtimeLogStreamConfig::alchemy")
         .expect("Alchemy realtime config must be present");
     assert!(
-        helius < alchemy,
-        "Helius must remain primary and Alchemy must be the ordered fallback"
+        helius < chainstack && chainstack < alchemy,
+        "production provider order must be Helius -> Chainstack -> Alchemy"
     );
 
     for forbidden in [

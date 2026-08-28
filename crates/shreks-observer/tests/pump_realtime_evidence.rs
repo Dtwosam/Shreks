@@ -157,6 +157,37 @@ async fn realtime_writer_preserves_alchemy_trade_provenance() {
 }
 
 #[tokio::test]
+async fn realtime_writer_preserves_chainstack_trade_provenance() {
+    let root = unique_test_dir("chainstack-writer");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(1);
+
+    let mut event = notification();
+    event.provider = ProviderId::Chainstack;
+    event.signature = "ChainstackRealtimeSignature111".to_owned();
+    event.lifecycle = None;
+    sender.send(event).await.unwrap();
+    drop(sender);
+
+    assert_eq!(
+        Observer::run_pump_realtime_writer(writer_db, receiver)
+            .await
+            .unwrap(),
+        1
+    );
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let rows = db
+        .pump_trade_evidence_for_signature("ChainstackRealtimeSignature111")
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].provider, ProviderId::Chainstack);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn realtime_writer_persists_pumpswap_economics_immediately_and_idempotently() {
     let root = unique_test_dir("pumpswap-writer");
     let db_path = root.join("shreks.db");
@@ -237,6 +268,44 @@ async fn realtime_writer_preserves_alchemy_pumpswap_provenance() {
         .unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].provider, ProviderId::Alchemy);
+    assert_eq!(rows[0].ordinal, pump_swap_event_ordinal(17).unwrap());
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn realtime_writer_preserves_chainstack_pumpswap_provenance() {
+    let root = unique_test_dir("chainstack-pumpswap-writer");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(1);
+
+    sender
+        .send(PumpRealtimeNotification {
+            provider: ProviderId::Chainstack,
+            signature: "ChainstackPumpSwapRealtimeSignature111".to_owned(),
+            slot: 903,
+            lifecycle: None,
+            trades: Vec::new(),
+            pump_swap_trades: vec![pump_swap_trade()],
+        })
+        .await
+        .unwrap();
+    drop(sender);
+
+    assert_eq!(
+        Observer::run_pump_realtime_writer(writer_db, receiver)
+            .await
+            .unwrap(),
+        1
+    );
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let rows = db
+        .pump_swap_trade_evidence_for_signature("ChainstackPumpSwapRealtimeSignature111")
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].provider, ProviderId::Chainstack);
     assert_eq!(rows[0].ordinal, pump_swap_event_ordinal(17).unwrap());
 
     cleanup_dir(&root);

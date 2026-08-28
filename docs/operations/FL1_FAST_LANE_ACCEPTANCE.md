@@ -30,7 +30,7 @@ Use the authoritative persistent observer database:
 /var/lib/shreks/shreks.db
 ```
 
-FL1 realtime may be configured with `HELIUS_API_KEY` as primary and `ALCHEMY_API_KEY` as the secondary standard-Solana websocket source. Keys belong only in protected host runtime configuration. Never print either key, put either value in this runbook, copy either value into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
+FL1 realtime may be configured with `HELIUS_API_KEY` as primary, host-only `CHAINSTACK_SOLANA_WSS_URL` as the proven secondary standard-Solana websocket source, and `ALCHEMY_API_KEY` as tertiary. The Chainstack endpoint itself contains credential material. Provider credentials/endpoints belong only in protected host runtime configuration. Never print them, put their values in this runbook, copy them into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
 
 When accepting the provider-failover fix after a natural Helius quota failure, keep the failure natural: do not deliberately exhaust credits, block networking, corrupt credentials, or restart services merely to manufacture failover. If Helius is already returning `429` / `max usage reached`, that is valid real-world primary-provider failure evidence and the representative window should prove that the configured fallback continues FL1 ingestion.
 
@@ -87,7 +87,7 @@ connection.close()
 PY
 ```
 
-This query is evidence-only and must remain `mode=ro`. Provider counts must agree with the raw/canonical activity in the acceptance report. If Helius is naturally quota-exhausted during the window, accepted fallback evidence should contain `alchemy` rows rather than relabeling them as Helius.
+This query is evidence-only and must remain `mode=ro`. Provider counts must agree with the raw/canonical activity in the acceptance report. If Helius is naturally quota-exhausted during the window, accepted fallback evidence should contain `chainstack` rows when Chainstack is configured rather than relabeling them as Helius. Alchemy counts are acceptable only when its websocket subscription actually acknowledges and carries traffic.
 
 ### Host-only evidence
 
@@ -179,7 +179,7 @@ Also require:
 - no reported latency is negative or invalid;
 - pending Pump/PumpSwap rows are explainable by known metadata/lifecycle resolution and do not show an unexplained persistent or monotonically growing backlog across repeated representative windows;
 - p50/p95/p99/max values are retained as measured evidence, not silently converted into a pass threshold that was never specified;
-- `provider-counts.txt` contains only recognized realtime provenance (`helius` and/or `alchemy`) for FL1 rows and is consistent with the report's activity counts;
+- `provider-counts.txt` contains only recognized realtime provenance (`helius`, `chainstack`, and/or `alchemy`) for FL1 rows and is consistent with the report's activity counts;
 - when the window naturally includes Helius quota exhaustion, `provider-counts.txt` proves continued `alchemy` raw/canonical progress rather than a stalled lane or falsely relabeled source.
 
 A single pending row is not automatically a failure: delayed mint decimals or verified PumpSwap lifecycle mapping can be legitimate. The failure condition is unexplained persistence/growth, integrity errors, or evidence that normalization cannot catch up under real load.
@@ -201,7 +201,7 @@ Require:
 - `df -h` shows enough free space for continued database/WAL growth;
 - `storage-before.txt` and `storage-after.txt` show DB/WAL growth compatible with the measured event rate and available disk headroom.
 
-A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Alchemy fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, or ingestion/canonicalization stalls.
+A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Chainstack (or independently proven Alchemy) fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, or ingestion/canonicalization stalls.
 
 Do not turn one quiet snapshot into a resource-capacity claim. If CPU/RSS or DB/WAL growth is uncertain, repeat the acceptance interval under representative load and retain both evidence sets.
 

@@ -9,12 +9,13 @@ const DEFAULT_METEORA_MARKET_RPS: u32 = 1;
 
 /// Runtime configuration for Shreks' free provider adapters.
 ///
-/// Keyed providers are disabled when their runtime key is absent or blank.
+/// Keyed providers are disabled when their runtime key/endpoint is absent or blank.
 /// Public providers remain enabled. Request budgets intentionally sit at or
 /// below the free/public ceilings Shreks is designed around.
 pub struct ProviderConfig {
     helius_api_key: Option<String>,
     alchemy_api_key: Option<String>,
+    chainstack_solana_wss_url: Option<String>,
     jupiter_api_key: Option<String>,
     pub dexscreener_enabled: bool,
     pub meteora_enabled: bool,
@@ -36,6 +37,7 @@ impl ProviderConfig {
         Self {
             helius_api_key: non_blank(lookup("HELIUS_API_KEY")),
             alchemy_api_key: non_blank(lookup("ALCHEMY_API_KEY")),
+            chainstack_solana_wss_url: non_blank(lookup("CHAINSTACK_SOLANA_WSS_URL")),
             jupiter_api_key: non_blank(lookup("JUPITER_API_KEY")),
             dexscreener_enabled: true,
             meteora_enabled: true,
@@ -58,6 +60,10 @@ impl ProviderConfig {
         self.alchemy_api_key.is_some()
     }
 
+    pub fn chainstack_enabled(&self) -> bool {
+        self.chainstack_solana_wss_url.is_some()
+    }
+
     pub fn jupiter_enabled(&self) -> bool {
         self.jupiter_api_key.is_some()
     }
@@ -68,6 +74,10 @@ impl ProviderConfig {
 
     pub fn alchemy_api_key(&self) -> Option<&str> {
         self.alchemy_api_key.as_deref()
+    }
+
+    pub fn chainstack_solana_wss_url(&self) -> Option<&str> {
+        self.chainstack_solana_wss_url.as_deref()
     }
 
     pub fn jupiter_api_key(&self) -> Option<&str> {
@@ -81,6 +91,7 @@ impl fmt::Debug for ProviderConfig {
             .debug_struct("ProviderConfig")
             .field("helius_enabled", &self.helius_enabled())
             .field("alchemy_enabled", &self.alchemy_enabled())
+            .field("chainstack_enabled", &self.chainstack_enabled())
             .field("jupiter_enabled", &self.jupiter_enabled())
             .field("dexscreener_enabled", &self.dexscreener_enabled)
             .field("meteora_enabled", &self.meteora_enabled)

@@ -215,6 +215,38 @@ async fn provider_aware_stream_preserves_alchemy_source_identity() {
 }
 
 #[tokio::test]
+async fn provider_aware_stream_preserves_chainstack_source_identity() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut socket = accept_pump_subscriptions(&listener).await;
+        socket
+            .send(Message::Text(trade_notification("chainstack-trade", 89).into()))
+            .await
+            .unwrap();
+    });
+
+    let config = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        format!("ws://{address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5));
+    let mut stream = PumpRealtimeLogStream::new(config);
+    let realtime = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("realtime notification before timeout")
+    .expect("valid realtime stream event");
+
+    assert_eq!(realtime.provider, ProviderId::Chainstack);
+    assert_eq!(realtime.signature, "chainstack-trade");
+    server.await.unwrap();
+}
+
+#[tokio::test]
 async fn realtime_stream_returns_after_bounded_connection_failures() {
     let config = PumpRealtimeLogStreamConfig::for_provider_endpoint(
         ProviderId::Helius,
@@ -235,6 +267,47 @@ async fn realtime_stream_returns_after_bounded_connection_failures() {
 
     assert_eq!(error.provider, ProviderId::Helius);
     assert!(error.is_retryable());
+}
+
+#[tokio::test]
+async fn failover_stream_rotates_from_unavailable_helius_to_chainstack() {
+    let chainstack_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let chainstack_address = chainstack_listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut socket = accept_pump_subscriptions(&chainstack_listener).await;
+        socket
+            .send(Message::Text(trade_notification("chainstack-fallback", 98).into()))
+            .await
+            .unwrap();
+    });
+
+    let helius = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Helius,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+    let chainstack = PumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        format!("ws://{chainstack_address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+
+    let mut stream = PumpRealtimeFailoverStream::new(vec![helius, chainstack]).unwrap();
+    let realtime = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("fallback notification before timeout")
+    .expect("Chainstack fallback should succeed");
+
+    assert_eq!(realtime.provider, ProviderId::Chainstack);
+    assert_eq!(realtime.signature, "chainstack-fallback");
+    server.await.unwrap();
 }
 
 #[tokio::test]
