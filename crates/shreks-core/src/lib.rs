@@ -89,6 +89,7 @@ impl FromStr for RuntimeMode {
 pub enum ProviderId {
     DexScreener,
     Helius,
+    Alchemy,
     Jupiter,
     Meteora,
 }
@@ -98,6 +99,7 @@ impl ProviderId {
         match self {
             Self::DexScreener => "dexscreener",
             Self::Helius => "helius",
+            Self::Alchemy => "alchemy",
             Self::Jupiter => "jupiter",
             Self::Meteora => "meteora",
         }
