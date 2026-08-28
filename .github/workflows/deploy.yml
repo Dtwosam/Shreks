@@ -110,5 +110,15 @@ jobs:
           scp -q -i "$KEY_FILE" -P "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$CHECKSUM" "$DESTINATION:$REMOTE_CHECKSUM"
           scp -q -i "$KEY_FILE" -P "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$MANIFEST" "$DESTINATION:$REMOTE_MANIFEST"
 
+          set +e
           ssh -i "$KEY_FILE" -p "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$DESTINATION" \
             "sudo /usr/local/sbin/shreks-release-manager install '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
+          DEPLOY_RC=$?
+          set -e
+
+          if (( DEPLOY_RC != 0 )); then
+            echo "release manager failed; collecting read-only host diagnostics" >&2
+            ssh -i "$KEY_FILE" -p "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes "$DESTINATION" \
+              "printf 'current_release='; readlink -f /opt/shreks/current || true; printf 'candidate_release_present='; if test -d '/opt/shreks/releases/$SOURCE_SHA'; then echo yes; else echo no; fi; systemctl is-active shreks.target || true; systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks.target -p ActiveState -p SubState --no-pager || true" || true
+            exit "$DEPLOY_RC"
+          fi
