@@ -25,7 +25,7 @@ use shreks_providers::{
 use shreks_storage::ShreksDb;
 use tokio::{
     sync::{mpsc, watch},
-    task::JoinError,
+    task::{JoinError, JoinHandle},
 };
 
 const PUMP_REALTIME_CHANNEL_CAPACITY: usize = 4_096;
@@ -74,29 +74,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         None
     };
 
-    let observation_result = run_observation_loops(
-        observer,
-        sampler,
-        runtime.cycle_interval,
-    )
-    .await;
-
-    // Stop the producer first. Dropping its sender closes the bounded channel;
-    // the writer then drains every envelope already accepted by this process.
-    let realtime_writer_result = if let Some((forwarder, writer)) = pump_realtime_tasks {
-        forwarder.abort();
-        let _ = forwarder.await;
-        Some(writer.await)
+    let (observer_cycles, sampler_cycles) = if let Some((forwarder, writer)) = pump_realtime_tasks {
+        run_observation_with_realtime(
+            observer,
+            sampler,
+            runtime.cycle_interval,
+            forwarder,
+            writer,
+        )
+        .await?
     } else {
-        None
+        run_observation_loops(observer, sampler, runtime.cycle_interval).await?
     };
-
-    let (observer_cycles, sampler_cycles) = observation_result?;
-
-    if let Some(writer_result) = realtime_writer_result {
-        let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
-        eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
-    }
 
     eprintln!(
         "Shreks observe stopped: legacy_cycles={observer_cycles} v2_sampler_cycles={sampler_cycles}"
@@ -146,6 +135,42 @@ fn build_high_resolution_sampler(
     }
 
     HighResolutionSampler::new(db, discovery, market, SamplingPolicy::default_v1())
+}
+
+async fn run_observation_with_realtime(
+    observer: Observer,
+    sampler: HighResolutionSampler,
+    cycle_interval: std::time::Duration,
+    forwarder: JoinHandle<()>,
+    mut writer: JoinHandle<Result<usize, ObserverError>>,
+) -> Result<(usize, u64), Box<dyn Error>> {
+    let observation = run_observation_loops(observer, sampler, cycle_interval);
+    tokio::pin!(observation);
+
+    tokio::select! {
+        observation_result = &mut observation => {
+            // Normal observer shutdown closes the producer first, then drains every
+            // realtime envelope already accepted into the bounded channel.
+            forwarder.abort();
+            let _ = forwarder.await;
+            let writer_result = writer.await;
+            let cycles = observation_result?;
+            let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
+            eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
+            Ok(cycles)
+        }
+        writer_result = &mut writer => {
+            // The realtime durability lane is mandatory whenever Helius realtime
+            // is configured. Any writer exit means the process can no longer prove
+            // it is collecting Pump evidence, so fail closed and let systemd restart.
+            forwarder.abort();
+            let _ = forwarder.await;
+            let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
+            Err(Box::new(std::io::Error::other(format!(
+                "Pump realtime writer stopped unexpectedly after {rows} new trade rows"
+            ))))
+        }
+    }
 }
 
 async fn run_observation_loops(
