@@ -90,6 +90,7 @@ pub enum ProviderId {
     DexScreener,
     Helius,
     Alchemy,
+    Chainstack,
     Jupiter,
     Meteora,
 }
@@ -100,6 +101,7 @@ impl ProviderId {
             Self::DexScreener => "dexscreener",
             Self::Helius => "helius",
             Self::Alchemy => "alchemy",
+            Self::Chainstack => "chainstack",
             Self::Jupiter => "jupiter",
             Self::Meteora => "meteora",
         }
