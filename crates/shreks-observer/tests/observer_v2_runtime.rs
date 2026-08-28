@@ -26,7 +26,7 @@ fn observe_binary_runs_v2_sampler_and_does_not_duplicate_public_discovery() {
 }
 
 #[test]
-fn lifecycle_observer_has_market_evidence_for_verified_pump_launches() {
+fn lifecycle_observer_has_pump_only_market_evidence_without_v2_duplication() {
     let start = OBSERVE_SOURCE
         .find("fn build_lifecycle_observer")
         .expect("lifecycle observer builder must exist");
@@ -41,12 +41,16 @@ fn lifecycle_observer_has_market_evidence_for_verified_pump_launches() {
         "verified Pump launches require DEX Screener market evidence in the lifecycle observer"
     );
     assert!(
-        builder.contains("with_market_provider"),
-        "verified Pump launches must be sent through the lifecycle observer market path"
+        builder.contains("with_pump_market_provider"),
+        "verified Pump launches must use the dedicated Pump-only market path"
     );
     assert!(
         !builder.contains("with_discovery_provider"),
         "lifecycle observer must not duplicate V2 public discovery"
+    );
+    assert!(
+        !builder.contains(".with_market_provider"),
+        "lifecycle observer must not attach a general market provider that duplicates V2 outcome sampling"
     );
 }
 
