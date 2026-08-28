@@ -22,7 +22,7 @@ Add tests proving:
 3. observation time moving backward is rejected;
 4. snapshots are rejected only when they precede the latest observation, not merely the latest chain occurrence.
 
-Run `cargo test -p shreks-core --test fast_lane_state` and prove failure under current occurrence-clock behavior.
+Run `cargo test -p shreks-core --test fast_lane_observation_clock` and prove failure under current occurrence-clock behavior.
 
 ## GREEN
 
@@ -39,4 +39,4 @@ Run focused tests, then full workspace CI including Rust, Python, repository saf
 
 ## Merge gate
 
-Diff must remain limited to this plan, `crates/shreks-core/src/fast_lane/state.rs`, and `crates/shreks-core/tests/fast_lane_state.rs`. Merge only after GREEN evidence. LIVE remains disabled.
+Diff must remain limited to this plan, `crates/shreks-core/src/fast_lane/state.rs`, `crates/shreks-core/tests/fast_lane_state.rs`, and `crates/shreks-core/tests/fast_lane_observation_clock.rs`. Merge only after GREEN evidence. LIVE remains disabled.
