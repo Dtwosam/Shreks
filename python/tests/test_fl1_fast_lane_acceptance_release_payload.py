@@ -16,15 +16,17 @@ def test_verified_release_builds_and_copies_fast_lane_acceptance_binary():
     ) in source
 
 
-def test_release_manifest_allowlist_requires_fast_lane_acceptance_binary():
+def test_release_manifest_allowlist_accepts_fast_lane_reporter_without_invalidating_legacy_releases():
     source = (_REPO_ROOT / "deploy" / "release" / "release_bundle.py").read_text(
         encoding="utf-8"
     )
+    assert "_OPTIONAL_STATIC_PAYLOAD_PATHS" in source
     assert f'"{_REPORTER}"' in source
 
 
-def test_release_manager_verifies_fast_lane_acceptance_binary():
+def test_release_manager_verifies_reporter_through_generic_manifest_integrity_checks():
     source = (_REPO_ROOT / "deploy" / "release" / "release_manager.py").read_text(
         encoding="utf-8"
     )
-    assert f'"{_REPORTER}"' in source
+    assert "_verify_payloads_for_staging(staging_dir, manifest)" in source
+    assert "_verify_stored_release(release_dir)" in source
