@@ -171,6 +171,26 @@ fn canonical_fast_event_duplicate_is_idempotent_but_conflict_fails_closed() {
 }
 
 #[test]
+fn new_canonical_identity_cannot_skip_durable_append_sequence() {
+    let root = unique_test_dir("sequence-gap");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    db.record_pump_trade_evidence(&raw_trade("sig-a", 0, 1_100))
+        .unwrap();
+
+    let skipped = fast_event("sig-a", 0, 2, 1_300);
+    let error = db.record_fast_event(&skipped, 1_100, 6, 9).unwrap_err();
+    assert!(matches!(error, StorageError::InvalidData(_)));
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 1);
+
+    let contiguous = fast_event("sig-a", 0, 1, 1_300);
+    assert!(db.record_fast_event(&contiguous, 1_100, 6, 9).unwrap());
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 2);
+
+    cleanup_dir(&root);
+}
+
+#[test]
 fn canonical_fast_event_rejects_backdated_source_provenance() {
     let root = unique_test_dir("provenance");
     let db_path = root.join("shreks.db");
