@@ -218,6 +218,7 @@ pub struct Observer {
     db: ShreksDb,
     discovery_providers: Vec<Arc<dyn DiscoveryProvider>>,
     market_providers: Vec<Arc<dyn MarketDataProvider>>,
+    pump_market_provider: Option<Arc<dyn MarketDataProvider>>,
     chain_providers: Vec<Arc<dyn ChainDataProvider>>,
     transaction_providers: Vec<Arc<dyn TransactionProvider>>,
     pump_signal_receiver: Option<mpsc::Receiver<PumpLifecycleSignal>>,
@@ -230,6 +231,7 @@ impl Observer {
             db,
             discovery_providers: Vec::new(),
             market_providers: Vec::new(),
+            pump_market_provider: None,
             chain_providers: Vec::new(),
             transaction_providers: Vec::new(),
             pump_signal_receiver: None,
@@ -244,6 +246,14 @@ impl Observer {
 
     pub fn with_market_provider(mut self, provider: Arc<dyn MarketDataProvider>) -> Self {
         self.market_providers.push(provider);
+        self
+    }
+
+    /// Attach one market provider only to newly verified Pump launches. This
+    /// lane is deliberately separate from general market/outcome sampling so a
+    /// lifecycle observer cannot duplicate Observer V2's broad market traffic.
+    pub fn with_pump_market_provider(mut self, provider: Arc<dyn MarketDataProvider>) -> Self {
+        self.pump_market_provider = Some(provider);
         self
     }
 
@@ -643,6 +653,16 @@ impl Observer {
                     )?;
                     self.db
                         .mark_pump_launch_verified(&signal.signature, candidate_id)?;
+                    if let Some(market_provider) = self.pump_market_provider.clone() {
+                        self.observe_market_provider(
+                            market_provider,
+                            candidate_id,
+                            &candidate.mint,
+                            report,
+                            health,
+                        )
+                        .await?;
+                    }
                     report.pump_signals_verified =
                         report.pump_signals_verified.saturating_add(1);
                     if seen_candidate_ids.insert(candidate_id) {
@@ -782,56 +802,69 @@ impl Observer {
         health: &mut HashMap<ProviderId, CycleHealth>,
     ) -> Result<(), ObserverError> {
         for provider in self.market_providers.clone() {
-            let provider_id = provider.provider_id();
-            self.ensure_health(health, provider_id)?;
-            self.pacer.wait(PacingLane::Market(provider_id)).await;
-
-            match provider.token_pairs(token_mint).await {
-                Ok(snapshots) => {
-                    health
-                        .get_mut(&provider_id)
-                        .expect("health initialized before provider call")
-                        .record_success();
-                    for snapshot in snapshots {
-                        if snapshot.provider != provider_id {
-                            report.provider_failures = report.provider_failures.saturating_add(1);
-                            record_synthetic_failure(
-                                health,
-                                provider_id,
-                                format!(
-                                    "market snapshot provider {} did not match adapter {}",
-                                    snapshot.provider, provider_id
-                                ),
-                            );
-                            continue;
-                        }
-                        if snapshot.base_mint != token_mint && snapshot.quote_mint != token_mint {
-                            report.provider_failures = report.provider_failures.saturating_add(1);
-                            record_synthetic_failure(
-                                health,
-                                provider_id,
-                                format!(
-                                    "market snapshot pair {} did not contain requested mint {}",
-                                    snapshot.pair_address, token_mint
-                                ),
-                            );
-                            continue;
-                        }
-
-                        self.db.insert_market_snapshot(candidate_id, &snapshot)?;
-                        report.market_snapshots_stored =
-                            report.market_snapshots_stored.saturating_add(1);
-                    }
-                }
-                Err(error) => {
-                    report.provider_failures = report.provider_failures.saturating_add(1);
-                    record_adapter_failure(health, provider_id, &error);
-                }
-            }
+            self.observe_market_provider(provider, candidate_id, token_mint, report, health)
+                .await?;
         }
 
         self.db
             .finalize_due_outcome_checkpoints(candidate_id, unix_time_ms()?)?;
+        Ok(())
+    }
+
+    async fn observe_market_provider(
+        &mut self,
+        provider: Arc<dyn MarketDataProvider>,
+        candidate_id: i64,
+        token_mint: &str,
+        report: &mut ObserverCycleReport,
+        health: &mut HashMap<ProviderId, CycleHealth>,
+    ) -> Result<(), ObserverError> {
+        let provider_id = provider.provider_id();
+        self.ensure_health(health, provider_id)?;
+        self.pacer.wait(PacingLane::Market(provider_id)).await;
+
+        match provider.token_pairs(token_mint).await {
+            Ok(snapshots) => {
+                health
+                    .get_mut(&provider_id)
+                    .expect("health initialized before provider call")
+                    .record_success();
+                for snapshot in snapshots {
+                    if snapshot.provider != provider_id {
+                        report.provider_failures = report.provider_failures.saturating_add(1);
+                        record_synthetic_failure(
+                            health,
+                            provider_id,
+                            format!(
+                                "market snapshot provider {} did not match adapter {}",
+                                snapshot.provider, provider_id
+                            ),
+                        );
+                        continue;
+                    }
+                    if snapshot.base_mint != token_mint && snapshot.quote_mint != token_mint {
+                        report.provider_failures = report.provider_failures.saturating_add(1);
+                        record_synthetic_failure(
+                            health,
+                            provider_id,
+                            format!(
+                                "market snapshot pair {} did not contain requested mint {}",
+                                snapshot.pair_address, token_mint
+                            ),
+                        );
+                        continue;
+                    }
+
+                    self.db.insert_market_snapshot(candidate_id, &snapshot)?;
+                    report.market_snapshots_stored =
+                        report.market_snapshots_stored.saturating_add(1);
+                }
+            }
+            Err(error) => {
+                report.provider_failures = report.provider_failures.saturating_add(1);
+                record_adapter_failure(health, provider_id, &error);
+            }
+        }
         Ok(())
     }
 
