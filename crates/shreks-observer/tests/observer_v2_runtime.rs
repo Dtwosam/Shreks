@@ -55,6 +55,60 @@ fn lifecycle_observer_has_pump_only_market_evidence_without_v2_duplication() {
 }
 
 #[test]
+fn production_uses_one_realtime_pump_stream_and_the_durable_writer() {
+    for required in [
+        "PumpRealtimeLogStream",
+        "PumpRealtimeLogStreamConfig",
+        "forward_pump_realtime_signals",
+        "Observer::run_pump_realtime_writer",
+        "PUMP_REALTIME_CHANNEL_CAPACITY",
+    ] {
+        assert!(
+            OBSERVE_SOURCE.contains(required),
+            "production observer must wire the Pump realtime evidence path: {required}"
+        );
+    }
+
+    assert_eq!(
+        OBSERVE_SOURCE.matches("PumpRealtimeLogStream::new").count(),
+        1,
+        "production must create exactly one Pump realtime websocket stream"
+    );
+
+    for forbidden in [
+        "PumpLogStream::new",
+        "PumpLogStreamConfig::helius",
+        "forward_pump_signals",
+        "with_pump_signal_receiver",
+    ] {
+        assert!(
+            !OBSERVE_SOURCE.contains(forbidden),
+            "production must not retain the lifecycle-only Pump websocket path: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn realtime_writer_termination_is_fail_closed_and_supervised() {
+    for required in [
+        "run_observation_with_realtime",
+        "writer_result = &mut writer",
+        "Pump realtime writer stopped unexpectedly",
+        "forwarder.abort()",
+    ] {
+        assert!(
+            OBSERVE_SOURCE.contains(required),
+            "production must supervise realtime durability fail-closed: {required}"
+        );
+    }
+
+    assert!(
+        !OBSERVE_SOURCE.contains("Some(writer.await)"),
+        "realtime writer must be monitored during runtime, not only checked at process shutdown"
+    );
+}
+
+#[test]
 fn observe_v2_runtime_remains_observe_only() {
     for forbidden in [
         "TradeIntent",
