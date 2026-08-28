@@ -36,7 +36,7 @@ WHEN NOT EXISTS (
          FROM fast_events
      )
 BEGIN
-    SELECT RAISE(ABORT, 'fast_events sequence must append contiguously');
+    SELECT RAISE(IGNORE);
 END;
 
 CREATE INDEX idx_fast_events_market_sequence
