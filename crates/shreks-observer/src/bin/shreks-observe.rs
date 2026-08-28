@@ -2,6 +2,7 @@ mod observer_v2 {
     pub mod sampler;
     pub mod sampling;
 }
+#[path = "shreks-observe/fast_lane_acceptance_cli.rs"]
 mod fast_lane_acceptance_cli;
 
 #[path = "../fast_event_normalizer.rs"]
