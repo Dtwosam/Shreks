@@ -19,6 +19,7 @@ use crate::{
         parse_pump_lifecycle_log_notification, PumpLifecycleSignal, PUMP_AMM_PROGRAM_ID,
         PUMP_PROGRAM_ID,
     },
+    pump_swap_trade::{parse_pump_swap_trade_logs, PumpSwapTradeEvidence},
     pump_trade::{
         classify_pump_trade_transaction, PumpTradeEvidence, PumpTradeVerification,
         PUMP_BUY_DISCRIMINATOR, PUMP_BUY_EXACT_SOL_IN_DISCRIMINATOR,
@@ -40,6 +41,7 @@ pub struct PumpRealtimeNotification {
     pub slot: u64,
     pub lifecycle: Option<PumpLifecycleSignal>,
     pub trades: Vec<PumpTradeEvidence>,
+    pub pump_swap_trades: Vec<PumpSwapTradeEvidence>,
 }
 
 /// Runtime configuration for the single standard-Solana Pump realtime stream.
@@ -357,13 +359,10 @@ where
     }
 }
 
-/// Parse one confirmed standard-Solana Pump `logsNotification` into the complete
-/// realtime evidence Shreks can obtain without an additional RPC request.
-///
-/// The already-audited transaction trade decoder remains the single economic
-/// codec. This function derives only the Pump instruction-side evidence that is
-/// present in the runtime logs, then feeds the original log stream through that
-/// decoder. No instruction max/min amount is treated as a fill.
+/// Parse one confirmed standard-Solana Pump/PumpSwap `logsNotification` into
+/// the complete direct evidence Shreks can obtain without an additional RPC
+/// request. Bonding-curve trades reuse the audited transaction codec; PumpSwap
+/// consumes its authoritative Anchor BuyEvent/SellEvent directly.
 pub fn parse_pump_realtime_log_notification(
     body: &str,
 ) -> Result<Option<PumpRealtimeNotification>, ProviderError> {
@@ -407,8 +406,9 @@ pub fn parse_pump_realtime_log_notification(
     } else {
         decode_trade_evidence_from_notification_logs(signature, slot, logs, &trade_discriminators)?
     };
+    let pump_swap_trades = parse_pump_swap_trade_logs(logs)?;
 
-    if lifecycle.is_none() && trades.is_empty() {
+    if lifecycle.is_none() && trades.is_empty() && pump_swap_trades.is_empty() {
         return Ok(None);
     }
 
@@ -417,6 +417,7 @@ pub fn parse_pump_realtime_log_notification(
         slot,
         lifecycle,
         trades,
+        pump_swap_trades,
     }))
 }
 
