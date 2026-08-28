@@ -1,8 +1,23 @@
+use std::{fmt, time::Duration};
+
+use async_trait::async_trait;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use shreks_core::ProviderId;
+use tokio::{
+    net::TcpStream,
+    sync::mpsc,
+    time::{sleep, timeout},
+};
+use tokio_tungstenite::{
+    connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
+};
 
 use crate::{
+    helius::helius_ws_url,
     pump::{
-        parse_pump_lifecycle_log_notification, PumpLifecycleSignal, PUMP_PROGRAM_ID,
+        parse_pump_lifecycle_log_notification, parse_pump_subscription_ack,
+        pump_logs_subscribe_request, PumpLifecycleSignal, PUMP_PROGRAM_ID,
     },
     pump_trade::{
         classify_pump_trade_transaction, PumpTradeEvidence, PumpTradeVerification,
@@ -12,12 +27,268 @@ use crate::{
     ProviderError, ProviderErrorKind,
 };
 
+const DEFAULT_RECONNECT_BASE: Duration = Duration::from_secs(1);
+const DEFAULT_RECONNECT_MAX: Duration = Duration::from_secs(30);
+const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
+const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpRealtimeNotification {
     pub signature: String,
     pub slot: u64,
     pub lifecycle: Option<PumpLifecycleSignal>,
     pub trades: Vec<PumpTradeEvidence>,
+}
+
+/// Runtime configuration for the single standard-Solana Pump realtime stream.
+/// The endpoint is intentionally redacted because a Helius websocket URL embeds
+/// its API key in the query string.
+#[derive(Clone)]
+pub struct PumpRealtimeLogStreamConfig {
+    endpoint: String,
+    reconnect_base: Duration,
+    reconnect_max: Duration,
+    heartbeat_interval: Duration,
+}
+
+impl PumpRealtimeLogStreamConfig {
+    pub fn helius(api_key: &str) -> Result<Self, ProviderError> {
+        if api_key.trim().is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "Helius API key must not be empty",
+            ));
+        }
+        Self::for_endpoint(helius_ws_url(api_key))
+    }
+
+    pub fn for_endpoint(endpoint: impl Into<String>) -> Result<Self, ProviderError> {
+        let endpoint = endpoint.into();
+        let trimmed = endpoint.trim();
+        if trimmed.is_empty()
+            || !(trimmed.starts_with("ws://") || trimmed.starts_with("wss://"))
+        {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "Pump realtime websocket endpoint must use ws:// or wss://",
+            ));
+        }
+
+        Ok(Self {
+            endpoint,
+            reconnect_base: DEFAULT_RECONNECT_BASE,
+            reconnect_max: DEFAULT_RECONNECT_MAX,
+            heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+        })
+    }
+
+    pub fn with_reconnect_bounds(mut self, base: Duration, max: Duration) -> Self {
+        self.reconnect_base = base;
+        self.reconnect_max = max;
+        self
+    }
+
+    pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
+        self.heartbeat_interval = interval;
+        self
+    }
+
+    fn reconnect_delay(&self, attempt: u32) -> Duration {
+        let multiplier = 1_u32.checked_shl(attempt.min(31)).unwrap_or(u32::MAX);
+        self.reconnect_base
+            .saturating_mul(multiplier)
+            .min(self.reconnect_max)
+    }
+}
+
+impl fmt::Debug for PumpRealtimeLogStreamConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("PumpRealtimeLogStreamConfig")
+            .field("endpoint", &"<redacted>")
+            .field("reconnect_base", &self.reconnect_base)
+            .field("reconnect_max", &self.reconnect_max)
+            .field("heartbeat_interval", &self.heartbeat_interval)
+            .finish()
+    }
+}
+
+type PumpRealtimeSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// Single-subscription Pump websocket that emits lifecycle and trade economics
+/// from the same confirmed log notification. It performs no SQLite writes and
+/// no per-trade transaction RPC calls.
+pub struct PumpRealtimeLogStream {
+    config: PumpRealtimeLogStreamConfig,
+    socket: Option<PumpRealtimeSocket>,
+    reconnect_attempt: u32,
+}
+
+impl PumpRealtimeLogStream {
+    pub fn new(config: PumpRealtimeLogStreamConfig) -> Self {
+        Self {
+            config,
+            socket: None,
+            reconnect_attempt: 0,
+        }
+    }
+
+    pub async fn next_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError> {
+        loop {
+            self.ensure_connected().await?;
+            let heartbeat_interval = self.config.heartbeat_interval;
+
+            let next_frame = {
+                let socket = self
+                    .socket
+                    .as_mut()
+                    .expect("ensure_connected establishes a websocket");
+                timeout(heartbeat_interval, socket.next()).await
+            };
+
+            match next_frame {
+                Err(_) => {
+                    let sent = self
+                        .socket
+                        .as_mut()
+                        .expect("connected socket exists for heartbeat")
+                        .send(Message::Ping(Vec::new().into()))
+                        .await;
+                    if sent.is_err() {
+                        self.disconnect_and_backoff().await;
+                    }
+                }
+                Ok(Some(Ok(Message::Text(text)))) => {
+                    if let Some(notification) =
+                        parse_pump_realtime_log_notification(&text.to_string())?
+                    {
+                        return Ok(notification);
+                    }
+                }
+                Ok(Some(Ok(Message::Ping(payload)))) => {
+                    let sent = self
+                        .socket
+                        .as_mut()
+                        .expect("connected socket exists for pong")
+                        .send(Message::Pong(payload))
+                        .await;
+                    if sent.is_err() {
+                        self.disconnect_and_backoff().await;
+                    }
+                }
+                Ok(Some(Ok(Message::Pong(_))))
+                | Ok(Some(Ok(Message::Binary(_))))
+                | Ok(Some(Ok(Message::Frame(_)))) => {}
+                Ok(Some(Ok(Message::Close(_)))) | Ok(Some(Err(_))) | Ok(None) => {
+                    self.disconnect_and_backoff().await;
+                }
+            }
+        }
+    }
+
+    async fn ensure_connected(&mut self) -> Result<(), ProviderError> {
+        while self.socket.is_none() {
+            match self.connect_once().await {
+                Ok(socket) => {
+                    self.socket = Some(socket);
+                    self.reconnect_attempt = 0;
+                }
+                Err(error) if error.is_retryable() => self.backoff().await,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    async fn connect_once(&self) -> Result<PumpRealtimeSocket, ProviderError> {
+        let (mut socket, _) = connect_async(self.config.endpoint.as_str())
+            .await
+            .map_err(|_| websocket_unavailable("Helius Pump realtime websocket connection failed"))?;
+
+        socket
+            .send(Message::Text(
+                pump_logs_subscribe_request().to_string().into(),
+            ))
+            .await
+            .map_err(|_| websocket_unavailable("Helius Pump realtime subscription send failed"))?;
+
+        loop {
+            let frame = timeout(SUBSCRIPTION_ACK_TIMEOUT, socket.next())
+                .await
+                .map_err(|_| websocket_unavailable("Helius Pump realtime subscription timed out"))?;
+
+            match frame {
+                Some(Ok(Message::Text(text))) => {
+                    if parse_pump_subscription_ack(&text.to_string())?.is_some() {
+                        return Ok(socket);
+                    }
+                }
+                Some(Ok(Message::Ping(payload))) => {
+                    socket
+                        .send(Message::Pong(payload))
+                        .await
+                        .map_err(|_| websocket_unavailable("Helius Pump realtime pong failed"))?;
+                }
+                Some(Ok(Message::Pong(_)))
+                | Some(Ok(Message::Binary(_)))
+                | Some(Ok(Message::Frame(_))) => {}
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                    return Err(websocket_unavailable(
+                        "Helius Pump realtime websocket closed before subscription acknowledgement",
+                    ));
+                }
+            }
+        }
+    }
+
+    async fn disconnect_and_backoff(&mut self) {
+        self.socket = None;
+        self.backoff().await;
+    }
+
+    async fn backoff(&mut self) {
+        let delay = self.config.reconnect_delay(self.reconnect_attempt);
+        self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+        sleep(delay).await;
+    }
+}
+
+#[async_trait]
+pub trait PumpRealtimeSignalSource: Send {
+    async fn next_pump_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError>;
+}
+
+#[async_trait]
+impl PumpRealtimeSignalSource for PumpRealtimeLogStream {
+    async fn next_pump_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError> {
+        self.next_realtime_notification().await
+    }
+}
+
+/// Forward Pump realtime envelopes into a bounded consumer channel. The
+/// forwarding task is intentionally storage-free; backpressure comes from the
+/// bounded channel and a closed consumer terminates cleanly.
+pub async fn forward_pump_realtime_signals<S>(
+    mut source: S,
+    sender: mpsc::Sender<PumpRealtimeNotification>,
+) -> Result<(), ProviderError>
+where
+    S: PumpRealtimeSignalSource,
+{
+    loop {
+        let notification = source.next_pump_realtime_notification().await?;
+        if sender.send(notification).await.is_err() {
+            return Ok(());
+        }
+    }
 }
 
 /// Parse one confirmed standard-Solana Pump `logsNotification` into the complete
@@ -179,9 +450,13 @@ fn terminated_program(log: &str) -> Option<&str> {
     rest.split_once(" failed:").map(|(program, _)| program)
 }
 
+fn websocket_unavailable(message: impl Into<String>) -> ProviderError {
+    ProviderError::new(ProviderId::Helius, ProviderErrorKind::Unavailable, message)
+}
+
 fn invalid_response(message: impl Into<String>) -> ProviderError {
     ProviderError::new(
-        shreks_core::ProviderId::Helius,
+        ProviderId::Helius,
         ProviderErrorKind::InvalidResponse,
         message,
     )
