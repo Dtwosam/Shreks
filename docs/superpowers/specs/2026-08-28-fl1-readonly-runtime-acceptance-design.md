@@ -73,16 +73,25 @@ The reporter reads metadata for the database path and `<db>-wal` path when prese
 
 It does not claim CPU, RAM, or network headroom from database evidence.
 
+## Verified release availability
+
+Production acceptance must use the reporter from the same immutable verified release mechanism as the running Shreks services.
+
+New FL1.5 release bundles build and stage `target/release/shreks-fast-lane-acceptance`, include it in the sealed manifest, and therefore subject it to the existing archive/hash/tree verification path. The reporter is an allowed optional payload at the manifest-schema level so older already-sealed releases remain valid rollback points; the current FL1.5 build script is what makes it mandatory for newly built acceptance-capable releases.
+
+A production evidence set is invalid if the reporter is locally compiled, copied outside the verified release, absent from `RELEASE_MANIFEST.json`, or comes from a different source SHA than `/opt/shreks/current`.
+
 ## Host acceptance evidence
 
-A production runbook will require operators to capture, alongside the database report:
+The production runbook requires operators to capture, alongside the database report:
 
 - service status and restart count;
 - process CPU and RSS during normal flow and an observed burst;
 - host memory/storage headroom;
 - database/WAL growth across a measured interval;
 - provider/reconnect log evidence;
-- start/end timestamps for the acceptance observation period.
+- start/end timestamps for the acceptance observation period;
+- immutable current-release path, manifest, and source SHA.
 
 Those measurements must come from the actual production host. CI fixtures are not substitutes.
 
@@ -96,8 +105,8 @@ The output contains no API keys, wallet secrets, signing material, or full raw e
 
 FL1.5 is complete only when:
 
-1. the reporter and runbook are merged with full Rust/Python/safety/ARM64 CI green;
-2. the reporter is run against the real production FL1 database in read-only mode;
+1. the reporter, verified-release packaging, and runbook are merged with full Rust/Python/safety/ARM64 CI green;
+2. the reporter is present in the exact production `RELEASE_MANIFEST.json` and run from that immutable release against the real production FL1 database in read-only mode;
 3. host CPU/RAM/storage/reconnect evidence is captured for the same observation period;
 4. event-rate and latency evidence is reviewed for enough capacity/headroom to proceed;
 5. no unexplained canonical gaps or invalid timing rows exist.
