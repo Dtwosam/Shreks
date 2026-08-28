@@ -4,40 +4,33 @@
 **Repository:** `Dtwosam/Shreks`  
 **Primary chain:** Solana  
 **System type:** Autonomous memecoin trading system  
-**Architecture:** Rust + Python  
-**Status:** Implementation in progress; architecture controlled by this source of truth  
-**Last updated:** 2026-08-25
+**Architecture:** Rust Fast Lane + Python research/learning/control plane  
+**Status:** Fast Lane trading-core rebuild authorized; LIVE trading remains disabled  
+**Last updated:** 2026-08-28
 
 ---
 
 ## 1. Purpose
 
-Shreks is an autonomous Solana memecoin trading system.
+Shreks is an autonomous Solana memecoin trading system designed to exploit **tradable price movement**, not to judge whether a memecoin is fundamentally good, legitimate, or likely to survive long term.
 
-Its final job is to:
+Its job is to:
 
-1. discover memecoins,
-2. reject unsafe or untradeable tokens,
-3. analyze market and wallet behavior,
-4. identify valid trading setups,
-5. decide whether to enter,
-6. size the position,
-7. execute the buy automatically,
-8. monitor the open position,
-9. execute partial or full exits automatically,
-10. record the result,
-11. learn from observed markets and completed trades,
-12. improve future decisions through controlled model evaluation.
+1. discover and continuously observe memecoins and their onchain market activity,
+2. reconstruct event-level order flow, bonding-curve/pool state, wallet/cohort behavior, and execution conditions,
+3. estimate likely future price/executability paths across several horizons,
+4. continuously choose between `BUY`, `SKIP`, `HOLD`, `REDUCE`, and `SELL`,
+5. calculate expected profit **after all realistic round-trip costs**,
+6. determine the maximum price worth paying for an entry,
+7. size risk and execute automatically,
+8. reevaluate whenever meaningful new information arrives rather than waiting for a fixed timer,
+9. record actual and counterfactual outcomes,
+10. learn from traded, skipped, held, reduced, and exited opportunities,
+11. improve through controlled champion/challenger promotion.
 
-The final product is **not a signal bot**. In live mode, Shreks will be authorized to buy and sell without requiring human approval for each trade.
+A trade may last fractions of a second, seconds, minutes, or longer. There is no fixed holding period and no five-minute ceiling.
 
-Shreks is not designed around finding the next 100x token. Its objective is to develop **positive trading expectancy after real costs** by repeatedly making better decisions about:
-
-- whether to trade,
-- when to enter,
-- how much to risk,
-- when to exit,
-- when to do nothing.
+The objective is **positive long-run net expectancy/account growth after fees, slippage, latency, failed fills, and drawdown**, not win rate, token quality, or prediction accuracy by itself.
 
 Profit is never assumed or guaranteed.
 
@@ -45,1159 +38,815 @@ Profit is never assumed or guaranteed.
 
 ## 2. Non-Negotiable Requirements
 
-These requirements must not be changed casually.
-
 ### 2.1 Autonomous execution
-The final live system buys and sells by itself. Manual confirmation per trade is not part of the target architecture.
+The final live system buys, holds, reduces, and sells without per-trade human approval.
 
 ### 2.2 Solana only for V1
-Do not add Ethereum, Base, BNB Chain, or other chains until the Solana system is proven.
+Do not add other chains until the Solana system is proven.
 
-### 2.3 Free external sources only
-V1 must not require paid APIs, paid data subscriptions, or premium market-data plans.
+### 2.3 Free external data sources for V1
+V1 must not require paid market-data subscriptions or premium RPC/data plans.
 
-Allowed:
+Allowed inputs include:
 
-- free API tiers,
-- free RPC tiers,
-- public blockchain data,
+- free API/RPC tiers,
+- public Solana data,
 - self-derived data,
 - open-source software.
 
-Actual trading costs are allowed and must be measured:
+Real trading costs are allowed and must be measured, including:
 
+- platform/swap fees,
 - network fees,
-- swap fees,
-- priority fees/tips if enabled,
+- priority fees/tips,
 - slippage,
-- price impact.
+- price impact,
+- failed/partial execution costs where applicable.
 
-If a free source reaches its allowance or becomes unavailable, Shreks must degrade or pause safely rather than silently switch to paid usage.
+If a free source is exhausted or unavailable, Shreks degrades or pauses the affected strategy safely rather than silently requiring paid data.
 
-### 2.4 No live trading before proof
-Real-money trading stays disabled until the paper-trading system meets explicit promotion criteria.
+### 2.4 LIVE stays disabled until proof
+Real-money trading remains disabled until the promoted strategy family passes explicit PAPER/shadow, execution, accounting, recovery, and risk gates.
 
-### 2.5 One decision path
-Paper and live modes use the same:
+### 2.5 Paper/live strategy parity
+Paper and live modes must use the same approved semantics for:
 
-- feature calculations,
-- strategy logic,
-- scoring,
+- event/state construction,
+- feature calculation,
+- forecasting,
+- action selection,
+- expected-value calculation,
 - risk logic,
 - position management,
 - exit logic.
 
-Only the execution adapter changes.
+Only the actual signing/submission/fill boundary changes.
 
-### 2.6 Fail closed
-If critical market, safety, risk, quote, or execution information is stale, missing, contradictory, or unreliable, Shreks does not open a new trade.
+### 2.6 Fail closed on execution uncertainty, not merely on token suspicion
+A new trade is blocked when critical information needed to execute or exit within the active risk policy is missing, stale, contradictory, or unreliable.
 
-### 2.7 Secrets never enter source control
-Private keys, seed phrases, API secrets, and wallet secrets must never be committed to GitHub or pasted into ChatGPT.
+Examples:
 
-### 2.8 Learning cannot directly control live money
-A newly trained model cannot silently replace the live strategy.
+- no usable execution path,
+- no credible exit capacity for intended size,
+- unknown executable price,
+- slippage/impact beyond risk policy,
+- accounting/reconciliation uncertainty,
+- duplicate-intent uncertainty,
+- active health/risk/kill-switch halt.
 
-New models are challengers. They must be evaluated, tested on unseen data, and paper/shadow traded before promotion.
+However, the following are **not automatic token-level vetoes** merely because they look suspicious:
 
-### 2.9 Everything important is auditable
-Every candidate and every trade must preserve enough information to reconstruct:
+- coordinated wallet activity,
+- creator/deployer participation,
+- concentrated holders,
+- unusual transfers,
+- rapid pumps/dumps,
+- high volatility,
+- suspected manipulation,
+- historical rug association.
 
-- what data Shreks saw,
-- what features it calculated,
-- what safety rules fired,
-- which strategy/setup was considered,
-- the score,
-- the risk decision,
-- execution/fill information,
-- the exit reason,
-- final PnL and costs,
-- strategy/model versions.
+Those are normally **features** that may imply ride, fade, smaller size, shorter hold, faster exit, or skip.
+
+### 2.7 Risk authority cannot be bypassed
+No score, forecast, model, wallet signal, or Fast Lane strategy can bypass hard capital/risk invariants.
+
+### 2.8 Learning cannot silently self-promote
+The live runtime may continuously update market state and predictions from incoming events, but it may not rewrite its own approved model weights/strategy parameters and silently deploy them.
+
+New models/policies are challengers. They must pass chronological evaluation, replay, and PAPER/shadow proof before explicit promotion.
+
+### 2.9 Secrets never enter source control or ChatGPT
+Never commit or paste wallet private keys, seed phrases, or unrestricted production secrets.
+
+### 2.10 Everything important is auditable
+For every material opportunity/action, preserve enough information to reconstruct:
+
+- events/state Shreks saw,
+- feature/model/schema versions,
+- wallet/cohort/manipulation descriptors,
+- multi-horizon forecasts,
+- expected gross move,
+- expected round-trip costs,
+- expected net value,
+- maximum acceptable entry price when buying,
+- why Shreks chose `BUY`, `SKIP`, `HOLD`, `REDUCE`, or `SELL`,
+- risk decision,
+- requested and actual execution price,
+- latency/fees/slippage,
+- PnL,
+- counterfactual outcomes where measurable.
 
 ---
 
-## 3. Core Trading Loop
+## 3. Core Trading Philosophy
 
-The high-level trading loop is:
+Shreks trades **moments**, not reputations.
 
-`WATCH -> FILTER -> SCORE -> DECIDE -> SIZE -> BUY -> MONITOR -> SELL -> RECORD -> LEARN -> REPEAT`
+A token that later rugs may still contain a profitable 1–10 second opportunity. A token that looks healthy can still be a terrible buy at the current executable price.
 
-A separate continuous observation loop runs whether or not a token is traded:
+The primary event-driven loop is:
 
-`DISCOVER -> STREAM EVENTS -> SNAPSHOT -> TRACK PATH -> LABEL OUTCOMES -> DATASET`
+`EVENT -> UPDATE STATE -> FORECAST FUTURE PATHS -> PRICE EXECUTION -> ESTIMATE NET EV -> CHOOSE ACTION -> RISK CHECK -> EXECUTE/WAIT -> RECORD -> LEARN`
 
-Shreks must watch far more tokens than it trades.
+The action set is:
 
-**Rejection is a valid and important outcome.**
+- `BUY`
+- `SKIP`
+- `HOLD`
+- `REDUCE`
+- `SELL`
 
-Observation must not stop when a candidate is rejected. Where data quality and provider limits permit, rejected, watched, entered, dead, rugged, and otherwise untraded candidates remain observable long enough to create useful future-outcome labels.
+Prediction horizons are **future checkpoints, not decision timers**. Example horizons include:
+
+`250ms -> 500ms -> 1s -> 3s -> 5s -> 10s -> 30s -> 1m -> 5m -> 15m -> 30m -> 1h+`
+
+If material information changes at 2.4 seconds, Shreks reevaluates at 2.4 seconds. It does not wait for the next named horizon.
+
+The core question is:
+
+> Given everything observable now, which available action maximizes expected net account growth after costs and risk?
 
 ---
 
-## 4. Technology Architecture
+## 4. Architecture
 
-### 4.1 Rust = Eyes + Hands
+### 4.1 Rust = Fast Lane + Eyes + Hands
 
-Rust owns Solana-facing and latency-sensitive responsibilities:
+Rust owns latency-sensitive responsibilities:
 
-- Solana/RPC ingestion,
-- persistent market/event connections,
-- fast provider adapters where appropriate,
-- normalized market event creation,
+- direct Solana/RPC/WebSocket ingestion,
+- Pump/PumpSwap launch/lifecycle/swap-event ingestion,
+- event ordering/deduplication,
+- bonding-curve/pool-state reconstruction,
+- live per-token rolling state,
+- microstructure windows,
+- approved champion inference when latency requires it,
+- event-driven Fast Lane action evaluation,
+- risk-request generation,
 - execution integration,
-- transaction construction,
-- transaction signing,
-- submission,
-- confirmation,
-- balance/fill reconciliation,
+- transaction construction/signing/submission,
+- confirmation and reconciliation,
 - live execution guardrails.
 
-Rust does **not** decide which memecoin to trade.
+The previous rule **"Rust does not decide which memecoin to trade" is superseded**. For sub-second/seconds strategies, the approved strategy runtime must be able to evaluate inside Rust so a Python round trip does not become the latency bottleneck.
 
-### 4.2 Python = Brain
+Rust still cannot bypass the approved champion artifact, risk authority, live-mode gate, or promotion system.
 
-Python owns research and decision intelligence:
+### 4.2 Python = Research + Training + Evaluation + Control Brain
 
-- feature engineering,
-- token safety analysis,
-- wallet intelligence,
-- setup detection,
-- deterministic scoring,
-- strategy logic,
-- risk and position sizing,
-- paper execution,
-- exit logic,
-- backtesting,
-- dataset generation,
+Python owns non-latency-critical intelligence:
+
+- feature research,
+- dataset construction,
+- wallet/cohort research,
+- manipulation-pattern research,
+- counterfactual labeling,
+- strategy experiments,
 - model training,
-- model evaluation,
-- champion/challenger comparison.
+- backtesting/replay,
+- chronological validation,
+- champion/challenger comparison,
+- promotion evidence,
+- slower-horizon decision logic where latency is not material,
+- research/dashboard explanations where appropriate.
+
+Python may produce the approved champion artifact/configuration loaded by Rust.
 
 ### 4.3 Shared state
 
-V1 starts simple:
+Keep infrastructure simple until measurements prove otherwise:
 
-- **SQLite in WAL mode** for operational state and event records.
-- **Parquet** for larger historical/research datasets.
+- SQLite WAL for durable operational/evidence/decision/trade/checkpoint state,
+- Parquet for large research datasets,
+- in-memory Rust rolling state for latency-critical windows, with restart-safe reconstruction/checkpointing.
 
-Do not introduce Redis, Kafka, Kubernetes, or a hosted database unless real operating evidence shows they are necessary.
+Do not add Redis, Kafka, Kubernetes, or a hosted database merely because the strategy is fast.
 
 ---
 
-## 5. Initial Free Data / Execution Sources
+## 5. Data Sources and Provider Rule
 
-The initial provider strategy is adapter-based so external sources can be replaced later.
+Initial V1 sources remain adapter-based:
 
-### Helius / Solana RPC
-Primary uses:
+### Direct Solana / Helius free tier
+Use for:
 
-- Solana chain data,
-- transactions,
-- account activity,
-- token/account state,
-- authority data,
-- wallet observations,
-- persistent Solana event access where available within free limits.
+- launch/lifecycle events,
+- transactions/swaps,
+- account/token state,
+- wallet activity,
+- authority/supply state,
+- chain timestamps.
+
+Direct public Solana data is preferred whenever it can provide a reliable signal without paid dependencies.
 
 ### DEX Screener
-Primary uses:
+Use primarily for slower enrichment/reference market data such as:
 
-- token/pair discovery and enrichment,
-- price,
-- liquidity,
-- volume,
-- buy/sell transaction counts,
+- pair discovery/enrichment,
+- price/liquidity/volume snapshots,
 - pair age,
-- market snapshots.
+- reference/cross-check data.
 
-### Jupiter
-Primary uses:
+DEX Screener must **not be the only source driving a 1–10 second Fast Lane**.
+
+### Jupiter / executable quote sources
+Use where appropriate for:
 
 - executable route/quote information,
-- price-impact checks,
-- eventual automatic swap execution.
+- price impact,
+- slippage context,
+- eventual execution paths.
 
-### Direct Solana data
-Whenever a reliable signal can be derived directly from public chain data without paying a third party, prefer the direct calculation.
+Pre-graduation Pump trades may use direct curve math/state when that is the authoritative executable mechanism.
 
 ### Provider rule
-Provider responses are inputs, not Shreks' internal domain model.
-
-Every provider adapter converts external responses into Shreks-owned normalized types.
+External responses are inputs, not Shreks domain objects. Adapters normalize them into versioned Shreks-owned structures.
 
 ---
 
-## 6. Primary Domain Objects
+## 6. Core Domain Objects
 
 ### TokenCandidate
-A discovered mint/pair Shreks may observe.
-
-Contains at minimum:
-
-- token mint,
-- discovery timestamp,
-- discovery source,
-- relevant pair/pool identifiers,
-- lifecycle status.
+Observation identity for a discovered mint/curve/pair/pool and lifecycle state. It does not imply the token is safe or worth buying.
 
 ### MarketEvent
-A timestamped market/onchain event relevant to an observed candidate.
+Timestamped/ordered event such as:
 
-Examples include:
-
-- swap/buy/sell,
-- liquidity add/remove,
+- buy/sell/swap,
+- reserve/curve change,
+- liquidity change,
 - creator/deployer action,
-- large-wallet action,
-- authority/supply change,
-- pool/account state change,
+- wallet/cohort action,
+- migration/graduation/BOOST-related event,
 - route/executability change.
 
-Where available, preserve enough event-level information to reconstruct important intra-window behavior instead of relying only on sparse periodic snapshots.
+### FastMarketState
+Current event-derived state used by Fast Lane, including where available:
 
-### MarketSnapshot
-Point-in-time market state and rolling-path summary.
-
-Possible fields include:
-
-- timestamp,
-- price,
-- market cap/FDV when reliable,
-- liquidity,
-- volume by time window,
-- buys/sells,
-- buy/sell volume imbalance,
-- unique buyer/seller counts or growth,
-- price change windows,
-- rolling/local high and low,
-- maximum favorable/adverse excursion so far,
-- pair/token age,
-- holder observations,
-- wallet-entry/exit summaries,
-- creator/deployer activity,
-- quote/route quality,
-- estimated price impact where available,
-- data source,
-- freshness.
-
-### SafetyAssessment
-Structured result of safety checks.
-
-Includes:
-
-- hard-reject flags,
-- authority risks,
-- concentration data,
-- creator/deployer exposure,
-- suspicious supply behavior,
-- liquidity adequacy,
-- abnormal transfers,
-- execution hazards,
-- confidence,
-- reasons.
-
-Safety has veto power.
-
-### WalletObservation
-An observed wallet action relevant to a candidate:
-
-- buy,
-- sell,
-- transfer,
-- liquidity event,
-- creator/deployer action,
-- other classified behavior.
-
-### WalletProfile
-An evolving history of a wallet's observed trading behavior.
-
-Examples:
-
-- observations/trades,
-- entry timing,
-- median outcome,
-- estimated expectancy,
-- drawdown behavior,
-- rug exposure,
-- sample size,
-- confidence.
-
-Scores must be confidence-weighted. A wallet with two lucky trades cannot rank like one with hundreds of useful observations.
+- curve/pool reserves and derived price,
+- executable/reference price,
+- rolling buy/sell notional and counts,
+- flow imbalance/velocity/acceleration,
+- buyer/seller arrival rates,
+- wallet/cohort actions,
+- creator activity,
+- local high/low/reversal state,
+- liquidity/exit capacity,
+- graduation/migration state,
+- expected round-trip costs and latency.
 
 ### FeatureVector
-The reproducible point-in-time features used by a strategy/model.
+Versioned point-in-time-safe features for strategy/model use.
 
-Must include:
+### HorizonForecast
+Forecast distribution for one or more future horizons, potentially including:
 
-- timestamp,
-- feature schema version,
-- market features,
-- safety features,
-- flow features,
-- wallet features,
-- momentum features,
-- liquidity/execution features,
-- regime features.
+- expected return,
+- upside/downside probabilities,
+- expected MFE/MAE,
+- reversal probability,
+- expected executable exit quality,
+- confidence/uncertainty.
 
-### TradeDecision
-Possible actions:
+### TradeabilityAssessment
+Describes whether a **specific trade at a specific size/time** can be executed and exited within active risk limits.
 
-- `REJECT`
-- `WATCH`
-- `ENTER`
-- `HOLD`
-- `REDUCE`
-- `EXIT`
-
-Every decision has structured reasons and strategy/model version.
+### ActionAssessment
+Decision record for `BUY`, `SKIP`, `HOLD`, `REDUCE`, or `SELL`, including forecasts, costs, expected net value, price boundary, strategy/model version, and reasons.
 
 ### TradeIntent
-A validated execution request.
-
-Contains:
-
-- token,
-- side,
-- requested size,
-- slippage ceiling,
-- strategy/model version,
-- reason,
-- idempotency key,
-- execution mode.
+Risk-validated capital-changing execution request with side, size, price/slippage constraints, model/strategy version, idempotency key, and execution mode.
 
 ### Position
-Authoritative state of a position.
+Authoritative open/closed position state with quantity, weighted entry, costs, PnL, high-water state, and latest action/forecast context.
 
-Contains:
+### CounterfactualOutcome
+Research-only record of what would have happened under alternative available actions, such as:
 
-- token,
-- quantity,
-- weighted entry,
-- current state,
-- realized PnL,
-- unrealized PnL,
-- accumulated costs,
-- stop state,
-- trailing state,
-- lifecycle state.
+- buy vs skip,
+- enter now vs delay,
+- sell now vs hold another 250ms/1s/3s/10s/30s,
+- reduce vs full exit.
+
+Future data may label counterfactuals but must never leak into the original decision features.
 
 ---
 
-## 7. Token Discovery and Continuous Observation
+## 7. Observation and Labeling
 
-Shreks must not blindly buy brand-new launches in the first seconds.
+Shreks should observe as much of the memecoin market as free-source and host capacity reasonably permit.
 
-V1 is not a pure sniper.
+### 7.1 Event-driven capture
+Prioritize event-level or near-event-level data where available:
 
-The first goal is to **watch broadly, preserve the path, and reject aggressively**.
+- buys/sells/swaps,
+- curve reserve changes,
+- liquidity changes,
+- wallet/cohort actions,
+- creator/deployer actions,
+- graduation/migration events,
+- route/execution changes.
 
-Every useful discovered token should be observed even when it is never traded. Pumps are only one outcome class. The research system must also preserve dumps, rugs, failed pumps, dead/flat tokens, recoveries, slow grinders, pump-consolidation-second-leg behavior, and pump-distribution behavior.
+### 7.2 Rolling micro-windows
+Maintain strategy-relevant rolling windows such as:
 
-### 7.1 Outcome checkpoints are labels, not the observation cadence
+- 100ms,
+- 250ms,
+- 500ms,
+- 1s,
+- 2s,
+- 5s,
+- 10s,
 
-For observed candidates, standard future outcomes are recorded at:
+where source timing supports them.
 
-- 1 minute,
-- 5 minutes,
-- 15 minutes,
-- 30 minutes,
-- 1 hour,
-- 4 hours,
-- 24 hours.
+Exact windows are configuration/model inputs, not immutable strategy law.
 
-These checkpoints are standardized research labels. They must **not** be the only times Shreks observes a token. Sparse checkpoint-only storage can miss a pump, dump, liquidity disappearance, wallet exit, or other critical path event that happens between two checkpoints.
+### 7.3 Longer labels still matter
+Persist future labels at longer horizons too, such as 30s, 1m, 5m, 15m, 30m, 1h, 4h, and 24h when practical.
 
-### 7.2 Three-layer observation model
+### 7.4 Preserve the path
+Do not reduce a token to endpoint returns. Event sequence, time-to-peak, drawdown, recovery, liquidity survival, and executable exit quality matter.
 
-The observer should combine three layers:
-
-1. **Event-level or near-event-level capture**
-   - swaps/buys/sells where available,
-   - meaningful liquidity changes,
-   - large-wallet activity,
-   - creator/deployer activity,
-   - important account/supply/authority changes,
-   - route/executability changes.
-
-2. **Short-interval rolling snapshots**
-   - price, liquidity, market cap/FDV when reliable,
-   - rolling volume and transaction counts,
-   - buy/sell imbalance and net flow,
-   - unique buyer/seller behavior,
-   - high/low and path statistics,
-   - wallet-entry/exit summaries,
-   - execution quality and price impact,
-   - data freshness/confidence.
-
-3. **Standard future-outcome labels**
-   - checkpoint return,
-   - maximum favorable excursion (MFE),
-   - maximum adverse excursion (MAE),
-   - time to peak,
-   - time to worst drawdown where measurable,
-   - liquidity and volume change,
-   - buyer/seller change,
-   - rug/dead-pool condition,
-   - whether a realistic exit was available,
-   - other path summaries required by approved research schemas.
-
-### 7.3 Adaptive sampling
-
-Snapshot frequency should be adaptive rather than identical for every token.
-
-A newly launched, volatile, or rapidly changing token should be observed at high resolution. A quiet or dead token can be sampled less frequently while still preserving required labels and critical events.
-
-Initial operational targets may resemble:
-
-- first ~15 minutes: seconds-level snapshots where provider limits permit,
-- ~15 minutes to 1 hour: tens-of-seconds resolution,
-- ~1 to 4 hours: roughly minute-level resolution,
-- later observation: progressively lower frequency.
-
-These are operating targets, **not hard-coded strategy constants**. Provider limits, measured information value, and storage cost may change the exact cadence.
-
-Sampling should automatically increase when meaningful activity accelerates, including sharp price movement, volume acceleration, liquidity change, wallet clustering, creator activity, or execution-quality deterioration.
-
-### 7.4 Preserve the path, not only the endpoint
-
-A token that moves from `$100k -> $400k -> $60k` between two checkpoints is materially different from a token that simply moves `$100k -> $60k`. The dataset must preserve enough high-frequency/event-derived information to distinguish those paths.
-
-Research labels must therefore capture path-dependent facts such as MFE, MAE, time-to-peak, time-to-drawdown, liquidity survival, and realistic exit quality whenever the underlying observations support them.
-
-### 7.5 Rejected and untraded tokens are first-class data
-
-Rejected tokens must remain in the research dataset where data quality permits. WATCH candidates and tokens that never become trades must also remain represented.
-
-This reduces selection bias and lets Shreks learn both:
-
-- which apparent opportunities should have been avoided, and
-- which filters repeatedly reject genuinely tradable opportunities.
-
-The learning problem is not simply **"will this token pump?"**
-
-The intended question is closer to:
-
-> Given everything observable at this timestamp, what future path is likely, what is the upside/downside distribution, how does liquidity/executability evolve, and is there a realistic positive-expectancy trade after costs?
+### 7.5 SKIP is first-class data
+Shreks must learn from opportunities it did not trade. A skipped token that later moved strongly is important evidence, as is a correctly avoided loss.
 
 ---
 
-## 8. Safety Layer
+## 8. Feature Families
 
-Safety runs before strategy scoring.
+All features must be point-in-time safe and versioned.
 
-### Potential hard rejects
-
-Exact thresholds are configuration and will be calibrated later.
-
-Examples:
-
-- dangerous token authority state under active policy,
-- liquidity below executable minimum,
-- holder/supply concentration above a hard ceiling,
-- inability to obtain a reliable exit route/quote,
-- stale critical data,
-- contradictory critical data,
-- detected execution trap,
-- active global risk halt.
-
-A high momentum score can never override a hard safety rejection.
-
-### Soft safety factors
-
-Examples:
-
-- creator concentration,
-- suspicious holder clustering,
-- weak holder distribution,
-- liquidity deterioration,
-- unusual transfers,
-- uncertain wallet data,
-- questionable route quality.
-
-Soft risks reduce score or confidence instead of automatically rejecting the token.
-
-Every rule returns structured reasons for later evaluation.
-
----
-
-## 9. Feature Families
-
-V0 begins with deterministic and explainable features.
-
-### Market quality
-- liquidity level,
-- liquidity change,
-- pair/token age,
-- quote quality,
-- estimated price impact,
-- route availability.
-
-### Flow
-- buy/sell count ratio,
-- buy/sell volume imbalance when derivable,
-- unique buyer growth,
-- unique seller growth,
+### Microstructure / flow
+- buy/sell notional/count imbalance,
 - net flow,
-- flow acceleration/deceleration.
+- flow velocity/acceleration,
+- buyer/seller arrival rate,
+- burst intensity,
+- changing trade-size distribution,
+- seller exhaustion,
+- continuation/reversal signatures.
 
-### Momentum / path dynamics
-- short-window return,
-- return acceleration,
-- volume acceleration,
-- breakout behavior,
-- pullback structure,
-- distance from recent local extremes,
-- recent high/low path,
-- volatility/velocity where useful,
-- time since local peak/trough,
-- MFE/MAE-so-far features when point-in-time safe.
+### Curve / pool
+- reserves,
+- derived price,
+- reserve change rate,
+- graduation progress/state,
+- pool liquidity,
+- exit capacity.
 
-### Wallet quality
-- number of independently strong wallets entering,
-- weighted wallet quality,
-- smart-wallet clustering,
-- strong-wallet exits,
-- creator/deployer activity.
+### Wallet / cohort
+- entries/exits,
+- repeat-wallet activity,
+- coordinated timing,
+- cohort historical post-action path by horizon,
+- creator/deployer behavior,
+- large-holder distribution behavior,
+- linkage/independence confidence.
 
-### Distribution/safety
-- top-holder concentration,
-- creator exposure,
-- authority state,
-- concentration change,
-- liquidity concentration.
+### Manipulation descriptors
+- concentration,
+- coordinated-flow intensity,
+- abnormal transfers,
+- pump/distribution patterns,
+- related-wallet behavior where inferable,
+- historical behavior of involved wallets/cohorts.
 
-### Market regime
-Initial labels:
+These are normally predictive features, not automatic vetoes.
 
-- `HOT`
-- `NORMAL`
-- `WEAK`
-- `DEAD`
+### Momentum / path
+- returns across micro/short/long windows,
+- acceleration,
+- local high/low,
+- drawdown/recovery,
+- volatility/velocity,
+- breakout/pullback/reclaim structure,
+- point-in-time-safe MFE/MAE-so-far features.
 
-Regime can affect which strategies are allowed to trade.
+### Execution economics
+- reference/executable price,
+- expected entry/exit price,
+- maximum acceptable entry price,
+- route/capacity,
+- slippage/impact,
+- platform/swap fee,
+- network/priority/tip cost,
+- expected landing latency,
+- round-trip break-even move.
 
-All features must be point-in-time safe. Never train on information that did not exist at the decision timestamp.
-
----
-
-## 10. Initial Trading Setups
-
-V0 starts with a small number of explicit setups.
-
-### 10.1 Fresh Launch Continuation
-Avoid blind first-second sniping.
-
-Look for evidence that real demand persists after initial launch noise.
-
-### 10.2 Graduation / Breakout
-Look for a token moving from random launch behavior into stronger liquidity, participation, and price structure.
-
-### 10.3 First Pullback
-Look for:
-
-- strong initial move,
-- controlled retracement,
-- seller absorption,
-- renewed demand.
-
-### 10.4 Smart Wallet Cluster
-Look for several independent historically strong wallets entering within a meaningful time window.
-
-Each setup must produce:
-
-- eligibility,
-- features,
-- score,
-- reasons,
-- invalidation conditions.
-
-Each strategy must be independently measurable and independently disableable.
+### Market regime/context
+Use broad activity, volatility, launch/graduation rates, congestion, and other evidence to determine whether specific strategy families currently have edge.
 
 ---
 
-## 11. V0 Scoring
+## 9. Strategy Families
 
-The first scorer is deterministic.
+Multiple independently measurable strategies should coexist. Capital should eventually favor strategies with proven net expectancy/capacity, not one permanently hard-coded setup.
 
-Possible score families:
+### 9.1 Impulse Scalp
+Potentially fractions of a second to roughly 1–10 seconds. Target explosive order-flow/curve movement when predicted movement comfortably exceeds round-trip costs.
 
-- safety,
-- money flow,
-- wallet quality,
-- momentum/setup quality,
-- liquidity/executability.
+### 9.2 Micro Pullback / Reclaim
+Enter after an impulse retraces and sellers weaken while demand reappears. Entry is based on favorable price structure/executability, not merely a token score.
 
-Initial weights and entry thresholds are **hypotheses**, not claims of profitability.
+### 9.3 Pre-Graduation Acceleration
+Trade accelerating flow as a curve approaches graduation when cost-adjusted expected value supports it.
 
-They must be calibrated from observation and paper trading.
+### 9.4 Graduation / Migration / BOOST Flow
+Treat graduation as an event regime. Learn whether to enter before/during/after, fade, hold, or skip based on live flow and executable economics.
 
-No score bypasses hard safety or risk controls.
+### 9.5 Wallet/Cohort Ride or Fade
+Learn what typically happens after specific wallets/cohorts act. Coordinated/manipulated activity may imply continuation, reversal, fast exit, or skip.
+
+### 9.6 Longer Runner
+Continue holding while the expected value of holding remains superior to reducing/selling and risk limits remain satisfied. No fixed five-minute stop.
+
+### 9.7 Legacy setups
+Fresh Launch Continuation, First Pullback, Graduation/Breakout, deterministic scores, and current setup engines remain useful as baselines/features/challengers. They are **no longer the sole gateway to entry**.
 
 ---
 
-## 12. Risk Engine
+## 10. Forecast, Decision, and Entry-Price Engine
 
-Risk logic is independent of strategy confidence.
+The existing deterministic score is retained as an interpretable baseline/feature. **A high score alone must not trigger a buy.**
 
-The risk engine must support:
+The target decision sequence is:
+
+1. build current point-in-time state,
+2. forecast price/path/executability across several horizons,
+3. estimate realistic entry and exit economics,
+4. subtract all expected costs,
+5. compare available actions,
+6. choose `BUY`, `SKIP`, `HOLD`, `REDUCE`, or `SELL`,
+7. pass capital-changing actions through risk.
+
+For `BUY`, calculate a **maximum acceptable entry price** or equivalent constraint. If price moves beyond the level where expected net value remains acceptable before landing, abort rather than chase.
+
+For open positions, continuously compare the expected value of holding with reducing/selling.
+
+---
+
+## 11. Risk Engine
+
+Risk remains a hard independent capital-preservation authority.
+
+It must enforce/configure:
 
 - max notional per position,
-- max % of trading capital per position,
+- max capital % per position,
 - max simultaneous positions,
-- max aggregate open risk,
-- max daily realized loss,
-- max rolling drawdown,
-- cooldown after consecutive losses,
-- minimum liquidity,
-- max expected price impact,
-- max slippage,
-- duplicate-intent protection,
-- health-based new-entry pause,
+- max aggregate exposure/risk,
+- daily realized-loss limit,
+- rolling drawdown limit,
+- abnormal-loss/execution cooldowns,
+- slippage/impact limits,
+- minimum credible exit capacity for intended size,
+- duplicate-intent prevention,
+- health-based entry halts,
 - global kill switch.
 
-Uncertainty about a critical guardrail means **no new entry**.
+Sizing may use volatility, liquidity/capacity, forecast confidence, strategy family, holding horizon, and manipulation descriptors.
+
+Suspicious conditions can require smaller size or higher required edge without automatically deleting the opportunity.
 
 ---
 
-## 13. Paper Trading
+## 12. Paper and Shadow Trading
 
-Paper mode is fully autonomous.
+Paper mode must exercise the same approved strategy semantics intended for live.
 
-It receives the same `TradeIntent` that live execution will later receive.
+At the resolution relevant to a strategy, simulate:
 
-The paper adapter must simulate realistic costs and constraints:
+- contemporaneous curve/quote/executable price,
+- platform/swap fees,
+- network/priority/tip costs,
+- decision-to-landing latency,
+- slippage/impact,
+- partial/failed fills where meaningful,
+- finite exit capacity,
+- adverse movement during execution.
 
-- slippage,
-- swap/network costs,
-- latency,
-- route/quote conditions,
-- partial or failed fills where appropriate,
-- limited exit liquidity.
+For sub-second/seconds strategies, minute candles and perfect midpoint fills are invalid proof.
 
-Paper performance that assumes perfect fills or impossible exits is invalid.
-
-Paper mode must support the full position lifecycle:
-
-- entry,
-- partial reduction,
-- take profit,
-- stop loss,
-- trailing stop,
-- emergency exit,
-- final close.
+PAPER must record `BUY`, `SKIP`, `HOLD`, `REDUCE`, and `SELL` decisions and enough future path to learn from them.
 
 ---
 
-## 14. Exit Engine
+## 13. Continuous Hold / Reduce / Sell
 
-Exits are first-class decisions.
+Exits do not wait for fixed checkpoints.
 
-V0 can combine:
+On material new information, ask:
 
-- hard stop loss,
-- take-profit levels,
-- partial profit taking,
-- trailing stop,
-- maximum holding time,
-- flow deterioration exit,
-- momentum deterioration exit,
-- strong-wallet distribution exit,
-- liquidity deterioration exit,
-- global-risk exit.
+> Is the expected net value of continuing to hold greater than reducing or selling now?
 
-Every exit records one primary reason plus supporting signals.
+Relevant information may include:
 
-Exit policies must later be compared by realized expectancy rather than assumed to be optimal.
+- reversal probability,
+- continuing buy-flow expectancy,
+- wallet/cohort distribution,
+- creator selling,
+- curve/pool changes,
+- liquidity/exit-capacity deterioration,
+- momentum/flow deterioration,
+- high-water drawdown,
+- current executable sell price and costs.
 
----
+Hard stop-loss, take-profit, trailing stop, maximum holding time, and emergency exits remain protective backstops/baselines.
 
-## 15. Live Execution
-
-Live execution is a Rust adapter.
-
-It executes approved `TradeIntent` objects. It does not invent trades.
-
-Before sending a transaction it must:
-
-1. confirm live mode is allowed,
-2. verify idempotency,
-3. recheck notional/risk constraints,
-4. obtain a fresh executable quote/route,
-5. recheck slippage and price impact,
-6. reject materially changed conditions,
-7. construct and sign,
-8. submit,
-9. record the signature,
-10. confirm,
-11. reconcile actual balances/fills.
-
-The live trading wallet should hold only capital deliberately allocated to Shreks.
+Every `HOLD`, `REDUCE`, and `SELL` decision should later be counterfactually evaluated where data permits.
 
 ---
 
-## 16. Learning System
+## 14. Learning System
 
-The system learns from:
+Shreks learns **which action was best**, not merely which token predicted profit.
 
-1. all sufficiently observed candidates,
-2. rejected and never-traded candidates,
-3. full observed token paths including pumps, dumps, rugs, dead tokens, failed breakouts, recoveries, and slow trends,
-4. wallet/creator activity sequences where attribution and data quality permit,
-5. paper trades,
-6. later, live trades.
+It learns from:
 
-The learning loop is:
+- all observed opportunities,
+- every `SKIP`,
+- entry timing/price after every `BUY`,
+- every `HOLD`,
+- every `REDUCE`,
+- every `SELL`,
+- wallet/cohort/creator sequences,
+- full price/liquidity/execution paths,
+- PAPER trades,
+- later LIVE trades.
 
-`DISCOVER -> CONTINUOUS OBSERVE -> FEATURE SNAPSHOT -> DECISION -> PATH/FUTURE OUTCOME -> DATASET -> TRAIN -> VALIDATE -> PAPER/SHADOW -> COMPARE -> PROMOTE OR REJECT`
+The loop is:
 
-Continuous data collection should begin as soon as the read-only observer is operational and may run in parallel with later research/promotion implementation phases. Every day of correctly timestamped observation adds proprietary history that is difficult to reconstruct perfectly after the fact.
+`EVENTS -> STATE -> ACTION -> FUTURE PATH -> MULTI-HORIZON LABELS -> COUNTERFACTUALS -> DATASET -> TRAIN CHALLENGER -> VALIDATE -> REPLAY -> PAPER/SHADOW -> COMPARE -> PROMOTE OR REJECT`
 
-### What the system optimizes
-Do not optimize for win rate alone.
+### 14.1 Multi-horizon learning
+Models may estimate outcomes over `250ms, 500ms, 1s, 3s, 5s, 10s, 30s, 1m, 5m, 15m, 30m, 1h+` or other evidence-supported horizons.
 
-Primary evaluation metrics:
+Those horizons characterize opportunity duration; they do not constrain action time.
 
-- expectancy after costs,
+### 14.2 Counterfactual learning
+Evaluate alternatives such as:
+
+- skip vs buy,
+- immediate vs delayed entry,
+- looser vs stricter maximum entry price,
+- sell now vs hold longer,
+- reduce vs full exit.
+
+This is required to learn **when not to buy, when to hold, and when to sell**.
+
+### 14.3 Objective
+Primary objective:
+
+> maximize long-run net account growth/expectancy after realistic costs and drawdown constraints.
+
+Measure at least:
+
+- net expectancy,
 - profit factor,
-- maximum drawdown,
-- average winner,
-- average loser,
+- max drawdown,
+- average winner/loser,
 - win rate,
-- calibration,
-- performance by setup,
+- calibration by horizon,
+- expected-value calibration,
+- entry-price efficiency,
+- exit-timing efficiency,
+- missed-opportunity cost,
+- cost burden,
+- capacity/turnover,
+- performance by strategy and regime.
+
+### 14.4 Champion / Challenger
+A challenger must use point-in-time-safe data, chronological unseen evaluation, realistic replay costs/latency, PAPER/shadow proof, and explicit promotion. It never silently promotes itself.
+
+---
+
+## 15. Wallet and Manipulation Intelligence
+
+Do not reduce wallet intelligence to "smart wallet bought = bullish."
+
+Learn histories such as:
+
+- immediate path after wallet/cohort entries/exits,
+- typical impulse magnitude/duration,
+- distribution timing,
+- behavior around graduation,
+- interaction with creator/deployer actions,
 - performance by market regime,
-- turnover,
-- cost burden.
+- likely independence/linkage.
 
-### Champion / Challenger
+The useful question is:
 
-**Champion:** currently approved strategy/model.
+> Given this wallet/cohort behavior now, what does it imply about the next executable path, and should Shreks ride, fade, hold, reduce, sell, or skip?
 
-**Challenger:** new candidate strategy/model.
-
-A challenger must:
-
-- use valid point-in-time data,
-- pass schema/data-quality checks,
-- be evaluated on unseen data,
-- beat required baselines,
-- remain within drawdown/risk limits,
-- avoid relying on one tiny period or a few extreme winners,
-- run in paper/shadow mode,
-- satisfy promotion rules.
-
-A challenger never promotes itself automatically.
+Attribution/linkage that cannot be proven must remain probabilistic.
 
 ---
 
-## 17. Wallet Intelligence
+## 16. Live Fast Lane and Execution
 
-Wallet intelligence becomes more valuable over time.
+LIVE remains disabled until promotion gates pass.
 
-The system should learn behavioral histories such as:
+The live path is:
 
-- how early a wallet tends to enter,
-- how often its entries precede profitable moves,
-- whether entries cluster before pumps, failed pumps, or rugs,
-- when the wallet begins reducing/exiting relative to local peaks and drawdowns,
-- typical hold time,
-- median trade outcome,
-- average/median drawdown,
-- rug exposure,
-- behavior during different regimes,
-- whether its activity is independent or linked to other wallets.
+1. **Fast Lane strategy runtime** updates state and runs the approved champion logic/inference.
+2. **Risk authority** validates capital/execution constraints and creates a `TradeIntent` for capital-changing actions.
+3. **Rust executor** executes the validated intent.
 
-Avoid simplistic "whale bought = bullish" logic.
+Immediately before submission:
 
-The intended future signal is closer to:
+- confirm live mode,
+- verify idempotency,
+- recheck risk/notional,
+- reprice with freshest executable state,
+- ensure price remains inside the decision's maximum acceptable price/slippage/EV boundary,
+- abort materially changed trades,
+- construct/sign/submit,
+- confirm,
+- reconcile actual balances/fills.
 
-> Several independent wallets with meaningful, statistically credible histories are accumulating the same token under favorable market conditions.
-
-Wallet identity heuristics must be treated as uncertain, not factual, when attribution is not provable.
+Low-latency Solana submission/priority mechanisms may be used when appropriate and when they do not create a forbidden paid-data dependency. Their real costs must be included in expected value.
 
 ---
 
-## 18. System Health and Recovery
+## 17. Health, Recovery, and Operations
 
-Shreks must be able to survive:
-
-- provider rate limits,
-- provider downtime,
-- malformed responses,
-- stale responses,
-- process restarts,
-- temporary network failures,
-- duplicate events,
-- duplicate intents,
-- partial execution failures,
-- transaction confirmation uncertainty.
+Shreks must survive provider limits/outages, malformed/stale data, network failures, process/host restarts, duplicate events/intents, partial execution failures, and confirmation uncertainty.
 
 Critical health degradation pauses new entries.
 
-State must be recoverable after restart from the operational database and onchain truth where necessary.
+### Production location
+GitHub is the source-control/CI/release/deployment control plane. It does **not** run Shreks continuously.
+
+The actual system runs continuously on the dedicated Linux VPS.
+
+The existing VPS release/deploy, service supervision, dashboard, PAPER runtime, and evidence foundations should be reused rather than discarded. The Fast Lane rebuild must earn new physical acceptance evidence for changed runtime behavior.
+
+Initial runtime shape:
+
+```text
+Solana/Pump events
+       |
+       v
++---------------------------+
+|        SHREKS VPS         |
+| Rust Fast Lane / Observer |
+| Rolling live state        |
+| PAPER / later LIVE path   |
+| Risk authority            |
+| SQLite evidence/state     |
+| Python research services  |
+| Dashboard / telemetry     |
++---------------------------+
+```
+
+Use systemd/current release-manager architecture unless measurements justify a deliberate change.
+
+### Dashboard
+The operator surface should expose:
+
+- service/provider/event freshness,
+- decisions by `BUY/SKIP/HOLD/REDUCE/SELL`,
+- current forecasts/EV for open positions where stored,
+- entry price boundary vs actual fill,
+- latency/fees/slippage,
+- PnL/drawdown/exposure,
+- model/strategy version,
+- proof/promotion state,
+- LIVE disabled/enabled state,
+- risk halt and kill switch.
+
+Trade drill-down must show stored evidence, not invented explanations.
 
 ---
 
-## 19. Testing Philosophy
+## 18. Testing and Proof
 
-Testing is mandatory before live money.
+Before LIVE money, require tests/evidence for:
 
-Required categories eventually include:
+- event ingestion/order/deduplication,
+- curve/pool-state reconstruction,
+- rolling micro-windows,
+- wallet/cohort features,
+- manipulation descriptors,
+- multi-horizon labels,
+- counterfactual leakage prevention,
+- Fast Lane inference/decision parity,
+- maximum-entry-price abort behavior,
+- realistic cost/EV accounting,
+- event-resolution PAPER fills,
+- continuous hold/reduce/sell,
+- risk authority,
+- restart/recovery,
+- idempotency,
+- paper/live artifact parity,
+- chronological evaluation,
+- latency/throughput/capacity benchmarks,
+- live dry runs.
 
-- Rust unit tests,
-- Python unit tests,
-- provider adapter tests,
-- continuous-observer/event-ingestion tests,
-- adaptive-sampling tests,
-- path/MFE/MAE outcome-label tests,
-- normalization tests,
-- schema/migration tests,
-- point-in-time feature tests,
-- safety rule tests,
-- strategy tests,
-- risk tests,
-- paper fill simulation tests,
-- exit tests,
-- restart/recovery tests,
-- idempotency tests,
-- paper/live parity tests,
-- model data-leakage tests,
-- backtest/evaluation tests,
-- live execution dry-run tests.
+LIVE promotion additionally requires:
 
-Use test-driven development for implementation tasks.
+- sufficient independent PAPER/shadow sample,
+- positive net expectancy after realistic costs,
+- acceptable drawdown/tail losses,
+- enough execution capacity for intended size/frequency,
+- measured latency compatible with claimed edge,
+- stable recovery/provider behavior,
+- reconciled accounting,
+- reliable halts/kill switch,
+- reproducible evaluation without look-ahead leakage.
 
----
-
-## 20. Live Promotion Gate
-
-Live trading remains disabled until Shreks demonstrates:
-
-- sufficient independent paper-trade sample size,
-- positive expectancy after realistic costs,
-- acceptable drawdown,
-- stable provider/restart behavior,
-- no unresolved accounting defects,
-- no unresolved execution defects,
-- paper/live decision-path parity,
-- reliable risk halts,
-- realistic fill simulation,
-- reproducible evaluation.
-
-The exact numeric thresholds will be defined using data rather than invented prematurely.
-
-Initial real-money deployment, when reached, must use deliberately limited capital and strict risk caps.
+Initial LIVE capital, when eventually authorized, must be deliberately small and strictly capped.
 
 ---
 
-## 21. Production Runtime, Monitoring, and Operations
-
-The finished Shreks system must **not run continuously on GitHub**. GitHub is the source-control and delivery control plane: code lives there, changes are reviewed there, CI/tests run there, releases are recorded there, and deployment can be triggered from there. The actual Shreks processes must run continuously on a dedicated server.
-
-The deployment/monitoring architecture is not yet sealed and should be built after the trading/proof path is finished enough to justify production operations work.
-
-### 21.1 Initial runtime architecture
-
-The initial production setup should be:
-
-```text
-                    GITHUB
-          code / PRs / tests / releases
-                       |
-                       | deploy
-                       v
-             +------------------+
-             |  SHREKS SERVER   |
-             |   Linux VPS      |
-             |                  |
-             | Rust Observer    |
-Solana/APIs ->| Safety Collector |
-             | Paper/Live Loop  |
-             | Risk Engine      |
-             | SQLite database  |
-             | Evidence stores  |
-             +--------+---------+
-                      |
-            monitoring / alerts
-                      |
-        +-------------+-------------+
-        |                           |
-        v                           v
-   Web dashboard              Phone alerts
-   Grafana/Shreks UI          Telegram/etc.
-```
-
-For the first production version, the whole system should run on **one dedicated Linux VPS**, with Europe as the initial preference unless measured network/provider behavior justifies another region.
-
-A suitable first-host layout is:
-
-```text
-Ubuntu VPS
-|
-+-- shreks-observer
-+-- shreks-safety-evidence
-+-- shreks-paper/live-runner
-+-- shreks-monitor
-+-- SQLite database
-+-- evidence/checkpoint files
-+-- monitoring stack
-```
-
-Services should run under **Docker Compose or systemd** and automatically restart after a machine reboot or process crash.
-
-The intended deployment flow is:
-
-```text
-code change
-   -> GitHub PR
-   -> tests all GREEN
-   -> approved release
-   -> GitHub deploys release to VPS
-   -> VPS keeps Shreks running 24/7
-```
-
-GitHub is therefore the software factory/control plane, not the continuously running trading machine.
-
-### 21.2 Operator dashboard
-
-The operator should not need to SSH into the server and manually read logs for normal monitoring. Shreks should expose a **private authenticated web dashboard**, for example at a private operator domain such as `https://shreks.<operator-domain>`.
-
-The main dashboard should expose at least:
-
-**System**
-
-- running state,
-- uptime,
-- observer health,
-- Helius health,
-- Jupiter health,
-- other required provider health,
-- market-data freshness/age,
-- latest checkpoint,
-- accounting reconciliation state.
-
-**Trading**
-
-- current mode,
-- candidates observed/discovered,
-- candidates passing safety,
-- trades entered,
-- open positions.
-
-**Performance**
-
-- realized PnL,
-- unrealized PnL,
-- net expectancy,
-- profit factor,
-- maximum drawdown,
-- costs, fees, and slippage.
-
-**Proof**
-
-- paper-trade count versus required evidence,
-- distinct tokens/mints represented,
-- proof-gate state such as `INSUFFICIENT` or `SUFFICIENT`,
-- promotion state,
-- live-trading enabled/disabled state.
-
-**Risk**
-
-- capital deployed,
-- daily loss,
-- drawdown,
-- kill-switch state,
-- risk-halt state.
-
-### 21.3 Individual-trade drill-down
-
-The operator must be able to inspect an individual paper/live trade and see both **what Shreks did** and **why it did it**.
-
-The trade view should expose, where applicable:
-
-- token,
-- observation time,
-- why Shreks liked the setup,
-- safety assessment,
-- features,
-- regime,
-- score,
-- decision,
-- risk sizing,
-- entry quote,
-- actual simulated/live fill,
-- exit reason,
-- fees,
-- slippage,
-- PnL.
-
-Monitoring must not only show outcomes; it must make the decision path understandable from stored evidence.
-
-### 21.4 Phone alerts
-
-The dashboard is for inspection. Critical operational/trading events should also be pushed automatically to the operator.
-
-Alerts should include at least:
-
-- Shreks stopped running,
-- market data became stale,
-- Helius/Jupiter/required-provider failure persists,
-- database/checkpoint problem,
-- accounting does not reconcile,
-- risk kill switch activates,
-- daily-loss or drawdown halt activates,
-- a paper/live position opens,
-- a position closes with its PnL,
-- an unusually bad fill/slippage event occurs,
-- paper proof becomes sufficient,
-- a challenger fails proof,
-- eventually, any live-money transaction.
-
-**Telegram** is a practical first notification channel. Email, Discord, or Slack may also be used. This is alerting; it does not make Telegram an authoritative trading control surface.
-
-### 21.5 Emergency live controls
-
-Before live trading is legitimately enabled, the dashboard should make the state obvious, for example:
-
-```text
-LIVE TRADING: DISABLED
-```
-
-When live trading is legitimately enabled, the operator dashboard should provide at least:
-
-```text
-LIVE TRADING: ENABLED
-
-[ HALT NEW ENTRIES ]
-[ EMERGENCY KILL SWITCH ]
-```
-
-The dashboard must **not bypass the risk engine**. Any halt or kill-switch action must write through the controlled risk/runtime path.
-
-### 21.6 Crash/restart recovery
-
-Operational state must survive process or server crashes. If the host dies and restarts, Shreks should recover or reconcile at least:
-
-```text
-last observer state
-+
-open paper/live positions
-+
-ledger
-+
-processed intent IDs
-+
-risk state
-+
-E11 evidence
-+
-latest checkpoint
-      ->
-same state before/after restart
-```
-
-A restart must not erase Shreks' memory, duplicate actions, silently change accounting, or lose required proof state.
-
-### 21.7 Four monitoring layers
-
-Monitoring should be separated into four layers:
-
-| Layer | What the operator sees |
-| --- | --- |
-| **System** | uptime, CPU/RAM/disk, provider health, restarts |
-| **Trading** | observations, scores, decisions, entries, exits |
-| **Money** | PnL, fees, slippage, drawdown, exposure |
-| **Proof/Risk** | sample size, expectancy, E12 gates, halts, accounting |
-
-This should answer both whether Shreks is technically healthy and whether it is making money safely.
-
-### 21.8 GitHub's continuing role
-
-Even though GitHub does not run the bot continuously, it remains important for:
-
-- source code,
-- every version of the strategy,
-- tests,
-- CI history,
-- release history,
-- deployment workflow,
-- sealed proof phases,
-- rollback points.
-
-A deployed version must remain traceable to the exact code/release that produced its behavior so a bad version can be rolled back.
-
-### 21.9 Runtime secret rule
-
-When live money is eventually enabled, wallet/private signing credentials must **never** live in the GitHub repository.
-
-They belong in the runtime server's protected secret store/environment with the smallest practical permissions. GitHub may deploy the application without storing the trading wallet key in source control.
-
-### 21.10 Operations build sequence
-
-The trading/proof path remains:
-
-`observer -> evidence -> strategy decision -> paper execution -> restart -> evaluation -> proof`
-
-After the proof machinery is sealed, the next major operational layer should be:
-
-`deployment -> 24/7 supervisor -> telemetry -> dashboard -> alerts -> backup/recovery`
-
-The intended end state is that the operator can open Shreks from a phone and see what it is doing, its PnL, its health, why it took each trade, and whether a safety/proof gate is blocking it, while the actual bot runs 24/7 on its own server and GitHub remains the source/testing/deployment control plane.
-
----
-
-## 22. Scope Explicitly Deferred
-
-Do not add these until core performance requires them:
-
-- multi-chain trading,
-- copy trading as the primary strategy,
-- paid data feeds,
-- paid RPC requirement,
-- social/X sentiment dependency,
-- Telegram trading UI,
-- complex web dashboard,
-- microservice sprawl,
-- Kafka,
-- Kubernetes,
-- reinforcement learning,
+## 19. Scope Explicitly Deferred
+
+Do not add prematurely:
+
+- other chains,
+- leverage/perpetuals,
+- paid data feeds/RPC as a requirement,
+- social/X dependency,
+- Telegram trading-control bot,
+- Kafka/Kubernetes/microservice sprawl,
+- reinforcement learning merely for sophistication,
 - self-modifying live strategies,
-- custom Solana onchain program,
-- leverage,
-- perpetual futures.
+- custom Solana onchain program.
 
 ---
 
-## 23. Source of Truth Hierarchy
+## 20. Source of Truth Hierarchy
 
-When project documents conflict, use this order:
+When project documents conflict:
 
 1. `SHREKS_MASTER_SOURCE_OF_TRUTH.md`
 2. `SHREKS_BUILD_ORDER.md`
-3. current approved implementation spec/plan in the repo
-4. repository code and tests
+3. current approved repo spec/plan
+4. repository code/tests
 5. chat messages
 
-If implementation discoveries require changing architecture, update the source of truth deliberately instead of silently drifting.
+Durable architecture changes must update this document deliberately.
 
 ---
 
-## 24. Definition of Success
+## 21. Rebuild Directive — 2026-08-28
 
-Shreks is successful when it can:
+The existing Shreks infrastructure is **not being thrown away**. Preserve and reuse the proven pieces:
 
-- continuously observe Solana memecoin markets at sufficient resolution to reconstruct important intra-window pumps, dumps, liquidity changes, and wallet behavior,
-- adapt observation frequency to information value without losing required outcome labels,
-- reject unsafe/untradeable situations,
-- generate reproducible trading decisions,
-- paper trade autonomously under realistic costs,
-- measure its true expectancy and drawdown,
-- learn from a growing proprietary dataset,
-- safely evaluate improved challengers,
-- execute live trades automatically only after proof,
-- preserve capital through hard risk controls,
-- explain why every trade was entered and exited.
+- Solana/Pump observation foundations,
+- SQLite/WAL evidence state,
+- wallet reconstruction/research foundations,
+- PAPER ledger/accounting,
+- risk controls,
+- dashboard/telemetry,
+- release/deploy/VPS supervision,
+- backup/recovery work,
+- learning/champion-challenger foundations.
 
-The goal is not an impressive dashboard.
+The **trading core is being rebuilt**.
 
-The goal is a trading machine that can demonstrate a real, measurable edge before meaningful capital is exposed.
+The old default philosophy:
+
+`discover -> slow snapshots -> setup/score -> buy available quote -> rule-based exit`
+
+is superseded by:
+
+`event stream -> Fast Lane state -> multi-horizon forecast -> cost-adjusted action -> price boundary -> risk -> event-driven hold/reduce/sell -> counterfactual learning`
+
+Implementation must now prioritize the Fast Lane and learning requirements in the updated `SHREKS_BUILD_ORDER.md` before further strategy promotion or LIVE work.
+
+LIVE TRADING REMAINS DISABLED.
+
+### Current repository/runtime position
+
+- `main` contains the previously built observer/PAPER/risk/learning/ops foundations.
+- the canonical-pair selection correction is merged and previously deployed/physically accepted on the VPS at release `330ace280067905b6502ba3846f73b2b461be125`.
+- the verified-Pump-market-evidence fix is merged and sealed in GitHub at `29f6dd9b747e053569d14d54a2f346b46ed103ac`; physical VPS deployment/acceptance of that newer seal must not be assumed until separately proven.
+- the Fast Lane architecture described here is the next major build direction.
+
+---
+
+## 22. Definition of Success
+
+Shreks succeeds when it can:
+
+- observe Solana memecoin markets at the event resolution required by its strategies,
+- reconstruct order flow, curve/pool movement, wallet/cohort behavior, and execution state,
+- treat manipulation/suspicious activity as learnable market information rather than blindly discarding opportunities,
+- estimate cost-adjusted future paths across multiple horizons,
+- choose `BUY`, `SKIP`, `HOLD`, `REDUCE`, or `SELL` whenever material information changes,
+- determine a maximum acceptable entry price instead of chasing any available quote,
+- PAPER trade sub-second, seconds, minutes, and longer opportunities under realistic costs/latency/capacity,
+- learn from actual actions and counterfactual alternatives,
+- demonstrate repeatable net expectancy and acceptable drawdown,
+- improve through controlled champion/challenger promotion,
+- execute LIVE automatically only after proof,
+- preserve capital through hard risk/execution invariants,
+- explain every action from stored evidence.
+
+The goal is not a high score, a pretty dashboard, or correctly predicting which meme survives.
+
+The goal is a trading machine with a measurable, repeatable **net execution edge**.
