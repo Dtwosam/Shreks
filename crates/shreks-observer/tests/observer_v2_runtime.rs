@@ -89,6 +89,26 @@ fn production_uses_one_realtime_pump_stream_and_the_durable_writer() {
 }
 
 #[test]
+fn realtime_writer_termination_is_fail_closed_and_supervised() {
+    for required in [
+        "run_observation_with_realtime",
+        "writer_result = &mut writer",
+        "Pump realtime writer stopped unexpectedly",
+        "forwarder.abort()",
+    ] {
+        assert!(
+            OBSERVE_SOURCE.contains(required),
+            "production must supervise realtime durability fail-closed: {required}"
+        );
+    }
+
+    assert!(
+        !OBSERVE_SOURCE.contains("Some(writer.await)"),
+        "realtime writer must be monitored during runtime, not only checked at process shutdown"
+    );
+}
+
+#[test]
 fn observe_v2_runtime_remains_observe_only() {
     for forbidden in [
         "TradeIntent",
