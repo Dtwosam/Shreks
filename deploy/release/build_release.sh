@@ -45,7 +45,7 @@ mkdir -p \
   "$STAGING/wheelhouse" \
   "$WHEEL_OUT"
 
-cargo build --release --bin shreks-observe --bin shreks-paper-evidence --bin shreks-fast-lane-acceptance
+cargo build --release --bin shreks-observe --bin shreks-paper-evidence
 python -m pip wheel ./python --no-deps -w "$WHEEL_OUT"
 
 mapfile -t WHEELS < <(find "$WHEEL_OUT" -maxdepth 1 -type f -name 'shreks_brain-*.whl' -print | sort)
@@ -56,7 +56,6 @@ fi
 
 cp target/release/shreks-observe "$STAGING/target/release/shreks-observe"
 cp target/release/shreks-paper-evidence "$STAGING/target/release/shreks-paper-evidence"
-cp target/release/shreks-fast-lane-acceptance "$STAGING/target/release/shreks-fast-lane-acceptance"
 cp deploy/systemd/shreks-observe.service "$STAGING/deploy/systemd/shreks-observe.service"
 cp deploy/systemd/shreks-paper-evidence.service "$STAGING/deploy/systemd/shreks-paper-evidence.service"
 cp deploy/systemd/shreks-paper-campaign.service "$STAGING/deploy/systemd/shreks-paper-campaign.service"

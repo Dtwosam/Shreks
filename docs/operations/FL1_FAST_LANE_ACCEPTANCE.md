@@ -22,7 +22,7 @@ systemctl is-active shreks.target | tee "$EVIDENCE_DIR/target-precondition.txt"
 systemctl is-active shreks-observe.service | tee "$EVIDENCE_DIR/observer-precondition.txt"
 ```
 
-The resolved release SHA and the manifest `source_sha` must match exactly. The release manifest must include `target/release/shreks-fast-lane-acceptance`; a locally compiled, copied, edited, or unmanifested reporter is not valid production evidence.
+The resolved release SHA and the manifest `source_sha` must match exactly. The release manifest must include `target/release/shreks-observe`; FL1.5 acceptance must run through that already-allowlisted immutable payload as the `fast-lane-acceptance` subcommand. A locally compiled, copied, edited, or unmanifested observer is not valid production evidence.
 
 Use the authoritative persistent observer database:
 
@@ -36,7 +36,9 @@ Do not copy provider credentials, environment secrets, wallet material, dashboar
 
 ### Database-backed evidence
 
-`shreks-fast-lane-acceptance` opens SQLite with `SQLITE_OPEN_READ_ONLY` and reports only evidence already present in the durable FL1 tables plus filesystem size metadata:
+`shreks-observe fast-lane-acceptance` opens SQLite with `SQLITE_OPEN_READ_ONLY` and reports only evidence already present in the durable FL1 tables plus filesystem size metadata. The subcommand dispatches before normal observer runtime/provider configuration, so acceptance does not require provider credentials or initialize market-data providers.
+
+It reports:
 
 - raw Pump event count for the selected window;
 - raw PumpSwap event count for the selected window;
@@ -110,10 +112,10 @@ Capture observer logs for the same interval:
 sudo journalctl -u shreks-observe.service --since "$START_ISO" --until "$END_ISO" --no-pager | tee "$EVIDENCE_DIR/observer-window.log"
 ```
 
-Run the reporter as the unprivileged runtime identity. The operator shell opens the private evidence file, while the reporter itself retains only the `shreks` user's database access:
+Run acceptance through the verified observer payload as the unprivileged runtime identity. The operator shell opens the private evidence file, while the subcommand itself retains only the `shreks` user's database access:
 
 ```bash
-sudo -u shreks /opt/shreks/current/target/release/shreks-fast-lane-acceptance \
+sudo -u shreks /opt/shreks/current/target/release/shreks-observe fast-lane-acceptance \
   /var/lib/shreks/shreks.db \
   "$START_MS" \
   "$END_MS" \
@@ -169,7 +171,7 @@ Use provider/reconnect journal evidence to assess whether reconnect behavior is 
 
 **Do not advance to FL2** if any of the following is true:
 
-- the reporter is not part of the exact verified immutable release;
+- the acceptance subcommand is not available from the exact verified immutable `shreks-observe` release payload;
 - the database is not the production observer database;
 - `sequence_integrity_violations` is nonzero;
 - the reporter rejects a timing invariant or schema invariant;

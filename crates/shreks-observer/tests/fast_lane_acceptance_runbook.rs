@@ -8,7 +8,8 @@ fn fl1_acceptance_runbook_preserves_read_only_and_release_boundaries() {
         "/opt/shreks/current",
         "RELEASE_MANIFEST.json",
         "/var/lib/shreks/shreks.db",
-        "shreks-fast-lane-acceptance",
+        "target/release/shreks-observe",
+        "fast-lane-acceptance",
         "systemctl show shreks-observe.service",
         "NRestarts",
         "journalctl -u shreks-observe.service",
@@ -29,6 +30,7 @@ fn fl1_acceptance_runbook_preserves_read_only_and_release_boundaries() {
     }
 
     for forbidden in [
+        "/target/release/shreks-fast-lane-acceptance",
         "systemctl restart shreks-observe",
         "systemctl stop shreks-observe",
         "systemctl kill shreks-observe",
@@ -38,7 +40,7 @@ fn fl1_acceptance_runbook_preserves_read_only_and_release_boundaries() {
     ] {
         assert!(
             !RUNBOOK.contains(forbidden),
-            "FL1.5 routine acceptance must not add mutation or capital authority: {forbidden}"
+            "FL1.5 routine acceptance must not add incompatible release paths, mutation, or capital authority: {forbidden}"
         );
     }
 }
