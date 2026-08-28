@@ -96,7 +96,7 @@ fn paper_quote_purpose_partitions_identity_and_preserves_exact_provenance() {
     drop(db);
 
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 10);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 11);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
