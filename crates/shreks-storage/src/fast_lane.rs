@@ -5,6 +5,9 @@ use shreks_core::{
 
 use crate::{ShreksDb, StorageError};
 
+const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
+const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpTradeEvidenceWrite {
     pub provider: ProviderId,
@@ -288,6 +291,7 @@ impl ShreksDb {
                 source_observed_at_unix_ms
             )));
         }
+        validate_pump_canonical_source(event, &source, base_decimals, quote_decimals)?;
 
         let sequence = i64::try_from(event.sequence).map_err(|_| {
             StorageError::InvalidData("FastEvent sequence exceeds SQLite integer range".to_owned())
@@ -691,6 +695,80 @@ fn validate_trade_evidence(evidence: &PumpTradeEvidenceWrite) -> Result<(), Stor
             "Pump trade chain timestamp must be non-negative".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn validate_pump_canonical_source(
+    event: &FastEvent,
+    source: &PumpTradeEvidenceWrite,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> Result<(), StorageError> {
+    let is_sol_quote = source.quote_mint == SYSTEM_SOL_MINT || source.quote_mint == WRAPPED_SOL_MINT;
+    let expected_quote_mint = if is_sol_quote {
+        WRAPPED_SOL_MINT
+    } else {
+        source.quote_mint.as_str()
+    };
+    let expected_quote_raw = if is_sol_quote {
+        source.sol_amount_raw
+    } else {
+        source.quote_amount_raw
+    };
+    if source.token_amount_raw == 0 || expected_quote_raw == 0 {
+        return Err(StorageError::InvalidData(format!(
+            "FastEvent source Pump evidence '{}' ordinal {} has non-positive economics",
+            source.signature, source.ordinal
+        )));
+    }
+
+    let occurred_at_unix_ms = source
+        .timestamp_unix_seconds
+        .checked_mul(1_000)
+        .ok_or_else(|| {
+            StorageError::InvalidData(format!(
+                "FastEvent source Pump timestamp overflow for '{}' ordinal {}",
+                source.signature, source.ordinal
+            ))
+        })?;
+    let base_scale = 10_f64.powi(i32::from(base_decimals));
+    let quote_scale = 10_f64.powi(i32::from(quote_decimals));
+    if !base_scale.is_finite()
+        || base_scale <= 0.0
+        || !quote_scale.is_finite()
+        || quote_scale <= 0.0
+    {
+        return Err(StorageError::InvalidData(format!(
+            "FastEvent decimal scale is invalid for '{}' ordinal {}",
+            source.signature, source.ordinal
+        )));
+    }
+    let base_quantity = source.token_amount_raw as f64 / base_scale;
+    let quote_quantity = expected_quote_raw as f64 / quote_scale;
+    let price_quote = quote_quantity / base_quantity;
+    let expected_kind = if source.is_buy {
+        FastEventKind::Buy
+    } else {
+        FastEventKind::Sell
+    };
+
+    if event.provider != source.provider
+        || event.market.mint != source.mint
+        || event.market.quote_mint != expected_quote_mint
+        || event.kind != expected_kind
+        || event.actor.as_deref() != Some(source.user.as_str())
+        || event.slot != source.slot
+        || event.occurred_at_unix_ms != occurred_at_unix_ms
+        || event.base_quantity != base_quantity
+        || event.quote_quantity != quote_quantity
+        || event.price_quote != price_quote
+    {
+        return Err(StorageError::InvalidData(format!(
+            "FastEvent payload does not match immutable Pump evidence '{}' ordinal {}",
+            source.signature, source.ordinal
+        )));
+    }
+
     Ok(())
 }
 
