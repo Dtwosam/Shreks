@@ -88,6 +88,9 @@ fn build_lifecycle_observer(
     config: &ProviderConfig,
 ) -> Result<Observer, ProviderError> {
     let mut observer = Observer::new(db);
+    if config.dexscreener_enabled {
+        observer = observer.with_pump_market_provider(Arc::new(DexScreenerProvider::new()));
+    }
     if let Some(api_key) = config.helius_api_key() {
         let helius = Arc::new(HeliusProvider::new(api_key)?);
         observer = observer
