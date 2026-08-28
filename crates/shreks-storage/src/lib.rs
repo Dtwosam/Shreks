@@ -3,6 +3,7 @@
 mod fast_lane;
 mod lifecycle;
 mod outcomes;
+mod pump_swap_fast_lane;
 mod safety_evidence;
 mod wallet;
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
@@ -10,6 +11,9 @@ pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
+};
+pub use pump_swap_fast_lane::{
+    pump_swap_event_ordinal, PumpSwapMarket, PumpSwapTradeEvidenceWrite,
 };
 pub use wallet::WalletObservationWrite;
 
@@ -89,6 +93,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 11,
         name: "fast_lane_canonical_events",
         sql: include_str!("../migrations/0011_fast_lane_canonical_events.sql"),
+    },
+    Migration {
+        version: 12,
+        name: "fast_lane_pumpswap_evidence",
+        sql: include_str!("../migrations/0012_fast_lane_pumpswap_evidence.sql"),
     },
 ];
 
