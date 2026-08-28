@@ -185,7 +185,20 @@ class ObserverCampaignCandidateStore:
                         ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
                     (as_of_unix_ms, cutoff, as_of_unix_ms),
                 ).fetchall()
-            else:
+                candidates = tuple(_candidate_from_row(row) for row in rows)
+                _reject_ambiguous_mints(candidates)
+                if market_read_policy is not None:
+                    candidates = tuple(
+                        candidate
+                        for candidate in candidates
+                        if _has_current_market_snapshot(
+                            connection,
+                            candidate.candidate_id,
+                            as_of_unix_ms,
+                            market_read_policy,
+                        )
+                    )
+            elif market_read_policy is None:
                 minimum_pair_age_ms, maximum_pair_age_ms = pair_age_window_ms
                 oldest_allowed_created_at = max(
                     0,
@@ -226,19 +239,75 @@ class ObserverCampaignCandidateStore:
                         preferred_created_at_ceiling,
                     ),
                 ).fetchall()
-            candidates = tuple(_candidate_from_row(row) for row in rows)
-            _reject_ambiguous_mints(candidates)
-            if market_read_policy is not None:
-                candidates = tuple(
-                    candidate
-                    for candidate in candidates
-                    if _has_current_market_snapshot(
+                candidates = tuple(_candidate_from_row(row) for row in rows)
+                _reject_ambiguous_mints(candidates)
+            else:
+                minimum_pair_age_ms, maximum_pair_age_ms = pair_age_window_ms
+                oldest_allowed_created_at = max(
+                    0,
+                    as_of_unix_ms - maximum_pair_age_ms,
+                )
+                preferred_created_at_ceiling = max(
+                    0,
+                    as_of_unix_ms - minimum_pair_age_ms,
+                )
+                rows = connection.execute(
+                    """SELECT
+                           candidate.id,
+                           candidate.mint,
+                           MAX(snapshot.observed_at_unix_ms) AS latest_market_observed_at
+                        FROM token_candidates AS candidate
+                        JOIN market_snapshots AS snapshot
+                          ON snapshot.candidate_id = candidate.id
+                        WHERE candidate.discovered_at_unix_ms <= ?
+                          AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                        GROUP BY candidate.id, candidate.mint
+                        ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
+                    (as_of_unix_ms, cutoff, as_of_unix_ms),
+                ).fetchall()
+                candidates = tuple(_candidate_from_row(row) for row in rows)
+                _reject_ambiguous_mints(candidates)
+
+                eligible: list[tuple[int, ObserverCampaignCandidate]] = []
+                for candidate in candidates:
+                    current = _current_market_snapshot_metadata(
                         connection,
                         candidate.candidate_id,
                         as_of_unix_ms,
                         market_read_policy,
                     )
+                    if current is None:
+                        continue
+                    current_observed_at, pair_created_at = current
+                    if pair_created_at is None:
+                        continue
+                    if not (
+                        oldest_allowed_created_at
+                        <= pair_created_at
+                        <= as_of_unix_ms
+                    ):
+                        continue
+                    canonical_candidate = ObserverCampaignCandidate(
+                        candidate_id=candidate.candidate_id,
+                        mint=candidate.mint,
+                        latest_market_observed_at_unix_ms=current_observed_at,
+                    )
+                    age_priority = (
+                        0
+                        if pair_created_at <= preferred_created_at_ceiling
+                        else 1
+                    )
+                    eligible.append((age_priority, canonical_candidate))
+
+                eligible.sort(
+                    key=lambda item: (
+                        item[0],
+                        -item[1].latest_market_observed_at_unix_ms,
+                        item[1].candidate_id,
+                    )
                 )
+                candidates = tuple(candidate for _, candidate in eligible)
+
             return candidates[: policy.max_entry_candidates]
         except ObserverCampaignCoordinatorError:
             raise
@@ -555,16 +624,16 @@ def _insert_unique(mapping: dict[str, object], key: str, value: object, label: s
         )
 
 
-def _has_current_market_snapshot(
+def _current_market_snapshot_metadata(
     connection: sqlite3.Connection,
     candidate_id: int,
     as_of_unix_ms: int,
     policy: ObserverMarketReadPolicy,
-) -> bool:
+) -> tuple[int, int | None] | None:
     minimum_observed_at = max(0, as_of_unix_ms - policy.max_current_age_ms)
     for source in policy.source_priority:
         row = connection.execute(
-            """SELECT 1
+            """SELECT observed_at_unix_ms, pair_created_at_unix_ms
                FROM market_snapshots
                WHERE candidate_id = ?
                  AND source = ?
@@ -574,8 +643,28 @@ def _has_current_market_snapshot(
             (candidate_id, source, minimum_observed_at, as_of_unix_ms),
         ).fetchone()
         if row is not None:
-            return True
-    return False
+            observed_at, pair_created_at = row
+            return int(observed_at), (
+                None if pair_created_at is None else int(pair_created_at)
+            )
+    return None
+
+
+def _has_current_market_snapshot(
+    connection: sqlite3.Connection,
+    candidate_id: int,
+    as_of_unix_ms: int,
+    policy: ObserverMarketReadPolicy,
+) -> bool:
+    return (
+        _current_market_snapshot_metadata(
+            connection,
+            candidate_id,
+            as_of_unix_ms,
+            policy,
+        )
+        is not None
+    )
 
 
 def _candidate_from_row(row: tuple[object, ...]) -> ObserverCampaignCandidate:
