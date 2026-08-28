@@ -3,6 +3,8 @@ use shreks_core::{FastEvent, FastEventKind, ProviderId, VenueId};
 
 use crate::{ShreksDb, StorageError};
 
+const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
+const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const PUMPSWAP_ORDINAL_NAMESPACE: u32 = 0x8000_0000;
 const PUMPSWAP_MAX_LOG_INDEX: u32 = PUMPSWAP_ORDINAL_NAMESPACE - 1;
 
@@ -228,12 +230,7 @@ impl ShreksDb {
                 source.pool
             ))
         })?;
-        if event.market.mint != market.mint || event.market.quote_mint != market.quote_mint {
-            return Err(StorageError::InvalidData(format!(
-                "PumpSwap FastEvent market does not match verified pool '{}' lifecycle",
-                source.pool
-            )));
-        }
+        validate_canonical_source(event, &source, &market, base_decimals, quote_decimals)?;
 
         let sequence = i64::try_from(event.sequence).map_err(|_| {
             StorageError::InvalidData("PumpSwap FastEvent sequence exceeds SQLite integer range".to_owned())
@@ -425,6 +422,61 @@ fn validate_evidence(evidence: &PumpSwapTradeEvidenceWrite) -> Result<(), Storag
             "PumpSwap executed quantities must be non-zero".to_owned(),
         ));
     }
+    Ok(())
+}
+
+fn validate_canonical_source(
+    event: &FastEvent,
+    source: &PumpSwapTradeEvidenceWrite,
+    market: &PumpSwapMarket,
+    base_decimals: u8,
+    quote_decimals: u8,
+) -> Result<(), StorageError> {
+    let expected_quote_mint = if market.quote_mint == SYSTEM_SOL_MINT || market.quote_mint == WRAPPED_SOL_MINT {
+        WRAPPED_SOL_MINT
+    } else {
+        market.quote_mint.as_str()
+    };
+    let occurred_at_unix_ms = source.timestamp_unix_seconds.checked_mul(1_000).ok_or_else(|| {
+        StorageError::InvalidData(format!(
+            "PumpSwap FastEvent source timestamp overflow for '{}' ordinal {}",
+            source.signature, source.ordinal
+        ))
+    })?;
+    let base_scale = 10_f64.powi(i32::from(base_decimals));
+    let quote_scale = 10_f64.powi(i32::from(quote_decimals));
+    if !base_scale.is_finite() || base_scale <= 0.0 || !quote_scale.is_finite() || quote_scale <= 0.0 {
+        return Err(StorageError::InvalidData(format!(
+            "PumpSwap FastEvent decimal scale is invalid for '{}' ordinal {}",
+            source.signature, source.ordinal
+        )));
+    }
+    let base_quantity = source.base_amount_raw as f64 / base_scale;
+    let quote_quantity = source.quote_amount_raw as f64 / quote_scale;
+    let price_quote = quote_quantity / base_quantity;
+    let expected_kind = if source.is_buy {
+        FastEventKind::Buy
+    } else {
+        FastEventKind::Sell
+    };
+
+    if event.provider != source.provider
+        || event.market.mint != market.mint
+        || event.market.quote_mint != expected_quote_mint
+        || event.kind != expected_kind
+        || event.actor.as_deref() != Some(source.user.as_str())
+        || event.slot != source.slot
+        || event.occurred_at_unix_ms != occurred_at_unix_ms
+        || event.base_quantity != base_quantity
+        || event.quote_quantity != quote_quantity
+        || event.price_quote != price_quote
+    {
+        return Err(StorageError::InvalidData(format!(
+            "PumpSwap FastEvent payload does not match immutable source '{}' ordinal {} and verified pool '{}' lifecycle",
+            source.signature, source.ordinal, source.pool
+        )));
+    }
+
     Ok(())
 }
 
