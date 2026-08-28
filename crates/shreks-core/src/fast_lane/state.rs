@@ -68,7 +68,7 @@ pub struct FastMarketState {
     windows_ms: Vec<u64>,
     events: VecDeque<FastEvent>,
     last_sequence: Option<u64>,
-    last_occurred_at_unix_ms: Option<i64>,
+    last_observed_at_unix_ms: Option<i64>,
     last_price_quote: Option<f64>,
 }
 
@@ -79,7 +79,7 @@ impl FastMarketState {
             windows_ms: DEFAULT_FAST_WINDOWS_MS.to_vec(),
             events: VecDeque::new(),
             last_sequence: None,
-            last_occurred_at_unix_ms: None,
+            last_observed_at_unix_ms: None,
             last_price_quote: None,
         }
     }
@@ -96,27 +96,27 @@ impl FastMarketState {
                 });
             }
         }
-        if let Some(last) = self.last_occurred_at_unix_ms {
-            if event.occurred_at_unix_ms < last {
-                return Err(FastStateError::EventTimeMovedBackward {
+        if let Some(last) = self.last_observed_at_unix_ms {
+            if event.observed_at_unix_ms < last {
+                return Err(FastStateError::ObservationTimeMovedBackward {
                     last,
-                    incoming: event.occurred_at_unix_ms,
+                    incoming: event.observed_at_unix_ms,
                 });
             }
         }
 
-        let occurred_at_unix_ms = event.occurred_at_unix_ms;
+        let observed_at_unix_ms = event.observed_at_unix_ms;
         self.last_sequence = Some(event.sequence);
-        self.last_occurred_at_unix_ms = Some(occurred_at_unix_ms);
+        self.last_observed_at_unix_ms = Some(observed_at_unix_ms);
         self.last_price_quote = Some(event.price_quote);
         self.events.push_back(event);
 
         let max_window_ms = self.windows_ms.iter().copied().max().unwrap_or(0) as i64;
-        let cutoff = occurred_at_unix_ms.saturating_sub(max_window_ms);
+        let cutoff = observed_at_unix_ms.saturating_sub(max_window_ms);
         while self
             .events
             .front()
-            .is_some_and(|front| front.occurred_at_unix_ms < cutoff)
+            .is_some_and(|front| front.observed_at_unix_ms < cutoff)
         {
             self.events.pop_front();
         }
@@ -128,10 +128,10 @@ impl FastMarketState {
         if as_of_unix_ms < 0 {
             return Err(FastStateError::NegativeAsOf(as_of_unix_ms));
         }
-        if let Some(last_event_at_unix_ms) = self.last_occurred_at_unix_ms {
-            if as_of_unix_ms < last_event_at_unix_ms {
-                return Err(FastStateError::SnapshotBeforeLastEvent {
-                    last_event_at_unix_ms,
+        if let Some(last_observed_at_unix_ms) = self.last_observed_at_unix_ms {
+            if as_of_unix_ms < last_observed_at_unix_ms {
+                return Err(FastStateError::SnapshotBeforeLastObservation {
+                    last_observed_at_unix_ms,
                     as_of_unix_ms,
                 });
             }
@@ -142,8 +142,8 @@ impl FastMarketState {
             let cutoff = as_of_unix_ms.saturating_sub(*window_ms as i64);
             let mut summary = FastWindowSummary::empty(*window_ms);
             for event in &self.events {
-                if event.occurred_at_unix_ms >= cutoff
-                    && event.occurred_at_unix_ms <= as_of_unix_ms
+                if event.observed_at_unix_ms >= cutoff
+                    && event.observed_at_unix_ms <= as_of_unix_ms
                 {
                     summary.apply(event);
                 }
@@ -165,10 +165,10 @@ impl FastMarketState {
 pub enum FastStateError {
     MarketMismatch,
     NonMonotonicSequence { last: u64, incoming: u64 },
-    EventTimeMovedBackward { last: i64, incoming: i64 },
+    ObservationTimeMovedBackward { last: i64, incoming: i64 },
     NegativeAsOf(i64),
-    SnapshotBeforeLastEvent {
-        last_event_at_unix_ms: i64,
+    SnapshotBeforeLastObservation {
+        last_observed_at_unix_ms: i64,
         as_of_unix_ms: i64,
     },
 }
@@ -183,20 +183,20 @@ impl fmt::Display for FastStateError {
                 formatter,
                 "fast-lane event sequence must strictly increase; last {last}, incoming {incoming}"
             ),
-            Self::EventTimeMovedBackward { last, incoming } => write!(
+            Self::ObservationTimeMovedBackward { last, incoming } => write!(
                 formatter,
-                "fast-lane event occurrence time moved backward; last {last}, incoming {incoming}"
+                "fast-lane event observation time moved backward; last {last}, incoming {incoming}"
             ),
             Self::NegativeAsOf(value) => write!(
                 formatter,
                 "fast-lane snapshot timestamp must be non-negative; got {value}"
             ),
-            Self::SnapshotBeforeLastEvent {
-                last_event_at_unix_ms,
+            Self::SnapshotBeforeLastObservation {
+                last_observed_at_unix_ms,
                 as_of_unix_ms,
             } => write!(
                 formatter,
-                "fast-lane snapshot timestamp {as_of_unix_ms} precedes latest accepted event {last_event_at_unix_ms}"
+                "fast-lane snapshot timestamp {as_of_unix_ms} precedes latest observation {last_observed_at_unix_ms}"
             ),
         }
     }
