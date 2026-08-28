@@ -27,6 +27,7 @@ def test_release_workflow_auto_releases_only_successful_main_ci_seals():
     assert re.search(r'workflows:\s*\[\s*["\']CI["\']\s*\]', workflow)
     assert re.search(r"types:\s*\[\s*completed\s*\]", workflow)
     assert re.search(r"branches:\s*\[\s*main\s*\]", workflow)
+    assert "github.event.workflow_run.event == 'push'" in workflow
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
     assert "startsWith(github.event.workflow_run.head_commit.message, 'seal:')" in workflow
 
