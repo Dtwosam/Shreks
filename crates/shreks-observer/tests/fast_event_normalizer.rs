@@ -208,6 +208,36 @@ fn alchemy_source_provenance_survives_raw_storage_and_canonical_normalization() 
 }
 
 #[test]
+fn chainstack_source_provenance_survives_raw_storage_and_canonical_normalization() {
+    let root = unique_test_dir("chainstack");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    verify_decimals(&db, "mint-a", 6);
+
+    let mut raw = raw_trade("sig-chainstack", SYSTEM_SOL_QUOTE_MINT, true);
+    raw.provider = ProviderId::Chainstack;
+    db.record_pump_trade_evidence(&raw).unwrap();
+    assert_eq!(
+        db.pump_trade_evidence_for_signature("sig-chainstack")
+            .unwrap()[0]
+            .provider,
+        ProviderId::Chainstack
+    );
+
+    let report = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS).unwrap();
+    assert_eq!(report.normalized, 1);
+
+    let rows = db
+        .fast_events_for_market("mint-a", WRAPPED_SOL_MINT, VenueId::PumpFunBondingCurve)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].event.provider, ProviderId::Chainstack);
+    assert_eq!(rows[0].event.id.signature, "sig-chainstack");
+
+    cleanup_dir(&root);
+}
+
+#[test]
 fn missing_decimals_remain_pending_without_consuming_sequence() {
     let root = unique_test_dir("pending");
     let db_path = root.join("shreks.db");
