@@ -58,6 +58,41 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 }
 
 #[test]
+fn alchemy_is_realtime_only_and_ordered_after_helius_when_both_keys_exist() {
+    let config = ObserverRuntimeConfig::from_lookup(|name| match name {
+        "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+
+    let plan = free_observe_provider_plan(&config.providers);
+    assert_eq!(plan.chain, vec![ProviderId::Helius]);
+    assert_eq!(plan.transactions, vec![ProviderId::Helius]);
+    assert_eq!(
+        plan.realtime,
+        vec![ProviderId::Helius, ProviderId::Alchemy],
+        "Helius remains primary and Alchemy is the free realtime fallback"
+    );
+    assert!(!plan.chain.contains(&ProviderId::Alchemy));
+    assert!(!plan.transactions.contains(&ProviderId::Alchemy));
+}
+
+#[test]
+fn alchemy_can_provide_realtime_without_helius_chain_authority() {
+    let config = ObserverRuntimeConfig::from_lookup(|name| match name {
+        "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+
+    let plan = free_observe_provider_plan(&config.providers);
+    assert!(plan.chain.is_empty());
+    assert!(plan.transactions.is_empty());
+    assert_eq!(plan.realtime, vec![ProviderId::Alchemy]);
+}
+
+#[test]
 fn runtime_accepts_explicit_db_path_and_cycle_interval() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "SHREKS_DB_PATH" => Some("tmp/observe.sqlite".to_owned()),
