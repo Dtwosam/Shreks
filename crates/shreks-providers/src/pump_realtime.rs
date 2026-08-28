@@ -87,6 +87,18 @@ impl PumpRealtimeLogStreamConfig {
         )
     }
 
+    pub fn chainstack(endpoint: &str) -> Result<Self, ProviderError> {
+    let endpoint = endpoint.trim();
+    if endpoint.is_empty() {
+        return Err(ProviderError::new(
+            ProviderId::Chainstack,
+            ProviderErrorKind::InvalidRequest,
+            "Chainstack Solana websocket endpoint must not be empty",
+        ));
+    }
+    Self::for_provider_endpoint(ProviderId::Chainstack, endpoint.to_owned())
+}
+
     /// Backward-compatible local/test constructor. Historical endpoint-only
     /// callers represented the Helius lane, so Helius remains the default.
     pub fn for_endpoint(endpoint: impl Into<String>) -> Result<Self, ProviderError> {
@@ -101,7 +113,7 @@ impl PumpRealtimeLogStreamConfig {
             return Err(ProviderError::new(
                 provider,
                 ProviderErrorKind::InvalidRequest,
-                "Pump realtime provider must be Helius or Alchemy",
+                "Pump realtime provider must be Helius, Chainstack, or Alchemy",
             ));
         }
 
@@ -697,7 +709,10 @@ fn terminated_program(log: &str) -> Option<&str> {
 }
 
 fn is_realtime_provider(provider: ProviderId) -> bool {
-    matches!(provider, ProviderId::Helius | ProviderId::Alchemy)
+    matches!(
+        provider,
+        ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy
+    )
 }
 
 fn websocket_unavailable(provider: ProviderId, message: impl Into<String>) -> ProviderError {
