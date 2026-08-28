@@ -7,6 +7,7 @@ import re
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RELEASE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "release.yml"
 _DEPLOY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "deploy.yml"
+_RELEASE_RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
 
 
 def _read(path: Path) -> str:
@@ -27,6 +28,7 @@ def test_release_workflow_auto_releases_only_successful_main_ci_seals():
     assert re.search(r"types:\s*\[\s*completed\s*\]", workflow)
     assert re.search(r"branches:\s*\[\s*main\s*\]", workflow)
     assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "startsWith(github.event.workflow_run.head_commit.message, 'seal:')" in workflow
 
     # The release identity must come from the exact CI-tested main commit.
     assert "github.event.workflow_run.head_sha" in workflow
@@ -76,3 +78,22 @@ def test_production_deploy_remains_manual_only():
     assert "release_bundle.py verify" in workflow
     assert "sudo /usr/local/sbin/shreks-release-manager install" in workflow
     assert "gh release create" not in workflow
+
+
+def test_release_runbook_distinguishes_auto_release_from_manual_deploy():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "After a `seal:` commit lands on `main`",
+        "CI",
+        "starts automatically",
+        "workflow_run.head_sha",
+        "aarch64-unknown-linux-gnu",
+        "manual `Build sealed Shreks release`",
+        "same exact-SHA, seal, full-test, bundle-verification, and duplicate-tag gates",
+        "does **not** contact the VPS",
+        "Production deployment remains a separate manual action",
+        "manual `Deploy verified Shreks release`",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
