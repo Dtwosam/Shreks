@@ -8,9 +8,11 @@ use std::{
 
 use async_trait::async_trait;
 use rusqlite::Connection;
-use shreks_core::ProviderId;
+use shreks_core::{PairMarketData, ProviderId, TransactionWindow, VenueId};
 use shreks_observer::Observer;
-use shreks_providers::{ProviderError, ProviderErrorKind, TransactionProvider};
+use shreks_providers::{
+    MarketDataProvider, ProviderError, ProviderErrorKind, TransactionProvider,
+};
 use shreks_storage::ShreksDb;
 
 const MINT: &str = "9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump";
@@ -54,6 +56,38 @@ fn verified_transaction_body(program_id: &str) -> String {
     )
 }
 
+fn pump_market_snapshot() -> PairMarketData {
+    PairMarketData {
+        provider: ProviderId::DexScreener,
+        venue: VenueId::PumpFunBondingCurve,
+        chain_id: "solana".to_owned(),
+        dex_id: "pump_fun".to_owned(),
+        pair_address: "pump-pair-verified".to_owned(),
+        base_mint: MINT.to_owned(),
+        base_name: Some("Verified Pump".to_owned()),
+        base_symbol: Some("PUMP".to_owned()),
+        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        quote_name: Some("Wrapped SOL".to_owned()),
+        quote_symbol: Some("SOL".to_owned()),
+        price_native: Some("0.0001".to_owned()),
+        price_usd: Some("0.01".to_owned()),
+        liquidity_usd: Some(12_000.0),
+        volume_5m: Some(2_500.0),
+        volume_1h: Some(2_500.0),
+        volume_6h: Some(2_500.0),
+        volume_24h: Some(2_500.0),
+        transactions: vec![TransactionWindow {
+            window: "m5".to_owned(),
+            buys: 20,
+            sells: 5,
+        }],
+        fdv_usd: Some(100_000.0),
+        market_cap_usd: Some(100_000.0),
+        pair_created_at_unix_ms: Some(90),
+        observed_at_unix_ms: 110,
+    }
+}
+
 #[derive(Clone)]
 struct StaticTransactionProvider {
     response: Result<String, ProviderError>,
@@ -80,6 +114,23 @@ impl TransactionProvider for StaticTransactionProvider {
     }
 
     async fn transaction_json(&self, _signature: &str) -> Result<String, ProviderError> {
+        self.response.clone()
+    }
+}
+
+#[derive(Clone)]
+struct StaticMarketProvider {
+    response: Result<Vec<PairMarketData>, ProviderError>,
+}
+
+#[async_trait]
+impl MarketDataProvider for StaticMarketProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::DexScreener
+    }
+
+    async fn token_pairs(&self, token_mint: &str) -> Result<Vec<PairMarketData>, ProviderError> {
+        assert_eq!(token_mint, MINT);
         self.response.clone()
     }
 }
@@ -119,7 +170,7 @@ async fn unavailable_confirmed_transaction_stays_pending_for_retry() {
 }
 
 #[tokio::test]
-async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
+async fn verified_pump_creation_becomes_candidate_and_persists_pump_only_market_evidence() {
     let root = unique_test_dir("verified");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
@@ -128,7 +179,12 @@ async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
     let provider = Arc::new(StaticTransactionProvider::body(verified_transaction_body(
         PUMP_PROGRAM_ID,
     )));
-    let mut observer = Observer::new(db).with_transaction_provider(provider);
+    let market = Arc::new(StaticMarketProvider {
+        response: Ok(vec![pump_market_snapshot()]),
+    });
+    let mut observer = Observer::new(db)
+        .with_transaction_provider(provider)
+        .with_pump_market_provider(market);
     let report = observer.run_cycle().await.unwrap();
 
     assert_eq!(report.pump_signals_processed, 1);
@@ -136,6 +192,7 @@ async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
     assert_eq!(report.pump_signals_pending, 0);
     assert_eq!(report.pump_signals_rejected, 0);
     assert_eq!(report.candidates_processed, 1);
+    assert_eq!(report.market_snapshots_stored, 1);
 
     drop(observer);
     let connection = Connection::open(&db_path).unwrap();
@@ -170,6 +227,17 @@ async fn verified_pump_creation_becomes_candidate_and_terminal_signal() {
         )
         .unwrap();
     assert_eq!(checkpoint_count, 7);
+
+    let market_snapshot: (String, String, String) = connection
+        .query_row(
+            "SELECT source, pair_address, base_mint FROM market_snapshots WHERE candidate_id = ?1",
+            [candidate_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(market_snapshot.0, "dexscreener");
+    assert_eq!(market_snapshot.1, "pump-pair-verified");
+    assert_eq!(market_snapshot.2, MINT);
 
     cleanup_dir(&root);
 }
