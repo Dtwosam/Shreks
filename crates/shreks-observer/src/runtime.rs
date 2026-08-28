@@ -141,6 +141,9 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
         transactions.push(ProviderId::Helius);
         realtime.push(ProviderId::Helius);
     }
+    if config.alchemy_enabled() {
+        realtime.push(ProviderId::Alchemy);
+    }
 
     ObserveProviderPlan {
         discovery,
@@ -222,7 +225,7 @@ impl Observer {
                 })?;
 
                 let write = PumpTradeEvidenceWrite {
-                    provider: ProviderId::Helius,
+                    provider: notification.provider,
                     signature: notification.signature.clone(),
                     ordinal,
                     slot: notification.slot,
@@ -252,7 +255,7 @@ impl Observer {
             for trade in &notification.pump_swap_trades {
                 let ordinal = pump_swap_event_ordinal(trade.log_index)?;
                 let write = PumpSwapTradeEvidenceWrite {
-                    provider: ProviderId::Helius,
+                    provider: notification.provider,
                     signature: notification.signature.clone(),
                     ordinal,
                     log_index: trade.log_index,
@@ -288,6 +291,11 @@ fn increment_trade_rows(current: usize) -> Result<usize, ObserverError> {
 }
 
 fn validate_realtime_identity(notification: &PumpRealtimeNotification) -> Result<(), ObserverError> {
+    if !matches!(notification.provider, ProviderId::Helius | ProviderId::Alchemy) {
+        return Err(ObserverError::Storage(StorageError::InvalidData(
+            "Pump realtime notification provider must be Helius or Alchemy".to_owned(),
+        )));
+    }
     if notification.signature.trim().is_empty() {
         return Err(ObserverError::Storage(StorageError::InvalidData(
             "Pump realtime notification signature must not be empty".to_owned(),
