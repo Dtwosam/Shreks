@@ -2,6 +2,7 @@ mod observer_v2 {
     pub mod sampler;
     pub mod sampling;
 }
+mod fast_lane_acceptance_cli;
 
 #[path = "../fast_event_normalizer.rs"]
 mod fast_event_normalizer;
@@ -45,6 +46,10 @@ const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    if fast_lane_acceptance_cli::run_fast_lane_acceptance_subcommand_if_requested()? {
+        return Ok(());
+    }
+
     let runtime = ObserverRuntimeConfig::from_env()?;
     let plan = free_observe_provider_plan(&runtime.providers);
 
