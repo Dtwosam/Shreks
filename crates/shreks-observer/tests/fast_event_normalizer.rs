@@ -109,7 +109,7 @@ fn sol_quote_normalizes_once_with_verified_base_decimals_and_exact_provenance() 
     let stored = &rows[0];
     assert_eq!(stored.event.id.signature, "sig-sol");
     assert_eq!(stored.event.id.ordinal, 0);
-    assert_eq!(stored.event.sequence, 0);
+    assert_eq!(stored.event.sequence, 1);
     assert_eq!(stored.event.observed_at_unix_ms, ACCEPTED_MS);
     assert_eq!(stored.source_observed_at_unix_ms, SOURCE_OBSERVED_MS);
     assert_eq!(stored.base_decimals, 6);
@@ -122,7 +122,7 @@ fn sol_quote_normalizes_once_with_verified_base_decimals_and_exact_provenance() 
     let replay = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS + 1).unwrap();
     assert_eq!(replay.scanned, 0);
     assert_eq!(replay.normalized, 0);
-    assert_eq!(db.next_fast_event_sequence().unwrap(), 1);
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 2);
 
     cleanup_dir(&root);
 }
@@ -139,13 +139,13 @@ fn missing_decimals_remain_pending_without_consuming_sequence() {
     assert_eq!(report.scanned, 1);
     assert_eq!(report.normalized, 0);
     assert_eq!(report.unresolved_decimals, 1);
-    assert_eq!(db.next_fast_event_sequence().unwrap(), 0);
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 1);
     assert_eq!(db.pending_pump_trade_evidence(32).unwrap().len(), 1);
 
     verify_decimals(&db, "mint-a", 6);
     let retried = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS + 10).unwrap();
     assert_eq!(retried.normalized, 1);
-    assert_eq!(db.next_fast_event_sequence().unwrap(), 1);
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 2);
 
     cleanup_dir(&root);
 }
@@ -162,7 +162,7 @@ fn non_sol_quote_requires_its_own_verified_decimals_before_normalization() {
     let pending = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS).unwrap();
     assert_eq!(pending.normalized, 0);
     assert_eq!(pending.unresolved_decimals, 1);
-    assert_eq!(db.next_fast_event_sequence().unwrap(), 0);
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 1);
 
     verify_decimals(&db, USDC_MINT, 6);
     let normalized = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS + 10).unwrap();
