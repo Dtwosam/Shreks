@@ -59,6 +59,7 @@ fn notification() -> PumpRealtimeNotification {
             slot: u64::MAX,
         })),
         trades: vec![trade()],
+        pump_swap_trades: Vec::new(),
     }
 }
 
@@ -125,6 +126,7 @@ async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
                 slot: 88,
             })),
             trades: Vec::new(),
+            pump_swap_trades: Vec::new(),
         })
         .await
         .unwrap();
