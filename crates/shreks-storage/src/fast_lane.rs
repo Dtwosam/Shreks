@@ -227,7 +227,7 @@ impl ShreksDb {
         })
     }
 
-    /// Append one canonical FastEvent linked to immutable Pump raw evidence.
+    /// Append one canonical FastEvent linked to immutable venue-specific raw evidence.
     ///
     /// Canonical `observed_at_unix_ms` is the time the normalized event became
     /// usable. `source_observed_at_unix_ms` preserves the earlier raw websocket
@@ -241,6 +241,24 @@ impl ShreksDb {
         base_decimals: u8,
         quote_decimals: u8,
     ) -> Result<bool, StorageError> {
+        match event.market.venue {
+            VenueId::PumpSwap => {
+                return self.record_pump_swap_fast_event(
+                    event,
+                    source_observed_at_unix_ms,
+                    base_decimals,
+                    quote_decimals,
+                );
+            }
+            VenueId::PumpFunBondingCurve => {}
+            other => {
+                return Err(StorageError::InvalidData(format!(
+                    "FastEvent storage has no raw evidence source for venue '{}'",
+                    other.as_str()
+                )));
+            }
+        }
+
         if source_observed_at_unix_ms < 0 {
             return Err(StorageError::InvalidData(
                 "FastEvent source observation timestamp must be non-negative".to_owned(),
