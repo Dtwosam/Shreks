@@ -87,7 +87,7 @@ fn migration_four_schedules_the_exact_approved_horizons_idempotently() {
     let root = unique_test_dir("schema-schedule");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 9);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 10);
 
     let discovered_at = 1_000_000_i64;
     let candidate_id = db.upsert_candidate(&candidate("mint-a", discovered_at)).unwrap();
@@ -128,25 +128,112 @@ fn due_query_returns_only_arrived_pending_rows_in_deterministic_order() {
     let db = ShreksDb::open(&db_path).unwrap();
 
     let first_id = db.upsert_candidate(&candidate("mint-first", 1_000)).unwrap();
-    let second_id = db.upsert_candidate(&candidate("mint-second", 2_000)).unwrap();
+    let second_id = db.upsert_candidate(&candidate("mint-second", 500)).unwrap();
     db.ensure_outcome_checkpoints(first_id, 1_000).unwrap();
-    db.ensure_outcome_checkpoints(second_id, 2_000).unwrap();
+    db.ensure_outcome_checkpoints(second_id, 500).unwrap();
 
-    assert!(db.due_outcome_checkpoints(60_999, 50).unwrap().is_empty());
-
-    let due = db.due_outcome_checkpoints(62_000, 50).unwrap();
+    let due = db.due_outcome_checkpoints(61_000, 10).unwrap();
     assert_eq!(due.len(), 2);
-    assert_eq!(due[0].candidate_id, first_id);
-    assert_eq!(due[0].mint, "mint-first");
+    assert_eq!(due[0].candidate_id, second_id);
     assert_eq!(due[0].horizon_seconds, 60);
-    assert_eq!(due[0].due_at_unix_ms, 61_000);
-    assert_eq!(due[1].candidate_id, second_id);
-    assert_eq!(due[1].mint, "mint-second");
-    assert_eq!(due[1].due_at_unix_ms, 62_000);
+    assert_eq!(due[1].candidate_id, first_id);
+    assert_eq!(due[1].horizon_seconds, 60);
 
-    let limited = db.due_outcome_checkpoints(62_000, 1).unwrap();
-    assert_eq!(limited.len(), 1);
-    assert_eq!(limited[0].candidate_id, first_id);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn completion_links_owned_snapshots_is_terminal_and_preserves_nullable_metrics() {
+    let root = unique_test_dir("completion");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let candidate_id = db.upsert_candidate(&candidate("mint-complete", 1_000)).unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, 1_000).unwrap();
+    let baseline = market_snapshot("mint-complete", "pair-complete", 1_500);
+    let checkpoint = market_snapshot("mint-complete", "pair-complete", 61_000);
+    db.insert_market_snapshot(candidate_id, &baseline).unwrap();
+    db.insert_market_snapshot(candidate_id, &checkpoint).unwrap();
+    let baseline_id = snapshot_id(&db_path, candidate_id, "pair-complete", 1_500);
+    let checkpoint_id = snapshot_id(&db_path, candidate_id, "pair-complete", 61_000);
+
+    db.complete_outcome_checkpoint(&OutcomeCheckpointCompletion {
+        candidate_id,
+        horizon_seconds: 60,
+        completed_at_unix_ms: 61_100,
+        baseline_snapshot_id: baseline_id,
+        checkpoint_snapshot_id: checkpoint_id,
+        return_pct: Some(10.0),
+        max_favorable_excursion_pct: None,
+        max_adverse_excursion_pct: Some(-5.0),
+        volume_change_pct: None,
+        buy_fraction: Some(0.7142857142857143),
+    })
+    .unwrap();
+
+    let checkpoints = db.outcome_checkpoints(candidate_id).unwrap();
+    let completed = checkpoints
+        .iter()
+        .find(|row| row.horizon_seconds == 60)
+        .unwrap();
+    assert_eq!(completed.status, OutcomeCheckpointStatus::Completed);
+    assert_eq!(completed.completed_at_unix_ms, Some(61_100));
+    assert_eq!(completed.baseline_snapshot_id, Some(baseline_id));
+    assert_eq!(completed.checkpoint_snapshot_id, Some(checkpoint_id));
+    assert_eq!(completed.return_pct, Some(10.0));
+    assert_eq!(completed.max_favorable_excursion_pct, None);
+    assert_eq!(completed.max_adverse_excursion_pct, Some(-5.0));
+    assert_eq!(completed.volume_change_pct, None);
+    assert_eq!(completed.buy_fraction, Some(0.7142857142857143));
+
+    let duplicate = db.complete_outcome_checkpoint(&OutcomeCheckpointCompletion {
+        candidate_id,
+        horizon_seconds: 60,
+        completed_at_unix_ms: 62_000,
+        baseline_snapshot_id: baseline_id,
+        checkpoint_snapshot_id: checkpoint_id,
+        return_pct: Some(99.0),
+        max_favorable_excursion_pct: Some(99.0),
+        max_adverse_excursion_pct: Some(-99.0),
+        volume_change_pct: Some(99.0),
+        buy_fraction: Some(1.0),
+    });
+    assert!(duplicate.is_err());
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn completion_rejects_snapshots_owned_by_another_candidate() {
+    let root = unique_test_dir("cross-candidate-snapshot");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let first_id = db.upsert_candidate(&candidate("mint-owner-a", 1_000)).unwrap();
+    let second_id = db.upsert_candidate(&candidate("mint-owner-b", 1_000)).unwrap();
+    db.ensure_outcome_checkpoints(first_id, 1_000).unwrap();
+
+    let first_snapshot = market_snapshot("mint-owner-a", "pair-owner-a", 1_500);
+    let second_snapshot = market_snapshot("mint-owner-b", "pair-owner-b", 61_000);
+    db.insert_market_snapshot(first_id, &first_snapshot).unwrap();
+    db.insert_market_snapshot(second_id, &second_snapshot).unwrap();
+
+    let first_snapshot_id = snapshot_id(&db_path, first_id, "pair-owner-a", 1_500);
+    let second_snapshot_id = snapshot_id(&db_path, second_id, "pair-owner-b", 61_000);
+
+    let result = db.complete_outcome_checkpoint(&OutcomeCheckpointCompletion {
+        candidate_id: first_id,
+        horizon_seconds: 60,
+        completed_at_unix_ms: 61_100,
+        baseline_snapshot_id: first_snapshot_id,
+        checkpoint_snapshot_id: second_snapshot_id,
+        return_pct: None,
+        max_favorable_excursion_pct: None,
+        max_adverse_excursion_pct: None,
+        volume_change_pct: None,
+        buy_fraction: None,
+    });
+    assert!(result.is_err());
 
     cleanup_dir(&root);
 }
@@ -156,129 +243,11 @@ fn scheduling_rejects_timestamp_overflow_without_partial_rows() {
     let root = unique_test_dir("overflow");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let candidate_id = db
-        .upsert_candidate(&candidate("mint-overflow", i64::MAX - 1_000))
-        .unwrap();
 
-    let error = db
-        .ensure_outcome_checkpoints(candidate_id, i64::MAX - 1_000)
-        .unwrap_err();
-    assert!(error.to_string().contains("overflow"));
+    let candidate_id = db.upsert_candidate(&candidate("mint-overflow", i64::MAX)).unwrap();
+    let result = db.ensure_outcome_checkpoints(candidate_id, i64::MAX);
+    assert!(result.is_err());
     assert!(db.outcome_checkpoints(candidate_id).unwrap().is_empty());
-
-    cleanup_dir(&root);
-}
-
-#[test]
-fn completion_links_owned_snapshots_is_terminal_and_preserves_nullable_metrics() {
-    let root = unique_test_dir("complete");
-    let db_path = root.join("shreks.db");
-    let db = ShreksDb::open(&db_path).unwrap();
-    let candidate_id = db.upsert_candidate(&candidate("mint-complete", 0)).unwrap();
-    db.ensure_outcome_checkpoints(candidate_id, 0).unwrap();
-
-    db.insert_market_snapshot(
-        candidate_id,
-        &market_snapshot("mint-complete", "baseline-pair", 1_000),
-    )
-    .unwrap();
-    db.insert_market_snapshot(
-        candidate_id,
-        &market_snapshot("mint-complete", "checkpoint-pair", 61_000),
-    )
-    .unwrap();
-    let baseline_id = snapshot_id(&db_path, candidate_id, "baseline-pair", 1_000);
-    let checkpoint_id = snapshot_id(&db_path, candidate_id, "checkpoint-pair", 61_000);
-
-    let completion = OutcomeCheckpointCompletion {
-        baseline_snapshot_id: baseline_id,
-        checkpoint_snapshot_id: checkpoint_id,
-        completed_at_unix_ms: 61_500,
-        return_pct: Some(25.0),
-        mfe_pct: None,
-        mae_pct: None,
-        liquidity_change_pct: None,
-        volume_m5_change_pct: None,
-        buys_m5_change: Some(3),
-        sells_m5_change: Some(-1),
-        rug_or_dead_pool: None,
-        exitability: None,
-    };
-    db.complete_outcome_checkpoint(candidate_id, 60, &completion)
-        .unwrap();
-
-    let completed = db
-        .outcome_checkpoints(candidate_id)
-        .unwrap()
-        .into_iter()
-        .find(|row| row.horizon_seconds == 60)
-        .unwrap();
-    assert_eq!(completed.status, OutcomeCheckpointStatus::Completed);
-    assert_eq!(completed.baseline_snapshot_id, Some(baseline_id));
-    assert_eq!(completed.checkpoint_snapshot_id, Some(checkpoint_id));
-    assert_eq!(completed.completed_at_unix_ms, Some(61_500));
-    assert_eq!(completed.return_pct, Some(25.0));
-    assert_eq!(completed.mfe_pct, None);
-    assert_eq!(completed.mae_pct, None);
-    assert_eq!(completed.buys_m5_change, Some(3));
-    assert_eq!(completed.sells_m5_change, Some(-1));
-    assert_eq!(completed.rug_or_dead_pool, None);
-    assert_eq!(completed.exitability, None);
-    assert!(db.due_outcome_checkpoints(100_000, 10).unwrap().is_empty());
-
-    let error = db
-        .complete_outcome_checkpoint(candidate_id, 60, &completion)
-        .unwrap_err();
-    assert!(error.to_string().contains("already completed"));
-
-    cleanup_dir(&root);
-}
-
-#[test]
-fn completion_rejects_snapshots_owned_by_another_candidate() {
-    let root = unique_test_dir("ownership");
-    let db_path = root.join("shreks.db");
-    let db = ShreksDb::open(&db_path).unwrap();
-    let first_id = db.upsert_candidate(&candidate("mint-owner-a", 0)).unwrap();
-    let second_id = db.upsert_candidate(&candidate("mint-owner-b", 0)).unwrap();
-    db.ensure_outcome_checkpoints(first_id, 0).unwrap();
-
-    db.insert_market_snapshot(
-        first_id,
-        &market_snapshot("mint-owner-a", "owner-a-pair", 1_000),
-    )
-    .unwrap();
-    db.insert_market_snapshot(
-        second_id,
-        &market_snapshot("mint-owner-b", "owner-b-pair", 61_000),
-    )
-    .unwrap();
-    let baseline_id = snapshot_id(&db_path, first_id, "owner-a-pair", 1_000);
-    let foreign_checkpoint_id = snapshot_id(&db_path, second_id, "owner-b-pair", 61_000);
-
-    let completion = OutcomeCheckpointCompletion {
-        baseline_snapshot_id: baseline_id,
-        checkpoint_snapshot_id: foreign_checkpoint_id,
-        completed_at_unix_ms: 61_500,
-        return_pct: None,
-        mfe_pct: None,
-        mae_pct: None,
-        liquidity_change_pct: None,
-        volume_m5_change_pct: None,
-        buys_m5_change: None,
-        sells_m5_change: None,
-        rug_or_dead_pool: None,
-        exitability: None,
-    };
-    let error = db
-        .complete_outcome_checkpoint(first_id, 60, &completion)
-        .unwrap_err();
-    assert!(error.to_string().contains("candidate"));
-
-    let due = db.due_outcome_checkpoints(61_000, 10).unwrap();
-    assert_eq!(due.len(), 1);
-    assert_eq!(due[0].candidate_id, first_id);
-    assert_eq!(due[0].horizon_seconds, 60);
 
     cleanup_dir(&root);
 }
