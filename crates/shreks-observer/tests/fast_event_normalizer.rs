@@ -5,8 +5,11 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[path = "../src/fast_event_normalizer.rs"]
+mod fast_event_normalizer;
+
+use fast_event_normalizer::normalize_pending_pump_trade_evidence_at;
 use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
-use shreks_observer::fast_event_normalizer::normalize_pending_pump_trade_evidence_at;
 use shreks_providers::{pump::WRAPPED_SOL_MINT, pump_quote::SYSTEM_SOL_QUOTE_MINT};
 use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb};
 
