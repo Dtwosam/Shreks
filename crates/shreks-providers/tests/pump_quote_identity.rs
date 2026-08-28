@@ -1,6 +1,6 @@
 use shreks_providers::{
     pump::WRAPPED_SOL_MINT,
-    pump_trade::pump_quote_is_sol,
+    pump_quote::pump_quote_is_sol,
 };
 
 #[test]
