@@ -2,33 +2,82 @@
 
 ## Purpose
 
-Turn immutable Pump websocket trade evidence into a durable, replayable, strictly sequenced canonical `FastEvent` journal without guessing token decimals or pretending normalized information was usable before it actually was.
+Capture direct Pump and PumpSwap economic events into immutable raw evidence, then normalize them into a durable, replayable, strictly sequenced canonical `FastEvent` journal without guessing market identity, token decimals, or information timing.
 
-This is an FL1 durability/ordering slice. It does not add strategy decisions, PAPER actions, execution economics, risk changes, or LIVE authority.
+This is the FL1 direct-event/durability/ordering implementation slice. It remains observation-only. It does not add strategy decisions, PAPER actions, execution economics, risk changes, transaction construction, signing, submission, or LIVE authority.
 
-## Existing inputs
+## Direct source topology
 
-The repository already provides:
+The production observer uses one reconnecting Helius websocket connection with confirmed Solana subscriptions for both Pump and PumpSwap programs.
 
-- `PumpRealtimeNotification` from one confirmed Pump websocket;
-- immutable raw `pump_trade_evidence` keyed by `(signature, ordinal)`;
-- `PumpTradeEvidence` and `pump_trade_evidence_to_fast_event(...)`;
-- `FastEvent`, `FastEventId`, `FastMarketKey`, and `FastMarketState`;
-- verified SPL mint decimals in `token_mint_states` when chain observation has completed.
+The direct stream carries:
 
-Raw evidence is authoritative for economic amounts. `FastEvent` quantities must not be created until the required decimal metadata is verified.
+- Pump creation and migration lifecycle signals;
+- Pump bonding-curve trade economics;
+- PumpSwap post-graduation swap economics.
 
-## Chosen architecture
+DEX Screener polling is not the authoritative Fast Lane order-flow source.
 
-### 1. Raw evidence remains immutable source truth
+The stream parser is fail-closed:
 
-`pump_trade_evidence` is not rewritten or reinterpreted. Its first local websocket observation timestamp remains the source-observation timestamp for audit and latency measurement.
+- only successful transactions are eligible;
+- program-data events are accepted only while the expected on-chain program is the active invocation;
+- malformed relevant events are provider errors rather than fabricated market events;
+- reconnect overlap is expected and handled by durable identity/idempotency.
 
-### 2. Canonical FastEvents use a separate append-only journal
+## Immutable raw evidence
+
+### Pump bonding curve
+
+`pump_trade_evidence` preserves the direct Pump event payload keyed by `(signature, ordinal)`, including:
+
+- provider;
+- slot and first local observation time;
+- mint and quote mint;
+- user and side;
+- raw base/quote/SOL quantities;
+- event timestamp;
+- raw reserve fields;
+- instruction/event name.
+
+### PumpSwap
+
+Migration 12 adds `pump_swap_trade_evidence`. It preserves:
+
+- provider;
+- signature;
+- original Solana log index;
+- durable Fast Lane ordinal;
+- slot and first local observation time;
+- pool and user;
+- side;
+- executed base quantity;
+- executed market quote quantity;
+- separate fee-adjusted user quote quantity;
+- event timestamp;
+- pool reserves.
+
+PumpSwap reserves the high half of the `u32` ordinal namespace. Its canonical ordinal is a deterministic mapping of the original log index. That keeps `(signature, ordinal)` globally usable by the shared canonical journal even when one transaction contains both bonding-curve and post-graduation evidence.
+
+Identical raw replay is a no-op. Conflicting replay for the same immutable identity fails closed.
+
+## Verified PumpSwap market identity
+
+PumpSwap event payloads intentionally do not invent token mint identity. A PumpSwap raw row becomes canonical only after durable verified Pump graduation lifecycle evidence maps its pool to one unambiguous `(mint, quote_mint)` market.
+
+For a pool:
+
+- no verified lifecycle market -> leave the raw event pending;
+- exactly one verified market -> use it;
+- contradictory durable markets -> fail closed.
+
+System SOL and wrapped SOL lifecycle quote identity are canonicalized to WSOL for the canonical market key.
+
+## Canonical FastEvent journal
 
 Migration 11 adds `fast_events` with:
 
-- durable SQLite-assigned `sequence`;
+- durable append `sequence`;
 - unique economic identity `(signature, ordinal)`;
 - provider, market, venue, side, actor, slot;
 - chain occurrence time;
@@ -36,86 +85,148 @@ Migration 11 adds `fast_events` with:
 - original raw source-observation time;
 - normalized base/quote quantities and quote price;
 - exact base/quote decimals used for normalization;
-- foreign-key linkage back to `pump_trade_evidence`.
+- immutable source linkage appropriate to the venue.
 
 Sequence is stable once assigned. Replay orders by `sequence`, never by a dynamic row number.
 
-### 3. Observation time means usable information time
+## Information-time policy
 
-If raw evidence arrives before verified decimals, the raw row is durable but no canonical `FastEvent` exists yet. When decimals later become available, canonicalization uses the normalization/acceptance clock as `FastEvent.observed_at_unix_ms`.
+`source_observed_at_unix_ms` is when Shreks first received the immutable direct websocket evidence.
 
-This prevents a delayed normalization from being inserted later in sequence while carrying an earlier observation timestamp that would make `FastMarketState` move its observation clock backward. The original websocket time remains separately stored as `source_observed_at_unix_ms`.
+`FastEvent.observed_at_unix_ms` is when the normalized event became usable by the canonical Fast Lane path. If raw evidence arrives before required metadata is verified, it remains durable but pending. When metadata later becomes available, canonicalization uses the later normalization/acceptance clock.
 
-### 4. Decimals are resolved fail-closed
+This prevents late normalization from moving the Fast Lane observation clock backward while preserving the earlier source timestamp for latency measurement.
 
-For a mint, Shreks queries all durable `token_mint_states` associated with candidate rows for that mint:
+Chain occurrence time is preserved independently. A late-delivered chain event may legitimately have an older occurrence time than a previously accepted canonical event.
 
-- no verified value -> pending, do not normalize;
-- exactly one distinct value -> use it;
-- contradictory durable values -> storage integrity error, stop rather than guess.
+## Decimal provenance
 
-SOL/WSOL quote decimals are protocol-known at 9. Non-SOL quote markets require verified quote-mint decimals from durable evidence; otherwise they remain pending.
+The normalizer resolves decimals from durable verified evidence before constructing a canonical event:
 
-### 5. Bounded pending normalization
+- no verified base decimals -> pending;
+- exactly one distinct verified base-decimal value -> use it;
+- contradictory verified values -> fail closed;
+- SOL/WSOL quote decimals -> protocol-known 9;
+- non-SOL quote -> require verified quote-mint decimals;
+- missing non-SOL quote decimals -> pending.
 
-Storage exposes raw Pump trade rows not yet represented in `fast_events`, ordered by first local source observation then signature/ordinal. The observer normalizer processes a bounded batch.
+The append layer stores the exact decimal values used. It does not perform network lookup. The normalizer owns verified-decimal resolution; the storage append boundary independently recomputes normalized quantities from the immutable raw integer economics using the supplied decimal provenance and rejects any canonical payload that does not match.
 
-For each row:
+## Canonical source-integrity boundary
 
-1. require Helius provenance for the current Pump parser path;
-2. resolve base decimals;
-3. resolve quote decimals or use 9 for SOL/WSOL;
-4. obtain the next durable append sequence from the canonical journal;
-5. call the existing provider-owned evidence-to-`FastEvent` conversion;
-6. append idempotently to `fast_events`;
-7. leave rows with missing decimals pending without fabrication.
+A first canonical append cannot merely reuse a valid raw identity. Before insertion, storage rebinds the canonical payload to immutable venue-specific source truth.
 
-Conflicting canonical replay fails closed. Identical replay is a no-op and preserves the original sequence.
+For Pump bonding-curve events, storage verifies:
 
-### 6. Realtime writer integration
+- provider;
+- mint;
+- canonical quote mint;
+- side;
+- actor/user;
+- slot;
+- occurrence timestamp;
+- base quantity;
+- quote quantity;
+- quote price.
 
-The existing realtime writer remains the single storage boundary. After accepting each websocket envelope it attempts a bounded normalization pass. A short timer also retries pending rows so an event can become canonical after the slow chain observer writes mint decimals even if no later Pump trade arrives.
+For PumpSwap events, storage additionally requires the verified pool-to-market lifecycle mapping and verifies the same canonical fields against the raw PumpSwap event.
 
-The normalizer performs no network calls. Unexpected storage/integrity failures remain fatal to the already supervised writer, causing systemd restart rather than silent evidence loss.
+PumpSwap canonical quote flow is always the executed market `quote_amount_raw`. The distinct `user_quote_amount_raw` field is retained for audit but is never substituted for canonical market order flow.
 
-## Ordering policy
+A mismatched first append fails before journal insertion or sequence consumption. Identical canonical replay is idempotent; conflicting replay fails closed.
 
-Canonical sequence is append/acceptance order, not chain occurrence order. A late chain event is allowed when observed later; its `occurred_at_unix_ms` may precede a previously accepted event while `observed_at_unix_ms` and sequence continue forward. This matches the existing Fast Lane observation-clock contract and prevents future leakage.
+## Bounded dual-source normalization
 
-Same-signature multi-event order is deterministic through `ordinal`. Duplicate reconnect/replay overlap cannot create a second canonical event because `(signature, ordinal)` is unique.
+The observer normalizer processes at most 1,024 pending raw events per pass across both source tables in one deterministic merged order.
 
-## Replay contract
+Ordering uses first source-observation time and stable identity tie-breakers. For each eligible row it:
 
-Storage provides deterministic canonical replay ordered by `sequence`. Reopening the database preserves sequence and payload exactly. Applying the same replay stream to a fresh `FastMarketState` must reproduce the same snapshot for the same `as_of` time.
+1. requires the expected direct-provider provenance;
+2. resolves required verified metadata;
+3. obtains the next durable append sequence;
+4. converts raw evidence to the provider-neutral `FastEvent` contract;
+5. appends through the venue-specific source-integrity boundary;
+6. leaves unresolved rows pending without fabrication.
 
-## Explicit non-goals
+The normalizer performs no network calls.
 
-This slice does not:
+A bounded periodic retry lets previously pending evidence become canonical after the slower verification path writes required mint decimals or lifecycle mapping. Unexpected storage/integrity errors remain fatal to the supervised observer process rather than being silently skipped.
 
-- decode PumpSwap/post-graduation swaps;
-- add lifecycle/liquidity/creator variants to `FastEventKind`;
-- claim FL1 complete;
-- change FastMarketState feature contents;
-- add learned forecasts;
-- price execution or compute maximum acceptable entry;
-- create `TradeIntent`;
-- enable LIVE trading.
+## Ordering, deduplication, and restart policy
 
-PumpSwap/event-family expansion follows after this canonical Pump journal is proven.
+Canonical sequence is append/acceptance order, not chain occurrence order.
 
-## Acceptance
+The system explicitly supports:
 
-The slice is accepted only when tests prove:
+- duplicate websocket delivery;
+- reconnect/replay overlap;
+- same-slot events;
+- multiple economic events in one transaction;
+- late/out-of-order chain occurrence;
+- delayed metadata resolution;
+- process restart.
 
-- schema migration preserves prior evidence;
-- sequence survives restart and strictly increases for new canonical events;
-- identical duplicate raw evidence produces one canonical event;
-- conflicting replay fails closed;
-- missing decimals never produce a `FastEvent`;
-- contradictory decimals fail closed;
-- SOL quote uses 9 decimals without a network call;
-- non-SOL quote requires verified quote decimals;
-- canonical observation time never predates source observation or chain occurrence;
-- replay is deterministic and compatible with `FastMarketState`;
-- realtime normalization remains bounded and observation-only;
-- Rust, Python, repository safety, and native ARM64 CI are GREEN.
+Raw identities are immutable. Canonical `(signature, ordinal)` is unique. Sequence is derived from the durable journal and cannot reset on restart or skip ahead for a new identity.
+
+Reopening the database preserves canonical sequence and payload exactly. Replay for one market is deterministic in sequence order.
+
+## Realtime durability boundary
+
+The existing realtime writer remains the single durable write boundary for the direct stream. It persists lifecycle signals and Pump/PumpSwap raw economics immediately and idempotently, then invokes bounded normalization.
+
+The stream itself stays storage-free. Writer termination and integrity failures propagate to existing supervision instead of inventing continuity.
+
+No additional websocket, per-trade RPC transaction fetch, strategy path, or execution authority is introduced.
+
+## Safety boundary
+
+This FL1 implementation is read-only with respect to capital behavior. It does not:
+
+- create trade intents;
+- change PAPER fills or ledger behavior;
+- alter risk policy;
+- construct Solana transactions;
+- access signing authority;
+- submit transactions;
+- enable LIVE mode;
+- start FL2 state/feature work.
+
+Existing legacy strategy/PAPER/risk infrastructure remains available as preserved baseline infrastructure but is not granted Fast Lane authority here.
+
+## Tested acceptance for this code slice
+
+Repository tests prove:
+
+- migrations preserve prior evidence and current schema reaches version 12;
+- one realtime socket covers Pump and PumpSwap subscriptions;
+- direct Pump and PumpSwap events decode only under the expected program context;
+- raw Pump and PumpSwap evidence is immutable and idempotent;
+- PumpSwap ordinal mapping is deterministic and namespace-separated;
+- PumpSwap pool identity waits for verified graduation lifecycle evidence;
+- missing/contradictory metadata never fabricates canonical events;
+- System SOL canonicalizes to WSOL;
+- PumpSwap canonical quote flow uses executed market quote, not fee-adjusted user quote;
+- first canonical Pump and PumpSwap appends must match immutable raw source truth;
+- canonical sequence is contiguous, restart-safe, and replay ordered;
+- reconnect duplicates do not create duplicate economic events;
+- normalizer work is bounded and network-free;
+- runtime remains observation-only and supervised;
+- Rust, Python, repository-safety, and native ARM64 CI gates pass.
+
+## FL1.5 still required before FL2
+
+This code slice does not claim the FL1 production exit criterion by CI alone.
+
+Before FL2 begins, Shreks must run this stream on the real production host in read-only mode and record evidence for at least:
+
+- raw Pump event rate;
+- raw PumpSwap event rate;
+- canonical event rate;
+- pending/unresolved raw rows;
+- chain-occurrence -> source-observation latency distribution where timestamps permit;
+- source-observation -> canonical-acceptance latency distribution;
+- end-to-end chain-occurrence -> canonical-acceptance latency distribution;
+- duplicate/reconnect behavior;
+- storage growth and resource headroom.
+
+The FL1.5 acceptance tooling must itself be read-only, deterministic, auditable, and unable to create signing or execution authority. Real-host measurements—not CI simulation—are required before the build order may advance to FL2.
