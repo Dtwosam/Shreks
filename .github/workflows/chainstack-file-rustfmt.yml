@@ -1,0 +1,49 @@
+name: Chainstack touched-file rustfmt
+
+on:
+  push:
+    branches:
+      - fix/fl1-chainstack-realtime-fallback
+
+permissions:
+  contents: write
+
+jobs:
+  rustfmt:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/fl1-chainstack-realtime-fallback
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format touched Rust files and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustfmt --edition 2021 \
+            crates/shreks-core/src/lib.rs \
+            crates/shreks-providers/src/config.rs \
+            crates/shreks-providers/src/pump_realtime.rs \
+            crates/shreks-providers/tests/contracts.rs \
+            crates/shreks-providers/tests/config.rs \
+            crates/shreks-providers/tests/pump_realtime_stream.rs \
+            crates/shreks-observer/src/runtime.rs \
+            crates/shreks-observer/src/bin/shreks-observe.rs \
+            crates/shreks-observer/src/fast_event_normalizer.rs \
+            crates/shreks-observer/tests/runtime_config.rs \
+            crates/shreks-observer/tests/observer_v2_runtime.rs \
+            crates/shreks-observer/tests/pump_realtime_evidence.rs \
+            crates/shreks-observer/tests/fast_event_normalizer.rs \
+            crates/shreks-storage/src/fast_lane.rs \
+            crates/shreks-storage/src/pump_swap_fast_lane.rs
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/chainstack-file-rustfmt.yml
+          git add crates
+          git diff --cached --check
+          git commit -m "style: format Chainstack realtime fallback"
+          git push origin HEAD:fix/fl1-chainstack-realtime-fallback
