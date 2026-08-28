@@ -4,9 +4,7 @@ use shreks_core::ProviderId;
 use shreks_providers::{
     pump::WRAPPED_SOL_MINT,
     pump_quote::{pump_quote_is_sol, SOL_QUOTE_DECIMALS},
-    pump_swap_trade::{
-        pump_swap_trade_evidence_to_fast_event, PumpSwapTradeEvidence,
-    },
+    pump_swap_trade::{pump_swap_trade_evidence_to_fast_event, PumpSwapTradeEvidence},
     pump_trade::{pump_trade_evidence_to_fast_event, PumpTradeEvidence},
     ProviderError,
 };
@@ -35,7 +33,7 @@ impl fmt::Display for FastEventNormalizationError {
             Self::Provider(error) => write!(formatter, "FastEvent normalization provider error: {error}"),
             Self::InvalidSourceProvider(provider) => write!(
                 formatter,
-                "FastEvent normalization rejected non-Helius Pump evidence provider {provider}"
+                "FastEvent normalization rejected non-realtime Pump evidence provider {provider}"
             ),
         }
     }
@@ -148,7 +146,7 @@ fn normalize_bonding_curve_row(
     accepted_at_unix_ms: i64,
     report: &mut FastEventNormalizationReport,
 ) -> Result<(), FastEventNormalizationError> {
-    require_helius(raw.provider)?;
+    require_realtime_provider(raw.provider)?;
 
     let Some(base_decimals) = db.verified_mint_decimals(&raw.mint)? else {
         report.unresolved_decimals += 1;
@@ -166,7 +164,7 @@ fn normalize_bonding_curve_row(
 
     let sequence = db.next_fast_event_sequence()?;
     let evidence = as_provider_evidence(&raw);
-    let event = pump_trade_evidence_to_fast_event(
+    let mut event = pump_trade_evidence_to_fast_event(
         &evidence,
         &raw.signature,
         raw.ordinal,
@@ -176,6 +174,7 @@ fn normalize_bonding_curve_row(
         base_decimals,
         quote_decimals,
     )?;
+    event.provider = raw.provider;
 
     if db.record_fast_event(
         &event,
@@ -194,7 +193,7 @@ fn normalize_pump_swap_row(
     accepted_at_unix_ms: i64,
     report: &mut FastEventNormalizationReport,
 ) -> Result<(), FastEventNormalizationError> {
-    require_helius(raw.provider)?;
+    require_realtime_provider(raw.provider)?;
 
     let Some(market) = db.pump_swap_market_for_pool(&raw.pool)? else {
         // A direct PumpSwap trade may arrive before its verified migration has
@@ -220,7 +219,7 @@ fn normalize_pump_swap_row(
 
     let sequence = db.next_fast_event_sequence()?;
     let evidence = as_provider_pump_swap_evidence(&raw);
-    let event = pump_swap_trade_evidence_to_fast_event(
+    let mut event = pump_swap_trade_evidence_to_fast_event(
         &evidence,
         &raw.signature,
         raw.ordinal,
@@ -232,6 +231,7 @@ fn normalize_pump_swap_row(
         base_decimals,
         quote_decimals,
     )?;
+    event.provider = raw.provider;
 
     if db.record_fast_event(
         &event,
@@ -244,8 +244,8 @@ fn normalize_pump_swap_row(
     Ok(())
 }
 
-fn require_helius(provider: ProviderId) -> Result<(), FastEventNormalizationError> {
-    if provider != ProviderId::Helius {
+fn require_realtime_provider(provider: ProviderId) -> Result<(), FastEventNormalizationError> {
+    if !matches!(provider, ProviderId::Helius | ProviderId::Alchemy) {
         return Err(FastEventNormalizationError::InvalidSourceProvider(provider));
     }
     Ok(())
