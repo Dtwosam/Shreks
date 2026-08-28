@@ -7,31 +7,41 @@ fn missing_optional_keys_disable_only_keyed_providers() {
     let config = ProviderConfig::from_lookup(|_| None);
 
     assert!(!config.helius_enabled());
+    assert!(!config.alchemy_enabled());
     assert!(!config.jupiter_enabled());
     assert!(config.dexscreener_enabled);
     assert!(config.meteora_enabled);
 }
 
 #[test]
-fn runtime_keys_enable_helius_and_jupiter_without_becoming_debug_output() {
+fn runtime_keys_enable_keyed_providers_without_becoming_debug_output() {
     let values = HashMap::from([
         ("HELIUS_API_KEY", "helius-secret"),
+        ("ALCHEMY_API_KEY", "alchemy-secret"),
         ("JUPITER_API_KEY", "jupiter-secret"),
     ]);
     let config = ProviderConfig::from_lookup(|name| values.get(name).map(|value| value.to_string()));
 
     assert!(config.helius_enabled());
+    assert!(config.alchemy_enabled());
     assert!(config.jupiter_enabled());
+    assert_eq!(config.alchemy_api_key(), Some("alchemy-secret"));
     let debug = format!("{config:?}");
     assert!(!debug.contains("helius-secret"));
+    assert!(!debug.contains("alchemy-secret"));
     assert!(!debug.contains("jupiter-secret"));
 }
 
 #[test]
 fn blank_keys_are_treated_as_missing() {
-    let values = HashMap::from([("HELIUS_API_KEY", "   "), ("JUPITER_API_KEY", "")]);
+    let values = HashMap::from([
+        ("HELIUS_API_KEY", "   "),
+        ("ALCHEMY_API_KEY", "\t"),
+        ("JUPITER_API_KEY", ""),
+    ]);
     let config = ProviderConfig::from_lookup(|name| values.get(name).map(|value| value.to_string()));
     assert!(!config.helius_enabled());
+    assert!(!config.alchemy_enabled());
     assert!(!config.jupiter_enabled());
 }
 
