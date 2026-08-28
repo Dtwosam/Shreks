@@ -14,6 +14,7 @@ const DEFAULT_METEORA_MARKET_RPS: u32 = 1;
 /// below the free/public ceilings Shreks is designed around.
 pub struct ProviderConfig {
     helius_api_key: Option<String>,
+    alchemy_api_key: Option<String>,
     jupiter_api_key: Option<String>,
     pub dexscreener_enabled: bool,
     pub meteora_enabled: bool,
@@ -34,6 +35,7 @@ impl ProviderConfig {
     {
         Self {
             helius_api_key: non_blank(lookup("HELIUS_API_KEY")),
+            alchemy_api_key: non_blank(lookup("ALCHEMY_API_KEY")),
             jupiter_api_key: non_blank(lookup("JUPITER_API_KEY")),
             dexscreener_enabled: true,
             meteora_enabled: true,
@@ -52,12 +54,20 @@ impl ProviderConfig {
         self.helius_api_key.is_some()
     }
 
+    pub fn alchemy_enabled(&self) -> bool {
+        self.alchemy_api_key.is_some()
+    }
+
     pub fn jupiter_enabled(&self) -> bool {
         self.jupiter_api_key.is_some()
     }
 
     pub fn helius_api_key(&self) -> Option<&str> {
         self.helius_api_key.as_deref()
+    }
+
+    pub fn alchemy_api_key(&self) -> Option<&str> {
+        self.alchemy_api_key.as_deref()
     }
 
     pub fn jupiter_api_key(&self) -> Option<&str> {
@@ -70,6 +80,7 @@ impl fmt::Debug for ProviderConfig {
         formatter
             .debug_struct("ProviderConfig")
             .field("helius_enabled", &self.helius_enabled())
+            .field("alchemy_enabled", &self.alchemy_enabled())
             .field("jupiter_enabled", &self.jupiter_enabled())
             .field("dexscreener_enabled", &self.dexscreener_enabled)
             .field("meteora_enabled", &self.meteora_enabled)
