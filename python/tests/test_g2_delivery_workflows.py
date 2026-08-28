@@ -73,12 +73,13 @@ def test_release_bundle_has_build_and_verify_cli_without_third_party_dependencie
     assert "yaml" not in source.lower()
 
 
-def test_release_workflow_is_manual_exact_sha_retests_and_only_writes_contents():
+def test_release_workflow_keeps_manual_and_auto_exact_sha_retests_and_only_writes_contents():
     workflow = _read(_RELEASE_WORKFLOW)
 
     assert "workflow_dispatch:" in workflow
     assert "source_sha:" in workflow
     assert "required: true" in workflow
+    assert "workflow_run:" in workflow
     assert re.search(r"permissions:\s*\n\s+contents: write", workflow)
     assert "packages: write" not in workflow
     assert "actions: write" not in workflow
@@ -90,7 +91,9 @@ def test_release_workflow_is_manual_exact_sha_retests_and_only_writes_contents()
         "actions/checkout@v7",
         "actions/setup-python@v7",
         "dtolnay/rust-toolchain@stable",
-        'ref: ${{ inputs.source_sha }}',
+        "inputs.source_sha",
+        "github.event.workflow_run.head_sha",
+        "github.event.workflow_run.conclusion == 'success'",
         "fetch-depth: 0",
         "^[0-9a-f]{40}$",
         'git rev-parse HEAD',

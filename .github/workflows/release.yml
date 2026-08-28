@@ -15,16 +15,29 @@ on:
         options:
           - x86_64-unknown-linux-gnu
           - aarch64-unknown-linux-gnu
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   release:
-    runs-on: ${{ inputs.platform == 'aarch64-unknown-linux-gnu' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.workflow_run.event == 'push' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          startsWith(github.event.workflow_run.head_commit.message, 'seal:')
+        )
+      }}
+    runs-on: ${{ github.event_name == 'workflow_run' && 'ubuntu-24.04-arm' || (inputs.platform == 'aarch64-unknown-linux-gnu' && 'ubuntu-24.04-arm' || 'ubuntu-latest') }}
     env:
-      SOURCE_SHA: ${{ inputs.source_sha }}
-      PLATFORM: ${{ inputs.platform }}
+      SOURCE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
+      PLATFORM: ${{ github.event_name == 'workflow_run' && 'aarch64-unknown-linux-gnu' || inputs.platform }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Validate requested source SHA
@@ -47,7 +60,7 @@ jobs:
       - name: Checkout exact source SHA
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.source_sha }}
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.source_sha }}
           fetch-depth: 0
 
       - name: Confirm exact sealed commit

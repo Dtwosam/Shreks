@@ -164,5 +164,8 @@ def test_sealed_release_workflow_can_build_the_selected_native_platform():
     assert "x86_64-unknown-linux-gnu" in workflow
     assert "aarch64-unknown-linux-gnu" in workflow
     assert "ubuntu-24.04-arm" in workflow
-    assert "PLATFORM: ${{ inputs.platform }}" in workflow
+    assert "inputs.platform" in workflow
+    assert "github.event_name == 'workflow_run'" in workflow
+    assert "github.event.workflow_run.head_sha" in workflow
+    assert "PLATFORM: ${{ github.event_name == 'workflow_run' && 'aarch64-unknown-linux-gnu' || inputs.platform }}" in workflow
     assert "deploy/release/build_release.sh" in workflow
