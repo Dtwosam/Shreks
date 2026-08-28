@@ -62,7 +62,11 @@ Do not populate runtime provider credentials, strategy/risk overrides, campaign 
 
 ## Create a release
 
-Use the manual `Build sealed Shreks release` workflow with the exact 40-character SHA of a sealed commit. The workflow checks out that exact SHA, confirms the commit subject contains `seal`, reruns repository safety plus Rust and Python tests, builds the allowlisted bundle, verifies it, rejects a duplicate tag, and creates `shreks-<sha>`.
+After a `seal:` commit lands on `main`, the normal `CI` workflow runs on that exact commit. If that `main` CI completes successfully, `Build sealed Shreks release` starts automatically for `aarch64-unknown-linux-gnu` and uses the CI-tested `workflow_run.head_sha` as the release source. The automatic path still checks out that exact SHA, confirms the commit subject contains `seal`, reruns repository safety plus Rust and Python tests, builds and verifies the allowlisted bundle, refuses a duplicate tag, and creates immutable release `shreks-<sha>`.
+
+The manual `Build sealed Shreks release` dispatch remains available for an explicit exact sealed SHA and supported native platform. It uses the same exact-SHA, seal, full-test, bundle-verification, and duplicate-tag gates. A manual/automatic race for the same SHA is fail-closed: the existing tag wins and the later attempt refuses to overwrite it.
+
+Automatic release creation does **not** contact the VPS, consume the `production-paper` environment, or trigger deployment. Production deployment remains a separate manual action.
 
 Release assets are exactly:
 
