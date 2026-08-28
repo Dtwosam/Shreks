@@ -3,8 +3,18 @@ mod observer_v2 {
     pub mod sampling;
 }
 
-use std::{error::Error, sync::Arc};
+#[path = "../fast_event_normalizer.rs"]
+mod fast_event_normalizer;
 
+use std::{
+    error::Error,
+    sync::Arc,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
+
+use fast_event_normalizer::{
+    normalize_pending_pump_trade_evidence_at, FastEventNormalizationError,
+};
 use observer_v2::{
     sampler::{HighResolutionSampler, SamplerError, SamplerProvider},
     sampling::SamplingPolicy,
@@ -22,13 +32,16 @@ use shreks_providers::{
     },
     DiscoveryProvider, ProviderError,
 };
-use shreks_storage::ShreksDb;
+use shreks_storage::{ShreksDb, StorageError};
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
+    time::MissedTickBehavior,
 };
 
 const PUMP_REALTIME_CHANNEL_CAPACITY: usize = 4_096;
+const FAST_EVENT_NORMALIZER_BATCH_LIMIT: usize = 1_024;
+const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -52,10 +65,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     sampler.restore_registry()?;
 
     // One confirmed Pump websocket feeds both lifecycle signals and raw trade
-    // economics. A dedicated WAL connection persists that evidence immediately;
-    // the slow lifecycle observer later verifies the durable inbox normally.
+    // economics. Dedicated WAL connections persist raw evidence immediately and
+    // normalize it into the canonical FastEvent journal once verified decimals exist.
     let pump_realtime_tasks = if let Some(api_key) = runtime.providers.helius_api_key() {
         let writer_db = ShreksDb::open(&runtime.db_path)?;
+        let normalizer_db = ShreksDb::open(&runtime.db_path)?;
         let stream = PumpRealtimeLogStream::new(PumpRealtimeLogStreamConfig::helius(api_key)?);
         let (sender, receiver) = mpsc::channel(PUMP_REALTIME_CHANNEL_CAPACITY);
 
@@ -68,24 +82,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         });
         let writer = tokio::spawn(Observer::run_pump_realtime_writer(writer_db, receiver));
+        let normalizer = tokio::spawn(run_fast_event_normalizer(normalizer_db));
 
-        Some((forwarder, writer))
+        Some((forwarder, writer, normalizer))
     } else {
         None
     };
 
-    let (observer_cycles, sampler_cycles) = if let Some((forwarder, writer)) = pump_realtime_tasks {
-        run_observation_with_realtime(
-            observer,
-            sampler,
-            runtime.cycle_interval,
-            forwarder,
-            writer,
-        )
-        .await?
-    } else {
-        run_observation_loops(observer, sampler, runtime.cycle_interval).await?
-    };
+    let (observer_cycles, sampler_cycles) =
+        if let Some((forwarder, writer, normalizer)) = pump_realtime_tasks {
+            run_observation_with_realtime(
+                observer,
+                sampler,
+                runtime.cycle_interval,
+                forwarder,
+                writer,
+                normalizer,
+            )
+            .await?
+        } else {
+            run_observation_loops(observer, sampler, runtime.cycle_interval).await?
+        };
 
     eprintln!(
         "Shreks observe stopped: legacy_cycles={observer_cycles} v2_sampler_cycles={sampler_cycles}"
@@ -137,12 +154,42 @@ fn build_high_resolution_sampler(
     HighResolutionSampler::new(db, discovery, market, SamplingPolicy::default_v1())
 }
 
+async fn run_fast_event_normalizer(
+    db: ShreksDb,
+) -> Result<(), FastEventNormalizationError> {
+    let mut ticker = tokio::time::interval(FAST_EVENT_NORMALIZER_INTERVAL);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        ticker.tick().await;
+        let accepted_at_unix_ms = normalizer_unix_time_ms()?;
+        normalize_pending_pump_trade_evidence_at(
+            &db,
+            FAST_EVENT_NORMALIZER_BATCH_LIMIT,
+            accepted_at_unix_ms,
+        )?;
+    }
+}
+
+fn normalizer_unix_time_ms() -> Result<i64, FastEventNormalizationError> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(StorageError::from)?
+        .as_millis();
+    i64::try_from(millis).map_err(|_| {
+        FastEventNormalizationError::Storage(StorageError::InvalidData(
+            "FastEvent normalizer clock exceeds i64 milliseconds".to_owned(),
+        ))
+    })
+}
+
 async fn run_observation_with_realtime(
     observer: Observer,
     sampler: HighResolutionSampler,
-    cycle_interval: std::time::Duration,
+    cycle_interval: Duration,
     forwarder: JoinHandle<()>,
     mut writer: JoinHandle<Result<usize, ObserverError>>,
+    mut normalizer: JoinHandle<Result<(), FastEventNormalizationError>>,
 ) -> Result<(usize, u64), Box<dyn Error>> {
     let observation = run_observation_loops(observer, sampler, cycle_interval);
     tokio::pin!(observation);
@@ -153,6 +200,8 @@ async fn run_observation_with_realtime(
             // realtime envelope already accepted into the bounded channel.
             forwarder.abort();
             let _ = forwarder.await;
+            normalizer.abort();
+            let _ = normalizer.await;
             let writer_result = writer.await;
             let cycles = observation_result?;
             let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
@@ -165,10 +214,24 @@ async fn run_observation_with_realtime(
             // it is collecting Pump evidence, so fail closed and let systemd restart.
             forwarder.abort();
             let _ = forwarder.await;
+            normalizer.abort();
+            let _ = normalizer.await;
             let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
             Err(Box::new(std::io::Error::other(format!(
                 "Pump realtime writer stopped unexpectedly after {rows} new trade rows"
             ))))
+        }
+        normalizer_result = &mut normalizer => {
+            // Canonicalization is part of the realtime evidence contract. A task
+            // exit means raw Pump evidence can no longer become replayable FastEvents.
+            forwarder.abort();
+            let _ = forwarder.await;
+            writer.abort();
+            let _ = writer.await;
+            normalizer_result.map_err(boxed_error)?.map_err(boxed_error)?;
+            Err(Box::new(std::io::Error::other(
+                "FastEvent normalizer stopped unexpectedly"
+            )))
         }
     }
 }
@@ -176,7 +239,7 @@ async fn run_observation_with_realtime(
 async fn run_observation_loops(
     mut observer: Observer,
     mut sampler: HighResolutionSampler,
-    cycle_interval: std::time::Duration,
+    cycle_interval: Duration,
 ) -> Result<(usize, u64), Box<dyn Error>> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let observer_shutdown = shutdown_receiver.clone();

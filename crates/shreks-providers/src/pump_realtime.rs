@@ -16,9 +16,10 @@ use tokio_tungstenite::{
 use crate::{
     helius::helius_ws_url,
     pump::{
-        parse_pump_lifecycle_log_notification, parse_pump_subscription_ack,
-        pump_logs_subscribe_request, PumpLifecycleSignal, PUMP_PROGRAM_ID,
+        parse_pump_lifecycle_log_notification, PumpLifecycleSignal, PUMP_AMM_PROGRAM_ID,
+        PUMP_PROGRAM_ID,
     },
+    pump_swap_trade::{parse_pump_swap_trade_logs, PumpSwapTradeEvidence},
     pump_trade::{
         classify_pump_trade_transaction, PumpTradeEvidence, PumpTradeVerification,
         PUMP_BUY_DISCRIMINATOR, PUMP_BUY_EXACT_SOL_IN_DISCRIMINATOR,
@@ -31,6 +32,8 @@ const DEFAULT_RECONNECT_BASE: Duration = Duration::from_secs(1);
 const DEFAULT_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const PUMP_SUBSCRIPTION_REQUEST_ID: u64 = 1;
+const PUMPSWAP_SUBSCRIPTION_REQUEST_ID: u64 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpRealtimeNotification {
@@ -38,6 +41,7 @@ pub struct PumpRealtimeNotification {
     pub slot: u64,
     pub lifecycle: Option<PumpLifecycleSignal>,
     pub trades: Vec<PumpTradeEvidence>,
+    pub pump_swap_trades: Vec<PumpSwapTradeEvidence>,
 }
 
 /// Runtime configuration for the single standard-Solana Pump realtime stream.
@@ -117,9 +121,9 @@ impl fmt::Debug for PumpRealtimeLogStreamConfig {
 
 type PumpRealtimeSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Single-subscription Pump websocket that emits lifecycle and trade economics
-/// from the same confirmed log notification. It performs no SQLite writes and
-/// no per-trade transaction RPC calls.
+/// One Pump websocket carrying both bonding-curve and PumpSwap subscriptions.
+/// It emits lifecycle and trade economics from confirmed log notifications,
+/// performs no SQLite writes, and performs no per-trade transaction RPC calls.
 pub struct PumpRealtimeLogStream {
     config: PumpRealtimeLogStreamConfig,
     socket: Option<PumpRealtimeSocket>,
@@ -209,40 +213,30 @@ impl PumpRealtimeLogStream {
             .await
             .map_err(|_| websocket_unavailable("Helius Pump realtime websocket connection failed"))?;
 
-        socket
-            .send(Message::Text(
-                pump_logs_subscribe_request().to_string().into(),
-            ))
-            .await
-            .map_err(|_| websocket_unavailable("Helius Pump realtime subscription send failed"))?;
-
-        loop {
-            let frame = timeout(SUBSCRIPTION_ACK_TIMEOUT, socket.next())
+        for (request_id, program_id, lane_name) in [
+            (PUMP_SUBSCRIPTION_REQUEST_ID, PUMP_PROGRAM_ID, "Pump bonding-curve"),
+            (
+                PUMPSWAP_SUBSCRIPTION_REQUEST_ID,
+                PUMP_AMM_PROGRAM_ID,
+                "PumpSwap",
+            ),
+        ] {
+            socket
+                .send(Message::Text(
+                    realtime_logs_subscribe_request(request_id, program_id)
+                        .to_string()
+                        .into(),
+                ))
                 .await
-                .map_err(|_| websocket_unavailable("Helius Pump realtime subscription timed out"))?;
-
-            match frame {
-                Some(Ok(Message::Text(text))) => {
-                    if parse_pump_subscription_ack(&text.to_string())?.is_some() {
-                        return Ok(socket);
-                    }
-                }
-                Some(Ok(Message::Ping(payload))) => {
-                    socket
-                        .send(Message::Pong(payload))
-                        .await
-                        .map_err(|_| websocket_unavailable("Helius Pump realtime pong failed"))?;
-                }
-                Some(Ok(Message::Pong(_)))
-                | Some(Ok(Message::Binary(_)))
-                | Some(Ok(Message::Frame(_))) => {}
-                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                    return Err(websocket_unavailable(
-                        "Helius Pump realtime websocket closed before subscription acknowledgement",
-                    ));
-                }
-            }
+                .map_err(|_| {
+                    websocket_unavailable(format!(
+                        "Helius {lane_name} realtime subscription send failed"
+                    ))
+                })?;
+            await_subscription_ack(&mut socket, request_id, lane_name).await?;
         }
+
+        Ok(socket)
     }
 
     async fn disconnect_and_backoff(&mut self) {
@@ -255,6 +249,80 @@ impl PumpRealtimeLogStream {
         self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
         sleep(delay).await;
     }
+}
+
+async fn await_subscription_ack(
+    socket: &mut PumpRealtimeSocket,
+    expected_request_id: u64,
+    lane_name: &str,
+) -> Result<u64, ProviderError> {
+    loop {
+        let frame = timeout(SUBSCRIPTION_ACK_TIMEOUT, socket.next())
+            .await
+            .map_err(|_| {
+                websocket_unavailable(format!(
+                    "Helius {lane_name} realtime subscription timed out"
+                ))
+            })?;
+
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                if let Some(subscription_id) =
+                    parse_realtime_subscription_ack(&text.to_string(), expected_request_id)?
+                {
+                    return Ok(subscription_id);
+                }
+            }
+            Some(Ok(Message::Ping(payload))) => {
+                socket.send(Message::Pong(payload)).await.map_err(|_| {
+                    websocket_unavailable(format!("Helius {lane_name} realtime pong failed"))
+                })?;
+            }
+            Some(Ok(Message::Pong(_)))
+            | Some(Ok(Message::Binary(_)))
+            | Some(Ok(Message::Frame(_))) => {}
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                return Err(websocket_unavailable(format!(
+                    "Helius {lane_name} realtime websocket closed before subscription acknowledgement"
+                )));
+            }
+        }
+    }
+}
+
+fn realtime_logs_subscribe_request(request_id: u64, program_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "logsSubscribe",
+        "params": [
+            {"mentions": [program_id]},
+            {"commitment": "confirmed"}
+        ]
+    })
+}
+
+fn parse_realtime_subscription_ack(
+    body: &str,
+    expected_request_id: u64,
+) -> Result<Option<u64>, ProviderError> {
+    let value: Value = serde_json::from_str(body).map_err(|error| {
+        invalid_response(format!("invalid Pump realtime subscription JSON: {error}"))
+    })?;
+    if value.get("id").and_then(Value::as_u64) != Some(expected_request_id) {
+        return Ok(None);
+    }
+    if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+        return Err(invalid_response(format!(
+            "Pump realtime subscription request {expected_request_id} failed: {error}"
+        )));
+    }
+    let subscription = value.get("result").and_then(Value::as_u64).ok_or_else(|| {
+        invalid_response(format!(
+            "Pump realtime subscription acknowledgement {expected_request_id} missing numeric result"
+        ))
+    })?;
+    Ok(Some(subscription))
 }
 
 #[async_trait]
@@ -291,13 +359,10 @@ where
     }
 }
 
-/// Parse one confirmed standard-Solana Pump `logsNotification` into the complete
-/// realtime evidence Shreks can obtain without an additional RPC request.
-///
-/// The already-audited transaction trade decoder remains the single economic
-/// codec. This function derives only the Pump instruction-side evidence that is
-/// present in the runtime logs, then feeds the original log stream through that
-/// decoder. No instruction max/min amount is treated as a fill.
+/// Parse one confirmed standard-Solana Pump/PumpSwap `logsNotification` into
+/// the complete direct evidence Shreks can obtain without an additional RPC
+/// request. Bonding-curve trades reuse the audited transaction codec; PumpSwap
+/// consumes its authoritative Anchor BuyEvent/SellEvent directly.
 pub fn parse_pump_realtime_log_notification(
     body: &str,
 ) -> Result<Option<PumpRealtimeNotification>, ProviderError> {
@@ -341,8 +406,9 @@ pub fn parse_pump_realtime_log_notification(
     } else {
         decode_trade_evidence_from_notification_logs(signature, slot, logs, &trade_discriminators)?
     };
+    let pump_swap_trades = parse_pump_swap_trade_logs(logs)?;
 
-    if lifecycle.is_none() && trades.is_empty() {
+    if lifecycle.is_none() && trades.is_empty() && pump_swap_trades.is_empty() {
         return Ok(None);
     }
 
@@ -351,6 +417,7 @@ pub fn parse_pump_realtime_log_notification(
         slot,
         lifecycle,
         trades,
+        pump_swap_trades,
     }))
 }
 

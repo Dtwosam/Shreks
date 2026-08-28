@@ -109,6 +109,33 @@ fn realtime_writer_termination_is_fail_closed_and_supervised() {
 }
 
 #[test]
+fn fast_event_normalizer_is_bounded_periodic_and_fail_closed_supervised() {
+    for required in [
+        "fast_event_normalizer",
+        "normalize_pending_pump_trade_evidence_at",
+        "FAST_EVENT_NORMALIZER_BATCH_LIMIT",
+        "FAST_EVENT_NORMALIZER_INTERVAL",
+        "run_fast_event_normalizer",
+        "normalizer_result = &mut normalizer",
+        "FastEvent normalizer stopped unexpectedly",
+    ] {
+        assert!(
+            OBSERVE_SOURCE.contains(required),
+            "production must supervise canonical FastEvent normalization: {required}"
+        );
+    }
+
+    assert!(
+        OBSERVE_SOURCE.contains("ShreksDb::open(&runtime.db_path)?"),
+        "normalizer must use its own restart-safe WAL connection"
+    );
+    assert!(
+        !OBSERVE_SOURCE.contains("spawn_blocking"),
+        "bounded normalizer must not create an unbounded blocking-task fanout"
+    );
+}
+
+#[test]
 fn observe_v2_runtime_remains_observe_only() {
     for forbidden in [
         "TradeIntent",

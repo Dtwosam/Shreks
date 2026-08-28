@@ -7,7 +7,9 @@ pub mod http;
 pub mod jupiter;
 pub mod meteora;
 pub mod pump;
+pub mod pump_quote;
 pub mod pump_realtime;
+pub mod pump_swap_trade;
 pub mod pump_trade;
 
 use std::{error::Error, fmt};

@@ -16,7 +16,10 @@ use shreks_providers::{
     pump_realtime::PumpRealtimeNotification,
     ProviderError,
 };
-use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb, StorageError};
+use shreks_storage::{
+    pump_swap_event_ordinal, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb,
+    StorageError,
+};
 use tokio::sync::mpsc;
 
 use crate::{Observer, ObserverError};
@@ -182,8 +185,9 @@ impl Observer {
     ///
     /// This writer intentionally performs no provider requests and owns no
     /// strategy, signing, or execution authority. Lifecycle evidence enters the
-    /// existing restart-safe inboxes immediately, while trade economics are
-    /// stored immutably by `(signature, ordinal)` for later normalization.
+    /// existing restart-safe inboxes immediately, while bonding-curve and
+    /// PumpSwap trade economics are stored immutably by `(signature, ordinal)`
+    /// for later normalization.
     pub async fn run_pump_realtime_writer(
         db: ShreksDb,
         mut receiver: mpsc::Receiver<PumpRealtimeNotification>,
@@ -241,17 +245,46 @@ impl Observer {
                 };
 
                 if db.record_pump_trade_evidence(&write)? {
-                    trade_rows_inserted = trade_rows_inserted.checked_add(1).ok_or_else(|| {
-                        ObserverError::Storage(StorageError::InvalidData(
-                            "Pump realtime inserted-row count overflowed usize".to_owned(),
-                        ))
-                    })?;
+                    trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
+                }
+            }
+
+            for trade in &notification.pump_swap_trades {
+                let ordinal = pump_swap_event_ordinal(trade.log_index)?;
+                let write = PumpSwapTradeEvidenceWrite {
+                    provider: ProviderId::Helius,
+                    signature: notification.signature.clone(),
+                    ordinal,
+                    log_index: trade.log_index,
+                    slot: notification.slot,
+                    observed_at_unix_ms,
+                    pool: trade.pool.clone(),
+                    user: trade.user.clone(),
+                    is_buy: trade.is_buy,
+                    base_amount_raw: trade.base_amount_raw,
+                    quote_amount_raw: trade.quote_amount_raw,
+                    user_quote_amount_raw: trade.user_quote_amount_raw,
+                    timestamp_unix_seconds: trade.timestamp_unix_seconds,
+                    pool_base_reserves_raw: trade.pool_base_reserves_raw,
+                    pool_quote_reserves_raw: trade.pool_quote_reserves_raw,
+                };
+
+                if db.record_pump_swap_trade_evidence(&write)? {
+                    trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
                 }
             }
         }
 
         Ok(trade_rows_inserted)
     }
+}
+
+fn increment_trade_rows(current: usize) -> Result<usize, ObserverError> {
+    current.checked_add(1).ok_or_else(|| {
+        ObserverError::Storage(StorageError::InvalidData(
+            "Pump realtime inserted-row count overflowed usize".to_owned(),
+        ))
+    })
 }
 
 fn validate_realtime_identity(notification: &PumpRealtimeNotification) -> Result<(), ObserverError> {

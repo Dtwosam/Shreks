@@ -10,9 +10,10 @@ use shreks_observer::Observer;
 use shreks_providers::{
     pump::{PumpCreationSignal, PumpLifecycleSignal},
     pump_realtime::PumpRealtimeNotification,
+    pump_swap_trade::PumpSwapTradeEvidence,
     pump_trade::PumpTradeEvidence,
 };
-use shreks_storage::ShreksDb;
+use shreks_storage::{pump_swap_event_ordinal, ShreksDb};
 use tokio::sync::mpsc;
 
 fn unique_test_dir(label: &str) -> PathBuf {
@@ -50,6 +51,21 @@ fn trade() -> PumpTradeEvidence {
     }
 }
 
+fn pump_swap_trade() -> PumpSwapTradeEvidence {
+    PumpSwapTradeEvidence {
+        log_index: 17,
+        pool: "PumpSwapPoolRealtime111".to_owned(),
+        user: "PumpSwapTraderRealtime111".to_owned(),
+        is_buy: false,
+        base_amount_raw: 700_000_000,
+        quote_amount_raw: 3_500_000_000,
+        user_quote_amount_raw: 3_460_000_000,
+        timestamp_unix_seconds: 1_770_000_001,
+        pool_base_reserves_raw: 800_000_000_000_000,
+        pool_quote_reserves_raw: 42_000_000_000,
+    }
+}
+
 fn notification() -> PumpRealtimeNotification {
     PumpRealtimeNotification {
         signature: "RealtimeSignature111".to_owned(),
@@ -59,6 +75,7 @@ fn notification() -> PumpRealtimeNotification {
             slot: u64::MAX,
         })),
         trades: vec![trade()],
+        pump_swap_trades: Vec::new(),
     }
 }
 
@@ -108,6 +125,53 @@ async fn realtime_writer_persists_lifecycle_and_trade_economics_immediately_and_
 }
 
 #[tokio::test]
+async fn realtime_writer_persists_pumpswap_economics_immediately_and_idempotently() {
+    let root = unique_test_dir("pumpswap-writer");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(4);
+
+    let event = PumpRealtimeNotification {
+        signature: "PumpSwapRealtimeSignature111".to_owned(),
+        slot: 901,
+        lifecycle: None,
+        trades: Vec::new(),
+        pump_swap_trades: vec![pump_swap_trade()],
+    };
+    sender.send(event.clone()).await.unwrap();
+    sender.send(event).await.unwrap();
+    drop(sender);
+
+    let inserted = Observer::run_pump_realtime_writer(writer_db, receiver)
+        .await
+        .expect("realtime writer should drain PumpSwap evidence");
+    assert_eq!(inserted, 1, "duplicate PumpSwap replay must remain idempotent");
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let rows = db
+        .pump_swap_trade_evidence_for_signature("PumpSwapRealtimeSignature111")
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.provider, ProviderId::Helius);
+    assert_eq!(row.signature, "PumpSwapRealtimeSignature111");
+    assert_eq!(row.ordinal, pump_swap_event_ordinal(17).unwrap());
+    assert_eq!(row.log_index, 17);
+    assert_eq!(row.slot, 901);
+    assert!(row.observed_at_unix_ms >= 0);
+    assert_eq!(row.pool, "PumpSwapPoolRealtime111");
+    assert_eq!(row.user, "PumpSwapTraderRealtime111");
+    assert!(!row.is_buy);
+    assert_eq!(row.base_amount_raw, 700_000_000);
+    assert_eq!(row.quote_amount_raw, 3_500_000_000);
+    assert_eq!(row.user_quote_amount_raw, 3_460_000_000);
+    assert_eq!(row.pool_base_reserves_raw, 800_000_000_000_000);
+    assert_eq!(row.pool_quote_reserves_raw, 42_000_000_000);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
     use shreks_providers::pump::{PumpMigrationSignal, PumpLifecycleSignal};
 
@@ -125,6 +189,7 @@ async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
                 slot: 88,
             })),
             trades: Vec::new(),
+            pump_swap_trades: Vec::new(),
         })
         .await
         .unwrap();
