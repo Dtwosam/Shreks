@@ -179,9 +179,40 @@ def test_deploy_workflow_copies_only_release_assets_and_does_not_mutate_runtime_
         assert protected not in workflow
 
     assert workflow.count("scp ") == 3
-    assert "systemctl" not in workflow
-    assert "activate-existing" not in workflow
-    assert "LIVE_TRADING" not in workflow
+    for forbidden in (
+        "systemctl start",
+        "systemctl stop",
+        "systemctl restart",
+        "systemctl enable",
+        "systemctl disable",
+        "systemctl kill",
+        "activate-existing",
+        "LIVE_TRADING",
+    ):
+        assert forbidden not in workflow
+
+
+def test_deploy_workflow_reports_read_only_host_diagnostics_on_release_manager_failure():
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    for required in (
+        'DEPLOY_RC=$?',
+        "release manager failed; collecting read-only host diagnostics",
+        "readlink -f /opt/shreks/current",
+        "candidate_release_present=",
+        "systemctl is-active shreks.target",
+        "systemctl show shreks-observe.service",
+        "-p ActiveState",
+        "-p SubState",
+        "-p NRestarts",
+        "-p MainPID",
+        "-p ExecMainStatus",
+        'exit "$DEPLOY_RC"',
+    ):
+        assert required in workflow
+
+    assert "sudo systemctl" not in workflow
+    assert "journalctl" not in workflow
 
 
 def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account():
