@@ -29,6 +29,9 @@ _REQUIRED_STATIC_PAYLOAD_PATHS = (
     "target/release/shreks-observe",
     "target/release/shreks-paper-evidence",
 )
+_OPTIONAL_STATIC_PAYLOAD_PATHS = (
+    "target/release/shreks-fast-lane-acceptance",
+)
 _WHEEL_PATH_RE = re.compile(r"^wheelhouse/shreks_brain-[^/]+\.whl$")
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -90,13 +93,14 @@ def _validate_payload_paths(paths: tuple[str, ...] | list[str] | set[str]) -> No
     if len(normalized) != len(set(normalized)):
         raise ReleaseBundleError("duplicate release payload path")
 
-    static = set(_REQUIRED_STATIC_PAYLOAD_PATHS)
+    required_static = set(_REQUIRED_STATIC_PAYLOAD_PATHS)
+    allowed_static = required_static | set(_OPTIONAL_STATIC_PAYLOAD_PATHS)
     actual = set(normalized)
-    missing = static - actual
+    missing = required_static - actual
     if missing:
         raise ReleaseBundleError(f"missing required release payloads: {sorted(missing)!r}")
 
-    non_static = actual - static
+    non_static = actual - allowed_static
     wheel_paths = sorted(path for path in non_static if _WHEEL_PATH_RE.fullmatch(path))
     unexpected = sorted(non_static - set(wheel_paths))
     if unexpected:
