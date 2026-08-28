@@ -1,9 +1,11 @@
 //! Operational SQLite storage for Shreks.
 
+mod fast_lane;
 mod lifecycle;
 mod outcomes;
 mod safety_evidence;
 mod wallet;
+pub use fast_lane::PumpTradeEvidenceWrite;
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
@@ -77,6 +79,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 9,
         name: "paper_quote_purpose",
         sql: include_str!("../migrations/0009_paper_quote_purpose.sql"),
+    },
+    Migration {
+        version: 10,
+        name: "fast_lane_pump_trade_evidence",
+        sql: include_str!("../migrations/0010_fast_lane_pump_trade_evidence.sql"),
     },
 ];
 
