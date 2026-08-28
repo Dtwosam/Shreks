@@ -205,6 +205,44 @@ async fn realtime_writer_persists_pumpswap_economics_immediately_and_idempotentl
 }
 
 #[tokio::test]
+async fn realtime_writer_preserves_alchemy_pumpswap_provenance() {
+    let root = unique_test_dir("alchemy-pumpswap-writer");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(1);
+
+    sender
+        .send(PumpRealtimeNotification {
+            provider: ProviderId::Alchemy,
+            signature: "AlchemyPumpSwapRealtimeSignature111".to_owned(),
+            slot: 902,
+            lifecycle: None,
+            trades: Vec::new(),
+            pump_swap_trades: vec![pump_swap_trade()],
+        })
+        .await
+        .unwrap();
+    drop(sender);
+
+    assert_eq!(
+        Observer::run_pump_realtime_writer(writer_db, receiver)
+            .await
+            .unwrap(),
+        1
+    );
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let rows = db
+        .pump_swap_trade_evidence_for_signature("AlchemyPumpSwapRealtimeSignature111")
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].provider, ProviderId::Alchemy);
+    assert_eq!(rows[0].ordinal, pump_swap_event_ordinal(17).unwrap());
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
     use shreks_providers::pump::{PumpMigrationSignal, PumpLifecycleSignal};
 
