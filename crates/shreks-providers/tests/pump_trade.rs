@@ -2,12 +2,13 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::json;
 use shreks_core::{FastEventKind, ProviderId, VenueId};
 use shreks_providers::{
-    pump::{
+    pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, WRAPPED_SOL_MINT},
+    pump_trade::{
         classify_pump_trade_transaction, parse_pump_trade_log_notification,
-        pump_trade_evidence_to_fast_event, PumpTradeVerification, PUMP_AMM_PROGRAM_ID,
+        pump_trade_evidence_to_fast_event, PumpTradeEvidence, PumpTradeVerification,
         PUMP_BUY_DISCRIMINATOR, PUMP_BUY_EXACT_SOL_IN_DISCRIMINATOR,
-        PUMP_BUY_V2_DISCRIMINATOR, PUMP_PROGRAM_ID, PUMP_SELL_DISCRIMINATOR,
-        PUMP_SELL_V2_DISCRIMINATOR, PUMP_TRADE_EVENT_DISCRIMINATOR, WRAPPED_SOL_MINT,
+        PUMP_BUY_V2_DISCRIMINATOR, PUMP_SELL_DISCRIMINATOR, PUMP_SELL_V2_DISCRIMINATOR,
+        PUMP_TRADE_EVENT_DISCRIMINATOR,
     },
     ProviderErrorKind,
 };
@@ -133,7 +134,7 @@ fn verified_evidence(
     quote_amount_raw: u64,
     ix_name: &str,
     discriminator: [u8; 8],
-) -> shreks_providers::pump::PumpTradeEvidence {
+) -> PumpTradeEvidence {
     let program_data = trade_event_program_data(
         is_buy,
         quote_mint,
