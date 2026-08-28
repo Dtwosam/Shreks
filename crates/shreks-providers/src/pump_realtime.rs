@@ -31,12 +31,15 @@ use crate::{
 const DEFAULT_RECONNECT_BASE: Duration = Duration::from_secs(1);
 const DEFAULT_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
+const DEFAULT_MAX_CONNECT_ATTEMPTS: u32 = 5;
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const PUMP_SUBSCRIPTION_REQUEST_ID: u64 = 1;
 const PUMPSWAP_SUBSCRIPTION_REQUEST_ID: u64 = 2;
+const ALCHEMY_MAINNET_WS_BASE: &str = "wss://solana-mainnet.g.alchemy.com/v2/";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpRealtimeNotification {
+    pub provider: ProviderId,
     pub signature: String,
     pub slot: u64,
     pub lifecycle: Option<PumpLifecycleSignal>,
@@ -44,15 +47,17 @@ pub struct PumpRealtimeNotification {
     pub pump_swap_trades: Vec<PumpSwapTradeEvidence>,
 }
 
-/// Runtime configuration for the single standard-Solana Pump realtime stream.
-/// The endpoint is intentionally redacted because a Helius websocket URL embeds
-/// its API key in the query string.
+/// Runtime configuration for one standard-Solana Pump realtime stream.
+/// The endpoint is intentionally redacted because provider websocket URLs may
+/// embed API keys.
 #[derive(Clone)]
 pub struct PumpRealtimeLogStreamConfig {
+    provider: ProviderId,
     endpoint: String,
     reconnect_base: Duration,
     reconnect_max: Duration,
     heartbeat_interval: Duration,
+    max_connect_attempts: u32,
 }
 
 impl PumpRealtimeLogStreamConfig {
@@ -64,27 +69,61 @@ impl PumpRealtimeLogStreamConfig {
                 "Helius API key must not be empty",
             ));
         }
-        Self::for_endpoint(helius_ws_url(api_key))
+        Self::for_provider_endpoint(ProviderId::Helius, helius_ws_url(api_key))
     }
 
+    pub fn alchemy(api_key: &str) -> Result<Self, ProviderError> {
+        let api_key = api_key.trim();
+        if api_key.is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Alchemy,
+                ProviderErrorKind::InvalidRequest,
+                "Alchemy API key must not be empty",
+            ));
+        }
+        Self::for_provider_endpoint(
+            ProviderId::Alchemy,
+            format!("{ALCHEMY_MAINNET_WS_BASE}{api_key}"),
+        )
+    }
+
+    /// Backward-compatible local/test constructor. Historical endpoint-only
+    /// callers represented the Helius lane, so Helius remains the default.
     pub fn for_endpoint(endpoint: impl Into<String>) -> Result<Self, ProviderError> {
+        Self::for_provider_endpoint(ProviderId::Helius, endpoint)
+    }
+
+    pub fn for_provider_endpoint(
+        provider: ProviderId,
+        endpoint: impl Into<String>,
+    ) -> Result<Self, ProviderError> {
+        if !is_realtime_provider(provider) {
+            return Err(ProviderError::new(
+                provider,
+                ProviderErrorKind::InvalidRequest,
+                "Pump realtime provider must be Helius or Alchemy",
+            ));
+        }
+
         let endpoint = endpoint.into();
         let trimmed = endpoint.trim();
         if trimmed.is_empty()
             || !(trimmed.starts_with("ws://") || trimmed.starts_with("wss://"))
         {
             return Err(ProviderError::new(
-                ProviderId::Helius,
+                provider,
                 ProviderErrorKind::InvalidRequest,
                 "Pump realtime websocket endpoint must use ws:// or wss://",
             ));
         }
 
         Ok(Self {
+            provider,
             endpoint,
             reconnect_base: DEFAULT_RECONNECT_BASE,
             reconnect_max: DEFAULT_RECONNECT_MAX,
             heartbeat_interval: DEFAULT_HEARTBEAT_INTERVAL,
+            max_connect_attempts: DEFAULT_MAX_CONNECT_ATTEMPTS,
         })
     }
 
@@ -96,6 +135,11 @@ impl PumpRealtimeLogStreamConfig {
 
     pub fn with_heartbeat_interval(mut self, interval: Duration) -> Self {
         self.heartbeat_interval = interval;
+        self
+    }
+
+    pub fn with_max_connect_attempts(mut self, attempts: u32) -> Self {
+        self.max_connect_attempts = attempts.max(1);
         self
     }
 
@@ -111,10 +155,12 @@ impl fmt::Debug for PumpRealtimeLogStreamConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("PumpRealtimeLogStreamConfig")
+            .field("provider", &self.provider)
             .field("endpoint", &"<redacted>")
             .field("reconnect_base", &self.reconnect_base)
             .field("reconnect_max", &self.reconnect_max)
             .field("heartbeat_interval", &self.heartbeat_interval)
+            .field("max_connect_attempts", &self.max_connect_attempts)
             .finish()
     }
 }
@@ -167,9 +213,10 @@ impl PumpRealtimeLogStream {
                     }
                 }
                 Ok(Some(Ok(Message::Text(text)))) => {
-                    if let Some(notification) =
-                        parse_pump_realtime_log_notification(&text.to_string())?
-                    {
+                    if let Some(notification) = parse_pump_realtime_log_notification_for_provider(
+                        &text.to_string(),
+                        self.config.provider,
+                    )? {
                         return Ok(notification);
                     }
                 }
@@ -201,7 +248,16 @@ impl PumpRealtimeLogStream {
                     self.socket = Some(socket);
                     self.reconnect_attempt = 0;
                 }
-                Err(error) if error.is_retryable() => self.backoff().await,
+                Err(error) if error.is_retryable() => {
+                    self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
+                    if self.reconnect_attempt >= self.config.max_connect_attempts {
+                        return Err(error);
+                    }
+                    let delay = self
+                        .config
+                        .reconnect_delay(self.reconnect_attempt.saturating_sub(1));
+                    sleep(delay).await;
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -209,9 +265,15 @@ impl PumpRealtimeLogStream {
     }
 
     async fn connect_once(&self) -> Result<PumpRealtimeSocket, ProviderError> {
+        let provider = self.config.provider;
         let (mut socket, _) = connect_async(self.config.endpoint.as_str())
             .await
-            .map_err(|_| websocket_unavailable("Helius Pump realtime websocket connection failed"))?;
+            .map_err(|_| {
+                websocket_unavailable(
+                    provider,
+                    format!("{provider} Pump realtime websocket connection failed"),
+                )
+            })?;
 
         for (request_id, program_id, lane_name) in [
             (PUMP_SUBSCRIPTION_REQUEST_ID, PUMP_PROGRAM_ID, "Pump bonding-curve"),
@@ -229,11 +291,12 @@ impl PumpRealtimeLogStream {
                 ))
                 .await
                 .map_err(|_| {
-                    websocket_unavailable(format!(
-                        "Helius {lane_name} realtime subscription send failed"
-                    ))
+                    websocket_unavailable(
+                        provider,
+                        format!("{provider} {lane_name} realtime subscription send failed"),
+                    )
                 })?;
-            await_subscription_ack(&mut socket, request_id, lane_name).await?;
+            await_subscription_ack(&mut socket, request_id, lane_name, provider).await?;
         }
 
         Ok(socket)
@@ -241,13 +304,58 @@ impl PumpRealtimeLogStream {
 
     async fn disconnect_and_backoff(&mut self) {
         self.socket = None;
-        self.backoff().await;
-    }
-
-    async fn backoff(&mut self) {
         let delay = self.config.reconnect_delay(self.reconnect_attempt);
         self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
         sleep(delay).await;
+    }
+}
+
+/// Ordered standard-Solana realtime sources. The currently working source is
+/// sticky; retryable exhaustion rotates to the next configured provider. One
+/// complete failed pass returns an error so the observer can fail closed.
+pub struct PumpRealtimeFailoverStream {
+    streams: Vec<PumpRealtimeLogStream>,
+    active_index: usize,
+}
+
+impl PumpRealtimeFailoverStream {
+    pub fn new(configs: Vec<PumpRealtimeLogStreamConfig>) -> Result<Self, ProviderError> {
+        if configs.is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "Pump realtime failover requires at least one provider",
+            ));
+        }
+        Ok(Self {
+            streams: configs.into_iter().map(PumpRealtimeLogStream::new).collect(),
+            active_index: 0,
+        })
+    }
+
+    pub async fn next_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError> {
+        let stream_count = self.streams.len();
+        let start = self.active_index;
+        let mut last_retryable_error = None;
+
+        for offset in 0..stream_count {
+            let index = (start + offset) % stream_count;
+            match self.streams[index].next_realtime_notification().await {
+                Ok(notification) => {
+                    self.active_index = index;
+                    return Ok(notification);
+                }
+                Err(error) if error.is_retryable() => {
+                    self.active_index = (index + 1) % stream_count;
+                    last_retryable_error = Some(error);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(last_retryable_error.expect("non-empty provider set produced a retryable error"))
     }
 }
 
@@ -255,36 +363,46 @@ async fn await_subscription_ack(
     socket: &mut PumpRealtimeSocket,
     expected_request_id: u64,
     lane_name: &str,
+    provider: ProviderId,
 ) -> Result<u64, ProviderError> {
     loop {
         let frame = timeout(SUBSCRIPTION_ACK_TIMEOUT, socket.next())
             .await
             .map_err(|_| {
-                websocket_unavailable(format!(
-                    "Helius {lane_name} realtime subscription timed out"
-                ))
+                websocket_unavailable(
+                    provider,
+                    format!("{provider} {lane_name} realtime subscription timed out"),
+                )
             })?;
 
         match frame {
             Some(Ok(Message::Text(text))) => {
-                if let Some(subscription_id) =
-                    parse_realtime_subscription_ack(&text.to_string(), expected_request_id)?
-                {
+                if let Some(subscription_id) = parse_realtime_subscription_ack(
+                    &text.to_string(),
+                    expected_request_id,
+                    provider,
+                )? {
                     return Ok(subscription_id);
                 }
             }
             Some(Ok(Message::Ping(payload))) => {
                 socket.send(Message::Pong(payload)).await.map_err(|_| {
-                    websocket_unavailable(format!("Helius {lane_name} realtime pong failed"))
+                    websocket_unavailable(
+                        provider,
+                        format!("{provider} {lane_name} realtime pong failed"),
+                    )
                 })?;
             }
             Some(Ok(Message::Pong(_)))
             | Some(Ok(Message::Binary(_)))
             | Some(Ok(Message::Frame(_))) => {}
             Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
-                return Err(websocket_unavailable(format!(
-                    "Helius {lane_name} realtime websocket closed before subscription acknowledgement"
-                )));
+                return Err(websocket_unavailable(
+                    provider,
+                    format!(
+                        "{provider} {lane_name} realtime websocket closed before subscription acknowledgement"
+                    ),
+                ));
             }
         }
     }
@@ -305,22 +423,30 @@ fn realtime_logs_subscribe_request(request_id: u64, program_id: &str) -> Value {
 fn parse_realtime_subscription_ack(
     body: &str,
     expected_request_id: u64,
+    provider: ProviderId,
 ) -> Result<Option<u64>, ProviderError> {
     let value: Value = serde_json::from_str(body).map_err(|error| {
-        invalid_response(format!("invalid Pump realtime subscription JSON: {error}"))
+        invalid_response(
+            provider,
+            format!("invalid Pump realtime subscription JSON: {error}"),
+        )
     })?;
     if value.get("id").and_then(Value::as_u64) != Some(expected_request_id) {
         return Ok(None);
     }
     if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
-        return Err(invalid_response(format!(
-            "Pump realtime subscription request {expected_request_id} failed: {error}"
-        )));
+        return Err(invalid_response(
+            provider,
+            format!("Pump realtime subscription request {expected_request_id} failed: {error}"),
+        ));
     }
     let subscription = value.get("result").and_then(Value::as_u64).ok_or_else(|| {
-        invalid_response(format!(
-            "Pump realtime subscription acknowledgement {expected_request_id} missing numeric result"
-        ))
+        invalid_response(
+            provider,
+            format!(
+                "Pump realtime subscription acknowledgement {expected_request_id} missing numeric result"
+            ),
+        )
     })?;
     Ok(Some(subscription))
 }
@@ -334,6 +460,15 @@ pub trait PumpRealtimeSignalSource: Send {
 
 #[async_trait]
 impl PumpRealtimeSignalSource for PumpRealtimeLogStream {
+    async fn next_pump_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError> {
+        self.next_realtime_notification().await
+    }
+}
+
+#[async_trait]
+impl PumpRealtimeSignalSource for PumpRealtimeFailoverStream {
     async fn next_pump_realtime_notification(
         &mut self,
     ) -> Result<PumpRealtimeNotification, ProviderError> {
@@ -361,29 +496,47 @@ where
 
 /// Parse one confirmed standard-Solana Pump/PumpSwap `logsNotification` into
 /// the complete direct evidence Shreks can obtain without an additional RPC
-/// request. Bonding-curve trades reuse the audited transaction codec; PumpSwap
-/// consumes its authoritative Anchor BuyEvent/SellEvent directly.
+/// request. Historical direct parser callers are Helius fixtures; live streams
+/// use the provider-aware internal parser.
 pub fn parse_pump_realtime_log_notification(
     body: &str,
 ) -> Result<Option<PumpRealtimeNotification>, ProviderError> {
+    parse_pump_realtime_log_notification_for_provider(body, ProviderId::Helius)
+}
+
+fn parse_pump_realtime_log_notification_for_provider(
+    body: &str,
+    provider: ProviderId,
+) -> Result<Option<PumpRealtimeNotification>, ProviderError> {
     let value: Value = serde_json::from_str(body).map_err(|error| {
-        invalid_response(format!("invalid Pump realtime websocket JSON: {error}"))
+        invalid_response(
+            provider,
+            format!("invalid Pump realtime websocket JSON: {error}"),
+        )
     })?;
 
     if value.get("method").and_then(Value::as_str) != Some("logsNotification") {
         return Ok(None);
     }
 
-    let result = value
-        .pointer("/params/result")
-        .ok_or_else(|| invalid_response("Pump realtime logsNotification missing params.result"))?;
+    let result = value.pointer("/params/result").ok_or_else(|| {
+        invalid_response(
+            provider,
+            "Pump realtime logsNotification missing params.result",
+        )
+    })?;
     let slot = result
         .pointer("/context/slot")
         .and_then(Value::as_u64)
-        .ok_or_else(|| invalid_response("Pump realtime logsNotification missing context.slot"))?;
-    let notification = result
-        .get("value")
-        .ok_or_else(|| invalid_response("Pump realtime logsNotification missing value"))?;
+        .ok_or_else(|| {
+            invalid_response(
+                provider,
+                "Pump realtime logsNotification missing context.slot",
+            )
+        })?;
+    let notification = result.get("value").ok_or_else(|| {
+        invalid_response(provider, "Pump realtime logsNotification missing value")
+    })?;
 
     if !notification.get("err").is_some_and(Value::is_null) {
         return Ok(None);
@@ -393,26 +546,45 @@ pub fn parse_pump_realtime_log_notification(
         .get("signature")
         .and_then(Value::as_str)
         .filter(|signature| !signature.trim().is_empty())
-        .ok_or_else(|| invalid_response("Pump realtime logsNotification missing signature"))?;
+        .ok_or_else(|| {
+            invalid_response(
+                provider,
+                "Pump realtime logsNotification missing signature",
+            )
+        })?;
     let logs = notification
         .get("logs")
         .and_then(Value::as_array)
-        .ok_or_else(|| invalid_response("Pump realtime logsNotification missing logs array"))?;
+        .ok_or_else(|| {
+            invalid_response(
+                provider,
+                "Pump realtime logsNotification missing logs array",
+            )
+        })?;
 
-    let lifecycle = parse_pump_lifecycle_log_notification(body)?;
+    let lifecycle = parse_pump_lifecycle_log_notification(body)
+        .map_err(|error| reattribute_provider_error(error, provider))?;
     let trade_discriminators = pump_trade_instruction_discriminators(logs);
     let trades = if trade_discriminators.is_empty() {
         Vec::new()
     } else {
-        decode_trade_evidence_from_notification_logs(signature, slot, logs, &trade_discriminators)?
+        decode_trade_evidence_from_notification_logs(
+            signature,
+            slot,
+            logs,
+            &trade_discriminators,
+            provider,
+        )?
     };
-    let pump_swap_trades = parse_pump_swap_trade_logs(logs)?;
+    let pump_swap_trades = parse_pump_swap_trade_logs(logs)
+        .map_err(|error| reattribute_provider_error(error, provider))?;
 
     if lifecycle.is_none() && trades.is_empty() && pump_swap_trades.is_empty() {
         return Ok(None);
     }
 
     Ok(Some(PumpRealtimeNotification {
+        provider,
         signature: signature.to_owned(),
         slot,
         lifecycle,
@@ -426,6 +598,7 @@ fn decode_trade_evidence_from_notification_logs(
     slot: u64,
     logs: &[Value],
     discriminators: &[[u8; 8]],
+    provider: ProviderId,
 ) -> Result<Vec<PumpTradeEvidence>, ProviderError> {
     let instructions: Vec<Value> = discriminators
         .iter()
@@ -456,14 +629,20 @@ fn decode_trade_evidence_from_notification_logs(
         "id": "shreks-pump-realtime"
     });
 
-    match classify_pump_trade_transaction(&synthetic.to_string(), signature)? {
+    match classify_pump_trade_transaction(&synthetic.to_string(), signature)
+        .map_err(|error| reattribute_provider_error(error, provider))?
+    {
         PumpTradeVerification::Verified(events) => Ok(events),
-        PumpTradeVerification::Pending => Err(invalid_response(format!(
-            "Pump realtime signature {signature} unexpectedly classified as pending"
-        ))),
-        PumpTradeVerification::Rejected(reason) => Err(invalid_response(format!(
-            "Pump realtime signature {signature} contained a trade instruction but no authoritative trade evidence: {reason}"
-        ))),
+        PumpTradeVerification::Pending => Err(invalid_response(
+            provider,
+            format!("Pump realtime signature {signature} unexpectedly classified as pending"),
+        )),
+        PumpTradeVerification::Rejected(reason) => Err(invalid_response(
+            provider,
+            format!(
+                "Pump realtime signature {signature} contained a trade instruction but no authoritative trade evidence: {reason}"
+            ),
+        )),
     }
 }
 
@@ -517,14 +696,22 @@ fn terminated_program(log: &str) -> Option<&str> {
     rest.split_once(" failed:").map(|(program, _)| program)
 }
 
-fn websocket_unavailable(message: impl Into<String>) -> ProviderError {
-    ProviderError::new(ProviderId::Helius, ProviderErrorKind::Unavailable, message)
+fn is_realtime_provider(provider: ProviderId) -> bool {
+    matches!(provider, ProviderId::Helius | ProviderId::Alchemy)
 }
 
-fn invalid_response(message: impl Into<String>) -> ProviderError {
-    ProviderError::new(
-        ProviderId::Helius,
-        ProviderErrorKind::InvalidResponse,
-        message,
-    )
+fn websocket_unavailable(provider: ProviderId, message: impl Into<String>) -> ProviderError {
+    ProviderError::new(provider, ProviderErrorKind::Unavailable, message)
+}
+
+fn invalid_response(provider: ProviderId, message: impl Into<String>) -> ProviderError {
+    ProviderError::new(provider, ProviderErrorKind::InvalidResponse, message)
+}
+
+fn reattribute_provider_error(error: ProviderError, provider: ProviderId) -> ProviderError {
+    let mut mapped = ProviderError::new(provider, error.kind, error.message);
+    if let Some(retry_after_ms) = error.retry_after_ms {
+        mapped = mapped.with_retry_after_ms(retry_after_ms);
+    }
+    mapped
 }
