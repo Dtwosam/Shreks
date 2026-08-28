@@ -5,7 +5,7 @@ mod lifecycle;
 mod outcomes;
 mod safety_evidence;
 mod wallet;
-pub use fast_lane::PumpTradeEvidenceWrite;
+pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
@@ -84,6 +84,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 10,
         name: "fast_lane_pump_trade_evidence",
         sql: include_str!("../migrations/0010_fast_lane_pump_trade_evidence.sql"),
+    },
+    Migration {
+        version: 11,
+        name: "fast_lane_canonical_events",
+        sql: include_str!("../migrations/0011_fast_lane_canonical_events.sql"),
     },
 ];
 
