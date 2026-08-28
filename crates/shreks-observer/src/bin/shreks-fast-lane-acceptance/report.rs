@@ -287,10 +287,7 @@ fn window_count(
     field: &str,
 ) -> Result<u64, FastLaneAcceptanceError> {
     let value: i64 = connection
-        .query_row(params![window_start_unix_ms, as_of_unix_ms], |row| row.get(0))
-        .or_else(|_| {
-            connection.query_row(sql, params![window_start_unix_ms, as_of_unix_ms], |row| row.get(0))
-        })
+        .query_row(sql, params![window_start_unix_ms, as_of_unix_ms], |row| row.get(0))
         .map_err(FastLaneAcceptanceError::Sqlite)?;
     nonnegative_u64(value, field)
 }
