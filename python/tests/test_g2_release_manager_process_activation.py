@@ -64,6 +64,46 @@ def test_upgrade_explicitly_stops_runtime_services_before_switch(monkeypatch, tm
     ]
 
 
+def test_same_release_reconciles_runtime_processes_instead_of_returning(
+    monkeypatch, tmp_path: Path
+):
+    paths = _paths(tmp_path)
+    release_dir = paths.releases_dir / ("b" * 40)
+    release_dir.mkdir(parents=True)
+
+    monkeypatch.setattr(release_manager, "_require_managed_release", lambda *_: None)
+    monkeypatch.setattr(release_manager, "_current_release", lambda *_: release_dir)
+    monkeypatch.setattr(release_manager, "_install_units", lambda *_: None)
+
+    health_calls: list[Path | None] = []
+    monkeypatch.setattr(
+        release_manager,
+        "_require_runtime_healthy",
+        lambda _runner, active_release=None: health_calls.append(active_release),
+    )
+
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]) -> None:
+        calls.append(command)
+
+    release_manager.activate_release(release_dir, paths, command_runner=runner)
+
+    assert calls == [
+        (
+            "systemctl",
+            "stop",
+            "shreks-paper-campaign.service",
+            "shreks-paper-evidence.service",
+            "shreks-observe.service",
+            "shreks.target",
+        ),
+        ("systemctl", "daemon-reload"),
+        ("systemctl", "start", "shreks.target"),
+    ]
+    assert health_calls == [release_dir]
+
+
 def test_runtime_process_identity_accepts_only_activated_release(tmp_path: Path):
     release_dir = tmp_path / "opt" / "shreks" / "releases" / ("b" * 40)
     release_dir.mkdir(parents=True)
