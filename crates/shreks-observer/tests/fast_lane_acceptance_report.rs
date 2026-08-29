@@ -262,6 +262,7 @@ fn report_counts_backlog_sequence_and_exact_latency_percentiles() {
     assert_eq!(acceptance.pumpswap_conflict_quarantine_total, 0);
     assert_eq!(acceptance.pump_conflict_quarantine_events, 0);
     assert_eq!(acceptance.pumpswap_conflict_quarantine_events, 0);
+    assert_eq!(acceptance.canonical_conflict_quarantine_violations, 0);
     assert_eq!(acceptance.pending_pump_events, 1);
     assert_eq!(acceptance.pending_pumpswap_events, 0);
     assert_eq!(acceptance.sequence_integrity_violations, 0);
@@ -324,6 +325,7 @@ fn conflict_quarantine_reports_total_and_window_counts_without_mutation() {
     assert_eq!(acceptance.pumpswap_conflict_quarantine_total, 2);
     assert_eq!(acceptance.pump_conflict_quarantine_events, 1);
     assert_eq!(acceptance.pumpswap_conflict_quarantine_events, 1);
+    assert_eq!(acceptance.canonical_conflict_quarantine_violations, 1);
     drop(store);
     assert_eq!(fs::metadata(&db_path).unwrap().len(), bytes_before);
 
