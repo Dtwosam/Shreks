@@ -44,10 +44,10 @@ impl ShreksDb {
     /// Persist one immutable Pump economic event.
     ///
     /// `(signature, ordinal)` is the canonical identity. Replaying the same
-    /// economics is idempotent even when the later local observation timestamp
-    /// differs; the first observation time remains authoritative. A conflicting
-    /// payload for an existing identity fails closed instead of overwriting
-    /// training evidence.
+    /// economics is idempotent even when a later provider, confirmed fork slot,
+    /// or local observation timestamp differs; the first stored provenance
+    /// remains authoritative. A conflicting economic payload for an existing
+    /// identity fails closed instead of overwriting training evidence.
     pub fn record_pump_trade_evidence(
         &self,
         evidence: &PumpTradeEvidenceWrite,
@@ -776,10 +776,8 @@ fn same_economic_event(
     stored: &PumpTradeEvidenceWrite,
     incoming: &PumpTradeEvidenceWrite,
 ) -> bool {
-    stored.provider == incoming.provider
-        && stored.signature == incoming.signature
+    stored.signature == incoming.signature
         && stored.ordinal == incoming.ordinal
-        && stored.slot == incoming.slot
         && stored.mint == incoming.mint
         && stored.quote_mint == incoming.quote_mint
         && stored.user == incoming.user
