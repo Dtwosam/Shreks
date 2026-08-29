@@ -1,14 +1,11 @@
 use serde_json::json;
-use shreks_core::ProviderId;
-use shreks_providers::{
-    pump_realtime::parse_pump_realtime_log_notification, ProviderErrorKind,
-};
+use shreks_providers::pump_realtime::parse_pump_realtime_log_notification;
 
 const DEFAULT_SOLANA_SIGNATURE: &str =
     "1111111111111111111111111111111111111111111111111111111111111111";
 
 #[test]
-fn successful_realtime_notification_rejects_default_zero_signature() {
+fn successful_realtime_notification_drops_default_zero_signature() {
     let body = json!({
         "jsonrpc": "2.0",
         "method": "logsNotification",
@@ -26,10 +23,8 @@ fn successful_realtime_notification_rejects_default_zero_signature() {
     })
     .to_string();
 
-    let error = parse_pump_realtime_log_notification(&body)
-        .expect_err("the all-zero/default Solana signature must never become realtime evidence");
+    let parsed = parse_pump_realtime_log_notification(&body)
+        .expect("the default signature must be ignored without terminating the realtime stream");
 
-    assert_eq!(error.provider, ProviderId::Helius);
-    assert!(matches!(error.kind, ProviderErrorKind::InvalidResponse));
-    assert!(error.message.contains("default Solana signature"));
+    assert!(parsed.is_none());
 }
