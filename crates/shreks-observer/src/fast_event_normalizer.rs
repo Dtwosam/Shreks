@@ -12,6 +12,8 @@ use shreks_storage::{
     PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb, StorageError,
 };
 
+const MAX_BLOCKED_FRONTIER_SCAN_MULTIPLIER: usize = 8;
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FastEventNormalizationReport {
     pub scanned: usize,
@@ -101,43 +103,67 @@ pub fn normalize_pending_pump_trade_evidence_at(
     limit: usize,
     accepted_at_unix_ms: i64,
 ) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
-    let mut pending = db
-        .pending_pump_trade_evidence(limit)?
-        .into_iter()
-        .map(PendingEvidence::Pump)
-        .chain(
-            db.pending_pump_swap_trade_evidence(limit)?
-                .into_iter()
-                .map(PendingEvidence::PumpSwap),
-        )
-        .collect::<Vec<_>>();
-
-    pending.sort_by(|left, right| {
-        left.observed_at_unix_ms()
-            .cmp(&right.observed_at_unix_ms())
-            .then_with(|| left.signature().cmp(right.signature()))
-            .then_with(|| left.ordinal().cmp(&right.ordinal()))
-            .then_with(|| left.source_rank().cmp(&right.source_rank()))
-    });
-    pending.truncate(limit);
-
-    let mut report = FastEventNormalizationReport {
-        scanned: pending.len(),
-        ..FastEventNormalizationReport::default()
-    };
-
-    for pending in pending {
-        match pending {
-            PendingEvidence::Pump(raw) => {
-                normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, &mut report)?;
-            }
-            PendingEvidence::PumpSwap(raw) => {
-                normalize_pump_swap_row(db, raw, accepted_at_unix_ms, &mut report)?;
-            }
-        }
+    if limit == 0 {
+        return Ok(FastEventNormalizationReport::default());
     }
 
-    Ok(report)
+    let max_scan_limit = limit
+        .saturating_mul(MAX_BLOCKED_FRONTIER_SCAN_MULTIPLIER)
+        .max(limit);
+    let mut scan_limit = limit;
+
+    loop {
+        let mut pending = db
+            .pending_pump_trade_evidence(scan_limit)?
+            .into_iter()
+            .map(PendingEvidence::Pump)
+            .chain(
+                db.pending_pump_swap_trade_evidence(scan_limit)?
+                    .into_iter()
+                    .map(PendingEvidence::PumpSwap),
+            )
+            .collect::<Vec<_>>();
+
+        pending.sort_by(|left, right| {
+            left.observed_at_unix_ms()
+                .cmp(&right.observed_at_unix_ms())
+                .then_with(|| left.signature().cmp(right.signature()))
+                .then_with(|| left.ordinal().cmp(&right.ordinal()))
+                .then_with(|| left.source_rank().cmp(&right.source_rank()))
+        });
+        pending.truncate(scan_limit);
+
+        let exhausted = pending.len() < scan_limit;
+        let mut report = FastEventNormalizationReport {
+            scanned: pending.len(),
+            ..FastEventNormalizationReport::default()
+        };
+
+        for pending in pending {
+            if report.normalized >= limit {
+                break;
+            }
+
+            match pending {
+                PendingEvidence::Pump(raw) => {
+                    normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, &mut report)?;
+                }
+                PendingEvidence::PumpSwap(raw) => {
+                    normalize_pump_swap_row(db, raw, accepted_at_unix_ms, &mut report)?;
+                }
+            }
+        }
+
+        if report.normalized > 0 || exhausted || scan_limit >= max_scan_limit {
+            return Ok(report);
+        }
+
+        let next_scan_limit = scan_limit.saturating_mul(2).min(max_scan_limit);
+        if next_scan_limit == scan_limit {
+            return Ok(report);
+        }
+        scan_limit = next_scan_limit;
+    }
 }
 
 fn normalize_bonding_curve_row(
