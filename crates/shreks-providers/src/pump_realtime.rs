@@ -353,6 +353,7 @@ impl PumpRealtimeFailoverStream {
         let stream_count = self.streams.len();
         let start = self.active_index;
         let mut last_retryable_error = None;
+        let mut attempts = Vec::with_capacity(stream_count);
 
         for offset in 0..stream_count {
             let index = (start + offset) % stream_count;
@@ -362,15 +363,32 @@ impl PumpRealtimeFailoverStream {
                     return Ok(notification);
                 }
                 Err(error) if error.is_retryable() => {
+                    attempts.push(format!("{}:{:?}", error.provider, error.kind));
                     self.active_index = (index + 1) % stream_count;
                     last_retryable_error = Some(error);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    attempts.push(format!("{}:{:?}", error.provider, error.kind));
+                    return Err(with_failover_attempt_trace(error, &attempts));
+                }
             }
         }
 
-        Err(last_retryable_error.expect("non-empty provider set produced a retryable error"))
+        let error = last_retryable_error
+            .expect("non-empty provider set produced a retryable error");
+        Err(with_failover_attempt_trace(error, &attempts))
     }
+}
+
+fn with_failover_attempt_trace(mut error: ProviderError, attempts: &[String]) -> ProviderError {
+    if !attempts.is_empty() {
+        error.message = format!(
+            "{}; failover_attempts={}",
+            error.message,
+            attempts.join(",")
+        );
+    }
+    error
 }
 
 async fn await_subscription_ack(
