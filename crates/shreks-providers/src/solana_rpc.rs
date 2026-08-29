@@ -10,7 +10,10 @@ use std::{
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use shreks_core::{ProviderId, TokenMintState};
-use tokio::{sync::Mutex, time::{sleep_until, Instant}};
+use tokio::{
+    sync::Mutex,
+    time::{sleep_until, Instant},
+};
 
 use crate::{
     helius::parse_mint_account_response,
@@ -19,6 +22,7 @@ use crate::{
 };
 
 const CHAINSTACK_RPC_INTERVAL: Duration = Duration::from_millis(125); // 8 RPS.
+pub const TRANSPORT_PROVIDER_FIELD: &str = "_shreks_transport_provider";
 
 /// Derive the HTTPS JSON-RPC endpoint from the protected Chainstack websocket
 /// endpoint already provisioned on the runtime host. The returned URL is still
@@ -72,6 +76,39 @@ pub fn parse_mint_account_response_for_provider(
             Err(error)
         }
     }
+}
+
+/// Add internal transport provenance to a valid standard JSON-RPC transaction
+/// response. The marker contains only the provider id, never endpoint material.
+pub fn annotate_transaction_response_for_provider(
+    provider: ProviderId,
+    body: &str,
+) -> Result<String, ProviderError> {
+    let mut value: Value = serde_json::from_str(body).map_err(|_| {
+        ProviderError::new(
+            provider,
+            ProviderErrorKind::InvalidResponse,
+            "standard Solana transaction RPC returned invalid JSON",
+        )
+    })?;
+    let object = value.as_object_mut().ok_or_else(|| {
+        ProviderError::new(
+            provider,
+            ProviderErrorKind::InvalidResponse,
+            "standard Solana transaction RPC returned a non-object response",
+        )
+    })?;
+    object.insert(
+        TRANSPORT_PROVIDER_FIELD.to_owned(),
+        Value::String(provider.as_str().to_owned()),
+    );
+    serde_json::to_string(&value).map_err(|_| {
+        ProviderError::new(
+            provider,
+            ProviderErrorKind::InvalidResponse,
+            "standard Solana transaction RPC response could not be normalized",
+        )
+    })
 }
 
 /// Chainstack adapter restricted to the two standard read-only calls FL1 needs:
@@ -134,11 +171,14 @@ impl StandardSolanaRpcProvider {
         })?;
 
         if !status.is_success() {
+            // Provider error bodies are deliberately excluded from the message:
+            // the protected endpoint is credential material and must never leak
+            // through an upstream diagnostic echo.
             return Err(classify_http_failure(
                 self.provider,
                 status.as_u16(),
                 retry_after.as_deref(),
-                &body,
+                "",
             ));
         }
 
@@ -247,6 +287,7 @@ impl TransactionProvider for StandardSolanaRpcProvider {
 
     async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
         let payload = Self::transaction_request(signature)?;
-        self.post_rpc(&payload).await
+        let body = self.post_rpc(&payload).await?;
+        annotate_transaction_response_for_provider(self.provider, &body)
     }
 }
