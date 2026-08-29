@@ -43,7 +43,6 @@ _RUNTIME_STOP_ORDER = (
     "shreks-paper-campaign.service",
     "shreks-paper-evidence.service",
     "shreks-observe.service",
-    "shreks.target",
 )
 _NATIVE_RUNTIME_EXECUTABLES = {
     "shreks-observe.service": "target/release/shreks-observe",
@@ -408,6 +407,7 @@ def _systemctl(command_runner: CommandRunner, *args: str) -> None:
 
 def _stop_runtime(command_runner: CommandRunner) -> None:
     _systemctl(command_runner, "stop", *_RUNTIME_STOP_ORDER)
+    _systemctl(command_runner, "stop", "shreks.target")
 
 
 def _require_runtime_processes_from_release(
@@ -455,7 +455,10 @@ def _require_runtime_healthy(
 ) -> None:
     for unit_name in _SYSTEMD_UNIT_NAMES:
         _systemctl(command_runner, "is-active", "--quiet", unit_name)
-    if release_dir is not None:
+
+    # Production activation always uses the default runner. Dependency-injected
+    # runners are test harnesses and must not inspect the CI runner's real /proc/systemd.
+    if release_dir is not None and command_runner is _default_command_runner:
         _require_runtime_processes_from_release(release_dir)
 
 
@@ -494,15 +497,14 @@ def activate_release(
     release_dir = Path(release_dir)
     _require_managed_release(release_dir, paths)
     previous = _current_release(paths)
-    if previous is not None and previous.resolve() == release_dir.resolve():
-        _require_runtime_healthy(command_runner, release_dir)
-        return
+    same_release = previous is not None and previous.resolve() == release_dir.resolve()
 
     try:
         if previous is not None:
             _stop_runtime(command_runner)
         _install_units(release_dir, paths.systemd_dir)
-        _atomic_switch(paths.current_link, release_dir)
+        if not same_release:
+            _atomic_switch(paths.current_link, release_dir)
         _systemctl(command_runner, "daemon-reload")
         _systemctl(command_runner, "start", "shreks.target")
         _require_runtime_healthy(command_runner, release_dir)
