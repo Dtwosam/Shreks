@@ -90,6 +90,10 @@ fn print_report(report: &FastLaneAcceptanceReport) -> Result<(), String> {
         "pumpswap_conflict_quarantine_events={}",
         report.pumpswap_conflict_quarantine_events
     );
+    println!(
+        "canonical_conflict_quarantine_violations={}",
+        report.canonical_conflict_quarantine_violations
+    );
     println!("pending_pump_events={}", report.pending_pump_events);
     println!("pending_pumpswap_events={}", report.pending_pumpswap_events);
     println!(
