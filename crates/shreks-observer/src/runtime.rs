@@ -14,6 +14,7 @@ use shreks_providers::{
     meteora::MeteoraProvider,
     pump::PumpLifecycleSignal,
     pump_realtime::PumpRealtimeNotification,
+    solana_rpc::StandardSolanaRpcProvider,
     ProviderError,
 };
 use shreks_storage::{
@@ -138,11 +139,14 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
     }
     if config.helius_enabled() {
         chain.push(ProviderId::Helius);
-        transactions.push(ProviderId::Helius);
         realtime.push(ProviderId::Helius);
     }
     if config.chainstack_enabled() {
+        chain.push(ProviderId::Chainstack);
+        transactions.push(ProviderId::Chainstack);
         realtime.push(ProviderId::Chainstack);
+    } else if config.helius_enabled() {
+        transactions.push(ProviderId::Helius);
     }
     if config.alchemy_enabled() {
         realtime.push(ProviderId::Alchemy);
@@ -178,9 +182,17 @@ pub fn build_free_observer(
 
     if let Some(api_key) = config.helius_api_key() {
         let helius = Arc::new(HeliusProvider::new(api_key)?);
+        observer = observer.with_chain_provider(helius.clone());
+        if !config.chainstack_enabled() {
+            observer = observer.with_transaction_provider(helius);
+        }
+    }
+
+    if let Some(endpoint) = config.chainstack_solana_wss_url() {
+        let chainstack = Arc::new(StandardSolanaRpcProvider::chainstack(endpoint)?);
         observer = observer
-            .with_chain_provider(helius.clone())
-            .with_transaction_provider(helius);
+            .with_chain_provider(chainstack.clone())
+            .with_transaction_provider(chainstack);
     }
 
     Ok(observer)

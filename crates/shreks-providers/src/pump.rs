@@ -17,7 +17,10 @@ use tokio_tungstenite::{
     connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream,
 };
 
-use crate::{helius::helius_ws_url, ProviderError, ProviderErrorKind};
+use crate::{
+    helius::helius_ws_url, solana_rpc::TRANSPORT_PROVIDER_FIELD, ProviderError,
+    ProviderErrorKind,
+};
 
 pub const PUMP_PROGRAM_ID: &str = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
 pub const PUMP_AMM_PROGRAM_ID: &str = "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA";
@@ -443,6 +446,7 @@ pub fn classify_pump_creation_transaction(
             "invalid Pump transaction JSON for {signature}: {error}"
         ))
     })?;
+    let source = transaction_transport_provider(&value)?;
 
     if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
         return Err(invalid_response(format!(
@@ -476,7 +480,7 @@ pub fn classify_pump_creation_transaction(
             dex_id: Some("pumpfun".to_owned()),
             venue: Some(VenueId::PumpFunBondingCurve),
             discovered_at_unix_ms,
-            source: ProviderId::Helius,
+            source,
         }));
     }
 
@@ -542,6 +546,23 @@ pub fn classify_pump_migration_transaction(
         )));
     }
     Ok(PumpMigrationVerification::Verified(evidence))
+}
+
+fn transaction_transport_provider(value: &Value) -> Result<ProviderId, ProviderError> {
+    let Some(provider) = value
+        .get(TRANSPORT_PROVIDER_FIELD)
+        .and_then(Value::as_str)
+    else {
+        return Ok(ProviderId::Helius);
+    };
+
+    match provider {
+        "helius" => Ok(ProviderId::Helius),
+        "chainstack" => Ok(ProviderId::Chainstack),
+        other => Err(invalid_response(format!(
+            "unsupported Pump transaction transport provider '{other}'"
+        ))),
+    }
 }
 
 fn parse_block_time_ms(result: &Value, signature: &str) -> Result<Option<i64>, ProviderError> {
