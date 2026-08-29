@@ -104,7 +104,10 @@ fn pump_runtime_writer_quarantines_conflicting_fork_without_overwriting_source()
         vec![first]
     );
     assert_eq!(db.pump_quarantined_conflict_count().unwrap(), 1);
-    assert!(db.pending_pump_trade_evidence(10).unwrap().is_empty());
+    assert!(db
+        .pending_unambiguous_pump_trade_evidence(10)
+        .unwrap()
+        .is_empty());
 
     cleanup_dir(&root);
 }
@@ -143,7 +146,7 @@ fn pumpswap_runtime_writer_quarantines_conflicting_fork_without_overwriting_sour
     );
     assert_eq!(db.pumpswap_quarantined_conflict_count().unwrap(), 1);
     assert!(db
-        .pending_pump_swap_trade_evidence(10)
+        .pending_unambiguous_pump_swap_trade_evidence(10)
         .unwrap()
         .is_empty());
 
