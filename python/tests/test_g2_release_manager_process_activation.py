@@ -30,6 +30,19 @@ def _paths(tmp_path: Path) -> release_manager.ReleasePaths:
     )
 
 
+def _expected_stop_calls() -> list[tuple[str, ...]]:
+    return [
+        (
+            "systemctl",
+            "stop",
+            "shreks-paper-campaign.service",
+            "shreks-paper-evidence.service",
+            "shreks-observe.service",
+        ),
+        ("systemctl", "stop", "shreks.target"),
+    ]
+
+
 def test_upgrade_explicitly_stops_runtime_services_before_switch(monkeypatch, tmp_path: Path):
     paths = _paths(tmp_path)
     previous = paths.releases_dir / ("a" * 40)
@@ -50,15 +63,8 @@ def test_upgrade_explicitly_stops_runtime_services_before_switch(monkeypatch, tm
 
     release_manager.activate_release(release_dir, paths, command_runner=runner)
 
-    assert calls[0] == (
-        "systemctl",
-        "stop",
-        "shreks-paper-campaign.service",
-        "shreks-paper-evidence.service",
-        "shreks-observe.service",
-        "shreks.target",
-    )
-    assert calls[1:] == [
+    assert calls == [
+        *_expected_stop_calls(),
         ("systemctl", "daemon-reload"),
         ("systemctl", "start", "shreks.target"),
     ]
@@ -90,14 +96,7 @@ def test_same_release_reconciles_runtime_processes_instead_of_returning(
     release_manager.activate_release(release_dir, paths, command_runner=runner)
 
     assert calls == [
-        (
-            "systemctl",
-            "stop",
-            "shreks-paper-campaign.service",
-            "shreks-paper-evidence.service",
-            "shreks-observe.service",
-            "shreks.target",
-        ),
+        *_expected_stop_calls(),
         ("systemctl", "daemon-reload"),
         ("systemctl", "start", "shreks.target"),
     ]
