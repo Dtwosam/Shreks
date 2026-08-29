@@ -49,6 +49,8 @@ def test_release_build_script_is_fail_closed_allowlisted_and_locally_verified():
         'deploy/systemd/shreks-paper-evidence.service',
         'deploy/systemd/shreks-paper-campaign.service',
         'deploy/systemd/shreks.target',
+        'deploy/release/release_manager.py',
+        'deploy/release/release_bundle.py',
         'release_bundle.py build',
         'release_bundle.py verify',
         'x86_64-unknown-linux-gnu',
@@ -246,3 +248,14 @@ def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account
     assert "deploy ssh key" in lower
     assert "trading key" in lower
     assert "never" in lower
+
+
+def test_release_runbook_documents_sealed_control_plane_recovery():
+    runbook = _read(_RELEASE_RUNBOOK)
+    for required in (
+        "/opt/shreks/current/deploy/release/release_manager.py",
+        "/opt/shreks/current/deploy/release/release_bundle.py",
+        "activate-existing",
+        "process identity",
+    ):
+        assert required in runbook
