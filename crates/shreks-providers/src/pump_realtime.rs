@@ -654,6 +654,14 @@ fn decode_trade_evidence_from_notification_logs(
             provider,
             format!("Pump realtime signature {signature} unexpectedly classified as pending"),
         )),
+        PumpTradeVerification::Rejected(reason)
+            if reason
+                == format!(
+                    "Pump trade signature {signature} contained no verified Pump tradeEvent"
+                ) =>
+        {
+            Ok(Vec::new())
+        }
         PumpTradeVerification::Rejected(reason) => Err(invalid_response(
             provider,
             format!(
