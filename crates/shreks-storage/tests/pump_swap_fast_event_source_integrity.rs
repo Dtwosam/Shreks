@@ -10,7 +10,8 @@ use shreks_core::{
     TokenLifecycleEvent, VenueId,
 };
 use shreks_storage::{
-    pump_swap_event_ordinal, PumpSwapTradeEvidenceWrite, ShreksDb, StorageError,
+    pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite, ShreksDb,
+    StorageError,
 };
 
 const WSOL: &str = "So11111111111111111111111111111111111111112";
@@ -167,6 +168,52 @@ fn first_canonical_append_must_match_immutable_pumpswap_source_truth() {
         db.pending_pump_swap_trade_evidence(32).unwrap().len(),
         cases.len()
     );
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_conflict_arriving_after_canonicalization_blocks_market_replay() {
+    let root = unique_test_dir("late-pumpswap");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    db.record_pump_migration_signal("migration-sig", 899, 900)
+        .unwrap();
+    db.complete_pump_migration("migration-sig", 950, &[verified_market()])
+        .unwrap();
+
+    let raw = raw_trade("late-pumpswap", 8);
+    assert_eq!(
+        db.record_pump_swap_trade_evidence_or_quarantine(&raw)
+            .unwrap(),
+        EvidenceWriteOutcome::Inserted
+    );
+    assert!(db
+        .record_fast_event(&canonical_event("late-pumpswap", 8), SOURCE_OBSERVED_MS, 6, 9)
+        .unwrap());
+    assert_eq!(
+        db.fast_events_for_market("mint-a", WSOL, VenueId::PumpSwap)
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let mut conflict = raw.clone();
+    conflict.slot += 2;
+    conflict.observed_at_unix_ms += 500;
+    conflict.base_amount_raw += 1;
+    assert_eq!(
+        db.record_pump_swap_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
+
+    let error = db
+        .fast_events_for_market("mint-a", WSOL, VenueId::PumpSwap)
+        .expect_err("late PumpSwap fork ambiguity must invalidate canonical market replay");
+    assert!(error.to_string().contains("quarantine"));
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 2);
 
     cleanup_dir(&root);
 }
