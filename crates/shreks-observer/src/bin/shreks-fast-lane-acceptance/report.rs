@@ -69,6 +69,7 @@ pub struct FastLaneAcceptanceReport {
     pub pumpswap_conflict_quarantine_total: u64,
     pub pump_conflict_quarantine_events: u64,
     pub pumpswap_conflict_quarantine_events: u64,
+    pub canonical_conflict_quarantine_violations: u64,
     pub pending_pump_events: u64,
     pub pending_pumpswap_events: u64,
     pub sequence_integrity_violations: u64,
@@ -195,6 +196,27 @@ impl FastLaneAcceptanceStore {
             as_of_unix_ms,
             "PumpSwap conflict quarantine window count",
         )?;
+        let canonical_conflict_quarantine_violations = count_query(
+            &self.connection,
+            r#"SELECT COUNT(*)
+               FROM fast_events AS f
+               WHERE (
+                   f.venue = 'pump_fun_bonding_curve'
+                   AND EXISTS (
+                       SELECT 1
+                       FROM pump_trade_evidence_conflicts AS c
+                       WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                   )
+               ) OR (
+                   f.venue = 'pump_swap'
+                   AND EXISTS (
+                       SELECT 1
+                       FROM pump_swap_trade_evidence_conflicts AS c
+                       WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                   )
+               )"#,
+            "canonical conflict quarantine violation count",
+        )?;
 
         let pending_pump_events = count_query(
             &self.connection,
@@ -256,6 +278,7 @@ impl FastLaneAcceptanceStore {
             pumpswap_conflict_quarantine_total,
             pump_conflict_quarantine_events,
             pumpswap_conflict_quarantine_events,
+            canonical_conflict_quarantine_violations,
             pending_pump_events,
             pending_pumpswap_events,
             sequence_integrity_violations: sequence_integrity_violations(&self.connection)?,
