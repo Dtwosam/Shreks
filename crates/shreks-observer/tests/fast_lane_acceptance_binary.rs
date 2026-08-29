@@ -81,6 +81,7 @@ fn empty_schema_thirteen_database_emits_stable_key_value_contract() {
         "pumpswap_conflict_quarantine_total",
         "pump_conflict_quarantine_events",
         "pumpswap_conflict_quarantine_events",
+        "canonical_conflict_quarantine_violations",
         "pending_pump_events",
         "pending_pumpswap_events",
         "sequence_integrity_violations",
@@ -121,6 +122,7 @@ fn empty_schema_thirteen_database_emits_stable_key_value_contract() {
     assert_eq!(parsed["pumpswap_conflict_quarantine_total"], "0");
     assert_eq!(parsed["pump_conflict_quarantine_events"], "0");
     assert_eq!(parsed["pumpswap_conflict_quarantine_events"], "0");
+    assert_eq!(parsed["canonical_conflict_quarantine_violations"], "0");
     assert_eq!(parsed["pending_pump_events"], "0");
     assert_eq!(parsed["pending_pumpswap_events"], "0");
     assert_eq!(parsed["sequence_integrity_violations"], "0");
