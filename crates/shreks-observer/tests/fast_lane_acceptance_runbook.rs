@@ -60,3 +60,27 @@ fn fl1_acceptance_runbook_distinguishes_database_and_host_only_evidence() {
         assert!(RUNBOOK.contains(required), "missing evidence boundary: {required}");
     }
 }
+
+#[test]
+fn fl1_acceptance_runbook_covers_quarantine_integrity_and_provider_order() {
+    for required in [
+        "pump_conflict_quarantine_total",
+        "pumpswap_conflict_quarantine_total",
+        "pump_conflict_quarantine_events",
+        "pumpswap_conflict_quarantine_events",
+        "canonical_conflict_quarantine_violations=0",
+        "Helius -> Chainstack -> Alchemy",
+        "isolated quarantined fork conflicts",
+        "persistent or growing quarantine",
+    ] {
+        assert!(
+            RUNBOOK.contains(required),
+            "FL1.5 runbook must document quarantine/provider acceptance contract: {required}"
+        );
+    }
+
+    assert!(
+        !RUNBOOK.contains("proves continued `alchemy` raw/canonical progress"),
+        "FL1.5 runbook must not skip the configured Chainstack secondary when describing Helius fallback"
+    );
+}
