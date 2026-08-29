@@ -36,7 +36,7 @@ fn open_creates_parent_directory_and_configures_sqlite() {
     let diagnostics = db.diagnostics().unwrap();
     assert_eq!(diagnostics.journal_mode, "wal");
     assert!(diagnostics.foreign_keys_enabled);
-    assert_eq!(diagnostics.schema_version, 12);
+    assert_eq!(diagnostics.schema_version, 13);
 
     drop(db);
     cleanup_dir(&root);
@@ -70,6 +70,8 @@ fn migrations_create_operational_lifecycle_paper_wallet_safety_and_fast_lane_tab
         "paper_quote_snapshots",
         "pump_trade_evidence",
         "pump_swap_trade_evidence",
+        "pump_trade_evidence_conflicts",
+        "pump_swap_trade_evidence_conflicts",
         "fast_events",
     ] {
         let count: i64 = connection
@@ -94,6 +96,10 @@ fn migrations_create_operational_lifecycle_paper_wallet_safety_and_fast_lane_tab
         "idx_pump_trade_evidence_observed",
         "idx_pump_swap_trade_evidence_pool_time",
         "idx_pump_swap_trade_evidence_observed",
+        "idx_pump_trade_evidence_conflicts_identity",
+        "idx_pump_trade_evidence_conflicts_observed",
+        "idx_pump_swap_trade_evidence_conflicts_identity",
+        "idx_pump_swap_trade_evidence_conflicts_observed",
         "idx_fast_events_market_sequence",
         "idx_fast_events_observed_sequence",
     ] {
@@ -118,13 +124,13 @@ fn reopening_database_does_not_reapply_migrations() {
 
     drop(ShreksDb::open(&db_path).unwrap());
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 12);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 13);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
     for version in [
         1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64, 8_i64, 9_i64, 10_i64, 11_i64,
-        12_i64,
+        12_i64, 13_i64,
     ] {
         let count: i64 = connection
             .query_row(
@@ -174,7 +180,7 @@ fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence(
     drop(connection);
 
     let upgraded = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(upgraded.diagnostics().unwrap().schema_version, 12);
+    assert_eq!(upgraded.diagnostics().unwrap().schema_version, 13);
     drop(upgraded);
 
     let connection = Connection::open(&db_path).unwrap();
@@ -205,7 +211,7 @@ fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence(
         .unwrap();
     assert_eq!(paper_quote_table_count, 1);
 
-    for version in [8_i64, 9_i64, 10_i64, 11_i64, 12_i64] {
+    for version in [8_i64, 9_i64, 10_i64, 11_i64, 12_i64, 13_i64] {
         let count: i64 = connection
             .query_row(
                 "SELECT COUNT(*) FROM schema_migrations WHERE version = ?1",

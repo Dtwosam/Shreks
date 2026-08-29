@@ -365,6 +365,11 @@ impl ShreksDb {
     }
 
     /// Replay one market's canonical journal in durable sequence order.
+    ///
+    /// If any canonical identity in the requested market later entered the
+    /// venue-specific conflict quarantine, replay fails closed. The immutable
+    /// canonical journal is preserved for forensics, but ambiguous economics
+    /// are never returned as trusted market state.
     pub fn fast_events_for_market(
         &self,
         mint: &str,
@@ -373,6 +378,40 @@ impl ShreksDb {
     ) -> Result<Vec<StoredFastEvent>, StorageError> {
         validate_nonempty(mint, "FastEvent mint")?;
         validate_nonempty(quote_mint, "FastEvent quote mint")?;
+
+        let quarantined_canonical: i64 = match venue {
+            VenueId::PumpFunBondingCurve => self.connection.query_row(
+                r#"SELECT COUNT(*)
+                   FROM fast_events AS f
+                   WHERE f.mint = ?1 AND f.quote_mint = ?2 AND f.venue = ?3
+                     AND EXISTS (
+                         SELECT 1
+                         FROM pump_trade_evidence_conflicts AS c
+                         WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                     )"#,
+                params![mint, quote_mint, venue.as_str()],
+                |row| row.get(0),
+            )?,
+            VenueId::PumpSwap => self.connection.query_row(
+                r#"SELECT COUNT(*)
+                   FROM fast_events AS f
+                   WHERE f.mint = ?1 AND f.quote_mint = ?2 AND f.venue = ?3
+                     AND EXISTS (
+                         SELECT 1
+                         FROM pump_swap_trade_evidence_conflicts AS c
+                         WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                     )"#,
+                params![mint, quote_mint, venue.as_str()],
+                |row| row.get(0),
+            )?,
+            _ => 0,
+        };
+        if quarantined_canonical > 0 {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent market replay blocked by {quarantined_canonical} conflict-quarantined canonical identities for venue '{}'",
+                venue.as_str()
+            )));
+        }
 
         let mut statement = self.connection.prepare(
             r#"SELECT

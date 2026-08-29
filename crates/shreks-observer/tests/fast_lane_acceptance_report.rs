@@ -84,6 +84,62 @@ fn insert_pumpswap_raw(
         .unwrap();
 }
 
+fn insert_pump_conflict(
+    connection: &Connection,
+    signature: &str,
+    slot: &str,
+    observed_at_unix_ms: i64,
+    token_amount_raw: &str,
+) {
+    connection
+        .execute(
+            r#"INSERT INTO pump_trade_evidence_conflicts (
+                   signature, ordinal, provider, slot, observed_at_unix_ms,
+                   mint, quote_mint, user, is_buy,
+                   token_amount_raw, sol_amount_raw, quote_amount_raw,
+                   timestamp_unix_seconds,
+                   virtual_sol_reserves_raw, virtual_token_reserves_raw,
+                   real_sol_reserves_raw, real_token_reserves_raw,
+                   virtual_quote_reserves_raw, real_quote_reserves_raw, ix_name
+               ) VALUES (
+                   ?1, 0, 'chainstack', ?2, ?3,
+                   'mint-a', 'So11111111111111111111111111111111111111112', 'wallet-a', 1,
+                   ?4, '100000000', '0',
+                   1,
+                   '10000000000', '20000000000',
+                   '5000000000', '10000000000',
+                   '0', '0', 'buy'
+               )"#,
+            params![signature, slot, observed_at_unix_ms, token_amount_raw],
+        )
+        .unwrap();
+}
+
+fn insert_pumpswap_conflict(
+    connection: &Connection,
+    signature: &str,
+    slot: &str,
+    observed_at_unix_ms: i64,
+    base_amount_raw: &str,
+) {
+    connection
+        .execute(
+            r#"INSERT INTO pump_swap_trade_evidence_conflicts (
+                   signature, ordinal, log_index, provider, slot, observed_at_unix_ms,
+                   pool, user, is_buy,
+                   base_amount_raw, quote_amount_raw, user_quote_amount_raw,
+                   timestamp_unix_seconds, pool_base_reserves_raw, pool_quote_reserves_raw
+               ) VALUES (
+                   ?1, 2147483649, 1, 'chainstack', ?2, ?3,
+                   'pool-a', 'wallet-swap', 1,
+                   ?4, '2500000000', '2530000000',
+                   1, '9500000000', '52500000000'
+               )"#,
+            params![signature, slot, observed_at_unix_ms, base_amount_raw],
+        )
+        .unwrap();
+}
+
 fn insert_fast_event(
     connection: &Connection,
     sequence: i64,
@@ -202,6 +258,11 @@ fn report_counts_backlog_sequence_and_exact_latency_percentiles() {
     assert_eq!(acceptance.pump_raw_events, 3);
     assert_eq!(acceptance.pumpswap_raw_events, 1);
     assert_eq!(acceptance.canonical_events, 3);
+    assert_eq!(acceptance.pump_conflict_quarantine_total, 0);
+    assert_eq!(acceptance.pumpswap_conflict_quarantine_total, 0);
+    assert_eq!(acceptance.pump_conflict_quarantine_events, 0);
+    assert_eq!(acceptance.pumpswap_conflict_quarantine_events, 0);
+    assert_eq!(acceptance.canonical_conflict_quarantine_violations, 0);
     assert_eq!(acceptance.pending_pump_events, 1);
     assert_eq!(acceptance.pending_pumpswap_events, 0);
     assert_eq!(acceptance.sequence_integrity_violations, 0);
@@ -238,6 +299,33 @@ fn report_counts_backlog_sequence_and_exact_latency_percentiles() {
         }
     );
 
+    drop(store);
+    assert_eq!(fs::metadata(&db_path).unwrap().len(), bytes_before);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn conflict_quarantine_reports_total_and_window_counts_without_mutation() {
+    let root = unique_test_dir("quarantine");
+    let db_path = root.join("shreks.db");
+    seeded_database(&db_path);
+    let connection = Connection::open(&db_path).unwrap();
+    insert_pump_conflict(&connection, "pump-pending", "56", 1_500, "3000000");
+    insert_pump_conflict(&connection, "pump-pending", "57", 900, "4000000");
+    insert_pumpswap_conflict(&connection, "swap-a", "901", 1_600, "600000000");
+    insert_pumpswap_conflict(&connection, "swap-a", "902", 900, "700000000");
+    drop(connection);
+    let bytes_before = fs::metadata(&db_path).unwrap().len();
+
+    let store = FastLaneAcceptanceStore::open(&db_path).unwrap();
+    let acceptance = store.report(1_000, 2_000).unwrap();
+
+    assert_eq!(acceptance.pump_conflict_quarantine_total, 2);
+    assert_eq!(acceptance.pumpswap_conflict_quarantine_total, 2);
+    assert_eq!(acceptance.pump_conflict_quarantine_events, 1);
+    assert_eq!(acceptance.pumpswap_conflict_quarantine_events, 1);
+    assert_eq!(acceptance.canonical_conflict_quarantine_violations, 1);
     drop(store);
     assert_eq!(fs::metadata(&db_path).unwrap().len(), bytes_before);
 

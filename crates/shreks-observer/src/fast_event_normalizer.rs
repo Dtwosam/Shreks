@@ -114,11 +114,11 @@ pub fn normalize_pending_pump_trade_evidence_at(
 
     loop {
         let mut pending = db
-            .pending_pump_trade_evidence(scan_limit)?
+            .pending_unambiguous_pump_trade_evidence(scan_limit)?
             .into_iter()
             .map(PendingEvidence::Pump)
             .chain(
-                db.pending_pump_swap_trade_evidence(scan_limit)?
+                db.pending_unambiguous_pump_swap_trade_evidence(scan_limit)?
                     .into_iter()
                     .map(PendingEvidence::PumpSwap),
             )

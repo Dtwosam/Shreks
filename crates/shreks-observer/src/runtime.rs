@@ -18,8 +18,8 @@ use shreks_providers::{
     ProviderError,
 };
 use shreks_storage::{
-    pump_swap_event_ordinal, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb,
-    StorageError,
+    pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
+    PumpTradeEvidenceWrite, ShreksDb, StorageError,
 };
 use tokio::sync::mpsc;
 
@@ -262,8 +262,12 @@ impl Observer {
                     ix_name: trade.ix_name.clone(),
                 };
 
-                if db.record_pump_trade_evidence(&write)? {
-                    trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
+                match db.record_pump_trade_evidence_or_quarantine(&write)? {
+                    EvidenceWriteOutcome::Inserted => {
+                        trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
+                    }
+                    EvidenceWriteOutcome::Duplicate
+                    | EvidenceWriteOutcome::QuarantinedConflict => {}
                 }
             }
 
@@ -287,8 +291,12 @@ impl Observer {
                     pool_quote_reserves_raw: trade.pool_quote_reserves_raw,
                 };
 
-                if db.record_pump_swap_trade_evidence(&write)? {
-                    trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
+                match db.record_pump_swap_trade_evidence_or_quarantine(&write)? {
+                    EvidenceWriteOutcome::Inserted => {
+                        trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
+                    }
+                    EvidenceWriteOutcome::Duplicate
+                    | EvidenceWriteOutcome::QuarantinedConflict => {}
                 }
             }
         }

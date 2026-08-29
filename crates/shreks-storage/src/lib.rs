@@ -1,11 +1,13 @@
 //! Operational SQLite storage for Shreks.
 
+mod conflict_quarantine;
 mod fast_lane;
 mod lifecycle;
 mod outcomes;
 mod pump_swap_fast_lane;
 mod safety_evidence;
 mod wallet;
+pub use conflict_quarantine::EvidenceWriteOutcome;
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
@@ -98,6 +100,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 12,
         name: "fast_lane_pumpswap_evidence",
         sql: include_str!("../migrations/0012_fast_lane_pumpswap_evidence.sql"),
+    },
+    Migration {
+        version: 13,
+        name: "fast_lane_conflict_quarantine",
+        sql: include_str!("../migrations/0013_fast_lane_conflict_quarantine.sql"),
     },
 ];
 
