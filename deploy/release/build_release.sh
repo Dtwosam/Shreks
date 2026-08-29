@@ -42,6 +42,7 @@ rm -rf "$WHEEL_OUT"
 mkdir -p \
   "$STAGING/target/release" \
   "$STAGING/deploy/systemd" \
+  "$STAGING/deploy/release" \
   "$STAGING/wheelhouse" \
   "$WHEEL_OUT"
 
@@ -60,6 +61,11 @@ cp deploy/systemd/shreks-observe.service "$STAGING/deploy/systemd/shreks-observe
 cp deploy/systemd/shreks-paper-evidence.service "$STAGING/deploy/systemd/shreks-paper-evidence.service"
 cp deploy/systemd/shreks-paper-campaign.service "$STAGING/deploy/systemd/shreks-paper-campaign.service"
 cp deploy/systemd/shreks.target "$STAGING/deploy/systemd/shreks.target"
+cp deploy/release/release_manager.py "$STAGING/deploy/release/release_manager.py"
+cp deploy/release/release_bundle.py "$STAGING/deploy/release/release_bundle.py"
+chmod 0755 \
+  "$STAGING/deploy/release/release_manager.py" \
+  "$STAGING/deploy/release/release_bundle.py"
 cp "${WHEELS[0]}" "$STAGING/wheelhouse/$(basename "${WHEELS[0]}")"
 
 python deploy/release/release_bundle.py build \
