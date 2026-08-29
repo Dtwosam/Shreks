@@ -58,7 +58,7 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 }
 
 #[test]
-fn chainstack_is_realtime_only_and_ordered_between_helius_and_alchemy() {
+fn chainstack_is_readonly_rpc_and_realtime_fallback_between_helius_and_alchemy() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         "CHAINSTACK_SOLANA_WSS_URL" => {
@@ -70,8 +70,16 @@ fn chainstack_is_realtime_only_and_ordered_between_helius_and_alchemy() {
     .unwrap();
 
     let plan = free_observe_provider_plan(&config.providers);
-    assert_eq!(plan.chain, vec![ProviderId::Helius]);
-    assert_eq!(plan.transactions, vec![ProviderId::Helius]);
+    assert_eq!(
+        plan.chain,
+        vec![ProviderId::Helius, ProviderId::Chainstack],
+        "Helius remains primary and Chainstack is the standard-RPC chain fallback"
+    );
+    assert_eq!(
+        plan.transactions,
+        vec![ProviderId::Helius, ProviderId::Chainstack],
+        "Helius remains primary and Chainstack is the standard-RPC transaction fallback"
+    );
     assert_eq!(
         plan.realtime,
         vec![
@@ -79,16 +87,14 @@ fn chainstack_is_realtime_only_and_ordered_between_helius_and_alchemy() {
             ProviderId::Chainstack,
             ProviderId::Alchemy,
         ],
-        "Helius remains primary, Chainstack is the proven free fallback, and Alchemy stays tertiary"
+        "Helius remains primary, Chainstack is the proven fallback, and Alchemy stays tertiary"
     );
-    assert!(!plan.chain.contains(&ProviderId::Chainstack));
-    assert!(!plan.transactions.contains(&ProviderId::Chainstack));
     assert!(!plan.chain.contains(&ProviderId::Alchemy));
     assert!(!plan.transactions.contains(&ProviderId::Alchemy));
 }
 
 #[test]
-fn chainstack_can_provide_realtime_without_helius_chain_authority() {
+fn chainstack_can_supply_readonly_rpc_and_realtime_without_helius() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "CHAINSTACK_SOLANA_WSS_URL" => {
             Some("wss://solana-mainnet.core.chainstack.com/fixture-chainstack-key".to_owned())
@@ -98,8 +104,8 @@ fn chainstack_can_provide_realtime_without_helius_chain_authority() {
     .unwrap();
 
     let plan = free_observe_provider_plan(&config.providers);
-    assert!(plan.chain.is_empty());
-    assert!(plan.transactions.is_empty());
+    assert_eq!(plan.chain, vec![ProviderId::Chainstack]);
+    assert_eq!(plan.transactions, vec![ProviderId::Chainstack]);
     assert_eq!(plan.realtime, vec![ProviderId::Chainstack]);
 }
 
