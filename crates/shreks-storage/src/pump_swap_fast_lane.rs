@@ -48,6 +48,12 @@ pub fn pump_swap_event_ordinal(log_index: u32) -> Result<u32, StorageError> {
 }
 
 impl ShreksDb {
+    /// Persist one immutable PumpSwap economic event.
+    ///
+    /// `(signature, ordinal)` is the canonical identity. Replaying the same
+    /// economics is idempotent even when a later provider, confirmed fork slot,
+    /// or local observation timestamp differs; the first stored provenance
+    /// remains authoritative. A conflicting economic payload still fails closed.
     pub fn record_pump_swap_trade_evidence(
         &self,
         evidence: &PumpSwapTradeEvidenceWrite,
@@ -484,11 +490,9 @@ fn same_economic_event(
     stored: &PumpSwapTradeEvidenceWrite,
     incoming: &PumpSwapTradeEvidenceWrite,
 ) -> bool {
-    stored.provider == incoming.provider
-        && stored.signature == incoming.signature
+    stored.signature == incoming.signature
         && stored.ordinal == incoming.ordinal
         && stored.log_index == incoming.log_index
-        && stored.slot == incoming.slot
         && stored.pool == incoming.pool
         && stored.user == incoming.user
         && stored.is_buy == incoming.is_buy
