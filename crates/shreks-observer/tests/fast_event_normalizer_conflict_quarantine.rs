@@ -122,3 +122,49 @@ fn quarantined_ready_identity_is_not_canonicalized() {
 
     cleanup_dir(&root);
 }
+
+#[test]
+fn conflict_arriving_after_normalization_makes_market_replay_fail_closed() {
+    let root = unique_test_dir("late-pump");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    verify_decimals(&db);
+
+    let first = trade(2_500_000_000);
+    assert_eq!(
+        db.record_pump_trade_evidence_or_quarantine(&first).unwrap(),
+        EvidenceWriteOutcome::Inserted
+    );
+    let normalized = normalize_pending_pump_trade_evidence_at(&db, 32, ACCEPTED_MS).unwrap();
+    assert_eq!(normalized.normalized, 1);
+    assert_eq!(
+        db.fast_events_for_market(
+            "mint-conflict",
+            shreks_providers::pump::WRAPPED_SOL_MINT,
+            VenueId::PumpFunBondingCurve,
+        )
+        .unwrap()
+        .len(),
+        1
+    );
+
+    let mut conflict = trade(2_500_000_001);
+    conflict.slot += 2;
+    conflict.observed_at_unix_ms += 500;
+    assert_eq!(
+        db.record_pump_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
+
+    let error = db
+        .fast_events_for_market(
+            "mint-conflict",
+            shreks_providers::pump::WRAPPED_SOL_MINT,
+            VenueId::PumpFunBondingCurve,
+        )
+        .expect_err("late fork ambiguity must invalidate canonical market replay");
+    assert!(error.to_string().contains("quarantine"));
+    assert_eq!(db.next_fast_event_sequence().unwrap(), 2);
+
+    cleanup_dir(&root);
+}
