@@ -27,6 +27,14 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "pump_trade_evidence_conflicts",
+        &["signature", "ordinal", "observed_at_unix_ms"],
+    ),
+    (
+        "pump_swap_trade_evidence_conflicts",
+        &["signature", "ordinal", "observed_at_unix_ms"],
+    ),
+    (
         "fast_events",
         &[
             "sequence",
@@ -57,6 +65,10 @@ pub struct FastLaneAcceptanceReport {
     pub pump_raw_events: u64,
     pub pumpswap_raw_events: u64,
     pub canonical_events: u64,
+    pub pump_conflict_quarantine_total: u64,
+    pub pumpswap_conflict_quarantine_total: u64,
+    pub pump_conflict_quarantine_events: u64,
+    pub pumpswap_conflict_quarantine_events: u64,
     pub pending_pump_events: u64,
     pub pending_pumpswap_events: u64,
     pub sequence_integrity_violations: u64,
@@ -159,6 +171,30 @@ impl FastLaneAcceptanceStore {
             as_of_unix_ms,
             "canonical FastEvent count",
         )?;
+        let pump_conflict_quarantine_total = count_query(
+            &self.connection,
+            "SELECT COUNT(*) FROM pump_trade_evidence_conflicts",
+            "Pump conflict quarantine total",
+        )?;
+        let pumpswap_conflict_quarantine_total = count_query(
+            &self.connection,
+            "SELECT COUNT(*) FROM pump_swap_trade_evidence_conflicts",
+            "PumpSwap conflict quarantine total",
+        )?;
+        let pump_conflict_quarantine_events = window_count(
+            &self.connection,
+            "SELECT COUNT(*) FROM pump_trade_evidence_conflicts WHERE observed_at_unix_ms >= ?1 AND observed_at_unix_ms < ?2",
+            window_start_unix_ms,
+            as_of_unix_ms,
+            "Pump conflict quarantine window count",
+        )?;
+        let pumpswap_conflict_quarantine_events = window_count(
+            &self.connection,
+            "SELECT COUNT(*) FROM pump_swap_trade_evidence_conflicts WHERE observed_at_unix_ms >= ?1 AND observed_at_unix_ms < ?2",
+            window_start_unix_ms,
+            as_of_unix_ms,
+            "PumpSwap conflict quarantine window count",
+        )?;
 
         let pending_pump_events = count_query(
             &self.connection,
@@ -216,6 +252,10 @@ impl FastLaneAcceptanceStore {
             pump_raw_events,
             pumpswap_raw_events,
             canonical_events,
+            pump_conflict_quarantine_total,
+            pumpswap_conflict_quarantine_total,
+            pump_conflict_quarantine_events,
+            pumpswap_conflict_quarantine_events,
             pending_pump_events,
             pending_pumpswap_events,
             sequence_integrity_violations: sequence_integrity_violations(&self.connection)?,
