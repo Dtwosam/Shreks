@@ -32,6 +32,7 @@ const DEFAULT_RECONNECT_BASE: Duration = Duration::from_secs(1);
 const DEFAULT_RECONNECT_MAX: Duration = Duration::from_secs(30);
 const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_CONNECT_ATTEMPTS: u32 = 5;
+const DEFAULT_FAILOVER_RETRY_DELAY: Duration = Duration::from_secs(30);
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const PUMP_SUBSCRIPTION_REQUEST_ID: u64 = 1;
 const PUMPSWAP_SUBSCRIPTION_REQUEST_ID: u64 = 2;
@@ -325,11 +326,14 @@ impl PumpRealtimeLogStream {
 }
 
 /// Ordered standard-Solana realtime sources. The currently working source is
-/// sticky; retryable exhaustion rotates to the next configured provider. One
-/// complete failed pass returns an error so the observer can fail closed.
+/// sticky. Provider setup outages rotate to the next configured provider. A
+/// complete retryable outage pass backs off and retries in-process so provider
+/// recovery does not require systemd restarts. Non-retryable evidence errors
+/// still terminate fail closed.
 pub struct PumpRealtimeFailoverStream {
     streams: Vec<PumpRealtimeLogStream>,
     active_index: usize,
+    retry_cycle_delay: Duration,
 }
 
 impl PumpRealtimeFailoverStream {
@@ -344,39 +348,43 @@ impl PumpRealtimeFailoverStream {
         Ok(Self {
             streams: configs.into_iter().map(PumpRealtimeLogStream::new).collect(),
             active_index: 0,
+            retry_cycle_delay: DEFAULT_FAILOVER_RETRY_DELAY,
         })
+    }
+
+    pub fn with_retry_cycle_delay(mut self, delay: Duration) -> Self {
+        self.retry_cycle_delay = delay;
+        self
     }
 
     pub async fn next_realtime_notification(
         &mut self,
     ) -> Result<PumpRealtimeNotification, ProviderError> {
-        let stream_count = self.streams.len();
-        let start = self.active_index;
-        let mut last_retryable_error = None;
-        let mut attempts = Vec::with_capacity(stream_count);
+        loop {
+            let stream_count = self.streams.len();
+            let start = self.active_index;
+            let mut attempts = Vec::with_capacity(stream_count);
 
-        for offset in 0..stream_count {
-            let index = (start + offset) % stream_count;
-            match self.streams[index].next_realtime_notification().await {
-                Ok(notification) => {
-                    self.active_index = index;
-                    return Ok(notification);
-                }
-                Err(error) if error.is_retryable() => {
-                    attempts.push(format!("{}:{:?}", error.provider, error.kind));
-                    self.active_index = (index + 1) % stream_count;
-                    last_retryable_error = Some(error);
-                }
-                Err(error) => {
-                    attempts.push(format!("{}:{:?}", error.provider, error.kind));
-                    return Err(with_failover_attempt_trace(error, &attempts));
+            for offset in 0..stream_count {
+                let index = (start + offset) % stream_count;
+                match self.streams[index].next_realtime_notification().await {
+                    Ok(notification) => {
+                        self.active_index = index;
+                        return Ok(notification);
+                    }
+                    Err(error) if error.is_retryable() => {
+                        attempts.push(format!("{}:{:?}", error.provider, error.kind));
+                        self.active_index = (index + 1) % stream_count;
+                    }
+                    Err(error) => {
+                        attempts.push(format!("{}:{:?}", error.provider, error.kind));
+                        return Err(with_failover_attempt_trace(error, &attempts));
+                    }
                 }
             }
-        }
 
-        let error = last_retryable_error
-            .expect("non-empty provider set produced a retryable error");
-        Err(with_failover_attempt_trace(error, &attempts))
+            sleep(self.retry_cycle_delay).await;
+        }
     }
 }
 
@@ -467,9 +475,17 @@ fn parse_realtime_subscription_ack(
         return Ok(None);
     }
     if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
+        if error.get("code").and_then(Value::as_i64) == Some(-32601) {
+            return Err(websocket_unavailable(
+                provider,
+                format!(
+                    "{provider} Pump realtime subscription request {expected_request_id} method unavailable"
+                ),
+            ));
+        }
         return Err(invalid_response(
             provider,
-            format!("Pump realtime subscription request {expected_request_id} failed: {error}"),
+            format!("Pump realtime subscription request {expected_request_id} failed"),
         ));
     }
     let subscription = value.get("result").and_then(Value::as_u64).ok_or_else(|| {
