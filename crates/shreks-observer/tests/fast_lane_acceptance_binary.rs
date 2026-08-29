@@ -49,7 +49,7 @@ fn cli_requires_exactly_database_start_and_as_of_arguments() {
 }
 
 #[test]
-fn empty_schema_twelve_database_emits_stable_key_value_contract() {
+fn empty_schema_thirteen_database_emits_stable_key_value_contract() {
     let root = unique_test_dir("output");
     let db_path = root.join("shreks.db");
     drop(ShreksDb::open(&db_path).unwrap());
@@ -77,6 +77,10 @@ fn empty_schema_twelve_database_emits_stable_key_value_contract() {
         "pump_raw_events",
         "pumpswap_raw_events",
         "canonical_events",
+        "pump_conflict_quarantine_total",
+        "pumpswap_conflict_quarantine_total",
+        "pump_conflict_quarantine_events",
+        "pumpswap_conflict_quarantine_events",
         "pending_pump_events",
         "pending_pumpswap_events",
         "sequence_integrity_violations",
@@ -113,6 +117,10 @@ fn empty_schema_twelve_database_emits_stable_key_value_contract() {
     assert_eq!(parsed["pump_raw_events"], "0");
     assert_eq!(parsed["pumpswap_raw_events"], "0");
     assert_eq!(parsed["canonical_events"], "0");
+    assert_eq!(parsed["pump_conflict_quarantine_total"], "0");
+    assert_eq!(parsed["pumpswap_conflict_quarantine_total"], "0");
+    assert_eq!(parsed["pump_conflict_quarantine_events"], "0");
+    assert_eq!(parsed["pumpswap_conflict_quarantine_events"], "0");
     assert_eq!(parsed["pending_pump_events"], "0");
     assert_eq!(parsed["pending_pumpswap_events"], "0");
     assert_eq!(parsed["sequence_integrity_violations"], "0");
