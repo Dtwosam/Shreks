@@ -58,7 +58,7 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 }
 
 #[test]
-fn chainstack_is_readonly_rpc_and_realtime_fallback_between_helius_and_alchemy() {
+fn chainstack_adds_readonly_chain_truth_and_owns_transaction_verification_when_configured() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         "CHAINSTACK_SOLANA_WSS_URL" => {
@@ -73,12 +73,12 @@ fn chainstack_is_readonly_rpc_and_realtime_fallback_between_helius_and_alchemy()
     assert_eq!(
         plan.chain,
         vec![ProviderId::Helius, ProviderId::Chainstack],
-        "Helius remains primary and Chainstack is the standard-RPC chain fallback"
+        "Helius and Chainstack may independently persist read-only mint truth"
     );
     assert_eq!(
         plan.transactions,
-        vec![ProviderId::Helius, ProviderId::Chainstack],
-        "Helius remains primary and Chainstack is the standard-RPC transaction fallback"
+        vec![ProviderId::Chainstack],
+        "the current observer consumes only its first transaction adapter, so Chainstack is selected explicitly to keep fallback provenance truthful while Helius quota is exhausted"
     );
     assert_eq!(
         plan.realtime,
@@ -87,9 +87,10 @@ fn chainstack_is_readonly_rpc_and_realtime_fallback_between_helius_and_alchemy()
             ProviderId::Chainstack,
             ProviderId::Alchemy,
         ],
-        "Helius remains primary, Chainstack is the proven fallback, and Alchemy stays tertiary"
+        "Helius remains primary realtime, Chainstack is the proven fallback, and Alchemy stays tertiary"
     );
     assert!(!plan.chain.contains(&ProviderId::Alchemy));
+    assert!(!plan.transactions.contains(&ProviderId::Helius));
     assert!(!plan.transactions.contains(&ProviderId::Alchemy));
 }
 
