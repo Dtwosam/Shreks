@@ -107,7 +107,7 @@ async fn malformed_evidence_ws_endpoint() -> String {
 }
 
 #[tokio::test]
-async fn failover_stays_alive_when_every_realtime_provider_is_temporarily_unavailable() {
+async fn failover_returns_truthful_error_when_every_realtime_provider_is_unavailable() {
     let helius = PumpRealtimeLogStreamConfig::for_provider_endpoint(
         ProviderId::Helius,
         unavailable_ws_endpoint().await,
@@ -124,20 +124,33 @@ async fn failover_stays_alive_when_every_realtime_provider_is_temporarily_unavai
     .with_max_connect_attempts(1);
 
     let mut stream = PumpRealtimeFailoverStream::new(vec![helius, alchemy]).unwrap();
-    let result = tokio::time::timeout(
-        Duration::from_millis(100),
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
         stream.next_realtime_notification(),
     )
-    .await;
+    .await
+    .expect("all-provider exhaustion must finish within a bounded timeout")
+    .expect_err("all unavailable providers must fail closed");
 
+    assert_eq!(error.provider, ProviderId::Alchemy);
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
+    assert!(error.is_retryable());
     assert!(
-        result.is_err(),
-        "temporary all-provider exhaustion must remain in bounded self-healing retry instead of terminating the realtime source: {result:?}"
+        error
+            .message
+            .contains("failover_attempts=helius:Unavailable,alchemy:Unavailable"),
+        "terminal failover error must retain provider/kind-only attempt trace: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("ws://") && !error.message.contains("wss://"),
+        "failover diagnostics must never expose provider endpoints: {}",
+        error.message
     );
 }
 
 #[tokio::test]
-async fn subscription_method_not_found_is_a_provider_setup_outage_not_terminal_evidence_failure() {
+async fn subscription_method_not_found_rotates_as_setup_unavailable_then_fails_closed_if_all_lanes_fail() {
     let alchemy = PumpRealtimeLogStreamConfig::for_provider_endpoint(
         ProviderId::Alchemy,
         method_not_found_ws_endpoint().await,
@@ -154,15 +167,22 @@ async fn subscription_method_not_found_is_a_provider_setup_outage_not_terminal_e
     .with_max_connect_attempts(1);
 
     let mut stream = PumpRealtimeFailoverStream::new(vec![alchemy, helius]).unwrap();
-    let result = tokio::time::timeout(
-        Duration::from_millis(150),
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
         stream.next_realtime_notification(),
     )
-    .await;
+    .await
+    .expect("setup outage rotation must finish within a bounded timeout when every lane fails")
+    .expect_err("complete provider exhaustion must fail closed");
 
+    assert_eq!(error.provider, ProviderId::Helius);
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     assert!(
-        result.is_err(),
-        "a provider-specific subscription capability failure must be retried/rotated as setup unavailability instead of terminating the observer: {result:?}"
+        error
+            .message
+            .contains("failover_attempts=alchemy:Unavailable,helius:Unavailable"),
+        "setup method-not-found must be downgraded only to provider unavailability and preserved in the sanitized rotation trace: {}",
+        error.message
     );
 }
 
