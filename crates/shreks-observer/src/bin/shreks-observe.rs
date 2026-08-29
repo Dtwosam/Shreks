@@ -32,6 +32,7 @@ use shreks_providers::{
     pump_realtime::{
         forward_pump_realtime_signals, PumpRealtimeFailoverStream, PumpRealtimeLogStreamConfig,
     },
+    solana_rpc::StandardSolanaRpcProvider,
     DiscoveryProvider, ProviderError,
 };
 use shreks_storage::{ShreksDb, StorageError};
@@ -143,9 +144,16 @@ fn build_lifecycle_observer(
     }
     if let Some(api_key) = config.helius_api_key() {
         let helius = Arc::new(HeliusProvider::new(api_key)?);
+        observer = observer.with_chain_provider(helius.clone());
+        if !config.chainstack_enabled() {
+            observer = observer.with_transaction_provider(helius);
+        }
+    }
+    if let Some(endpoint) = config.chainstack_solana_wss_url() {
+        let chainstack = Arc::new(StandardSolanaRpcProvider::chainstack(endpoint)?);
         observer = observer
-            .with_chain_provider(helius.clone())
-            .with_transaction_provider(helius);
+            .with_chain_provider(chainstack.clone())
+            .with_transaction_provider(chainstack);
     }
     Ok(observer)
 }
