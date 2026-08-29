@@ -567,10 +567,7 @@ fn parse_pump_realtime_log_notification_for_provider(
             )
         })?;
     if signature == DEFAULT_SOLANA_SIGNATURE {
-        return Err(invalid_response(
-            provider,
-            "Pump realtime logsNotification uses default Solana signature",
-        ));
+        return Ok(None);
     }
     let logs = notification
         .get("logs")
