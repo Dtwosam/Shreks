@@ -101,7 +101,7 @@ fn holder_distribution_persists_full_width_values_incomplete_state_and_restart_i
     drop(db);
 
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 12);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 13);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
