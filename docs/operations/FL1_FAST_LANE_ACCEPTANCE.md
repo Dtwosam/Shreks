@@ -30,7 +30,7 @@ Use the authoritative persistent observer database:
 /var/lib/shreks/shreks.db
 ```
 
-FL1 realtime may be configured with `HELIUS_API_KEY` as primary, host-only `CHAINSTACK_SOLANA_WSS_URL` as the proven secondary standard-Solana websocket source, and `ALCHEMY_API_KEY` as tertiary. The Chainstack endpoint itself contains credential material. Provider credentials/endpoints belong only in protected host runtime configuration. Never print them, put their values in this runbook, copy them into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
+FL1 realtime provider order is **Helius -> Chainstack -> Alchemy**: `HELIUS_API_KEY` is primary, host-only `CHAINSTACK_SOLANA_WSS_URL` is the proven secondary standard-Solana websocket source, and `ALCHEMY_API_KEY` is tertiary. The Chainstack endpoint itself contains credential material. Provider credentials/endpoints belong only in protected host runtime configuration. Never print them, put their values in this runbook, copy them into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
 
 When accepting the provider-failover fix after a natural Helius quota failure, keep the failure natural: do not deliberately exhaust credits, block networking, corrupt credentials, or restart services merely to manufacture failover. If Helius is already returning `429` / `max usage reached`, that is valid real-world primary-provider failure evidence and the representative window should prove that the configured fallback continues FL1 ingestion.
 
@@ -47,6 +47,11 @@ It reports:
 - raw Pump event count for the selected window;
 - raw PumpSwap event count for the selected window;
 - canonical FastEvent count for the selected window;
+- `pump_conflict_quarantine_total`, the total durable Pump conflicting variants retained for forensics;
+- `pumpswap_conflict_quarantine_total`, the total durable PumpSwap conflicting variants retained for forensics;
+- `pump_conflict_quarantine_events`, the Pump conflicting variants observed inside the selected acceptance window;
+- `pumpswap_conflict_quarantine_events`, the PumpSwap conflicting variants observed inside the selected acceptance window;
+- `canonical_conflict_quarantine_violations`, the count of canonical identities that also have a venue-specific quarantined conflicting variant;
 - current pending Pump backlog;
 - current pending PumpSwap backlog;
 - canonical sequence-integrity violations;
@@ -55,7 +60,7 @@ It reports:
 - chain occurrence -> canonical acceptance latency;
 - database and WAL bytes at report time.
 
-The reporter does not perform provider calls and cannot measure an attempted duplicate delivery that was rejected before it became a second durable row. Do not invent a duplicate-attempt count from SQLite.
+The reporter does not perform provider calls and cannot measure an attempted duplicate delivery that was rejected before it became a second durable row. Do not invent a duplicate-attempt count from SQLite. Quarantine counts are durable evidence of conflicting economic variants, not a count of all network replay attempts.
 
 ### Provider-provenance evidence
 
@@ -168,6 +173,7 @@ Read the captured report. The minimum integrity requirements are:
 
 ```text
 sequence_integrity_violations=0
+canonical_conflict_quarantine_violations=0
 pump_raw_events > 0
 pumpswap_raw_events > 0
 ```
@@ -180,7 +186,9 @@ Also require:
 - pending Pump/PumpSwap rows are explainable by known metadata/lifecycle resolution and do not show an unexplained persistent or monotonically growing backlog across repeated representative windows;
 - p50/p95/p99/max values are retained as measured evidence, not silently converted into a pass threshold that was never specified;
 - `provider-counts.txt` contains only recognized realtime provenance (`helius`, `chainstack`, and/or `alchemy`) for FL1 rows and is consistent with the report's activity counts;
-- when the window naturally includes Helius quota exhaustion, `provider-counts.txt` proves continued `alchemy` raw/canonical progress rather than a stalled lane or falsely relabeled source.
+- when the window naturally includes Helius quota exhaustion and Chainstack is configured, `provider-counts.txt` proves continued `chainstack` raw/canonical progress rather than a stalled lane or falsely relabeled source. If Chainstack is unavailable or not configured and independently proven Alchemy is the configured tertiary fallback, Alchemy progress may satisfy the same requirement, with truthful `alchemy` provenance.
+
+The total and window quarantine counts must be retained as measured evidence. **isolated quarantined fork conflicts** do not by themselves fail FL1.5 when the disputed identities remain excluded from trusted canonical replay, `canonical_conflict_quarantine_violations=0`, the observer remains stable, and representative raw/canonical progress continues. A **persistent or growing quarantine** across representative windows is a HOLD until the ambiguity is explained and canonical progress is shown to remain trustworthy.
 
 A single pending row is not automatically a failure: delayed mint decimals or verified PumpSwap lifecycle mapping can be legitimate. The failure condition is unexplained persistence/growth, integrity errors, or evidence that normalization cannot catch up under real load.
 
@@ -209,7 +217,9 @@ Do not turn one quiet snapshot into a resource-capacity claim. If CPU/RSS or DB/
 
 The FL1 journal is idempotent by durable event identity. That means an attempted duplicate arriving during websocket replay can be rejected before it creates another raw/canonical row. SQLite therefore proves the absence of duplicated durable economic identities, not the number of duplicate attempts received from the network.
 
-Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect or provider rotation occurred, verify the database report still has `sequence_integrity_violations=0`, no unexplained backlog jump, truthful provider provenance, and continued canonical event progress after recovery. If no reconnect/failover occurred naturally, record that fact; do not manufacture a destructive restart or quota-exhaustion drill for this FL1.5 routine acceptance.
+A replay that carries a different economic payload for an already-stored `(signature, ordinal)` is not treated as an idempotent duplicate. It is durably quarantined as conflicting evidence. The quarantined variant must not overwrite the first raw row, enter canonical normalization, or remain trusted through canonical market replay if the ambiguity arrives after canonicalization.
+
+Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect or provider rotation occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful provider provenance, and continued canonical event progress after recovery. If no reconnect/failover occurred naturally, record that fact; do not manufacture a destructive restart or quota-exhaustion drill for this FL1.5 routine acceptance.
 
 ## 8. FL1.5 hold / exit rule
 
@@ -218,9 +228,11 @@ Use provider/reconnect journal evidence to assess whether reconnect behavior is 
 - the acceptance subcommand is not available from the exact verified immutable `shreks-observe` release payload;
 - the database is not the production observer database;
 - `sequence_integrity_violations` is nonzero;
+- `canonical_conflict_quarantine_violations` is nonzero;
 - the reporter rejects a timing invariant or schema invariant;
 - Pump or PumpSwap representative traffic is absent from the chosen window;
 - canonical progress stalls or pending backlog is persistently unexplained/growing;
+- quarantine is persistent or growing across representative windows without a bounded explanation, or fork ambiguity prevents representative canonical progress;
 - provider provenance is missing, unrecognized, contradictory, or inconsistent with the reported FL1 activity;
 - Helius quota exhaustion occurs without a working configured fallback, or all configured realtime providers are exhausted/unavailable;
 - the observer remains nominally healthy while realtime raw/canonical progress has stopped;
