@@ -74,6 +74,22 @@ fn print_report(report: &FastLaneAcceptanceReport) -> Result<(), String> {
     println!("pump_raw_events={}", report.pump_raw_events);
     println!("pumpswap_raw_events={}", report.pumpswap_raw_events);
     println!("canonical_events={}", report.canonical_events);
+    println!(
+        "pump_conflict_quarantine_total={}",
+        report.pump_conflict_quarantine_total
+    );
+    println!(
+        "pumpswap_conflict_quarantine_total={}",
+        report.pumpswap_conflict_quarantine_total
+    );
+    println!(
+        "pump_conflict_quarantine_events={}",
+        report.pump_conflict_quarantine_events
+    );
+    println!(
+        "pumpswap_conflict_quarantine_events={}",
+        report.pumpswap_conflict_quarantine_events
+    );
     println!("pending_pump_events={}", report.pending_pump_events);
     println!("pending_pumpswap_events={}", report.pending_pumpswap_events);
     println!(
