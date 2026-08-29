@@ -36,6 +36,8 @@ const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const PUMP_SUBSCRIPTION_REQUEST_ID: u64 = 1;
 const PUMPSWAP_SUBSCRIPTION_REQUEST_ID: u64 = 2;
 const ALCHEMY_MAINNET_WS_BASE: &str = "wss://solana-mainnet.g.alchemy.com/v2/";
+const DEFAULT_SOLANA_SIGNATURE: &str =
+    "1111111111111111111111111111111111111111111111111111111111111111";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpRealtimeNotification {
@@ -88,16 +90,16 @@ impl PumpRealtimeLogStreamConfig {
     }
 
     pub fn chainstack(endpoint: &str) -> Result<Self, ProviderError> {
-    let endpoint = endpoint.trim();
-    if endpoint.is_empty() {
-        return Err(ProviderError::new(
-            ProviderId::Chainstack,
-            ProviderErrorKind::InvalidRequest,
-            "Chainstack Solana websocket endpoint must not be empty",
-        ));
+        let endpoint = endpoint.trim();
+        if endpoint.is_empty() {
+            return Err(ProviderError::new(
+                ProviderId::Chainstack,
+                ProviderErrorKind::InvalidRequest,
+                "Chainstack Solana websocket endpoint must not be empty",
+            ));
+        }
+        Self::for_provider_endpoint(ProviderId::Chainstack, endpoint.to_owned())
     }
-    Self::for_provider_endpoint(ProviderId::Chainstack, endpoint.to_owned())
-}
 
     /// Backward-compatible local/test constructor. Historical endpoint-only
     /// callers represented the Helius lane, so Helius remains the default.
@@ -564,6 +566,12 @@ fn parse_pump_realtime_log_notification_for_provider(
                 "Pump realtime logsNotification missing signature",
             )
         })?;
+    if signature == DEFAULT_SOLANA_SIGNATURE {
+        return Err(invalid_response(
+            provider,
+            "Pump realtime logsNotification uses default Solana signature",
+        ));
+    }
     let logs = notification
         .get("logs")
         .and_then(Value::as_array)
