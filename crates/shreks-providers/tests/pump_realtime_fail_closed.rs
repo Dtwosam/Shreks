@@ -41,4 +41,16 @@ async fn failover_returns_error_when_every_realtime_provider_is_unavailable() {
 
     assert_eq!(error.provider, ProviderId::Alchemy);
     assert!(error.is_retryable());
+    assert!(
+        error
+            .message
+            .contains("failover_attempts=helius:Unavailable,alchemy:Unavailable"),
+        "terminal failover error must retain a provider/kind-only attempt trace: {}",
+        error.message
+    );
+    assert!(
+        !error.message.contains("ws://") && !error.message.contains("wss://"),
+        "failover diagnostics must never expose provider endpoints: {}",
+        error.message
+    );
 }
