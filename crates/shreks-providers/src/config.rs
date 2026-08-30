@@ -20,6 +20,7 @@ pub struct ProviderConfig {
     pub dexscreener_enabled: bool,
     pub meteora_enabled: bool,
     pub helius_rpc_rps: u32,
+    pub observer_helius_max_requests_per_process: Option<u64>,
     pub jupiter_general_rps: u32,
     pub dexscreener_market_rps: u32,
     pub meteora_market_rps: u32,
@@ -42,6 +43,9 @@ impl ProviderConfig {
             dexscreener_enabled: true,
             meteora_enabled: true,
             helius_rpc_rps: DEFAULT_HELIUS_RPC_RPS,
+            observer_helius_max_requests_per_process: positive_u64(non_blank(lookup(
+                "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS",
+            ))),
             jupiter_general_rps: DEFAULT_JUPITER_GENERAL_RPS,
             dexscreener_market_rps: DEFAULT_DEXSCREENER_MARKET_RPS,
             meteora_market_rps: DEFAULT_METEORA_MARKET_RPS,
@@ -96,6 +100,10 @@ impl fmt::Debug for ProviderConfig {
             .field("dexscreener_enabled", &self.dexscreener_enabled)
             .field("meteora_enabled", &self.meteora_enabled)
             .field("helius_rpc_rps", &self.helius_rpc_rps)
+            .field(
+                "observer_helius_max_requests_per_process",
+                &self.observer_helius_max_requests_per_process,
+            )
             .field("jupiter_general_rps", &self.jupiter_general_rps)
             .field("dexscreener_market_rps", &self.dexscreener_market_rps)
             .field("meteora_market_rps", &self.meteora_market_rps)
@@ -105,4 +113,8 @@ impl fmt::Debug for ProviderConfig {
 
 fn non_blank(value: Option<String>) -> Option<String> {
     value.filter(|candidate| !candidate.trim().is_empty())
+}
+
+fn positive_u64(value: Option<String>) -> Option<u64> {
+    value?.parse::<u64>().ok().filter(|candidate| *candidate > 0)
 }
