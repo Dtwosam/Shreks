@@ -4,6 +4,10 @@ mod observer_v2 {
 }
 #[path = "shreks-observe/fast_lane_acceptance_cli.rs"]
 mod fast_lane_acceptance_cli;
+#[path = "shreks-observe/realtime_targets.rs"]
+mod realtime_targets;
+#[path = "shreks-observe/realtime_target_publisher.rs"]
+mod realtime_target_publisher;
 
 #[path = "../fast_event_normalizer.rs"]
 mod fast_event_normalizer;
@@ -21,17 +25,21 @@ use observer_v2::{
     sampler::{HighResolutionSampler, SamplerError, SamplerProvider},
     sampling::SamplingPolicy,
 };
+use realtime_target_publisher::{
+    refresh_pumpswap_realtime_targets_now, run_pumpswap_realtime_target_publisher,
+    RealtimeTargetPublisherError,
+};
 use shreks_observer::{
     free_observe_provider_plan, Observer, ObserverError, ObserverRuntimeConfig,
 };
 use shreks_providers::{
+    bounded_pump_realtime::BoundedPumpRealtimeLogStreamConfig,
+    bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
     config::ProviderConfig,
     dexscreener::DexScreenerProvider,
     helius::HeliusProvider,
     meteora::MeteoraProvider,
-    pump_realtime::{
-        forward_pump_realtime_signals, PumpRealtimeFailoverStream, PumpRealtimeLogStreamConfig,
-    },
+    pump_realtime::forward_pump_realtime_signals,
     solana_rpc::StandardSolanaRpcProvider,
     DiscoveryProvider, ProviderError, ProviderErrorKind,
 };
@@ -71,18 +79,60 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut sampler = build_high_resolution_sampler(sampler_db, &runtime.providers)?;
     sampler.restore_registry()?;
 
-    // One active standard-Solana websocket carries both Pump lanes. Helius is
-    // preferred when configured; Chainstack is the proven free fallback and Alchemy
-    // remains tertiary. Provider exhaustion rotates sources before durability may fail.
+    // One active standard-Solana websocket keeps the Pump-wide lane and a
+    // bounded set of verified PumpSwap pool subscriptions. Helius is preferred
+    // when configured; Chainstack is the proven fallback and Alchemy remains
+    // tertiary. Provider exhaustion rotates sources before durability may fail.
     let realtime_configs = build_pump_realtime_configs(&runtime.providers)?;
     let pump_realtime_tasks = if realtime_configs.is_empty() {
         None
     } else {
+        let pumpswap_tracking_max_age = runtime.pumpswap_tracking_max_age.ok_or_else(|| {
+            std::io::Error::other(
+                "bounded PumpSwap realtime tracking age is required when realtime is enabled",
+            )
+        })?;
+        let pumpswap_max_tracked_pools = runtime.pumpswap_max_tracked_pools.ok_or_else(|| {
+            std::io::Error::other(
+                "bounded PumpSwap realtime tracked-pool limit is required when realtime is enabled",
+            )
+        })?;
+        let pumpswap_tracking_max_age_ms =
+            i64::try_from(pumpswap_tracking_max_age.as_millis()).map_err(|_| {
+                std::io::Error::other(
+                    "bounded PumpSwap realtime tracking age exceeds i64 milliseconds",
+                )
+            })?;
+
         let writer_db = ShreksDb::open(&runtime.db_path)?;
         let normalizer_db = ShreksDb::open(&runtime.db_path)?;
-        let stream = PumpRealtimeFailoverStream::new(realtime_configs)?;
+        let (target_sender, target_receiver) = watch::channel(Vec::<String>::new());
+
+        // Establish the verified canonical target set before any websocket is
+        // opened. This avoids a startup gap where the first provider would
+        // otherwise begin with an incidental empty PumpSwap target snapshot.
+        refresh_pumpswap_realtime_targets_now(
+            &runtime.db_path,
+            pumpswap_tracking_max_age_ms,
+            pumpswap_max_tracked_pools,
+            &target_sender,
+        )?;
+        eprintln!(
+            "Shreks bounded PumpSwap realtime scope: tracked_pools={} max_tracked_pools={} max_age_seconds={}",
+            target_sender.borrow().len(),
+            pumpswap_max_tracked_pools,
+            pumpswap_tracking_max_age.as_secs(),
+        );
+
+        let stream = BoundedPumpRealtimeFailoverStream::new(realtime_configs, target_receiver)?;
         let (sender, receiver) = mpsc::channel(PUMP_REALTIME_CHANNEL_CAPACITY);
 
+        let target_publisher = tokio::spawn(run_pumpswap_realtime_target_publisher(
+            runtime.db_path.clone(),
+            pumpswap_tracking_max_age_ms,
+            pumpswap_max_tracked_pools,
+            target_sender,
+        ));
         let forwarder = tokio::spawn(async move {
             if let Err(error) = forward_pump_realtime_signals(stream, sender).await {
                 eprintln!(
@@ -94,23 +144,29 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let writer = tokio::spawn(Observer::run_pump_realtime_writer(writer_db, receiver));
         let normalizer = tokio::spawn(run_fast_event_normalizer(normalizer_db));
 
-        Some((forwarder, writer, normalizer))
+        Some((target_publisher, forwarder, writer, normalizer))
     };
 
-    let (observer_cycles, sampler_cycles) =
-        if let Some((forwarder, writer, normalizer)) = pump_realtime_tasks {
-            run_observation_with_realtime(
-                observer,
-                sampler,
-                runtime.cycle_interval,
-                forwarder,
-                writer,
-                normalizer,
-            )
-            .await?
-        } else {
-            run_observation_loops(observer, sampler, runtime.cycle_interval).await?
-        };
+    let (observer_cycles, sampler_cycles) = if let Some((
+        target_publisher,
+        forwarder,
+        writer,
+        normalizer,
+    )) = pump_realtime_tasks
+    {
+        run_observation_with_realtime(
+            observer,
+            sampler,
+            runtime.cycle_interval,
+            target_publisher,
+            forwarder,
+            writer,
+            normalizer,
+        )
+        .await?
+    } else {
+        run_observation_loops(observer, sampler, runtime.cycle_interval).await?
+    };
 
     eprintln!(
         "Shreks observe stopped: legacy_cycles={observer_cycles} v2_sampler_cycles={sampler_cycles}"
@@ -120,16 +176,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 fn build_pump_realtime_configs(
     config: &ProviderConfig,
-) -> Result<Vec<PumpRealtimeLogStreamConfig>, ProviderError> {
+) -> Result<Vec<BoundedPumpRealtimeLogStreamConfig>, ProviderError> {
     let mut configs = Vec::new();
     if let Some(api_key) = config.helius_api_key() {
-        configs.push(PumpRealtimeLogStreamConfig::helius(api_key)?);
+        configs.push(BoundedPumpRealtimeLogStreamConfig::helius(api_key)?);
     }
     if let Some(endpoint) = config.chainstack_solana_wss_url() {
-        configs.push(PumpRealtimeLogStreamConfig::chainstack(endpoint)?);
+        configs.push(BoundedPumpRealtimeLogStreamConfig::chainstack(endpoint)?);
     }
     if let Some(api_key) = config.alchemy_api_key() {
-        configs.push(PumpRealtimeLogStreamConfig::alchemy(api_key)?);
+        configs.push(BoundedPumpRealtimeLogStreamConfig::alchemy(api_key)?);
     }
     Ok(configs)
 }
@@ -229,6 +285,7 @@ async fn run_observation_with_realtime(
     observer: Observer,
     sampler: HighResolutionSampler,
     cycle_interval: Duration,
+    mut target_publisher: JoinHandle<Result<(), RealtimeTargetPublisherError>>,
     forwarder: JoinHandle<()>,
     mut writer: JoinHandle<Result<usize, ObserverError>>,
     mut normalizer: JoinHandle<Result<(), FastEventNormalizationError>>,
@@ -240,6 +297,8 @@ async fn run_observation_with_realtime(
         observation_result = &mut observation => {
             // Normal observer shutdown closes the producer first, then drains every
             // realtime envelope already accepted into the bounded channel.
+            target_publisher.abort();
+            let _ = target_publisher.await;
             forwarder.abort();
             let _ = forwarder.await;
             normalizer.abort();
@@ -250,10 +309,30 @@ async fn run_observation_with_realtime(
             eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
             Ok(cycles)
         }
+        target_publisher_result = &mut target_publisher => {
+            forwarder.abort();
+            let _ = forwarder.await;
+            normalizer.abort();
+            let _ = normalizer.await;
+            writer.abort();
+            let _ = writer.await;
+            let message = match target_publisher_result {
+                Ok(Ok(())) => "PumpSwap realtime target publisher stopped unexpectedly".to_owned(),
+                Ok(Err(error)) => format!(
+                    "PumpSwap realtime target publisher stopped unexpectedly: {error}"
+                ),
+                Err(error) => format!(
+                    "PumpSwap realtime target publisher stopped unexpectedly: task join failure: {error}"
+                ),
+            };
+            Err(Box::new(std::io::Error::other(message)))
+        }
         writer_result = &mut writer => {
             // The realtime durability lane is mandatory whenever any realtime
             // provider is configured. Any writer exit means the process can no
             // longer prove it is collecting Pump evidence, so fail closed.
+            target_publisher.abort();
+            let _ = target_publisher.await;
             forwarder.abort();
             let _ = forwarder.await;
             normalizer.abort();
@@ -266,6 +345,8 @@ async fn run_observation_with_realtime(
         normalizer_result = &mut normalizer => {
             // Canonicalization is part of the realtime evidence contract. A task
             // exit means raw Pump evidence can no longer become replayable FastEvents.
+            target_publisher.abort();
+            let _ = target_publisher.await;
             forwarder.abort();
             let _ = forwarder.await;
             writer.abort();
