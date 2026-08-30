@@ -120,7 +120,7 @@ Capture these separately over the same physical-host interval:
 - observer PID, CPU, and RSS;
 - host memory and filesystem headroom;
 - database/WAL size before and after the interval for DB/WAL growth;
-- observer public-RPC/reconnect journal lines, including persistent rate-limit/disconnect instability or unexpected paid-provider activity;
+- observer provider/reconnect journal lines, specifically public-RPC/WSS rate-limit/disconnect instability or unexpected paid-provider activity;
 - exact release SHA and exact interval timestamps.
 
 Provider/reconnect logs are the source for reconnect behavior and any visible attempted duplicate/replay overlap. If the logs do not expose a trustworthy attempted duplicate count, record that metric as unavailable rather than fabricating it.
@@ -258,7 +258,7 @@ The FL1 journal is idempotent by durable event identity. That means an attempted
 
 A replay that carries a different economic payload for an already-stored `(signature, ordinal)` is not treated as an idempotent duplicate. It is durably quarantined as conflicting evidence. The quarantined variant must not overwrite the first raw row, enter canonical normalization, or remain trusted through canonical market replay if the ambiguity arrives after canonicalization.
 
-Use public-RPC/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful `solana_public` provenance, and continued canonical event progress after recovery. If no reconnect occurred naturally, record that fact; do not manufacture a destructive restart or network-failure drill for this FL1.5 routine acceptance.
+Use provider/reconnect journal evidence to assess whether public-Solana reconnect behavior is stable. If a reconnect occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful `solana_public` provenance, and continued canonical event progress after recovery. If no reconnect occurred naturally, record that fact; do not manufacture a destructive restart or network-failure drill for this FL1.5 routine acceptance.
 
 Any acceptance interval containing an observer restart requires an explicit explanation because it interrupts the continuous evidence window. Repeated restarts to hide public-endpoint instability or provider usage are prohibited and cannot satisfy FL1.5.
 
@@ -280,7 +280,7 @@ Any acceptance interval containing an observer restart requires an explicit expl
 - public Solana is persistently unavailable, rate-limited, or reconnecting such that representative raw/canonical progress is not sustained;
 - available paid-provider evidence shows unexplained counter growth attributable to the broad observer lane;
 - the observer remains nominally healthy while realtime raw/canonical progress has stopped;
-- the observer crashes/restarts unexpectedly or public-RPC/reconnect behavior is unstable;
+- the observer crashes/restarts unexpectedly or provider/reconnect behavior is unstable;
 - CPU/RSS, memory, disk, or DB/WAL growth leaves inadequate production headroom;
 - the evidence interval, release SHA, provider-provenance evidence, zero-paid-provider evidence, or host-only records are missing;
 - any command or code path introduces trading, signing, submission, or LIVE authority.
