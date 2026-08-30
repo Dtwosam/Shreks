@@ -30,17 +30,15 @@ Use the authoritative persistent observer database:
 /var/lib/shreks/shreks.db
 ```
 
-FL1 realtime provider order is **Helius -> Chainstack -> Alchemy**: `HELIUS_API_KEY` is primary, host-only `CHAINSTACK_SOLANA_WSS_URL` is the proven secondary standard-Solana websocket source, and `ALCHEMY_API_KEY` is tertiary. The Chainstack endpoint itself contains credential material. Provider credentials/endpoints belong only in protected host runtime configuration. Never print them, put their values in this runbook, copy them into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
+The current FL1 broad-capture contract is **official public Solana only**. Pump-wide realtime capture and read-only lifecycle/transaction verification use the official public Solana RPC/WSS endpoints and must retain truthful `solana_public` provenance. Paid provider credentials such as Helius, Chainstack, or Alchemy may remain in protected host configuration for other isolated services, but the production observer's broad FL1 lane must not consult them, silently fall back to them, or relabel public traffic as a paid source.
 
-When Helius is enabled, the observer release requires a positive host-side `SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS`. That value is an **HTTP/RPC process-lifetime ceiling only**. It does not meter WebSocket push consumption, it resets when the process restarts, and it must never be presented as a monthly/cross-process provider-spend limit. Missing/invalid configuration must fail startup closed. Repeated restarts must never be used to reset the process ceiling and continue consuming provider quota.
+PumpSwap remains bounded. Whenever FL1 realtime is enabled, the deployed observer must have positive host-side `SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS` and `SHREKS_PUMPSWAP_MAX_TRACKED_POOLS` values. The accepted topology is Pump-wide public-Solana logs plus only the bounded set of verified recent PumpSwap pool addresses. A global PumpSwap AMM subscription is not acceptable.
 
-Paper-evidence uses its own positive `SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS` plus `SHREKS_PAPER_HOLDER_REFRESH_SECONDS`; those controls are independent of the observer ceiling. Do not infer one service's provider usage from another service's counter.
+Paper-evidence is a separate service and has separate provider economics. Its Helius/Jupiter requirements, `SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS`, and `SHREKS_PAPER_HOLDER_REFRESH_SECONDS` must not be presented as observer FL1 provider usage. Likewise, a paper-evidence Helius counter or quota event does not prove anything about the observer's public-Solana broad lane.
 
-Metered realtime consumption remains a separate acceptance concern. A connected full-program WebSocket is not automatically healthy if its push volume is incompatible with free-tier operation. Before FL1.5 can pass, the deployed realtime topology itself must be the bounded design approved by the current source of truth, and the representative interval must retain enough non-secret evidence to show provider consumption is operationally sustainable. Buying a larger provider plan is not a substitute for that proof.
+Public Solana has no Shreks paid-provider request budget to reset. Operational acceptance therefore focuses on stable public endpoint progress, bounded PumpSwap scope, truthful `solana_public` provenance, restart stability, and proof that the broad observer lane does not create paid provider consumption. If the public endpoint cannot sustain representative traffic, FL1.5 is a HOLD; do not make the gate pass by silently enabling a metered provider.
 
-When accepting the provider-failover fix after a natural Helius quota failure, keep the failure natural: do not deliberately exhaust credits, block networking, corrupt credentials, or restart services merely to manufacture failover. If Helius is already returning `429` / `max usage reached`, that is valid real-world primary-provider failure evidence and the representative window should prove that the configured fallback continues FL1 ingestion.
-
-Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, signing material, provider account identifiers, or raw provider portal pages containing secret/account data into the evidence directory. If a provider portal exposes useful consumption counters, retain only non-secret numeric usage totals/time windows needed for acceptance.
+Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, signing material, provider account identifiers, or raw provider portal pages containing secret/account data into the evidence directory. If a paid-provider portal exposes useful counters, retain only non-secret numeric totals/time windows needed to demonstrate that broad observer usage did not increase them.
 
 ## 2. Evidence boundary
 
@@ -98,21 +96,21 @@ connection.close()
 PY
 ```
 
-This query is evidence-only and must remain `mode=ro`. Provider counts must agree with the raw/canonical activity in the acceptance report. If Helius is naturally quota-exhausted during the window, accepted fallback evidence should contain `chainstack` rows when Chainstack is configured rather than relabeling them as Helius. Alchemy counts are acceptable only when its websocket subscription actually acknowledges and carries traffic.
+This query is evidence-only and must remain `mode=ro`. For a post-deploy interval on the current release, FL1 Pump/PumpSwap raw rows and their canonical descendants must show `solana_public` provenance consistent with the report's activity counts. Any `helius`, `chainstack`, or `alchemy` FL1 provenance inside that new interval is a HOLD until explained because the current broad observer lane has no paid-provider fallback. Never relabel an unexpected source to make the evidence fit.
 
 ### Provider-consumption evidence
 
-Provider consumption is host/provider operational evidence, not a SQLite fact. Retain all non-secret evidence available for the same interval, including:
+Provider consumption is operational evidence, not a SQLite fact. Retain all non-secret evidence available for the same interval, including:
 
-- observer journal lines showing Helius HTTP/RPC budget exhaustion or provider `429`/quota conditions, if any;
-- the configured positive observer HTTP/RPC request ceiling as established by the deployed release's startup/config validation, without dumping the service environment or provider key;
-- any non-secret provider-side numeric consumption total/time window available for the deployed realtime subscription;
-- the exact realtime subscription/topology version from the immutable release under acceptance;
-- service restart count so a process-budget reset cannot be hidden by restart.
+- the exact immutable release SHA and its public-Solana realtime topology;
+- observer journal lines showing public-RPC/WSS connection, rate-limit, disconnect, reconnect, or supervision failures, if any;
+- service restart count so instability cannot be hidden by process churn;
+- non-secret Helius/Chainstack/Alchemy numeric counter totals before and after the interval when they are available, strictly as corroboration that broad observer activity did not increase paid usage;
+- an explicit statement when reliable paid-provider counter data is unavailable rather than inventing a number.
 
-An HTTP process ceiling is not evidence that WebSocket push consumption is bounded. Conversely, a bounded realtime subscription does not remove the HTTP/RPC ceiling requirement. Treat them as separate budgets/evidence lanes.
+The production observer's public-Solana broad lane has no paid-provider process budget. Paper-evidence Helius request ceilings and holder-refresh controls remain independent and must not be attributed to observer FL1. A bounded public-Solana topology plus `solana_public` provenance is architectural evidence of the zero-paid-provider lane; paid-provider counter deltas, when available, are additional operational corroboration.
 
-If reliable provider-side consumption numbers are unavailable, do not invent them. The acceptance record must instead explicitly state that provider-side numeric usage was unavailable and rely on the bounded approved subscription scope plus measured raw event rate, provider provenance, and stable interval behavior. A still-global/unbounded metered subscription cannot pass merely because provider-side counters are unavailable.
+If public endpoint reliability is poor, record the failure literally. Do not enable Helius, Chainstack, Alchemy, a paid PumpPortal feed, or another metered source as an unreviewed fallback. A still-global PumpSwap AMM subscription, any hidden paid fallback, or unexplained paid-provider counter growth is incompatible with this acceptance contract.
 
 ### Host-only evidence
 
@@ -122,7 +120,7 @@ Capture these separately over the same physical-host interval:
 - observer PID, CPU, and RSS;
 - host memory and filesystem headroom;
 - database/WAL size before and after the interval for DB/WAL growth;
-- observer provider/reconnect journal lines, including any disconnect/reconnect instability, HTTP budget exhaustion, or provider quota exhaustion;
+- observer provider/reconnect journal lines, specifically public-RPC/WSS rate-limit/disconnect instability or unexpected paid-provider activity;
 - exact release SHA and exact interval timestamps.
 
 Provider/reconnect logs are the source for reconnect behavior and any visible attempted duplicate/replay overlap. If the logs do not expose a trustworthy attempted duplicate count, record that metric as unavailable rather than fabricating it.
@@ -153,7 +151,7 @@ systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p
 
 The absence of a WAL file at one instant is not by itself a failure; retain that fact literally and compare with the end state. A permission failure is also not a reason to `chmod`/`chown` production state—investigate service identity/ownership instead.
 
-Let the normal production observer run without intervention for the chosen representative interval. Do not use this acceptance procedure to induce a restart, reset a provider request budget, or mutate service state.
+Let the normal production observer run without intervention for the chosen representative interval. Do not use this acceptance procedure to induce a restart, alter public-endpoint behavior, or mutate service state.
 
 ## 4. End the interval and run the read-only reporter
 
@@ -200,7 +198,7 @@ sudo -u shreks /opt/shreks/current/target/release/shreks-observe fast-lane-accep
   > "$EVIDENCE_DIR/fast-lane-report.txt"
 ```
 
-Then capture the provider-provenance breakdown from Section 2 using the same `DB`, `START_MS`, and `END_MS` values, plus the non-secret provider-consumption evidence available for that exact interval.
+Then capture the provider-provenance breakdown from Section 2 using the same `DB`, `START_MS`, and `END_MS` values, plus any non-secret paid-provider counter evidence available for that exact interval.
 
 The acceptance command must exit `0`. A nonzero exit means missing/incompatible schema, invalid timing, unreadable storage evidence, or another fail-closed condition; investigate it rather than overriding it.
 
@@ -222,8 +220,9 @@ Also require:
 - no reported latency is negative or invalid;
 - pending Pump/PumpSwap rows are explainable by known metadata/lifecycle resolution and do not show an unexplained persistent or monotonically growing backlog across repeated representative windows;
 - p50/p95/p99/max values are retained as measured evidence, not silently converted into a pass threshold that was never specified;
-- `provider-counts.txt` contains only recognized realtime provenance (`helius`, `chainstack`, and/or `alchemy`) for FL1 rows and is consistent with the report's activity counts;
-- when the window naturally includes Helius quota exhaustion and Chainstack is configured, `provider-counts.txt` proves continued `chainstack` raw/canonical progress rather than a stalled lane or falsely relabeled source. If Chainstack is unavailable or not configured and independently proven Alchemy is the configured tertiary fallback, Alchemy progress may satisfy the same requirement, with truthful `alchemy` provenance.
+- `provider-counts.txt` contains `solana_public` for the current post-deploy FL1 Pump/PumpSwap raw and canonical activity and is consistent with the report's counts;
+- any current-window `helius`, `chainstack`, or `alchemy` FL1 provenance is treated as an unexpected paid-provider path and a HOLD until explained;
+- Pump and PumpSwap both show natural representative traffic; do not manufacture trades or re-enable a global PumpSwap AMM subscription merely to produce counts.
 
 The total and window quarantine counts must be retained as measured evidence. **isolated quarantined fork conflicts** do not by themselves fail FL1.5 when the disputed identities remain excluded from trusted canonical replay, `canonical_conflict_quarantine_violations=0`, the observer remains stable, and representative raw/canonical progress continues. A **persistent or growing quarantine** across representative windows is a HOLD until the ambiguity is explained and canonical progress is shown to remain trustworthy.
 
@@ -237,22 +236,21 @@ Require:
 
 - `ActiveState=active` and a healthy observer substate at both ends;
 - no unexplained increase in `NRestarts`;
-- no restart was used to reset/bypass the Helius process request ceiling;
-- no crash loop or persistent provider/reconnect churn;
-- reconnects or provider rotation, if they occur naturally, recover without evidence loss or sequence corruption;
-- a primary-provider `429` / `max usage reached` condition does not leave the observer falsely healthy while raw/canonical progress has stopped;
-- the Helius HTTP/RPC process request budget is not exhausted during the accepted interval; any local `Helius process request budget exhausted` condition is a HOLD even if another evidence lane remains active;
-- the deployed realtime subscription/topology is the bounded approved design rather than the superseded unmeasured full-program metered firehose;
-- available non-secret provider consumption evidence is compatible with continued free-tier operation for the intended duty cycle; if exact provider counters are unavailable, the bounded subscription scope and measured event rate must still be retained and explained;
-- if all configured realtime providers are unavailable, the realtime lane exits fail-closed so the observer cannot continue presenting a healthy ingestion state;
+- no crash loop or persistent public-RPC/WSS reconnect or rate-limit churn;
+- a natural public endpoint disconnect/reconnect, if one occurs, recovers without evidence loss or sequence corruption;
+- the observer does not silently rotate to Helius, Chainstack, Alchemy, or another paid source when public Solana is unavailable;
+- the deployed realtime topology is Pump-wide public Solana plus only the bounded verified PumpSwap target set, never the superseded global PumpSwap AMM subscription;
+- any available non-secret paid-provider counters are compatible with zero broad-observer paid usage over the interval;
+- paper-evidence Helius activity, if that separate service is active, is accounted for separately and is not misattributed to the observer;
+- if public Solana becomes unavailable or cannot sustain representative progress, the realtime lane fails closed rather than presenting a falsely healthy ingestion state;
 - CPU and RSS remain stable enough for continuous operation with meaningful headroom;
 - `free -h` shows memory headroom rather than sustained exhaustion/swap pressure;
 - `df -h` shows enough free space for continued database/WAL growth;
 - `storage-before.txt` and `storage-after.txt` show DB/WAL growth compatible with the measured event rate and available disk headroom.
 
-A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Chainstack (or independently proven Alchemy) realtime fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress **and the accepted architecture's own required HTTP/RPC budgets remain healthy**. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, the configured Helius HTTP/RPC process ceiling is exhausted, the realtime topology is still unbounded/unsustainable, or ingestion/canonicalization stalls.
+A public endpoint rate-limit or disconnect is not automatically an FL1.5 failure when it is brief, recovery is natural, provenance remains `solana_public`, and representative raw/canonical progress continues with intact integrity. It is a HOLD if the observer stalls, enters persistent reconnect churn, hides the outage behind nominal service health, or activates a paid provider fallback.
 
-Do not turn one quiet snapshot into a resource-capacity or provider-cost claim. If CPU/RSS, DB/WAL growth, event rate, or realtime provider consumption is uncertain, repeat the acceptance interval under representative natural load and retain both evidence sets. Do not manufacture load, quota exhaustion, or restarts merely to make the evidence look complete.
+Do not turn one quiet snapshot into a resource-capacity or provider-cost claim. If CPU/RSS, DB/WAL growth, event rate, public-endpoint stability, or paid-provider counter isolation is uncertain, repeat the acceptance interval under representative natural load and retain both evidence sets. Do not manufacture load, rate limits, outages, or restarts merely to make the evidence look complete.
 
 ## 7. Duplicate/reconnect interpretation
 
@@ -260,9 +258,9 @@ The FL1 journal is idempotent by durable event identity. That means an attempted
 
 A replay that carries a different economic payload for an already-stored `(signature, ordinal)` is not treated as an idempotent duplicate. It is durably quarantined as conflicting evidence. The quarantined variant must not overwrite the first raw row, enter canonical normalization, or remain trusted through canonical market replay if the ambiguity arrives after canonicalization.
 
-Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect or provider rotation occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful provider provenance, and continued canonical event progress after recovery. If no reconnect/failover occurred naturally, record that fact; do not manufacture a destructive restart or quota-exhaustion drill for this FL1.5 routine acceptance.
+Use provider/reconnect journal evidence to assess whether public-Solana reconnect behavior is stable. If a reconnect occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful `solana_public` provenance, and continued canonical event progress after recovery. If no reconnect occurred naturally, record that fact; do not manufacture a destructive restart or network-failure drill for this FL1.5 routine acceptance.
 
-A restart also resets process-local request counters. Therefore any acceptance interval containing an observer restart requires an explicit explanation; an unexplained restart invalidates provider-budget evidence because the process ceiling may have reset. Repeated restarts to extend provider consumption are prohibited and cannot satisfy FL1.5.
+Any acceptance interval containing an observer restart requires an explicit explanation because it interrupts the continuous evidence window. Repeated restarts to hide public-endpoint instability or provider usage are prohibited and cannot satisfy FL1.5.
 
 ## 8. FL1.5 hold / exit rule
 
@@ -276,17 +274,17 @@ A restart also resets process-local request counters. Therefore any acceptance i
 - Pump or PumpSwap representative traffic is absent from the chosen window;
 - canonical progress stalls or pending backlog is persistently unexplained/growing;
 - quarantine is persistent or growing across representative windows without a bounded explanation, or fork ambiguity prevents representative canonical progress;
-- provider provenance is missing, unrecognized, contradictory, or inconsistent with the reported FL1 activity;
-- Helius quota exhaustion occurs without a working configured fallback, or all configured realtime providers are exhausted/unavailable;
-- any required Helius HTTP/RPC process request budget is missing, invalid, or exhausted;
-- a service restart was used or appears to have been used to reset a provider request ceiling;
-- the deployed realtime subscription is still an unmeasured/unbounded full-program metered firehose, or available evidence shows realtime consumption is incompatible with continuous free-tier operation;
+- current-window provider provenance is missing, contradictory, inconsistent with reported FL1 activity, or differs from the required `solana_public` broad-capture provenance;
+- the observer activates or appears to activate a paid provider fallback for broad FL1 capture or lifecycle verification;
+- the deployed realtime subscription includes the global PumpSwap AMM program rather than the bounded verified pool set;
+- public Solana is persistently unavailable, rate-limited, or reconnecting such that representative raw/canonical progress is not sustained;
+- available paid-provider evidence shows unexplained counter growth attributable to the broad observer lane;
 - the observer remains nominally healthy while realtime raw/canonical progress has stopped;
 - the observer crashes/restarts unexpectedly or provider/reconnect behavior is unstable;
 - CPU/RSS, memory, disk, or DB/WAL growth leaves inadequate production headroom;
-- the evidence interval, release SHA, provider-consumption evidence, or host-only records are missing;
+- the evidence interval, release SHA, provider-provenance evidence, zero-paid-provider evidence, or host-only records are missing;
 - any command or code path introduces trading, signing, submission, or LIVE authority.
 
-FL1.5 may be marked production-accepted only after the real dedicated host has produced and retained one or more representative evidence sets satisfying the database-backed, host-only, and provider-consumption checks above. CI, fixtures, localhost tests, and synthetic traffic alone cannot satisfy this exit rule.
+FL1.5 may be marked production-accepted only after the real dedicated host has produced and retained one or more representative evidence sets satisfying the database-backed, host-only, public-Solana provenance, and zero-paid-provider checks above. CI, fixtures, localhost tests, and synthetic traffic alone cannot satisfy this exit rule.
 
 **LIVE TRADING: DISABLED**

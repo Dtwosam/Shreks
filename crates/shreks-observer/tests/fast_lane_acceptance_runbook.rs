@@ -62,25 +62,33 @@ fn fl1_acceptance_runbook_distinguishes_database_and_host_only_evidence() {
 }
 
 #[test]
-fn fl1_acceptance_runbook_covers_quarantine_integrity_and_provider_order() {
+fn fl1_acceptance_runbook_covers_quarantine_integrity_and_zero_cost_provider_contract() {
     for required in [
         "pump_conflict_quarantine_total",
         "pumpswap_conflict_quarantine_total",
         "pump_conflict_quarantine_events",
         "pumpswap_conflict_quarantine_events",
         "canonical_conflict_quarantine_violations=0",
-        "Helius -> Chainstack -> Alchemy",
+        "solana_public",
+        "official public Solana",
+        "paid provider",
         "isolated quarantined fork conflicts",
         "persistent or growing quarantine",
     ] {
         assert!(
             RUNBOOK.contains(required),
-            "FL1.5 runbook must document quarantine/provider acceptance contract: {required}"
+            "FL1.5 runbook must document quarantine/public-provider acceptance contract: {required}"
         );
     }
 
-    assert!(
-        !RUNBOOK.contains("proves continued `alchemy` raw/canonical progress"),
-        "FL1.5 runbook must not skip the configured Chainstack secondary when describing Helius fallback"
-    );
+    for forbidden in [
+        "Helius -> Chainstack -> Alchemy",
+        "proves continued `chainstack` raw/canonical progress",
+        "proves continued `alchemy` raw/canonical progress",
+    ] {
+        assert!(
+            !RUNBOOK.contains(forbidden),
+            "FL1.5 runbook must not retain the superseded metered-provider realtime contract: {forbidden}"
+        );
+    }
 }
