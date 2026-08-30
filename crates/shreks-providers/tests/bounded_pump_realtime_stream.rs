@@ -5,7 +5,8 @@ use serde_json::{json, Value};
 use shreks_core::ProviderId;
 use shreks_providers::{
     bounded_pump_realtime::{
-        BoundedPumpRealtimeLogStream, BoundedPumpRealtimeLogStreamConfig,
+        BoundedPumpRealtimeFailoverStream, BoundedPumpRealtimeLogStream,
+        BoundedPumpRealtimeLogStreamConfig,
     },
     pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID},
 };
@@ -36,6 +37,13 @@ fn irrelevant_notification(signature: &str) -> String {
 async fn read_json(socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Value {
     let text = socket.next().await.unwrap().unwrap().into_text().unwrap();
     serde_json::from_str(&text).unwrap()
+}
+
+async fn unavailable_ws_endpoint() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    format!("ws://{address}")
 }
 
 #[tokio::test]
@@ -153,4 +161,111 @@ async fn target_change_unsubscribes_stale_pool_before_subscribing_replacement_wi
     client.abort();
     let _ = client.await;
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn bounded_failover_rebuilds_secondary_from_latest_targets_after_primary_retry() {
+    let secondary_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let secondary_address = secondary_listener.local_addr().unwrap();
+    let (secondary_ready_sender, secondary_ready_receiver) = oneshot::channel();
+
+    let server = tokio::spawn(async move {
+        let (tcp, _) = secondary_listener.accept().await.unwrap();
+        let mut socket = accept_async(tcp).await.unwrap();
+        let mut mentions = Vec::new();
+        for subscription_id in [501_u64, 502_u64] {
+            let request = read_json(&mut socket).await;
+            assert_eq!(request["method"], "logsSubscribe");
+            mentions.push(
+                request["params"][0]["mentions"][0]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+            let request_id = request["id"].as_u64().unwrap();
+            socket
+                .send(Message::Text(
+                    json!({"jsonrpc":"2.0","id":request_id,"result":subscription_id})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        }
+        assert_eq!(mentions, vec![PUMP_PROGRAM_ID.to_owned(), "pool-b".to_owned()]);
+        assert!(!mentions.iter().any(|value| value == "pool-a"));
+        assert!(!mentions.iter().any(|value| value == PUMP_AMM_PROGRAM_ID));
+        secondary_ready_sender.send(()).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    });
+
+    let primary = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Helius,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(100), Duration::from_millis(100))
+    .with_max_connect_attempts(2);
+    let secondary = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        format!("ws://{secondary_address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+
+    let (targets_sender, targets_receiver) = watch::channel(vec!["pool-a".to_owned()]);
+    let mut failover =
+        BoundedPumpRealtimeFailoverStream::new(vec![primary, secondary], targets_receiver).unwrap();
+    let client = tokio::spawn(async move { failover.next_realtime_notification().await });
+
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    targets_sender.send(vec!["pool-b".to_owned()]).unwrap();
+    tokio::time::timeout(Duration::from_secs(1), secondary_ready_receiver)
+        .await
+        .expect("secondary must be reached after bounded primary retry exhaustion")
+        .unwrap();
+
+    client.abort();
+    let _ = client.await;
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn bounded_failover_all_provider_failure_returns_traced_error() {
+    let helius = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Helius,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+    let chainstack = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        unavailable_ws_endpoint().await,
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+    let (_targets_sender, targets_receiver) = watch::channel(vec!["pool-a".to_owned()]);
+    let mut failover =
+        BoundedPumpRealtimeFailoverStream::new(vec![helius, chainstack], targets_receiver).unwrap();
+
+    let error = tokio::time::timeout(
+        Duration::from_secs(1),
+        failover.next_realtime_notification(),
+    )
+    .await
+    .expect("bounded failover must terminate after one failed provider pass")
+    .expect_err("all unavailable providers must fail closed");
+
+    assert_eq!(error.provider, ProviderId::Chainstack);
+    assert!(error.is_retryable());
+    assert!(
+        error
+            .message
+            .contains("failover_attempts=helius:Unavailable,chainstack:Unavailable"),
+        "unexpected failover trace: {}",
+        error.message
+    );
 }
