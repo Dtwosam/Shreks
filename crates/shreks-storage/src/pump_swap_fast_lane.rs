@@ -163,6 +163,89 @@ impl ShreksDb {
         rows.into_iter().map(decode_stored).collect()
     }
 
+    /// Return the oldest conflict-free PumpSwap rows whose verified lifecycle
+    /// market and mint-decimal prerequisites are currently available. Pools
+    /// with contradictory verified markets remain eligible so the existing
+    /// resolver sees them and fails closed rather than silently skipping them.
+    pub fn pending_normalizable_pump_swap_trade_evidence(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpSwapTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("PumpSwap normalizable pending limit exceeds i64".to_owned())
+        })?;
+        let mut statement = self.connection.prepare(
+            r#"WITH distinct_markets AS (
+                   SELECT DISTINCT pool_address, mint, quote_mint
+                   FROM token_lifecycle_events
+                   WHERE event_type = 'pump_graduation'
+                     AND to_venue = 'pump_swap'
+               ),
+               market_counts AS (
+                   SELECT pool_address, COUNT(*) AS market_count
+                   FROM distinct_markets
+                   GROUP BY pool_address
+               ),
+               eligible_pools AS (
+                   SELECT pool_address
+                   FROM market_counts
+                   WHERE market_count <> 1
+
+                   UNION
+
+                   SELECT market.pool_address
+                   FROM distinct_markets AS market
+                   JOIN market_counts AS counts
+                     ON counts.pool_address = market.pool_address
+                   WHERE counts.market_count = 1
+                     AND EXISTS (
+                         SELECT 1
+                         FROM token_candidates AS base_candidate
+                         JOIN token_mint_states AS base_state
+                           ON base_state.candidate_id = base_candidate.id
+                         WHERE base_candidate.mint = market.mint
+                     )
+                     AND (
+                         market.quote_mint = ?1
+                         OR market.quote_mint = ?2
+                         OR EXISTS (
+                             SELECT 1
+                             FROM token_candidates AS quote_candidate
+                             JOIN token_mint_states AS quote_state
+                               ON quote_state.candidate_id = quote_candidate.id
+                             WHERE quote_candidate.mint = market.quote_mint
+                         )
+                     )
+               )
+               SELECT
+                   p.provider, p.signature, p.ordinal, p.log_index, p.slot, p.observed_at_unix_ms,
+                   p.pool, p.user, p.is_buy,
+                   p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
+                   p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
+               FROM eligible_pools AS eligible
+               JOIN pump_swap_trade_evidence AS p
+                 ON p.pool = eligible.pool_address
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM pump_swap_trade_evidence_conflicts AS conflict
+                     WHERE conflict.signature = p.signature
+                       AND conflict.ordinal = p.ordinal
+                 )
+               ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.log_index ASC
+               LIMIT ?3"#,
+        )?;
+        let rows = statement
+            .query_map(params![SYSTEM_SOL_MINT, WRAPPED_SOL_MINT, limit], decode_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_stored).collect()
+    }
+
     /// Resolve a PumpSwap pool only from verified Pump graduation lifecycle
     /// evidence. Missing mapping stays unresolved; contradictory markets for
     /// one pool fail closed instead of choosing by recency.
@@ -523,6 +606,7 @@ fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
         "helius" => Ok(ProviderId::Helius),
         "alchemy" => Ok(ProviderId::Alchemy),
         "chainstack" => Ok(ProviderId::Chainstack),
+        "solana_public" => Ok(ProviderId::SolanaPublic),
         "jupiter" => Ok(ProviderId::Jupiter),
         "meteora" => Ok(ProviderId::Meteora),
         other => Err(StorageError::InvalidData(format!(

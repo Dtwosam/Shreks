@@ -6,6 +6,9 @@ use crate::{
     StorageError,
 };
 
+const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
+const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceWriteOutcome {
     Inserted,
@@ -149,6 +152,9 @@ impl ShreksDb {
         count_rows(&self.connection, "pump_swap_trade_evidence_conflicts")
     }
 
+    /// Return the oldest conflict-free Pump rows that have not yet been
+    /// normalized. Missing metadata remains visible here so backlog and
+    /// normalization diagnostics preserve the full unresolved debt.
     pub fn pending_unambiguous_pump_trade_evidence(
         &self,
         limit: usize,
@@ -181,6 +187,88 @@ impl ShreksDb {
         )?;
         let rows = statement
             .query_map([limit], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, i64>(12)?,
+                    row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?,
+                    row.get::<_, String>(15)?,
+                    row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?,
+                    row.get::<_, String>(18)?,
+                    row.get::<_, String>(19)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter().map(decode_pump_row).collect()
+    }
+
+    /// Return the oldest conflict-free Pump rows whose normalization metadata
+    /// is currently available. This is intentionally separate from the generic
+    /// pending frontier so a deep unresolved prefix cannot starve ready market
+    /// evidence without hiding that unresolved debt from diagnostics.
+    pub fn pending_normalizable_pump_trade_evidence(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = sqlite_limit(limit, "Pump normalizable pending-trade limit")?;
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                   p.mint, p.quote_mint, p.user, p.is_buy,
+                   p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                   p.timestamp_unix_seconds,
+                   p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                   p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                   p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                   p.ix_name
+               FROM pump_trade_evidence AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM pump_trade_evidence_conflicts AS c
+                     WHERE c.signature = p.signature AND c.ordinal = p.ordinal
+                 )
+                 AND EXISTS (
+                     SELECT 1
+                     FROM token_candidates AS base_candidate
+                     JOIN token_mint_states AS base_state
+                       ON base_state.candidate_id = base_candidate.id
+                     WHERE base_candidate.mint = p.mint
+                 )
+                 AND (
+                     p.quote_mint = ?1
+                     OR p.quote_mint = ?2
+                     OR EXISTS (
+                         SELECT 1
+                         FROM token_candidates AS quote_candidate
+                         JOIN token_mint_states AS quote_state
+                           ON quote_state.candidate_id = quote_candidate.id
+                         WHERE quote_candidate.mint = p.quote_mint
+                     )
+                 )
+               ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
+               LIMIT ?3"#,
+        )?;
+        let rows = statement
+            .query_map(params![SYSTEM_SOL_MINT, WRAPPED_SOL_MINT, limit], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -378,6 +466,7 @@ fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
         "helius" => Ok(ProviderId::Helius),
         "alchemy" => Ok(ProviderId::Alchemy),
         "chainstack" => Ok(ProviderId::Chainstack),
+        "solana_public" => Ok(ProviderId::SolanaPublic),
         "jupiter" => Ok(ProviderId::Jupiter),
         "meteora" => Ok(ProviderId::Meteora),
         other => Err(StorageError::InvalidData(format!(
