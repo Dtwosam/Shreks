@@ -32,9 +32,15 @@ Use the authoritative persistent observer database:
 
 FL1 realtime provider order is **Helius -> Chainstack -> Alchemy**: `HELIUS_API_KEY` is primary, host-only `CHAINSTACK_SOLANA_WSS_URL` is the proven secondary standard-Solana websocket source, and `ALCHEMY_API_KEY` is tertiary. The Chainstack endpoint itself contains credential material. Provider credentials/endpoints belong only in protected host runtime configuration. Never print them, put their values in this runbook, copy them into an evidence bundle, or expose the service environment with commands such as `systemctl show ... -p Environment`.
 
+When Helius is enabled, the observer release requires a positive host-side `SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS`. That value is an **HTTP/RPC process-lifetime ceiling only**. It does not meter WebSocket push consumption, it resets when the process restarts, and it must never be presented as a monthly/cross-process provider-spend limit. Missing/invalid configuration must fail startup closed. Repeated restarts must never be used to reset the process ceiling and continue consuming provider quota.
+
+Paper-evidence uses its own positive `SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS` plus `SHREKS_PAPER_HOLDER_REFRESH_SECONDS`; those controls are independent of the observer ceiling. Do not infer one service's provider usage from another service's counter.
+
+Metered realtime consumption remains a separate acceptance concern. A connected full-program WebSocket is not automatically healthy if its push volume is incompatible with free-tier operation. Before FL1.5 can pass, the deployed realtime topology itself must be the bounded design approved by the current source of truth, and the representative interval must retain enough non-secret evidence to show provider consumption is operationally sustainable. Buying a larger provider plan is not a substitute for that proof.
+
 When accepting the provider-failover fix after a natural Helius quota failure, keep the failure natural: do not deliberately exhaust credits, block networking, corrupt credentials, or restart services merely to manufacture failover. If Helius is already returning `429` / `max usage reached`, that is valid real-world primary-provider failure evidence and the representative window should prove that the configured fallback continues FL1 ingestion.
 
-Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, or any signing material into the evidence directory.
+Do not copy provider credentials, environment secrets, wallet material, dashboard credentials, Telegram tokens, signing material, provider account identifiers, or raw provider portal pages containing secret/account data into the evidence directory. If a provider portal exposes useful consumption counters, retain only non-secret numeric usage totals/time windows needed for acceptance.
 
 ## 2. Evidence boundary
 
@@ -94,6 +100,20 @@ PY
 
 This query is evidence-only and must remain `mode=ro`. Provider counts must agree with the raw/canonical activity in the acceptance report. If Helius is naturally quota-exhausted during the window, accepted fallback evidence should contain `chainstack` rows when Chainstack is configured rather than relabeling them as Helius. Alchemy counts are acceptable only when its websocket subscription actually acknowledges and carries traffic.
 
+### Provider-consumption evidence
+
+Provider consumption is host/provider operational evidence, not a SQLite fact. Retain all non-secret evidence available for the same interval, including:
+
+- observer journal lines showing Helius HTTP/RPC budget exhaustion or provider `429`/quota conditions, if any;
+- the configured positive observer HTTP/RPC request ceiling as established by the deployed release's startup/config validation, without dumping the service environment or provider key;
+- any non-secret provider-side numeric consumption total/time window available for the deployed realtime subscription;
+- the exact realtime subscription/topology version from the immutable release under acceptance;
+- service restart count so a process-budget reset cannot be hidden by restart.
+
+An HTTP process ceiling is not evidence that WebSocket push consumption is bounded. Conversely, a bounded realtime subscription does not remove the HTTP/RPC ceiling requirement. Treat them as separate budgets/evidence lanes.
+
+If reliable provider-side consumption numbers are unavailable, do not invent them. The acceptance record must instead explicitly state that provider-side numeric usage was unavailable and rely on the bounded approved subscription scope plus measured raw event rate, provider provenance, and stable interval behavior. A still-global/unbounded metered subscription cannot pass merely because provider-side counters are unavailable.
+
 ### Host-only evidence
 
 Capture these separately over the same physical-host interval:
@@ -102,7 +122,7 @@ Capture these separately over the same physical-host interval:
 - observer PID, CPU, and RSS;
 - host memory and filesystem headroom;
 - database/WAL size before and after the interval for DB/WAL growth;
-- observer provider/reconnect journal lines, including any disconnect/reconnect instability or quota exhaustion;
+- observer provider/reconnect journal lines, including any disconnect/reconnect instability, HTTP budget exhaustion, or provider quota exhaustion;
 - exact release SHA and exact interval timestamps.
 
 Provider/reconnect logs are the source for reconnect behavior and any visible attempted duplicate/replay overlap. If the logs do not expose a trustworthy attempted duplicate count, record that metric as unavailable rather than fabricating it.
@@ -111,7 +131,7 @@ Provider/reconnect logs are the source for reconnect behavior and any visible at
 
 Choose a window long enough to observe both Pump bonding-curve and PumpSwap traffic. Zero traffic from either lane does not prove that lane on the production host; extend the window instead of treating silence as success.
 
-Capture the starting wall clock and database/WAL sizes:
+Capture the starting wall clock and database/WAL sizes. The database directory is intentionally protected; read metadata as the `shreks` service identity rather than changing ownership/permissions or running the checks as the operator account:
 
 ```bash
 DB=/var/lib/shreks/shreks.db
@@ -119,22 +139,39 @@ START_MS="$(date +%s%3N)"
 START_ISO="$(date --iso-8601=seconds)"
 printf '%s\n' "$START_MS" > "$EVIDENCE_DIR/window-start-ms.txt"
 printf '%s\n' "$START_ISO" > "$EVIDENCE_DIR/window-start-iso.txt"
-stat -c '%n %s' "$DB" "$DB-wal" 2>&1 | tee "$EVIDENCE_DIR/storage-before.txt"
+sudo -u shreks test -r "$DB"
+{
+  sudo -u shreks stat -c '%n %s' "$DB"
+  if sudo -u shreks test -e "$DB-wal"; then
+    sudo -u shreks stat -c '%n %s' "$DB-wal"
+  else
+    printf '%s\n' "$DB-wal absent"
+  fi
+} | tee "$EVIDENCE_DIR/storage-before.txt"
 systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus | tee "$EVIDENCE_DIR/observer-before.txt"
 ```
 
-Let the normal production observer run without intervention for the chosen representative interval. Do not use this acceptance procedure to induce a restart or mutate service state.
+The absence of a WAL file at one instant is not by itself a failure; retain that fact literally and compare with the end state. A permission failure is also not a reason to `chmod`/`chown` production state—investigate service identity/ownership instead.
+
+Let the normal production observer run without intervention for the chosen representative interval. Do not use this acceptance procedure to induce a restart, reset a provider request budget, or mutate service state.
 
 ## 4. End the interval and run the read-only reporter
 
-Capture the end timestamp and host state:
+Capture the end timestamp and host state, again reading protected database metadata as `shreks`:
 
 ```bash
 END_MS="$(date +%s%3N)"
 END_ISO="$(date --iso-8601=seconds)"
 printf '%s\n' "$END_MS" > "$EVIDENCE_DIR/window-end-ms.txt"
 printf '%s\n' "$END_ISO" > "$EVIDENCE_DIR/window-end-iso.txt"
-stat -c '%n %s' "$DB" "$DB-wal" 2>&1 | tee "$EVIDENCE_DIR/storage-after.txt"
+{
+  sudo -u shreks stat -c '%n %s' "$DB"
+  if sudo -u shreks test -e "$DB-wal"; then
+    sudo -u shreks stat -c '%n %s' "$DB-wal"
+  else
+    printf '%s\n' "$DB-wal absent"
+  fi
+} | tee "$EVIDENCE_DIR/storage-after.txt"
 systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus | tee "$EVIDENCE_DIR/observer-after.txt"
 ```
 
@@ -163,7 +200,7 @@ sudo -u shreks /opt/shreks/current/target/release/shreks-observe fast-lane-accep
   > "$EVIDENCE_DIR/fast-lane-report.txt"
 ```
 
-Then capture the provider-provenance breakdown from Section 2 using the same `DB`, `START_MS`, and `END_MS` values.
+Then capture the provider-provenance breakdown from Section 2 using the same `DB`, `START_MS`, and `END_MS` values, plus the non-secret provider-consumption evidence available for that exact interval.
 
 The acceptance command must exit `0`. A nonzero exit means missing/incompatible schema, invalid timing, unreadable storage evidence, or another fail-closed condition; investigate it rather than overriding it.
 
@@ -192,26 +229,30 @@ The total and window quarantine counts must be retained as measured evidence. **
 
 A single pending row is not automatically a failure: delayed mint decimals or verified PumpSwap lifecycle mapping can be legitimate. The failure condition is unexplained persistence/growth, integrity errors, or evidence that normalization cannot catch up under real load.
 
-## 6. Host-only acceptance checks
+## 6. Host/provider acceptance checks
 
-Compare `observer-before.txt` with `observer-after.txt` and inspect `observer-window.log`.
+Compare `observer-before.txt` with `observer-after.txt` and inspect `observer-window.log` plus the provider-consumption evidence.
 
 Require:
 
 - `ActiveState=active` and a healthy observer substate at both ends;
 - no unexplained increase in `NRestarts`;
+- no restart was used to reset/bypass the Helius process request ceiling;
 - no crash loop or persistent provider/reconnect churn;
 - reconnects or provider rotation, if they occur naturally, recover without evidence loss or sequence corruption;
 - a primary-provider `429` / `max usage reached` condition does not leave the observer falsely healthy while raw/canonical progress has stopped;
+- the Helius HTTP/RPC process request budget is not exhausted during the accepted interval; any local `Helius process request budget exhausted` condition is a HOLD even if another evidence lane remains active;
+- the deployed realtime subscription/topology is the bounded approved design rather than the superseded unmeasured full-program metered firehose;
+- available non-secret provider consumption evidence is compatible with continued free-tier operation for the intended duty cycle; if exact provider counters are unavailable, the bounded subscription scope and measured event rate must still be retained and explained;
 - if all configured realtime providers are unavailable, the realtime lane exits fail-closed so the observer cannot continue presenting a healthy ingestion state;
 - CPU and RSS remain stable enough for continuous operation with meaningful headroom;
 - `free -h` shows memory headroom rather than sustained exhaustion/swap pressure;
 - `df -h` shows enough free space for continued database/WAL growth;
 - `storage-before.txt` and `storage-after.txt` show DB/WAL growth compatible with the measured event rate and available disk headroom.
 
-A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Chainstack (or independently proven Alchemy) fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, or ingestion/canonicalization stalls.
+A Helius quota error is not by itself an FL1.5 failure when an explicitly configured Chainstack (or independently proven Alchemy) realtime fallback is demonstrably carrying representative Pump/PumpSwap traffic with intact canonical progress **and the accepted architecture's own required HTTP/RPC budgets remain healthy**. It is a failure if fallback is absent, provenance is ambiguous, all-provider exhaustion is hidden, the configured Helius HTTP/RPC process ceiling is exhausted, the realtime topology is still unbounded/unsustainable, or ingestion/canonicalization stalls.
 
-Do not turn one quiet snapshot into a resource-capacity claim. If CPU/RSS or DB/WAL growth is uncertain, repeat the acceptance interval under representative load and retain both evidence sets.
+Do not turn one quiet snapshot into a resource-capacity or provider-cost claim. If CPU/RSS, DB/WAL growth, event rate, or realtime provider consumption is uncertain, repeat the acceptance interval under representative natural load and retain both evidence sets. Do not manufacture load, quota exhaustion, or restarts merely to make the evidence look complete.
 
 ## 7. Duplicate/reconnect interpretation
 
@@ -220,6 +261,8 @@ The FL1 journal is idempotent by durable event identity. That means an attempted
 A replay that carries a different economic payload for an already-stored `(signature, ordinal)` is not treated as an idempotent duplicate. It is durably quarantined as conflicting evidence. The quarantined variant must not overwrite the first raw row, enter canonical normalization, or remain trusted through canonical market replay if the ambiguity arrives after canonicalization.
 
 Use provider/reconnect journal evidence to assess whether reconnect behavior is stable. If a reconnect or provider rotation occurred, verify the database report still has `sequence_integrity_violations=0`, `canonical_conflict_quarantine_violations=0`, no unexplained backlog jump, truthful provider provenance, and continued canonical event progress after recovery. If no reconnect/failover occurred naturally, record that fact; do not manufacture a destructive restart or quota-exhaustion drill for this FL1.5 routine acceptance.
+
+A restart also resets process-local request counters. Therefore any acceptance interval containing an observer restart requires an explicit explanation; an unexplained restart invalidates provider-budget evidence because the process ceiling may have reset. Repeated restarts to extend provider consumption are prohibited and cannot satisfy FL1.5.
 
 ## 8. FL1.5 hold / exit rule
 
@@ -235,12 +278,15 @@ Use provider/reconnect journal evidence to assess whether reconnect behavior is 
 - quarantine is persistent or growing across representative windows without a bounded explanation, or fork ambiguity prevents representative canonical progress;
 - provider provenance is missing, unrecognized, contradictory, or inconsistent with the reported FL1 activity;
 - Helius quota exhaustion occurs without a working configured fallback, or all configured realtime providers are exhausted/unavailable;
+- any required Helius HTTP/RPC process request budget is missing, invalid, or exhausted;
+- a service restart was used or appears to have been used to reset a provider request ceiling;
+- the deployed realtime subscription is still an unmeasured/unbounded full-program metered firehose, or available evidence shows realtime consumption is incompatible with continuous free-tier operation;
 - the observer remains nominally healthy while realtime raw/canonical progress has stopped;
 - the observer crashes/restarts unexpectedly or provider/reconnect behavior is unstable;
 - CPU/RSS, memory, disk, or DB/WAL growth leaves inadequate production headroom;
-- the evidence interval, release SHA, or host-only records are missing;
+- the evidence interval, release SHA, provider-consumption evidence, or host-only records are missing;
 - any command or code path introduces trading, signing, submission, or LIVE authority.
 
-FL1.5 may be marked production-accepted only after the real dedicated host has produced and retained one or more representative evidence sets satisfying both the database-backed and host-only checks above. CI, fixtures, localhost tests, and synthetic traffic alone cannot satisfy this exit rule.
+FL1.5 may be marked production-accepted only after the real dedicated host has produced and retained one or more representative evidence sets satisfying the database-backed, host-only, and provider-consumption checks above. CI, fixtures, localhost tests, and synthetic traffic alone cannot satisfy this exit rule.
 
 **LIVE TRADING: DISABLED**
