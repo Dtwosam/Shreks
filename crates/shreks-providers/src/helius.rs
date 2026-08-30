@@ -2,6 +2,11 @@
 
 use std::{
     collections::{BTreeMap, HashSet},
+    fmt,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -263,8 +268,7 @@ pub fn parse_token_accounts_page(
     if result.token_accounts.len() > result.limit {
         return Err(invalid_response(format!(
             "Helius holder page returned {} accounts above limit {}",
-            result.token_accounts.len(),
-            result.limit
+            result.limit, result.limit
         )));
     }
 
@@ -309,8 +313,7 @@ pub fn aggregate_token_account_pages(
     if pages.len() > request.max_pages {
         return Err(invalid_response(format!(
             "holder distribution received {} pages above max {}",
-            pages.len(),
-            request.max_pages
+            pages.len(), request.max_pages
         )));
     }
 
@@ -430,10 +433,82 @@ pub fn aggregate_token_account_pages(
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HeliusRequestUsage {
+    pub attempted: u64,
+    pub limit: Option<u64>,
+    pub remaining: Option<u64>,
+    pub exhausted: bool,
+}
+
+#[derive(Debug)]
+struct HeliusRequestBudget {
+    attempted: AtomicU64,
+    limit: Option<u64>,
+}
+
+impl HeliusRequestBudget {
+    fn unbounded() -> Self {
+        Self {
+            attempted: AtomicU64::new(0),
+            limit: None,
+        }
+    }
+
+    fn bounded(limit: u64) -> Self {
+        Self {
+            attempted: AtomicU64::new(0),
+            limit: Some(limit),
+        }
+    }
+
+    fn reserve(&self) -> Result<(), ProviderError> {
+        let mut current = self.attempted.load(Ordering::Relaxed);
+        loop {
+            if self.limit.is_some_and(|limit| current >= limit) {
+                return Err(ProviderError::new(
+                    ProviderId::Helius,
+                    ProviderErrorKind::RateLimited,
+                    "Helius process request budget exhausted",
+                ));
+            }
+            let next = current.checked_add(1).ok_or_else(|| {
+                ProviderError::new(
+                    ProviderId::Helius,
+                    ProviderErrorKind::RateLimited,
+                    "Helius process request counter exhausted",
+                )
+            })?;
+            match self.attempted.compare_exchange_weak(
+                current,
+                next,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    fn usage(&self) -> HeliusRequestUsage {
+        let attempted = self.attempted.load(Ordering::Relaxed);
+        let remaining = self.limit.map(|limit| limit.saturating_sub(attempted));
+        let exhausted = self.limit.is_some_and(|limit| attempted >= limit);
+        HeliusRequestUsage {
+            attempted,
+            limit: self.limit,
+            remaining,
+            exhausted,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct HeliusProvider {
     api_key: String,
     client: reqwest::Client,
+    request_budget: Arc<HeliusRequestBudget>,
 }
 
 impl HeliusProvider {
@@ -450,7 +525,24 @@ impl HeliusProvider {
         Ok(Self {
             api_key,
             client: reqwest::Client::new(),
+            request_budget: Arc::new(HeliusRequestBudget::unbounded()),
         })
+    }
+
+    pub fn with_request_budget(mut self, max_requests: u64) -> Result<Self, ProviderError> {
+        if max_requests == 0 {
+            return Err(ProviderError::new(
+                ProviderId::Helius,
+                ProviderErrorKind::InvalidRequest,
+                "Helius process request budget must be positive",
+            ));
+        }
+        self.request_budget = Arc::new(HeliusRequestBudget::bounded(max_requests));
+        Ok(self)
+    }
+
+    pub fn request_usage(&self) -> HeliusRequestUsage {
+        self.request_budget.usage()
     }
 
     /// Fetch a confirmed transaction as raw JSON for a protocol-specific
@@ -462,6 +554,7 @@ impl HeliusProvider {
     }
 
     async fn post_rpc(&self, payload: &Value) -> Result<String, ProviderError> {
+        self.request_budget.reserve()?;
         let response = self
             .client
             .post(helius_rpc_url(&self.api_key))
@@ -487,6 +580,16 @@ impl HeliusProvider {
         }
 
         Ok(body)
+    }
+}
+
+impl fmt::Debug for HeliusProvider {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HeliusProvider")
+            .field("api_key", &"<redacted>")
+            .field("request_budget", &self.request_usage())
+            .finish()
     }
 }
 
@@ -607,7 +710,6 @@ fn unix_time_ms() -> Result<i64, ProviderError> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| {
         invalid_response(format!("system clock before Unix epoch: {error}"))
     })?;
-    i64::try_from(elapsed.as_millis()).map_err(|_| {
-        invalid_response("system clock exceeds i64 milliseconds")
-    })
+    i64::try_from(elapsed.as_millis())
+        .map_err(|_| invalid_response("system clock exceeds i64 milliseconds"))
 }
