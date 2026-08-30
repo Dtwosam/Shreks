@@ -37,11 +37,10 @@ use shreks_providers::{
     bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
     config::ProviderConfig,
     dexscreener::DexScreenerProvider,
-    helius::HeliusProvider,
     meteora::MeteoraProvider,
     pump_realtime::forward_pump_realtime_signals,
     solana_rpc::StandardSolanaRpcProvider,
-    DiscoveryProvider, ProviderError, ProviderErrorKind,
+    DiscoveryProvider, ProviderError,
 };
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::{
@@ -79,11 +78,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut sampler = build_high_resolution_sampler(sampler_db, &runtime.providers)?;
     sampler.restore_registry()?;
 
-    // One active standard-Solana websocket keeps the Pump-wide lane and a
-    // bounded set of verified PumpSwap pool subscriptions. Helius is preferred
-    // when configured; Chainstack is the proven fallback and Alchemy remains
-    // tertiary. Provider exhaustion rotates sources before durability may fail.
-    let realtime_configs = build_pump_realtime_configs(&runtime.providers)?;
+    // Broad Pump capture is deliberately pinned to the official public Solana
+    // websocket. Paid provider credentials may remain configured for other
+    // binaries, but they cannot activate the FL1 realtime firehose. The same
+    // bounded target engine keeps Pump-wide evidence plus verified PumpSwap pools.
+    let realtime_configs = build_pump_realtime_configs()?;
     let pump_realtime_tasks = if realtime_configs.is_empty() {
         None
     } else {
@@ -174,20 +173,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn build_pump_realtime_configs(
-    config: &ProviderConfig,
-) -> Result<Vec<BoundedPumpRealtimeLogStreamConfig>, ProviderError> {
-    let mut configs = Vec::new();
-    if let Some(api_key) = config.helius_api_key() {
-        configs.push(BoundedPumpRealtimeLogStreamConfig::helius(api_key)?);
-    }
-    if let Some(endpoint) = config.chainstack_solana_wss_url() {
-        configs.push(BoundedPumpRealtimeLogStreamConfig::chainstack(endpoint)?);
-    }
-    if let Some(api_key) = config.alchemy_api_key() {
-        configs.push(BoundedPumpRealtimeLogStreamConfig::alchemy(api_key)?);
-    }
-    Ok(configs)
+fn build_pump_realtime_configs() -> Result<Vec<BoundedPumpRealtimeLogStreamConfig>, ProviderError> {
+    Ok(vec![BoundedPumpRealtimeLogStreamConfig::solana_public()?])
 }
 
 fn build_lifecycle_observer(
@@ -198,30 +185,15 @@ fn build_lifecycle_observer(
     if config.dexscreener_enabled {
         observer = observer.with_pump_market_provider(Arc::new(DexScreenerProvider::new()));
     }
-    if let Some(api_key) = config.helius_api_key() {
-        let max_requests = config
-            .observer_helius_max_requests_per_process
-            .ok_or_else(|| {
-                ProviderError::new(
-                    shreks_core::ProviderId::Helius,
-                    ProviderErrorKind::InvalidRequest,
-                    "observer Helius process request budget is required",
-                )
-            })?;
-        let helius = Arc::new(
-            HeliusProvider::new(api_key)?.with_request_budget(max_requests)?,
-        );
-        observer = observer.with_chain_provider(helius.clone());
-        if !config.chainstack_enabled() {
-            observer = observer.with_transaction_provider(helius);
-        }
-    }
-    if let Some(endpoint) = config.chainstack_solana_wss_url() {
-        let chainstack = Arc::new(StandardSolanaRpcProvider::chainstack(endpoint)?);
-        observer = observer
-            .with_chain_provider(chainstack.clone())
-            .with_transaction_provider(chainstack);
-    }
+
+    // Launch/migration verification uses the same read-only standard Solana
+    // semantics as before, but the broad verifier is public-only. Paid Helius
+    // and Chainstack credentials are intentionally not consulted here.
+    let solana_public = Arc::new(StandardSolanaRpcProvider::solana_public()?);
+    observer = observer
+        .with_chain_provider(solana_public.clone())
+        .with_transaction_provider(solana_public);
+
     Ok(observer)
 }
 
