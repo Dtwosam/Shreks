@@ -15,7 +15,7 @@ use shreks_providers::{
     pump::PumpLifecycleSignal,
     pump_realtime::PumpRealtimeNotification,
     solana_rpc::StandardSolanaRpcProvider,
-    ProviderError,
+    ProviderError, ProviderErrorKind,
 };
 use shreks_storage::{
     pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
@@ -192,7 +192,18 @@ pub fn build_free_observer(
     }
 
     if let Some(api_key) = config.helius_api_key() {
-        let helius = Arc::new(HeliusProvider::new(api_key)?);
+        let max_requests = config
+            .observer_helius_max_requests_per_process
+            .ok_or_else(|| {
+                ProviderError::new(
+                    ProviderId::Helius,
+                    ProviderErrorKind::InvalidRequest,
+                    "observer Helius process request budget is required",
+                )
+            })?;
+        let helius = Arc::new(
+            HeliusProvider::new(api_key)?.with_request_budget(max_requests)?,
+        );
         observer = observer.with_chain_provider(helius.clone());
         if !config.chainstack_enabled() {
             observer = observer.with_transaction_provider(helius);
