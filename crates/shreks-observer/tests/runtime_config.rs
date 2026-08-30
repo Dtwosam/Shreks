@@ -39,6 +39,7 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 
     let with_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("500".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -58,9 +59,57 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 }
 
 #[test]
+fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
+    let missing = ObserverRuntimeConfig::from_lookup(|name| match name {
+        "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        _ => None,
+    })
+    .expect_err("Helius observer runtime must not start without an HTTP request ceiling");
+    assert!(
+        missing
+            .to_string()
+            .contains("SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS")
+    );
+
+    for invalid in ["0", "-1", "nope"] {
+        let error = ObserverRuntimeConfig::from_lookup(|name| match name {
+            "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+            "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some(invalid.to_owned()),
+            _ => None,
+        })
+        .expect_err("invalid Helius request ceiling must fail closed");
+        assert!(
+            error
+                .to_string()
+                .contains("SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS"),
+            "invalid {invalid}: {error}"
+        );
+    }
+
+    let bounded = ObserverRuntimeConfig::from_lookup(|name| match name {
+        "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("123".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+    assert_eq!(
+        bounded.providers.observer_helius_max_requests_per_process,
+        Some(123)
+    );
+
+    let helius_free = ObserverRuntimeConfig::from_lookup(|_| None)
+        .expect("Helius-free observe mode must not require a Helius ceiling");
+    assert_eq!(
+        helius_free.providers.observer_helius_max_requests_per_process,
+        None
+    );
+}
+
+#[test]
 fn chainstack_adds_readonly_chain_truth_and_owns_transaction_verification_when_configured() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("500".to_owned()),
         "CHAINSTACK_SOLANA_WSS_URL" => {
             Some("wss://solana-mainnet.core.chainstack.com/fixture-chainstack-key".to_owned())
         }
@@ -114,6 +163,7 @@ fn chainstack_can_supply_readonly_rpc_and_realtime_without_helius() {
 fn alchemy_is_realtime_only_and_ordered_after_helius_when_both_keys_exist() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("500".to_owned()),
         "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
         _ => None,
     })
