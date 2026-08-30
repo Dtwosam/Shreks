@@ -9,6 +9,8 @@ fn runtime_defaults_are_safe_and_observe_only() {
 
     assert_eq!(config.db_path.to_string_lossy(), "data/shreks.db");
     assert_eq!(config.cycle_interval, Duration::from_secs(30));
+    assert_eq!(config.pumpswap_tracking_max_age, None);
+    assert_eq!(config.pumpswap_max_tracked_pools, None);
 
     let plan = free_observe_provider_plan(&config.providers);
     assert_eq!(plan.discovery, vec![ProviderId::DexScreener]);
@@ -40,6 +42,8 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
     let with_key = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("500".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -62,6 +66,8 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
     let missing = match ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     }) {
         Ok(_) => panic!("Helius observer runtime must not start without an HTTP request ceiling"),
@@ -77,6 +83,8 @@ fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
         let error = match ObserverRuntimeConfig::from_lookup(|name| match name {
             "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
             "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some(invalid.to_owned()),
+            "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+            "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
             _ => None,
         }) {
             Ok(_) => panic!("invalid Helius request ceiling must fail closed"),
@@ -93,6 +101,8 @@ fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
     let bounded = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("123".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -110,6 +120,77 @@ fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
 }
 
 #[test]
+fn realtime_requires_explicit_positive_pumpswap_tracking_bounds() {
+    for missing in [
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS",
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS",
+    ] {
+        let result = ObserverRuntimeConfig::from_lookup(|name| match name {
+            "CHAINSTACK_SOLANA_WSS_URL" => Some("wss://fixture-chainstack.invalid/key".to_owned()),
+            "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS"
+                if missing != "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" =>
+            {
+                Some("900".to_owned())
+            }
+            "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS"
+                if missing != "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" =>
+            {
+                Some("64".to_owned())
+            }
+            _ => None,
+        });
+        let error = result.expect_err("realtime must fail closed without both scope bounds");
+        assert!(error.to_string().contains(missing), "missing {missing}: {error}");
+    }
+
+    for (name, invalid) in [
+        ("SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS", "0"),
+        ("SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS", "-1"),
+        ("SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS", "nope"),
+        ("SHREKS_PUMPSWAP_MAX_TRACKED_POOLS", "0"),
+        ("SHREKS_PUMPSWAP_MAX_TRACKED_POOLS", "-1"),
+        ("SHREKS_PUMPSWAP_MAX_TRACKED_POOLS", "nope"),
+    ] {
+        let result = ObserverRuntimeConfig::from_lookup(|key| match key {
+            "CHAINSTACK_SOLANA_WSS_URL" => Some("wss://fixture-chainstack.invalid/key".to_owned()),
+            "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some(
+                if name == "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" {
+                    invalid
+                } else {
+                    "900"
+                }
+                .to_owned(),
+            ),
+            "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some(
+                if name == "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" {
+                    invalid
+                } else {
+                    "64"
+                }
+                .to_owned(),
+            ),
+            _ => None,
+        });
+        let error = result.expect_err("invalid realtime scope bound must fail closed");
+        assert!(error.to_string().contains(name), "invalid {name}={invalid}: {error}");
+    }
+}
+
+#[test]
+fn valid_realtime_scope_bounds_are_exposed_exactly() {
+    let config = ObserverRuntimeConfig::from_lookup(|name| match name {
+        "CHAINSTACK_SOLANA_WSS_URL" => Some("wss://fixture-chainstack.invalid/key".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("901".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("37".to_owned()),
+        _ => None,
+    })
+    .unwrap();
+
+    assert_eq!(config.pumpswap_tracking_max_age, Some(Duration::from_secs(901)));
+    assert_eq!(config.pumpswap_max_tracked_pools, Some(37));
+}
+
+#[test]
 fn chainstack_adds_readonly_chain_truth_and_owns_transaction_verification_when_configured() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
@@ -118,6 +199,8 @@ fn chainstack_adds_readonly_chain_truth_and_owns_transaction_verification_when_c
             Some("wss://solana-mainnet.core.chainstack.com/fixture-chainstack-key".to_owned())
         }
         "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -153,6 +236,8 @@ fn chainstack_can_supply_readonly_rpc_and_realtime_without_helius() {
         "CHAINSTACK_SOLANA_WSS_URL" => {
             Some("wss://solana-mainnet.core.chainstack.com/fixture-chainstack-key".to_owned())
         }
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -169,6 +254,8 @@ fn alchemy_is_realtime_only_and_ordered_after_helius_when_both_keys_exist() {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some("500".to_owned()),
         "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
@@ -189,6 +276,8 @@ fn alchemy_is_realtime_only_and_ordered_after_helius_when_both_keys_exist() {
 fn alchemy_can_provide_realtime_without_helius_chain_authority() {
     let config = ObserverRuntimeConfig::from_lookup(|name| match name {
         "ALCHEMY_API_KEY" => Some("fixture-alchemy-key".to_owned()),
+        "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some("900".to_owned()),
+        "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS" => Some("64".to_owned()),
         _ => None,
     })
     .unwrap();
