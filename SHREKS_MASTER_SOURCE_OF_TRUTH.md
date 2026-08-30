@@ -6,7 +6,7 @@
 **System type:** Autonomous memecoin trading system  
 **Architecture:** Rust Fast Lane + Python research/learning/control plane  
 **Status:** Fast Lane trading-core rebuild authorized; LIVE trading remains disabled  
-**Last updated:** 2026-08-28
+**Last updated:** 2026-08-30
 
 ---
 
@@ -64,6 +64,10 @@ Real trading costs are allowed and must be measured, including:
 - failed/partial execution costs where applicable.
 
 If a free source is exhausted or unavailable, Shreks degrades or pauses the affected strategy safely rather than silently requiring paid data.
+
+Provider consumption itself is an operational cost/health invariant. Enabled metered HTTP/RPC paths must have explicit bounded request budgets appropriate to their process, expose non-secret usage evidence where implemented, and fail closed at exhaustion rather than silently consuming beyond the configured ceiling. A per-process budget resets on restart and is **not** a substitute for cross-process or monthly provider accounting; service restarts must never be used to bypass a provider budget.
+
+Metered realtime/WebSocket consumption must be measured and bounded separately from HTTP/RPC request budgets. A full-program realtime firehose may not be assumed safe for continuous production merely because transport remains connected. If its consumption is incompatible with free-tier operation, the runtime must narrow collection, rotate/degrade to an allowed source, or pause the affected lane safely. Buying a larger provider plan is not the default architectural fix.
 
 ### 2.4 LIVE stays disabled until proof
 Real-money trading remains disabled until the promoted strategy family passes explicit PAPER/shadow, execution, accounting, recovery, and risk gates.
@@ -677,6 +681,10 @@ Shreks must survive provider limits/outages, malformed/stale data, network failu
 
 Critical health degradation pauses new entries.
 
+Provider health includes consumption health, not only transport connectivity. Production evidence must distinguish HTTP/RPC request usage from realtime/WebSocket push consumption, retain truthful provider provenance, and show that configured ceilings and free-tier capacity are compatible with the intended operating interval. An exhausted required request budget is a fail-closed provider condition, not a reason to silently raise the limit or restart the process to reset it.
+
+A realtime source that is technically connected but consuming provider quota at an unsustainable rate is not production-healthy. Full-program metered ingestion must be narrowed, bounded, or otherwise proven sustainable before 24/7 runtime acceptance.
+
 ### Production location
 GitHub is the source-control/CI/release/deployment control plane. It does **not** run Shreks continuously.
 
@@ -744,6 +752,7 @@ Before LIVE money, require tests/evidence for:
 - paper/live artifact parity,
 - chronological evaluation,
 - latency/throughput/capacity benchmarks,
+- provider-consumption/budget evidence under representative physical-host load,
 - live dry runs.
 
 LIVE promotion additionally requires:
@@ -826,6 +835,7 @@ LIVE TRADING REMAINS DISABLED.
 - the canonical-pair selection correction is merged and previously deployed/physically accepted on the VPS at release `330ace280067905b6502ba3846f73b2b461be125`.
 - the verified-Pump-market-evidence fix is merged and sealed in GitHub at `29f6dd9b747e053569d14d54a2f346b46ed103ac`; physical VPS deployment/acceptance of that newer seal must not be assumed until separately proven.
 - the Fast Lane architecture described here is the next major build direction.
+- FL1.5 physical-host work exposed unsustainable provider consumption in the metered realtime/evidence paths; provider-consuming production services remain stopped until bounded HTTP guardrails, a bounded realtime topology, exact release verification, and fresh physical-host acceptance are all complete.
 
 ---
 
