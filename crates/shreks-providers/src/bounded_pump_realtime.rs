@@ -34,6 +34,7 @@ const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_MAX_CONNECT_ATTEMPTS: u32 = 5;
 const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const ALCHEMY_MAINNET_WS_BASE: &str = "wss://solana-mainnet.g.alchemy.com/v2/";
+const SOLANA_PUBLIC_MAINNET_WS_URL: &str = "wss://api.mainnet.solana.com";
 
 type BoundedPumpRealtimeSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 type BoundedPumpRealtimeFrame = Option<Result<Message, tokio_tungstenite::tungstenite::Error>>;
@@ -82,17 +83,27 @@ impl BoundedPumpRealtimeLogStreamConfig {
         )
     }
 
+    pub fn solana_public() -> Result<Self, ProviderError> {
+        Self::for_provider_endpoint(
+            ProviderId::SolanaPublic,
+            SOLANA_PUBLIC_MAINNET_WS_URL,
+        )
+    }
+
     pub fn for_provider_endpoint(
         provider: ProviderId,
         endpoint: impl Into<String>,
     ) -> Result<Self, ProviderError> {
         if !matches!(
             provider,
-            ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy
+            ProviderId::Helius
+                | ProviderId::Chainstack
+                | ProviderId::Alchemy
+                | ProviderId::SolanaPublic
         ) {
             return Err(invalid_request(
                 provider,
-                "bounded Pump realtime provider must be Helius, Chainstack, or Alchemy",
+                "bounded Pump realtime provider must be Helius, Chainstack, Alchemy, or SolanaPublic",
             ));
         }
         let endpoint = endpoint.into();
