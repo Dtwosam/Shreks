@@ -76,6 +76,15 @@ shreks-release-<sha>.tar.gz.sha256
 RELEASE_MANIFEST.json
 ```
 
+The top-level release payload intentionally keeps the historical G2 allowlist so an already-installed older root verifier can stage the first release that repairs deployment activation. The exact sealed `deploy/release/release_bundle.py` and `deploy/release/release_manager.py` bytes are embedded inside the already-allowlisted Shreks wheel as:
+
+```text
+shreks_brain/_sealed_deploy_control/release_bundle.py
+shreks_brain/_sealed_deploy_control/release_manager.py
+```
+
+The wheel itself is a manifest-hashed release payload. During release construction, `build_release.sh` opens the completed wheel and verifies those two members are byte-for-byte identical to the exact sealed checkout before the wheel enters the release bundle. This transports the one-time root control-plane repair without changing the top-level manifest schema or making old verified releases unverifiable.
+
 ## Deploy a release
 
 Run the manual `Deploy verified Shreks release` workflow with the existing release tag. The workflow validates the tag, checks out the verifier at that release, downloads the three assets, verifies them before host contact, uses strict pinned host-key checking, copies the assets to `/var/tmp`, and invokes only:
@@ -84,7 +93,74 @@ Run the manual `Deploy verified Shreks release` workflow with the existing relea
 sudo /usr/local/sbin/shreks-release-manager install <archive> <checksum> <manifest>
 ```
 
-The release manager re-verifies the bundle, stages `/opt/shreks/releases/<sha>`, constructs the release-local Python environment at its final SHA path, re-verifies stored payloads, installs systemd unit files, atomically switches `/opt/shreks/current`, starts `shreks.target`, and checks health. If activation fails after a prior release was active, the manager restores the previous verified release and its previous unit files.
+The current release manager re-verifies the bundle, stages `/opt/shreks/releases/<sha>`, constructs the release-local Python environment at its final SHA path, re-verifies stored payloads, installs systemd unit files, atomically switches `/opt/shreks/current`, starts `shreks.target`, and checks health. A repaired manager additionally stops the runtime services explicitly before switching an existing release and verifies runtime **process identity** against the activated immutable release. The two native services must execute the exact binaries inside that release, and every runtime service must have its working directory rooted at that release. If activation fails after a prior release was active, the repaired manager restores the previous verified release and its previous unit files.
+
+## Recover or update sealed deployment control scripts
+
+The root-owned `/usr/local/sbin` verifier and manager are intentionally outside the unprivileged deploy account's write authority. If a verified release contains a deployment-manager fix that must replace an older bootstrapped manager, perform this bounded recovery from a trusted administrator session only after verifying that `/opt/shreks/current` and its `RELEASE_MANIFEST.json` identify the intended immutable release.
+
+The sealed control scripts are transported inside the release's manifest-hashed wheel. Extract only the two fixed members from that verified wheel into a private temporary directory, install them root-owned, then reconcile the already-selected immutable release:
+
+```sh
+set -euo pipefail
+umask 077
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+MANIFEST_SHA="$(python3 - <<'PY'
+import json
+with open('/opt/shreks/current/RELEASE_MANIFEST.json') as handle:
+    print(json.load(handle)['source_sha'])
+PY
+)"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ || "$MANIFEST_SHA" != "$CURRENT_SHA" ]]; then
+  echo "current release identity is not verified" >&2
+  exit 2
+fi
+
+mapfile -t WHEELS < <(find "$CURRENT_RELEASE/wheelhouse" -maxdepth 1 -type f -name 'shreks_brain-*.whl' -print | sort)
+if [[ "${#WHEELS[@]}" -ne 1 ]]; then
+  echo "expected exactly one verified Shreks wheel" >&2
+  exit 2
+fi
+
+CONTROL_TMP="$(mktemp -d)"
+trap 'rm -rf "$CONTROL_TMP"' EXIT
+
+python3 - "${WHEELS[0]}" "$CONTROL_TMP" <<'PY'
+from pathlib import Path
+import sys
+import zipfile
+
+wheel = Path(sys.argv[1])
+out = Path(sys.argv[2])
+members = {
+    "release_bundle.py": "shreks_brain/_sealed_deploy_control/release_bundle.py",
+    "release_manager.py": "shreks_brain/_sealed_deploy_control/release_manager.py",
+}
+with zipfile.ZipFile(wheel) as archive:
+    for output_name, member in members.items():
+        try:
+            payload = archive.read(member)
+        except KeyError as exc:
+            raise SystemExit(f"sealed deployment-control member missing: {member}") from exc
+        (out / output_name).write_bytes(payload)
+PY
+
+sudo install -o root -g root -m 0755 \
+  "$CONTROL_TMP/release_bundle.py" \
+  /usr/local/sbin/release_bundle.py
+sudo install -o root -g root -m 0755 \
+  "$CONTROL_TMP/release_manager.py" \
+  /usr/local/sbin/shreks-release-manager
+
+sudo /usr/local/sbin/shreks-release-manager activate-existing "$CURRENT_SHA"
+```
+
+`activate-existing` re-verifies the stored release before activation. Even when `/opt/shreks/current` already points to that same SHA, the repaired manager reconciles the runtime by explicitly stopping the three Shreks services, stopping `shreks.target`, reinstalling the release's unit files, reloading systemd, starting the target, checking unit health, and verifying process identity. A stale process from a previous release therefore cannot be reported as a successful activation.
+
+This recovery updates only the root-owned deployment-control scripts and runtime activation state. It does not read or modify `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, `/var/lib/shreks`, wallet/signing material, PAPER/LIVE authority, or any trading credential. Do not widen the deploy account's sudoers rule merely to avoid this administrator boundary.
 
 ## Provenance and health checks
 
@@ -99,7 +175,9 @@ sudo systemctl status shreks-paper-evidence.service --no-pager
 sudo systemctl status shreks-paper-campaign.service --no-pager
 ```
 
-The resolved `current` path must end in the same 40-character SHA recorded in `RELEASE_MANIFEST.json`. The protected paths `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, and `/var/lib/shreks` remain outside release activation and rollback.
+The resolved `current` path must end in the same 40-character SHA recorded in `RELEASE_MANIFEST.json`. For repaired production activation, process identity must also match that release: the observer and paper-evidence executables must resolve to the exact native binaries under `/opt/shreks/releases/<sha>/target/release/`, and all runtime service working directories must resolve to `/opt/shreks/releases/<sha>`.
+
+The protected paths `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, and `/var/lib/shreks` remain outside release activation and rollback.
 
 ## Rollback
 

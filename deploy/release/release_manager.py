@@ -25,6 +25,8 @@ from release_bundle import (
 
 
 CommandRunner = Callable[[tuple[str, ...]], None]
+RuntimeIdentity = tuple[int, Path, Path]
+RuntimeIdentityReader = Callable[[str], RuntimeIdentity]
 
 _SYSTEMD_UNIT_NAMES = (
     "shreks-observe.service",
@@ -32,6 +34,20 @@ _SYSTEMD_UNIT_NAMES = (
     "shreks-paper-campaign.service",
     "shreks.target",
 )
+_RUNTIME_SERVICE_NAMES = (
+    "shreks-observe.service",
+    "shreks-paper-evidence.service",
+    "shreks-paper-campaign.service",
+)
+_RUNTIME_STOP_ORDER = (
+    "shreks-paper-campaign.service",
+    "shreks-paper-evidence.service",
+    "shreks-observe.service",
+)
+_NATIVE_RUNTIME_EXECUTABLES = {
+    "shreks-observe.service": "target/release/shreks-observe",
+    "shreks-paper-evidence.service": "target/release/shreks-paper-evidence",
+}
 _RUNTIME_BINARY_PATHS = (
     "target/release/shreks-observe",
     "target/release/shreks-paper-evidence",
@@ -56,6 +72,26 @@ class ReleasePaths:
 
 def _default_command_runner(command: tuple[str, ...]) -> None:
     subprocess.run(command, check=True)
+
+
+def _default_runtime_identity_reader(unit_name: str) -> RuntimeIdentity:
+    try:
+        result = subprocess.run(
+            ("systemctl", "show", unit_name, "-p", "MainPID", "--value"),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        pid = int(result.stdout.strip())
+        if pid <= 0:
+            raise ValueError("MainPID is not a running process")
+        executable = Path(os.readlink(f"/proc/{pid}/exe"))
+        cwd = Path(os.readlink(f"/proc/{pid}/cwd"))
+        return pid, executable, cwd
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        raise ReleaseManagerError(
+            f"unable to inspect runtime process for {unit_name}"
+        ) from exc
 
 
 def _host_release_platform() -> str:
@@ -369,9 +405,61 @@ def _systemctl(command_runner: CommandRunner, *args: str) -> None:
     command_runner(("systemctl", *args))
 
 
-def _require_runtime_healthy(command_runner: CommandRunner) -> None:
+def _stop_runtime(command_runner: CommandRunner) -> None:
+    _systemctl(command_runner, "stop", *_RUNTIME_STOP_ORDER)
+    _systemctl(command_runner, "stop", "shreks.target")
+
+
+def _require_runtime_processes_from_release(
+    release_dir: Path,
+    *,
+    identity_reader: RuntimeIdentityReader = _default_runtime_identity_reader,
+) -> None:
+    release_dir = Path(release_dir)
+    try:
+        resolved_release = release_dir.resolve(strict=True)
+    except OSError as exc:
+        raise ReleaseManagerError("unable to resolve activated release directory") from exc
+
+    for unit_name in _RUNTIME_SERVICE_NAMES:
+        pid, executable, cwd = identity_reader(unit_name)
+        if pid <= 0:
+            raise ReleaseManagerError(f"{unit_name} has no running process")
+
+        resolved_cwd = Path(cwd).resolve(strict=False)
+        if resolved_cwd != resolved_release:
+            raise ReleaseManagerError(
+                f"{unit_name} process is not running from the activated release"
+            )
+
+        native_relative = _NATIVE_RUNTIME_EXECUTABLES.get(unit_name)
+        if native_relative is not None:
+            expected_executable = (release_dir / native_relative).resolve(strict=False)
+            resolved_executable = Path(executable).resolve(strict=False)
+            if resolved_executable != expected_executable:
+                raise ReleaseManagerError(
+                    f"{unit_name} executable does not match the activated release"
+                )
+        elif unit_name == "shreks-paper-campaign.service":
+            expected_venv_bin = (release_dir / ".venv" / "bin").resolve(strict=False)
+            resolved_executable = Path(executable).resolve(strict=False)
+            if expected_venv_bin not in resolved_executable.parents:
+                raise ReleaseManagerError(
+                    f"{unit_name} executable is not from the activated release virtualenv"
+                )
+
+
+def _require_runtime_healthy(
+    command_runner: CommandRunner,
+    release_dir: Path | None = None,
+) -> None:
     for unit_name in _SYSTEMD_UNIT_NAMES:
         _systemctl(command_runner, "is-active", "--quiet", unit_name)
+
+    # Production activation always uses the default runner. Dependency-injected
+    # runners are test harnesses and must not inspect the CI runner's real /proc/systemd.
+    if release_dir is not None and command_runner is _default_command_runner:
+        _require_runtime_processes_from_release(release_dir)
 
 
 def _rollback_after_failure(
@@ -381,6 +469,8 @@ def _rollback_after_failure(
     command_runner: CommandRunner,
 ) -> None:
     current = Path(paths.current_link)
+    _stop_runtime(command_runner)
+
     if previous is None:
         if current.is_symlink():
             try:
@@ -388,7 +478,6 @@ def _rollback_after_failure(
                     current.unlink(missing_ok=True)
             except OSError:
                 current.unlink(missing_ok=True)
-        _systemctl(command_runner, "stop", "shreks.target")
         return
 
     _verify_stored_release(previous)
@@ -396,7 +485,7 @@ def _rollback_after_failure(
     _atomic_switch(current, previous)
     _systemctl(command_runner, "daemon-reload")
     _systemctl(command_runner, "start", "shreks.target")
-    _require_runtime_healthy(command_runner)
+    _require_runtime_healthy(command_runner, previous)
 
 
 def activate_release(
@@ -408,17 +497,17 @@ def activate_release(
     release_dir = Path(release_dir)
     _require_managed_release(release_dir, paths)
     previous = _current_release(paths)
-    if previous is not None and previous.resolve() == release_dir.resolve():
-        return
+    same_release = previous is not None and previous.resolve() == release_dir.resolve()
 
     try:
         if previous is not None:
-            _systemctl(command_runner, "stop", "shreks.target")
+            _stop_runtime(command_runner)
         _install_units(release_dir, paths.systemd_dir)
-        _atomic_switch(paths.current_link, release_dir)
+        if not same_release:
+            _atomic_switch(paths.current_link, release_dir)
         _systemctl(command_runner, "daemon-reload")
         _systemctl(command_runner, "start", "shreks.target")
-        _require_runtime_healthy(command_runner)
+        _require_runtime_healthy(command_runner, release_dir)
     except Exception as activation_error:
         try:
             _rollback_after_failure(previous, release_dir, paths, command_runner)
