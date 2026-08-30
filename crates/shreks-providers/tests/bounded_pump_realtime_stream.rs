@@ -4,10 +4,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use shreks_core::ProviderId;
 use shreks_providers::{
-    bounded_pump_realtime::{
-        BoundedPumpRealtimeFailoverStream, BoundedPumpRealtimeLogStream,
-        BoundedPumpRealtimeLogStreamConfig,
-    },
+    bounded_pump_realtime::{BoundedPumpRealtimeLogStream, BoundedPumpRealtimeLogStreamConfig},
+    bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
     pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID},
 };
 use tokio::{
