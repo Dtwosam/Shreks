@@ -118,3 +118,59 @@ fn unresolved_oldest_row_does_not_starve_newer_ready_row() {
 
     let _ = fs::remove_dir_all(root);
 }
+
+#[test]
+fn deep_unresolved_frontier_does_not_hide_fresh_ready_trade() {
+    let root = unique_test_dir();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    // The production normalizer historically searched at most 8x its requested
+    // output limit. Put a ready event beyond that frontier to prove old missing
+    // metadata cannot indefinitely hide fresh usable market evidence.
+    for index in 0..12_i64 {
+        db.record_pump_trade_evidence(&raw_trade(
+            &format!("sig-unresolved-{index:02}"),
+            &format!("mint-without-decimals-{index:02}"),
+            ACCEPTED_MS - 20_000 + index,
+        ))
+        .unwrap();
+    }
+
+    verify_decimals(&db, "mint-ready-deep");
+    db.record_pump_trade_evidence(&raw_trade(
+        "sig-ready-after-deep-frontier",
+        "mint-ready-deep",
+        ACCEPTED_MS - 1_000,
+    ))
+    .unwrap();
+
+    let report = normalize_pending_pump_trade_evidence_at(&db, 1, ACCEPTED_MS).unwrap();
+    assert_eq!(
+        report.normalized, 1,
+        "fresh ready evidence must not be hidden behind an arbitrarily deep unresolved prefix"
+    );
+
+    let ready = db
+        .fast_events_for_market(
+            "mint-ready-deep",
+            shreks_providers::pump::WRAPPED_SOL_MINT,
+            VenueId::PumpFunBondingCurve,
+        )
+        .unwrap();
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].event.id.signature, "sig-ready-after-deep-frontier");
+    assert_eq!(ready[0].source_observed_at_unix_ms, ACCEPTED_MS - 1_000);
+    assert_eq!(
+        ready[0].event.observed_at_unix_ms, ACCEPTED_MS,
+        "canonical observation time must remain the later normalization time"
+    );
+
+    assert_eq!(
+        db.pending_pump_trade_evidence(64).unwrap().len(),
+        12,
+        "unresolved history must remain durable for later completion"
+    );
+
+    let _ = fs::remove_dir_all(root);
+}
