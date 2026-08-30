@@ -6,6 +6,9 @@ use crate::{
     StorageError,
 };
 
+const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
+const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceWriteOutcome {
     Inserted,
@@ -149,6 +152,9 @@ impl ShreksDb {
         count_rows(&self.connection, "pump_swap_trade_evidence_conflicts")
     }
 
+    /// Return the oldest conflict-free Pump rows whose normalization metadata
+    /// is currently available. Unresolved rows remain durable in the generic
+    /// pending backlog and become eligible automatically when metadata arrives.
     pub fn pending_unambiguous_pump_trade_evidence(
         &self,
         limit: usize,
@@ -176,11 +182,29 @@ impl ShreksDb {
                      FROM pump_trade_evidence_conflicts AS c
                      WHERE c.signature = p.signature AND c.ordinal = p.ordinal
                  )
+                 AND EXISTS (
+                     SELECT 1
+                     FROM token_candidates AS base_candidate
+                     JOIN token_mint_states AS base_state
+                       ON base_state.candidate_id = base_candidate.id
+                     WHERE base_candidate.mint = p.mint
+                 )
+                 AND (
+                     p.quote_mint = ?1
+                     OR p.quote_mint = ?2
+                     OR EXISTS (
+                         SELECT 1
+                         FROM token_candidates AS quote_candidate
+                         JOIN token_mint_states AS quote_state
+                           ON quote_state.candidate_id = quote_candidate.id
+                         WHERE quote_candidate.mint = p.quote_mint
+                     )
+                 )
                ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
-               LIMIT ?1"#,
+               LIMIT ?3"#,
         )?;
         let rows = statement
-            .query_map([limit], |row| {
+            .query_map(params![SYSTEM_SOL_MINT, WRAPPED_SOL_MINT, limit], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
