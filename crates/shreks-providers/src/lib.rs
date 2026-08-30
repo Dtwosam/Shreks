@@ -11,6 +11,7 @@ pub mod pump_quote;
 pub mod pump_realtime;
 pub mod pump_swap_trade;
 pub mod pump_trade;
+pub mod realtime_scope;
 pub mod solana_rpc;
 
 use std::{error::Error, fmt};
