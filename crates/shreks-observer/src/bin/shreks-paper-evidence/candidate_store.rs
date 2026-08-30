@@ -250,6 +250,7 @@ impl EvidenceCandidateStore {
             ));
         }
 
+        validate_required_table(&self.connection, REQUIRED_TABLE_COLUMNS[2])?;
         let found = self
             .connection
             .query_row(
@@ -388,36 +389,44 @@ where
 }
 
 fn validate_schema(connection: &Connection) -> Result<(), EvidenceCandidateStoreError> {
-    for (table, required_columns) in REQUIRED_TABLE_COLUMNS {
-        let exists: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
-                [*table],
-                |row| row.get(0),
-            )
-            .map_err(EvidenceCandidateStoreError::Sqlite)?;
-        if exists != 1 {
+    for required in &REQUIRED_TABLE_COLUMNS[..2] {
+        validate_required_table(connection, *required)?;
+    }
+    Ok(())
+}
+
+fn validate_required_table(
+    connection: &Connection,
+    (table, required_columns): (&str, &[&str]),
+) -> Result<(), EvidenceCandidateStoreError> {
+    let exists: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(EvidenceCandidateStoreError::Sqlite)?;
+    if exists != 1 {
+        return Err(EvidenceCandidateStoreError::InvalidData(format!(
+            "observer database missing required table {table}"
+        )));
+    }
+
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut statement = connection
+        .prepare(&pragma)
+        .map_err(EvidenceCandidateStoreError::Sqlite)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(EvidenceCandidateStoreError::Sqlite)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(EvidenceCandidateStoreError::Sqlite)?;
+
+    for required in required_columns {
+        if !columns.iter().any(|column| column == required) {
             return Err(EvidenceCandidateStoreError::InvalidData(format!(
-                "observer database missing required table {table}"
+                "observer database table {table} missing required column {required}"
             )));
-        }
-
-        let pragma = format!("PRAGMA table_info({table})");
-        let mut statement = connection
-            .prepare(&pragma)
-            .map_err(EvidenceCandidateStoreError::Sqlite)?;
-        let columns = statement
-            .query_map([], |row| row.get::<_, String>(1))
-            .map_err(EvidenceCandidateStoreError::Sqlite)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(EvidenceCandidateStoreError::Sqlite)?;
-
-        for required in *required_columns {
-            if !columns.iter().any(|column| column == required) {
-                return Err(EvidenceCandidateStoreError::InvalidData(format!(
-                    "observer database table {table} missing required column {required}"
-                )));
-            }
         }
     }
     Ok(())
