@@ -55,6 +55,7 @@ async fn bounded_stream_subscribes_to_pump_and_explicit_pools_only() {
         assert!(!mentions.iter().any(|value| value == PUMP_AMM_PROGRAM_ID));
 
         socket.send(Message::Text(irrelevant_notification("ignored").into())).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
     });
 
     let (_targets_sender, targets_receiver) = watch::channel(vec!["pool-a".to_owned()]);
