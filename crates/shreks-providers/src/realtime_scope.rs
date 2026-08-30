@@ -34,6 +34,43 @@ pub fn pump_realtime_logs_subscribe_request(
     }))
 }
 
+pub fn pump_realtime_logs_unsubscribe_request(request_id: u64, subscription_id: u64) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "logsUnsubscribe",
+        "params": [subscription_id]
+    })
+}
+
+pub fn parse_pump_realtime_unsubscribe_ack(
+    body: &str,
+    expected_request_id: u64,
+    provider: ProviderId,
+) -> Result<Option<()>, ProviderError> {
+    let value: Value = serde_json::from_str(body).map_err(|_| {
+        invalid_response_for(provider, "invalid realtime unsubscribe acknowledgement JSON")
+    })?;
+
+    if value.get("id").and_then(Value::as_u64) != Some(expected_request_id) {
+        return Ok(None);
+    }
+    if value.get("error").is_some_and(|error| !error.is_null()) {
+        return Err(invalid_response_for(
+            provider,
+            "realtime unsubscribe request was rejected",
+        ));
+    }
+    if value.get("result").and_then(Value::as_bool) != Some(true) {
+        return Err(invalid_response_for(
+            provider,
+            "realtime unsubscribe acknowledgement did not return true",
+        ));
+    }
+
+    Ok(Some(()))
+}
+
 pub fn pump_realtime_initial_mentions(
     tracked_pools: &[String],
 ) -> Result<Vec<String>, ProviderError> {
@@ -120,4 +157,8 @@ fn invalid_scope(message: impl Into<String>) -> ProviderError {
         ProviderErrorKind::InvalidRequest,
         message,
     )
+}
+
+fn invalid_response_for(provider: ProviderId, message: impl Into<String>) -> ProviderError {
+    ProviderError::new(provider, ProviderErrorKind::InvalidResponse, message)
 }
