@@ -1,6 +1,6 @@
 //! Read-only standard Solana JSON-RPC adapter used when provider-specific
-//! enriched APIs are unavailable. The protected endpoint may contain credential
-//! material and is therefore never exposed through Debug or error messages.
+//! enriched APIs are unavailable. Protected endpoints may contain credential
+//! material and are therefore never exposed through Debug or error messages.
 
 use std::{
     fmt,
@@ -22,6 +22,8 @@ use crate::{
 };
 
 const CHAINSTACK_RPC_INTERVAL: Duration = Duration::from_millis(125); // 8 RPS.
+const SOLANA_PUBLIC_RPC_URL: &str = "https://api.mainnet.solana.com";
+pub const SOLANA_PUBLIC_RPC_INTERVAL: Duration = Duration::from_millis(250); // 4 RPS total.
 pub const TRANSPORT_PROVIDER_FIELD: &str = "_shreks_transport_provider";
 
 /// Derive the HTTPS JSON-RPC endpoint from the protected Chainstack websocket
@@ -55,7 +57,10 @@ pub fn parse_mint_account_response_for_provider(
     mint: &str,
     observed_at_unix_ms: i64,
 ) -> Result<TokenMintState, ProviderError> {
-    if !matches!(provider, ProviderId::Helius | ProviderId::Chainstack) {
+    if !matches!(
+        provider,
+        ProviderId::Helius | ProviderId::Chainstack | ProviderId::SolanaPublic
+    ) {
         return Err(ProviderError::new(
             provider,
             ProviderErrorKind::InvalidRequest,
@@ -111,13 +116,14 @@ pub fn annotate_transaction_response_for_provider(
     })
 }
 
-/// Chainstack adapter restricted to the two standard read-only calls FL1 needs:
+/// Standard read-only Solana adapter restricted to the two calls FL1 needs:
 /// confirmed transaction verification and SPL mint-state inspection.
 pub struct StandardSolanaRpcProvider {
     provider: ProviderId,
     rpc_url: String,
     client: reqwest::Client,
     next_allowed: Mutex<Instant>,
+    request_interval: Duration,
 }
 
 impl StandardSolanaRpcProvider {
@@ -127,6 +133,17 @@ impl StandardSolanaRpcProvider {
             rpc_url: chainstack_http_url(websocket_endpoint)?,
             client: reqwest::Client::new(),
             next_allowed: Mutex::new(Instant::now()),
+            request_interval: CHAINSTACK_RPC_INTERVAL,
+        })
+    }
+
+    pub fn solana_public() -> Result<Self, ProviderError> {
+        Ok(Self {
+            provider: ProviderId::SolanaPublic,
+            rpc_url: SOLANA_PUBLIC_RPC_URL.to_owned(),
+            client: reqwest::Client::new(),
+            next_allowed: Mutex::new(Instant::now()),
+            request_interval: SOLANA_PUBLIC_RPC_INTERVAL,
         })
     }
 
@@ -136,7 +153,7 @@ impl StandardSolanaRpcProvider {
         if *next_allowed > now {
             sleep_until(*next_allowed).await;
         }
-        *next_allowed = Instant::now() + CHAINSTACK_RPC_INTERVAL;
+        *next_allowed = Instant::now() + self.request_interval;
     }
 
     async fn post_rpc(&self, payload: &Value) -> Result<String, ProviderError> {
@@ -152,7 +169,7 @@ impl StandardSolanaRpcProvider {
                 ProviderError::new(
                     self.provider,
                     ProviderErrorKind::Unavailable,
-                    "Chainstack standard Solana RPC transport failed",
+                    "standard Solana RPC transport failed",
                 )
             })?;
 
@@ -166,13 +183,13 @@ impl StandardSolanaRpcProvider {
             ProviderError::new(
                 self.provider,
                 ProviderErrorKind::Unavailable,
-                "Chainstack standard Solana RPC response body could not be read",
+                "standard Solana RPC response body could not be read",
             )
         })?;
 
         if !status.is_success() {
             // Provider error bodies are deliberately excluded from the message:
-            // the protected endpoint is credential material and must never leak
+            // protected endpoints may be credential material and must never leak
             // through an upstream diagnostic echo.
             return Err(classify_http_failure(
                 self.provider,
@@ -185,10 +202,10 @@ impl StandardSolanaRpcProvider {
         Ok(body)
     }
 
-    fn mint_state_request(token_mint: &str) -> Result<Value, ProviderError> {
+    fn mint_state_request(&self, token_mint: &str) -> Result<Value, ProviderError> {
         if token_mint.trim().is_empty() {
             return Err(ProviderError::new(
-                ProviderId::Chainstack,
+                self.provider,
                 ProviderErrorKind::InvalidRequest,
                 "token mint must not be empty",
             ));
@@ -208,10 +225,10 @@ impl StandardSolanaRpcProvider {
         }))
     }
 
-    fn transaction_request(signature: &str) -> Result<Value, ProviderError> {
+    fn transaction_request(&self, signature: &str) -> Result<Value, ProviderError> {
         if signature.trim().is_empty() {
             return Err(ProviderError::new(
-                ProviderId::Chainstack,
+                self.provider,
                 ProviderErrorKind::InvalidRequest,
                 "transaction signature must not be empty",
             ));
@@ -250,7 +267,7 @@ impl ChainDataProvider for StandardSolanaRpcProvider {
     }
 
     async fn token_mint_state(&self, token_mint: &str) -> Result<TokenMintState, ProviderError> {
-        let payload = Self::mint_state_request(token_mint)?;
+        let payload = self.mint_state_request(token_mint)?;
         let body = self.post_rpc(&payload).await?;
         let observed_at_unix_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -286,7 +303,7 @@ impl TransactionProvider for StandardSolanaRpcProvider {
     }
 
     async fn transaction_json(&self, signature: &str) -> Result<String, ProviderError> {
-        let payload = Self::transaction_request(signature)?;
+        let payload = self.transaction_request(signature)?;
         let body = self.post_rpc(&payload).await?;
         annotate_transaction_response_for_provider(self.provider, &body)
     }
