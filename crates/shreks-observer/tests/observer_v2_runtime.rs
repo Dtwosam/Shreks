@@ -1,4 +1,5 @@
 const OBSERVE_SOURCE: &str = include_str!("../src/bin/shreks-observe.rs");
+const RUNTIME_SOURCE: &str = include_str!("../src/runtime.rs");
 
 #[test]
 fn observe_binary_runs_v2_sampler_and_does_not_duplicate_public_discovery() {
@@ -51,6 +52,43 @@ fn lifecycle_observer_has_pump_only_market_evidence_without_v2_duplication() {
     assert!(
         !builder.contains(".with_market_provider"),
         "lifecycle observer must not attach a general market provider that duplicates V2 outcome sampling"
+    );
+}
+
+#[test]
+fn observer_helius_http_builders_apply_the_required_process_budget() {
+    let runtime_start = RUNTIME_SOURCE
+        .find("pub fn build_free_observer")
+        .expect("library observer builder must exist");
+    let runtime_end = RUNTIME_SOURCE[runtime_start..]
+        .find("impl Observer")
+        .map(|offset| runtime_start + offset)
+        .expect("Observer implementation must follow library builder");
+    let runtime_builder = &RUNTIME_SOURCE[runtime_start..runtime_end];
+    assert!(
+        runtime_builder.contains("with_request_budget"),
+        "library Helius HTTP provider must apply the configured process request ceiling"
+    );
+    assert!(
+        runtime_builder.contains("observer_helius_max_requests_per_process"),
+        "library Helius HTTP provider must source the observer-specific ceiling"
+    );
+
+    let binary_start = OBSERVE_SOURCE
+        .find("fn build_lifecycle_observer")
+        .expect("production lifecycle observer builder must exist");
+    let binary_end = OBSERVE_SOURCE[binary_start..]
+        .find("fn build_high_resolution_sampler")
+        .map(|offset| binary_start + offset)
+        .expect("V2 sampler builder must follow lifecycle observer builder");
+    let binary_builder = &OBSERVE_SOURCE[binary_start..binary_end];
+    assert!(
+        binary_builder.contains("with_request_budget"),
+        "production Helius HTTP provider must apply the configured process request ceiling"
+    );
+    assert!(
+        binary_builder.contains("observer_helius_max_requests_per_process"),
+        "production Helius HTTP provider must source the observer-specific ceiling"
     );
 }
 
