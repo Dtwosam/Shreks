@@ -1,6 +1,6 @@
 use shreks_providers::{
     pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID},
-    pump_realtime::{
+    realtime_scope::{
         pump_realtime_initial_mentions, pump_realtime_logs_subscribe_request,
     },
 };
