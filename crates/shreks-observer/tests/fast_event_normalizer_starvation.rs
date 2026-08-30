@@ -3,7 +3,9 @@ use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
 #[path = "../src/fast_event_normalizer.rs"]
 mod fast_event_normalizer;
 
-use fast_event_normalizer::normalize_pending_pump_trade_evidence_at;
+use fast_event_normalizer::{
+    normalize_pending_pump_trade_evidence_at, FastEventNormalizationError,
+};
 use shreks_core::{
     DiscoveredToken, LifecycleEventKind, ProviderId, TokenLifecycleEvent, TokenMintState, VenueId,
 };
@@ -13,6 +15,7 @@ use shreks_providers::{
 };
 use shreks_storage::{
     pump_swap_event_ordinal, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb,
+    StorageError,
 };
 
 const EVENT_SECONDS: i64 = 1_770_000_000;
@@ -287,6 +290,54 @@ fn deep_unmapped_pumpswap_frontier_does_not_hide_ready_trade() {
         12,
         "unmapped PumpSwap history must remain durable for later lifecycle completion"
     );
+
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn deep_contradictory_pumpswap_market_fails_closed_in_ready_fallback() {
+    let root = unique_test_dir();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    for index in 0..12_i64 {
+        db.record_pump_swap_trade_evidence(&raw_pumpswap_trade(
+            &format!("swap-unmapped-conflict-prefix-{index:02}"),
+            &format!("pool-unmapped-conflict-prefix-{index:02}"),
+            ACCEPTED_MS - 20_000 + index,
+        ))
+        .unwrap();
+    }
+
+    let contradictory_pool = "pool-contradictory-pumpswap";
+    verify_pumpswap_market(
+        &db,
+        "migration-conflict-a",
+        "mint-conflict-a",
+        contradictory_pool,
+        ACCEPTED_MS - 1_600,
+    );
+    verify_pumpswap_market(
+        &db,
+        "migration-conflict-b",
+        "mint-conflict-b",
+        contradictory_pool,
+        ACCEPTED_MS - 1_500,
+    );
+    db.record_pump_swap_trade_evidence(&raw_pumpswap_trade(
+        "swap-contradictory-after-deep-frontier",
+        contradictory_pool,
+        ACCEPTED_MS - 1_000,
+    ))
+    .unwrap();
+
+    let error = normalize_pending_pump_trade_evidence_at(&db, 1, ACCEPTED_MS)
+        .expect_err("contradictory verified PumpSwap markets must fail closed even beyond the ordinary frontier");
+    assert!(matches!(
+        error,
+        FastEventNormalizationError::Storage(StorageError::InvalidData(message))
+            if message.contains("contradictory PumpSwap lifecycle markets")
+    ));
 
     let _ = fs::remove_dir_all(root);
 }
