@@ -91,6 +91,7 @@ pub enum ProviderId {
     Helius,
     Alchemy,
     Chainstack,
+    SolanaPublic,
     Jupiter,
     Meteora,
 }
@@ -102,6 +103,7 @@ impl ProviderId {
             Self::Helius => "helius",
             Self::Alchemy => "alchemy",
             Self::Chainstack => "chainstack",
+            Self::SolanaPublic => "solana_public",
             Self::Jupiter => "jupiter",
             Self::Meteora => "meteora",
         }
