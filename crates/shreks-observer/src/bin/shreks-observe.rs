@@ -132,14 +132,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             pumpswap_max_tracked_pools,
             target_sender,
         ));
-        let forwarder = tokio::spawn(async move {
-            if let Err(error) = forward_pump_realtime_signals(stream, sender).await {
-                eprintln!(
-                    "Shreks Pump realtime stream stopped: provider={} kind={:?}: {}",
-                    error.provider, error.kind, error.message
-                );
-            }
-        });
+        let forwarder = tokio::spawn(forward_pump_realtime_signals(stream, sender));
         let writer = tokio::spawn(Observer::run_pump_realtime_writer(writer_db, receiver));
         let normalizer = tokio::spawn(run_fast_event_normalizer(normalizer_db));
 
@@ -258,7 +251,7 @@ async fn run_observation_with_realtime(
     sampler: HighResolutionSampler,
     cycle_interval: Duration,
     mut target_publisher: JoinHandle<Result<(), RealtimeTargetPublisherError>>,
-    forwarder: JoinHandle<()>,
+    mut forwarder: JoinHandle<Result<(), ProviderError>>,
     mut writer: JoinHandle<Result<usize, ObserverError>>,
     mut normalizer: JoinHandle<Result<(), FastEventNormalizationError>>,
 ) -> Result<(usize, u64), Box<dyn Error>> {
@@ -299,10 +292,29 @@ async fn run_observation_with_realtime(
             };
             Err(Box::new(std::io::Error::other(message)))
         }
+        forwarder_result = &mut forwarder => {
+            target_publisher.abort();
+            let _ = target_publisher.await;
+            normalizer.abort();
+            let _ = normalizer.await;
+            writer.abort();
+            let _ = writer.await;
+            let message = match forwarder_result {
+                Ok(Ok(())) => "Pump realtime forwarder stopped unexpectedly".to_owned(),
+                Ok(Err(error)) => format!(
+                    "Pump realtime forwarder stopped unexpectedly: provider={} kind={:?}",
+                    error.provider, error.kind
+                ),
+                Err(error) => format!(
+                    "Pump realtime forwarder stopped unexpectedly: task join failure: {error}"
+                ),
+            };
+            Err(Box::new(std::io::Error::other(message)))
+        }
         writer_result = &mut writer => {
-            // The realtime durability lane is mandatory whenever any realtime
-            // provider is configured. Any writer exit means the process can no
-            // longer prove it is collecting Pump evidence, so fail closed.
+            // The realtime durability lane is mandatory whenever realtime is
+            // active. Any writer exit means the process can no longer prove it
+            // is collecting Pump evidence, so fail closed.
             target_publisher.abort();
             let _ = target_publisher.await;
             forwarder.abort();
