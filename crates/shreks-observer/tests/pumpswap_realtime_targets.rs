@@ -70,6 +70,7 @@ fn verified_targets_are_point_in_time_bounded_deduplicated_and_deterministic() {
     persist_graduation(&db, "sig-a", "mint-a", "pool-a", 950);
     persist_graduation(&db, "sig-dup-new", "mint-dup-new", "pool-dup", 990);
     persist_graduation(&db, "sig-dup-old", "mint-dup-old", "pool-dup", 900);
+    persist_graduation(&db, "sig-boundary", "mint-boundary", "pool-boundary", 1_000);
     persist_graduation(&db, "sig-future", "mint-future", "pool-future", 1_001);
 
     let targets = realtime_targets::load_verified_pumpswap_targets(&db_path, 1_000, 200, 3)
@@ -77,9 +78,11 @@ fn verified_targets_are_point_in_time_bounded_deduplicated_and_deterministic() {
 
     assert_eq!(targets, vec!["pool-dup", "pool-a", "pool-z"]);
     assert!(!targets.iter().any(|pool| pool == "pool-old"));
+    assert!(!targets.iter().any(|pool| pool == "pool-boundary"));
     assert!(!targets.iter().any(|pool| pool == "pool-future"));
     assert_eq!(targets.iter().filter(|pool| *pool == "pool-dup").count(), 1);
 
+    drop(db);
     cleanup_dir(&root);
 }
 
@@ -87,11 +90,12 @@ fn verified_targets_are_point_in_time_bounded_deduplicated_and_deterministic() {
 fn target_reader_rejects_unbounded_or_invalid_queries() {
     let root = unique_test_dir("invalid");
     let db_path = root.join("shreks.db");
-    let _db = ShreksDb::open(&db_path).unwrap();
+    let db = ShreksDb::open(&db_path).unwrap();
 
     assert!(realtime_targets::load_verified_pumpswap_targets(&db_path, -1, 1_000, 1).is_err());
     assert!(realtime_targets::load_verified_pumpswap_targets(&db_path, 1_000, 0, 1).is_err());
     assert!(realtime_targets::load_verified_pumpswap_targets(&db_path, 1_000, 1_000, 0).is_err());
 
+    drop(db);
     cleanup_dir(&root);
 }
