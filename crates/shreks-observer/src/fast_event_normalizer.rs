@@ -271,7 +271,10 @@ fn normalize_pump_swap_row(
 }
 
 fn require_realtime_provider(provider: ProviderId) -> Result<(), FastEventNormalizationError> {
-    if !matches!(provider, ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy) {
+    if !matches!(
+        provider,
+        ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy | ProviderId::SolanaPublic
+    ) {
         return Err(FastEventNormalizationError::InvalidSourceProvider(provider));
     }
     Ok(())
