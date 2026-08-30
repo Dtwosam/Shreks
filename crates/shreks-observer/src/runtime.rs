@@ -403,10 +403,13 @@ fn increment_trade_rows(current: usize) -> Result<usize, ObserverError> {
 fn validate_realtime_identity(notification: &PumpRealtimeNotification) -> Result<(), ObserverError> {
     if !matches!(
         notification.provider,
-        ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy
+        ProviderId::Helius
+            | ProviderId::Chainstack
+            | ProviderId::Alchemy
+            | ProviderId::SolanaPublic
     ) {
         return Err(ObserverError::Storage(StorageError::InvalidData(
-            "Pump realtime notification provider must be Helius, Chainstack, or Alchemy".to_owned(),
+            "Pump realtime notification provider must be Helius, Chainstack, Alchemy, or SolanaPublic".to_owned(),
         )));
     }
     if notification.signature.trim().is_empty() {
