@@ -268,7 +268,8 @@ pub fn parse_token_accounts_page(
     if result.token_accounts.len() > result.limit {
         return Err(invalid_response(format!(
             "Helius holder page returned {} accounts above limit {}",
-            result.limit, result.limit
+            result.token_accounts.len(),
+            result.limit
         )));
     }
 
@@ -313,7 +314,8 @@ pub fn aggregate_token_account_pages(
     if pages.len() > request.max_pages {
         return Err(invalid_response(format!(
             "holder distribution received {} pages above max {}",
-            pages.len(), request.max_pages
+            pages.len(),
+            request.max_pages
         )));
     }
 
@@ -710,6 +712,7 @@ fn unix_time_ms() -> Result<i64, ProviderError> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| {
         invalid_response(format!("system clock before Unix epoch: {error}"))
     })?;
-    i64::try_from(elapsed.as_millis())
-        .map_err(|_| invalid_response("system clock exceeds i64 milliseconds"))
+    i64::try_from(elapsed.as_millis()).map_err(|_| {
+        invalid_response("system clock exceeds i64 milliseconds")
+    })
 }
