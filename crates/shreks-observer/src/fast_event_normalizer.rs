@@ -154,8 +154,12 @@ pub fn normalize_pending_pump_trade_evidence_at(
             }
         }
 
-        if report.normalized > 0 || exhausted || scan_limit >= max_scan_limit {
+        if report.normalized > 0 || exhausted {
             return Ok(report);
+        }
+
+        if scan_limit >= max_scan_limit {
+            return normalize_ready_pump_fallback(db, limit, accepted_at_unix_ms, report);
         }
 
         let next_scan_limit = scan_limit.saturating_mul(2).min(max_scan_limit);
@@ -164,6 +168,25 @@ pub fn normalize_pending_pump_trade_evidence_at(
         }
         scan_limit = next_scan_limit;
     }
+}
+
+fn normalize_ready_pump_fallback(
+    db: &ShreksDb,
+    limit: usize,
+    accepted_at_unix_ms: i64,
+    mut report: FastEventNormalizationReport,
+) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
+    let ready = db.pending_normalizable_pump_trade_evidence(limit)?;
+    report.scanned = report.scanned.saturating_add(ready.len());
+
+    for raw in ready {
+        if report.normalized >= limit {
+            break;
+        }
+        normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, &mut report)?;
+    }
+
+    Ok(report)
 }
 
 fn normalize_bonding_curve_row(
