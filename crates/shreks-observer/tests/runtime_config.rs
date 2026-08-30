@@ -125,7 +125,7 @@ fn realtime_requires_explicit_positive_pumpswap_tracking_bounds() {
         "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS",
         "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS",
     ] {
-        let result = ObserverRuntimeConfig::from_lookup(|name| match name {
+        let error = match ObserverRuntimeConfig::from_lookup(|name| match name {
             "CHAINSTACK_SOLANA_WSS_URL" => Some("wss://fixture-chainstack.invalid/key".to_owned()),
             "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS"
                 if missing != "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" =>
@@ -138,8 +138,10 @@ fn realtime_requires_explicit_positive_pumpswap_tracking_bounds() {
                 Some("64".to_owned())
             }
             _ => None,
-        });
-        let error = result.expect_err("realtime must fail closed without both scope bounds");
+        }) {
+            Ok(_) => panic!("realtime must fail closed without both scope bounds"),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains(missing), "missing {missing}: {error}");
     }
 
@@ -151,7 +153,7 @@ fn realtime_requires_explicit_positive_pumpswap_tracking_bounds() {
         ("SHREKS_PUMPSWAP_MAX_TRACKED_POOLS", "-1"),
         ("SHREKS_PUMPSWAP_MAX_TRACKED_POOLS", "nope"),
     ] {
-        let result = ObserverRuntimeConfig::from_lookup(|key| match key {
+        let error = match ObserverRuntimeConfig::from_lookup(|key| match key {
             "CHAINSTACK_SOLANA_WSS_URL" => Some("wss://fixture-chainstack.invalid/key".to_owned()),
             "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" => Some(
                 if name == "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS" {
@@ -170,8 +172,10 @@ fn realtime_requires_explicit_positive_pumpswap_tracking_bounds() {
                 .to_owned(),
             ),
             _ => None,
-        });
-        let error = result.expect_err("invalid realtime scope bound must fail closed");
+        }) {
+            Ok(_) => panic!("invalid realtime scope bound must fail closed"),
+            Err(error) => error,
+        };
         assert!(error.to_string().contains(name), "invalid {name}={invalid}: {error}");
     }
 }
