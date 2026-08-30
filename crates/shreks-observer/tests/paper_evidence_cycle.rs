@@ -106,6 +106,11 @@ fn runtime_config(db_path: &Path, max_candidates: usize) -> PaperEvidenceRuntime
             "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
             max_candidates.to_string(),
         ),
+        ("SHREKS_PAPER_HOLDER_REFRESH_SECONDS", "300".to_owned()),
+        (
+            "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
+            "1000".to_owned(),
+        ),
         ("SHREKS_PAPER_PROBE_POLICY_VERSION", "paper-probe-v1".to_owned()),
         ("SHREKS_PAPER_QUOTE_ASSET_MINT", WSOL.to_owned()),
         ("SHREKS_PAPER_QUOTE_TAKER", TAKER.to_owned()),

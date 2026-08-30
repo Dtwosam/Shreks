@@ -15,7 +15,7 @@ use shreks_providers::{
     pump::PumpLifecycleSignal,
     pump_realtime::PumpRealtimeNotification,
     solana_rpc::StandardSolanaRpcProvider,
-    ProviderError,
+    ProviderError, ProviderErrorKind,
 };
 use shreks_storage::{
     pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
@@ -31,6 +31,7 @@ const DEFAULT_CYCLE_INTERVAL_SECONDS: u64 = 30;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeConfigError {
     InvalidCycleInterval(String),
+    MissingHeliusRequestBudget,
 }
 
 impl fmt::Display for RuntimeConfigError {
@@ -39,6 +40,9 @@ impl fmt::Display for RuntimeConfigError {
             Self::InvalidCycleInterval(value) => write!(
                 formatter,
                 "SHREKS_OBSERVER_INTERVAL_SECONDS must be a positive integer; got '{value}'"
+            ),
+            Self::MissingHeliusRequestBudget => formatter.write_str(
+                "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS must be a positive integer when HELIUS_API_KEY is configured",
             ),
         }
     }
@@ -78,6 +82,13 @@ impl ObserverRuntimeConfig {
         };
 
         let providers = ProviderConfig::from_lookup(|name| lookup(name));
+        if providers.helius_enabled()
+            && providers
+                .observer_helius_max_requests_per_process
+                .is_none()
+        {
+            return Err(RuntimeConfigError::MissingHeliusRequestBudget);
+        }
 
         Ok(Self {
             db_path,
@@ -181,7 +192,18 @@ pub fn build_free_observer(
     }
 
     if let Some(api_key) = config.helius_api_key() {
-        let helius = Arc::new(HeliusProvider::new(api_key)?);
+        let max_requests = config
+            .observer_helius_max_requests_per_process
+            .ok_or_else(|| {
+                ProviderError::new(
+                    ProviderId::Helius,
+                    ProviderErrorKind::InvalidRequest,
+                    "observer Helius process request budget is required",
+                )
+            })?;
+        let helius = Arc::new(
+            HeliusProvider::new(api_key)?.with_request_budget(max_requests)?,
+        );
         observer = observer.with_chain_provider(helius.clone());
         if !config.chainstack_enabled() {
             observer = observer.with_transaction_provider(helius);

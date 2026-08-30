@@ -85,11 +85,29 @@ pub async fn run_paper_evidence_cycle(
         candidates_selected: candidates.len(),
         ..PaperEvidenceCycleReport::default()
     };
+    let holder_refresh_ms = i64::try_from(config.holder_refresh.as_millis()).ok();
 
     for candidate in candidates {
         let probe = config.probe_for(&candidate.mint)?;
+        let collect_holder_distribution = match holder_refresh_ms {
+            Some(refresh_ms) => {
+                let minimum_observed_at_unix_ms =
+                    as_of_unix_ms.saturating_sub(refresh_ms).max(0);
+                !store.has_holder_distribution_since(
+                    candidate.candidate_id,
+                    minimum_observed_at_unix_ms,
+                    as_of_unix_ms,
+                )?
+            }
+            None => true,
+        };
         let report = collector
-            .collect_candidate(candidate.candidate_id, &candidate.mint, &probe)
+            .collect_candidate_with_holder_probe(
+                candidate.candidate_id,
+                &candidate.mint,
+                &probe,
+                collect_holder_distribution,
+            )
             .await?;
 
         aggregate.mint_states_stored = aggregate
