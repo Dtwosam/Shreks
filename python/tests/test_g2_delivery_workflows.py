@@ -41,7 +41,7 @@ def test_release_build_script_is_fail_closed_allowlisted_and_locally_verified():
         "^[0-9a-f]{40}$",
         'git rev-parse HEAD',
         'cargo build --release --bin shreks-observe --bin shreks-paper-evidence',
-        'python -m pip wheel ./python --no-deps',
+        'python -m pip wheel "$PYTHON_BUILD_ROOT" --no-deps',
         'rm -rf "$RELEASE_OUT"',
         'target/release/shreks-observe',
         'target/release/shreks-paper-evidence',
@@ -51,11 +51,18 @@ def test_release_build_script_is_fail_closed_allowlisted_and_locally_verified():
         'deploy/systemd/shreks.target',
         'deploy/release/release_manager.py',
         'deploy/release/release_bundle.py',
+        'shreks_brain/_sealed_deploy_control/release_manager.py',
+        'shreks_brain/_sealed_deploy_control/release_bundle.py',
+        'zipfile.ZipFile',
         'release_bundle.py build',
         'release_bundle.py verify',
         'x86_64-unknown-linux-gnu',
     ):
         assert required in script
+
+    assert '"$STAGING/deploy/release"' not in script
+    assert 'cp deploy/release/release_manager.py "$STAGING/' not in script
+    assert 'cp deploy/release/release_bundle.py "$STAGING/' not in script
 
     for forbidden in _FORBIDDEN_RELEASE_TEXT:
         assert forbidden not in script
@@ -250,12 +257,17 @@ def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account
     assert "never" in lower
 
 
-def test_release_runbook_documents_sealed_control_plane_recovery():
+def test_release_runbook_documents_backward_compatible_sealed_control_plane_recovery():
     runbook = _read(_RELEASE_RUNBOOK)
     for required in (
-        "/opt/shreks/current/deploy/release/release_manager.py",
-        "/opt/shreks/current/deploy/release/release_bundle.py",
+        "shreks_brain/_sealed_deploy_control/release_manager.py",
+        "shreks_brain/_sealed_deploy_control/release_bundle.py",
+        "manifest-hashed wheel",
+        "zipfile.ZipFile",
         "activate-existing",
         "process identity",
     ):
         assert required in runbook
+
+    assert "/opt/shreks/current/deploy/release/release_manager.py" not in runbook
+    assert "/opt/shreks/current/deploy/release/release_bundle.py" not in runbook
