@@ -33,8 +33,10 @@ impl From<rusqlite::Error> for RealtimeTargetError {
 }
 
 /// Read a deterministic bounded set of verified PumpSwap pool identities from
-/// existing immutable Pump graduation evidence. This function never migrates or
-/// writes the operational database.
+/// existing immutable Pump graduation evidence. The interval is
+/// `[as_of_unix_ms - max_age_ms, as_of_unix_ms)` so evidence observed exactly
+/// at the as-of boundary belongs to the next refresh. This function never
+/// migrates or writes the operational database.
 pub fn load_verified_pumpswap_targets(
     db_path: &Path,
     as_of_unix_ms: i64,
@@ -64,7 +66,7 @@ pub fn load_verified_pumpswap_targets(
            FROM token_lifecycle_events
            WHERE event_type = 'pump_graduation'
              AND detected_at_unix_ms >= ?1
-             AND detected_at_unix_ms <= ?2
+             AND detected_at_unix_ms < ?2
            ORDER BY detected_at_unix_ms DESC, signature ASC, pool_address ASC"#,
     )?;
 
