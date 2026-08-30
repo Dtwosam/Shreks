@@ -93,30 +93,32 @@ fn observer_helius_http_builders_apply_the_required_process_budget() {
 }
 
 #[test]
-fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
+fn production_uses_one_bounded_realtime_failover_source_and_the_durable_writer() {
     for required in [
-        "PumpRealtimeFailoverStream",
-        "PumpRealtimeLogStreamConfig",
+        "BoundedPumpRealtimeFailoverStream",
+        "BoundedPumpRealtimeLogStreamConfig",
         "build_pump_realtime_configs",
-        "PumpRealtimeLogStreamConfig::helius",
-        "PumpRealtimeLogStreamConfig::chainstack",
-        "PumpRealtimeLogStreamConfig::alchemy",
+        "BoundedPumpRealtimeLogStreamConfig::helius",
+        "BoundedPumpRealtimeLogStreamConfig::chainstack",
+        "BoundedPumpRealtimeLogStreamConfig::alchemy",
+        "refresh_pumpswap_realtime_targets_now",
+        "run_pumpswap_realtime_target_publisher",
         "forward_pump_realtime_signals",
         "Observer::run_pump_realtime_writer",
         "PUMP_REALTIME_CHANNEL_CAPACITY",
     ] {
         assert!(
             OBSERVE_SOURCE.contains(required),
-            "production observer must wire the Pump realtime evidence path: {required}"
+            "production observer must wire the bounded Pump realtime evidence path: {required}"
         );
     }
 
     assert_eq!(
         OBSERVE_SOURCE
-            .matches("PumpRealtimeFailoverStream::new")
+            .matches("BoundedPumpRealtimeFailoverStream::new")
             .count(),
         1,
-        "production must create exactly one ordered Pump realtime failover source"
+        "production must create exactly one ordered bounded Pump realtime failover source"
     );
 
     let start = OBSERVE_SOURCE
@@ -128,14 +130,14 @@ fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
         .expect("lifecycle builder must follow realtime config builder");
     let builder = &OBSERVE_SOURCE[start..end];
     let helius = builder
-        .find("PumpRealtimeLogStreamConfig::helius")
-        .expect("Helius realtime config must be present");
+        .find("BoundedPumpRealtimeLogStreamConfig::helius")
+        .expect("Helius bounded realtime config must be present");
     let chainstack = builder
-        .find("PumpRealtimeLogStreamConfig::chainstack")
-        .expect("Chainstack realtime config must be present");
+        .find("BoundedPumpRealtimeLogStreamConfig::chainstack")
+        .expect("Chainstack bounded realtime config must be present");
     let alchemy = builder
-        .find("PumpRealtimeLogStreamConfig::alchemy")
-        .expect("Alchemy realtime config must be present");
+        .find("BoundedPumpRealtimeLogStreamConfig::alchemy")
+        .expect("Alchemy bounded realtime config must be present");
     assert!(
         helius < chainstack && chainstack < alchemy,
         "production provider order must be Helius -> Chainstack -> Alchemy"
@@ -146,25 +148,29 @@ fn production_uses_one_realtime_failover_source_and_the_durable_writer() {
         "PumpLogStreamConfig::helius",
         "forward_pump_signals",
         "with_pump_signal_receiver",
+        "PUMP_AMM_PROGRAM_ID",
     ] {
         assert!(
             !OBSERVE_SOURCE.contains(forbidden),
-            "production must not retain the lifecycle-only Pump websocket path: {forbidden}"
+            "production must not retain the unbounded/lifecycle-only Pump websocket path: {forbidden}"
         );
     }
 }
 
 #[test]
-fn realtime_writer_termination_is_fail_closed_and_supervised() {
+fn realtime_writer_and_target_publisher_termination_are_fail_closed_and_supervised() {
     for required in [
         "run_observation_with_realtime",
+        "target_publisher_result = &mut target_publisher",
+        "PumpSwap realtime target publisher stopped unexpectedly",
         "writer_result = &mut writer",
         "Pump realtime writer stopped unexpectedly",
         "forwarder.abort()",
+        "target_publisher.abort()",
     ] {
         assert!(
             OBSERVE_SOURCE.contains(required),
-            "production must supervise realtime durability fail-closed: {required}"
+            "production must supervise realtime durability/scope fail-closed: {required}"
         );
     }
 
