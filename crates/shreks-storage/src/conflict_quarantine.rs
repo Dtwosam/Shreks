@@ -378,6 +378,7 @@ fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
         "helius" => Ok(ProviderId::Helius),
         "alchemy" => Ok(ProviderId::Alchemy),
         "chainstack" => Ok(ProviderId::Chainstack),
+        "solana_public" => Ok(ProviderId::SolanaPublic),
         "jupiter" => Ok(ProviderId::Jupiter),
         "meteora" => Ok(ProviderId::Meteora),
         other => Err(StorageError::InvalidData(format!(
