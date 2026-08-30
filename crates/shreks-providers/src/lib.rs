@@ -1,6 +1,7 @@
 //! External data-provider boundaries for Shreks.
 
 pub mod bounded_pump_realtime;
+pub mod bounded_pump_realtime_failover;
 pub mod config;
 pub mod dexscreener;
 pub mod helius;
