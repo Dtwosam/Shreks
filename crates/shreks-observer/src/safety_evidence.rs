@@ -93,14 +93,30 @@ impl SafetyEvidenceCollector {
         self
     }
 
-    /// Collect and persist read-only mint/holder/exitability evidence for exactly
-    /// one candidate. Provider failures remain unknown evidence, never false
-    /// facts. Storage failures are fatal because losing audit truth is unsafe.
+    /// Collect the full read-only evidence recipe for exactly one candidate.
+    /// This compatibility entry point preserves the historical behavior: holder
+    /// distribution is probed on every invocation.
     pub async fn collect_candidate(
         &self,
         candidate_id: i64,
         candidate_mint: &str,
         probe: &SafetyEvidenceProbe,
+    ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
+        self.collect_candidate_with_holder_probe(candidate_id, candidate_mint, probe, true)
+            .await
+    }
+
+    /// Collect and persist read-only mint/holder/exitability evidence for exactly
+    /// one candidate while allowing an operational caller to suppress only the
+    /// holder-distribution transport when fresh durable holder evidence already
+    /// exists. Quote and mint-state semantics are unchanged. Provider failures
+    /// remain unknown evidence, never false facts.
+    pub async fn collect_candidate_with_holder_probe(
+        &self,
+        candidate_id: i64,
+        candidate_mint: &str,
+        probe: &SafetyEvidenceProbe,
+        collect_holder_distribution: bool,
     ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
         validate_probe(candidate_id, candidate_mint, probe)?;
         let mut report = SafetyEvidenceCycleReport::default();
@@ -124,28 +140,30 @@ impl SafetyEvidenceCollector {
             }
         }
 
-        for provider in &self.distribution_providers {
-            let provider_id = provider.provider_id();
-            let result = match provider
-                .token_holder_distribution(&probe.distribution_request)
-                .await
-            {
-                Ok(result) => result,
-                Err(_) => {
+        if collect_holder_distribution {
+            for provider in &self.distribution_providers {
+                let provider_id = provider.provider_id();
+                let result = match provider
+                    .token_holder_distribution(&probe.distribution_request)
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(_) => {
+                        report.distribution_provider_failures =
+                            report.distribution_provider_failures.saturating_add(1);
+                        continue;
+                    }
+                };
+
+                if !distribution_identity_matches(provider_id, candidate_mint, &result) {
                     report.distribution_provider_failures =
                         report.distribution_provider_failures.saturating_add(1);
                     continue;
                 }
-            };
 
-            if !distribution_identity_matches(provider_id, candidate_mint, &result) {
-                report.distribution_provider_failures =
-                    report.distribution_provider_failures.saturating_add(1);
-                continue;
+                self.db.insert_holder_distribution(candidate_id, &result)?;
+                report.holder_snapshots_stored = report.holder_snapshots_stored.saturating_add(1);
             }
-
-            self.db.insert_holder_distribution(candidate_id, &result)?;
-            report.holder_snapshots_stored = report.holder_snapshots_stored.saturating_add(1);
         }
 
         for provider in &self.quote_providers {
