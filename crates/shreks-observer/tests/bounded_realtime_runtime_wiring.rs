@@ -25,7 +25,7 @@ fn production_wires_bounded_realtime_scope_and_supervises_target_publisher() {
             .matches("BoundedPumpRealtimeFailoverStream::new")
             .count(),
         1,
-        "production must create exactly one bounded ordered realtime failover source"
+        "production must create exactly one bounded realtime source"
     );
     assert!(
         !OBSERVE_SOURCE.contains("PUMP_AMM_PROGRAM_ID"),
@@ -34,7 +34,7 @@ fn production_wires_bounded_realtime_scope_and_supervises_target_publisher() {
 }
 
 #[test]
-fn bounded_realtime_provider_order_remains_helius_chainstack_alchemy() {
+fn production_realtime_uses_exactly_one_public_solana_source_without_paid_fallback() {
     let start = OBSERVE_SOURCE
         .find("fn build_pump_realtime_configs")
         .expect("bounded realtime config builder must exist");
@@ -44,18 +44,25 @@ fn bounded_realtime_provider_order_remains_helius_chainstack_alchemy() {
         .expect("lifecycle builder must follow realtime config builder");
     let builder = &OBSERVE_SOURCE[start..end];
 
-    let helius = builder
-        .find("BoundedPumpRealtimeLogStreamConfig::helius")
-        .expect("Helius bounded realtime config must be present");
-    let chainstack = builder
-        .find("BoundedPumpRealtimeLogStreamConfig::chainstack")
-        .expect("Chainstack bounded realtime config must be present");
-    let alchemy = builder
-        .find("BoundedPumpRealtimeLogStreamConfig::alchemy")
-        .expect("Alchemy bounded realtime config must be present");
-
     assert!(
-        helius < chainstack && chainstack < alchemy,
-        "bounded production provider order must remain Helius -> Chainstack -> Alchemy"
+        builder.contains("BoundedPumpRealtimeLogStreamConfig::solana_public()"),
+        "broad production realtime must use the official public Solana websocket"
     );
+    assert_eq!(
+        builder
+            .matches("BoundedPumpRealtimeLogStreamConfig::solana_public()")
+            .count(),
+        1,
+        "production must configure exactly one public Solana broad realtime source"
+    );
+    for forbidden in [
+        "BoundedPumpRealtimeLogStreamConfig::helius",
+        "BoundedPumpRealtimeLogStreamConfig::chainstack",
+        "BoundedPumpRealtimeLogStreamConfig::alchemy",
+    ] {
+        assert!(
+            !builder.contains(forbidden),
+            "paid broad realtime fallback must remain disabled: {forbidden}"
+        );
+    }
 }
