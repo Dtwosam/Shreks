@@ -60,11 +60,13 @@ fn helius_is_enabled_for_chain_pump_verification_and_realtime_only_with_non_blan
 
 #[test]
 fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
-    let missing = ObserverRuntimeConfig::from_lookup(|name| match name {
+    let missing = match ObserverRuntimeConfig::from_lookup(|name| match name {
         "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
         _ => None,
-    })
-    .expect_err("Helius observer runtime must not start without an HTTP request ceiling");
+    }) {
+        Ok(_) => panic!("Helius observer runtime must not start without an HTTP request ceiling"),
+        Err(error) => error,
+    };
     assert!(
         missing
             .to_string()
@@ -72,12 +74,14 @@ fn helius_http_request_ceiling_is_required_only_when_helius_is_enabled() {
     );
 
     for invalid in ["0", "-1", "nope"] {
-        let error = ObserverRuntimeConfig::from_lookup(|name| match name {
+        let error = match ObserverRuntimeConfig::from_lookup(|name| match name {
             "HELIUS_API_KEY" => Some("fixture-helius-key".to_owned()),
             "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS" => Some(invalid.to_owned()),
             _ => None,
-        })
-        .expect_err("invalid Helius request ceiling must fail closed");
+        }) {
+            Ok(_) => panic!("invalid Helius request ceiling must fail closed"),
+            Err(error) => error,
+        };
         assert!(
             error
                 .to_string()
