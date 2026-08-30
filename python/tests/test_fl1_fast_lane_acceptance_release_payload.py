@@ -7,17 +7,13 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RELEASE_DIR = _REPO_ROOT / "deploy" / "release"
 _REPORTER = "target/release/shreks-fast-lane-acceptance"
-_HISTORICAL_RUNTIME_PAYLOADS = {
+_HISTORICAL_STATIC_PAYLOADS = {
     "deploy/systemd/shreks-observe.service",
     "deploy/systemd/shreks-paper-campaign.service",
     "deploy/systemd/shreks-paper-evidence.service",
     "deploy/systemd/shreks.target",
     "target/release/shreks-observe",
     "target/release/shreks-paper-evidence",
-}
-_SEALED_DEPLOYMENT_CONTROL_PAYLOADS = {
-    "deploy/release/release_bundle.py",
-    "deploy/release/release_manager.py",
 }
 
 
@@ -32,14 +28,12 @@ def _load_release_bundle():
     return module
 
 
-def test_verified_release_keeps_runtime_payloads_and_exact_sealed_deployment_controls():
+def test_verified_release_keeps_historical_runtime_payload_paths_only():
     build_script = (_RELEASE_DIR / "build_release.sh").read_text(encoding="utf-8")
     bundle_source = (_RELEASE_DIR / "release_bundle.py").read_text(encoding="utf-8")
     release_bundle = _load_release_bundle()
 
-    assert set(release_bundle._REQUIRED_STATIC_PAYLOAD_PATHS) == (
-        _HISTORICAL_RUNTIME_PAYLOADS | _SEALED_DEPLOYMENT_CONTROL_PAYLOADS
-    )
+    assert set(release_bundle._REQUIRED_STATIC_PAYLOAD_PATHS) == _HISTORICAL_STATIC_PAYLOADS
     assert not hasattr(release_bundle, "_OPTIONAL_STATIC_PAYLOAD_PATHS")
     assert _REPORTER not in bundle_source
     assert "--bin shreks-fast-lane-acceptance" not in build_script

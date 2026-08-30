@@ -5,7 +5,6 @@ import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
 import sys
-import tarfile
 
 import pytest
 
@@ -42,8 +41,6 @@ PAYLOADS = {
     "deploy/systemd/shreks-paper-evidence.service": b"evidence-unit\n",
     "deploy/systemd/shreks-paper-campaign.service": b"campaign-unit\n",
     "deploy/systemd/shreks.target": b"target-unit\n",
-    "deploy/release/release_bundle.py": b"#!/usr/bin/env python3\n",
-    "deploy/release/release_manager.py": b"#!/usr/bin/env python3\n",
     "wheelhouse/shreks_brain-0.1.0-py3-none-any.whl": b"wheel-bytes",
 }
 
@@ -98,23 +95,6 @@ def test_release_manifest_accepts_exactly_x86_64_and_aarch64_linux_gnu(tmp_path:
         _write_payload_tree(staging)
         with pytest.raises(release_bundle.ReleaseBundleError, match="unsupported release platform"):
             release_bundle.build_release_manifest(staging, SOURCE_SHA, platform)
-
-
-def test_sealed_deployment_controls_are_required_and_executable_in_archive(tmp_path: Path):
-    archive, checksum, manifest_path = _build_bundle(tmp_path / "bundle", ARM64_PLATFORM)
-    manifest = release_bundle.verify_release_archive(archive, checksum, manifest_path)
-    paths = {entry.path for entry in manifest.files}
-
-    assert {
-        "deploy/release/release_bundle.py",
-        "deploy/release/release_manager.py",
-    } <= paths
-
-    with tarfile.open(archive, "r:gz") as release_archive:
-        modes = {member.name: member.mode for member in release_archive.getmembers()}
-
-    assert modes["deploy/release/release_bundle.py"] == 0o755
-    assert modes["deploy/release/release_manager.py"] == 0o755
 
 
 def test_release_manager_rejects_manifest_platform_mismatch_before_staging(

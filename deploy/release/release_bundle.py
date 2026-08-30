@@ -22,20 +22,12 @@ SUPPORTED_PLATFORMS = frozenset(
 )
 
 _REQUIRED_STATIC_PAYLOAD_PATHS = (
-    "deploy/release/release_bundle.py",
-    "deploy/release/release_manager.py",
     "deploy/systemd/shreks-observe.service",
     "deploy/systemd/shreks-paper-campaign.service",
     "deploy/systemd/shreks-paper-evidence.service",
     "deploy/systemd/shreks.target",
     "target/release/shreks-observe",
     "target/release/shreks-paper-evidence",
-)
-_EXECUTABLE_CONTROL_PAYLOAD_PATHS = frozenset(
-    (
-        "deploy/release/release_bundle.py",
-        "deploy/release/release_manager.py",
-    )
 )
 _WHEEL_PATH_RE = re.compile(r"^wheelhouse/shreks_brain-[^/]+\.whl$")
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -276,7 +268,7 @@ def _safe_archive_member_name(member: tarfile.TarInfo) -> str:
 
 
 def _archive_mode(relative: str) -> int:
-    if relative.startswith("target/release/") or relative in _EXECUTABLE_CONTROL_PAYLOAD_PATHS:
+    if relative.startswith("target/release/"):
         return 0o755
     return 0o644
 
