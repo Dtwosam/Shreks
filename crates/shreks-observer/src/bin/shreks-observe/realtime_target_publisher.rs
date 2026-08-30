@@ -81,11 +81,28 @@ pub fn refresh_pumpswap_realtime_targets(
     Ok(true)
 }
 
-/// Periodically publish the verified bounded PumpSwap target set. The first
-/// interval tick is immediate, so realtime startup can establish its initial
-/// scope without waiting one refresh period. Any clock/query/watch failure is
-/// returned to the owning observer so the realtime evidence lane can fail
-/// closed rather than continue on stale or unknown scope.
+/// Perform the startup refresh using the current wall clock. Production calls
+/// this before opening any websocket so the first provider connection starts
+/// with the verified bounded target set rather than an empty startup snapshot.
+pub fn refresh_pumpswap_realtime_targets_now(
+    db_path: &Path,
+    max_age_ms: i64,
+    max_count: usize,
+    sender: &watch::Sender<Vec<String>>,
+) -> Result<bool, RealtimeTargetPublisherError> {
+    refresh_pumpswap_realtime_targets(
+        db_path,
+        unix_time_ms()?,
+        max_age_ms,
+        max_count,
+        sender,
+    )
+}
+
+/// Periodically publish the verified bounded PumpSwap target set. Any
+/// clock/query/watch failure is returned to the owning observer so the
+/// realtime evidence lane can fail closed rather than continue on stale or
+/// unknown scope.
 pub async fn run_pumpswap_realtime_target_publisher(
     db_path: PathBuf,
     max_age_ms: i64,
@@ -97,14 +114,7 @@ pub async fn run_pumpswap_realtime_target_publisher(
 
     loop {
         ticker.tick().await;
-        let as_of_unix_ms = unix_time_ms()?;
-        refresh_pumpswap_realtime_targets(
-            &db_path,
-            as_of_unix_ms,
-            max_age_ms,
-            max_count,
-            &sender,
-        )?;
+        refresh_pumpswap_realtime_targets_now(&db_path, max_age_ms, max_count, &sender)?;
     }
 }
 
