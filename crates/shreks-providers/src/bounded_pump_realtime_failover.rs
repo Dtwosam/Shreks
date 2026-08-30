@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use shreks_core::ProviderId;
 use tokio::sync::watch;
 
@@ -5,7 +6,7 @@ use crate::{
     bounded_pump_realtime::{
         BoundedPumpRealtimeLogStream, BoundedPumpRealtimeLogStreamConfig,
     },
-    pump_realtime::PumpRealtimeNotification,
+    pump_realtime::{PumpRealtimeNotification, PumpRealtimeSignalSource},
     ProviderError, ProviderErrorKind,
 };
 
@@ -73,6 +74,15 @@ impl BoundedPumpRealtimeFailoverStream {
         let error = last_retryable_error
             .expect("non-empty bounded realtime provider set produced a retryable error");
         Err(with_failover_attempt_trace(error, &attempts))
+    }
+}
+
+#[async_trait]
+impl PumpRealtimeSignalSource for BoundedPumpRealtimeFailoverStream {
+    async fn next_pump_realtime_notification(
+        &mut self,
+    ) -> Result<PumpRealtimeNotification, ProviderError> {
+        self.next_realtime_notification().await
     }
 }
 
