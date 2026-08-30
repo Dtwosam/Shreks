@@ -1,4 +1,8 @@
-use std::{collections::{BTreeMap, VecDeque}, fmt, time::Duration};
+use std::{
+    collections::{BTreeMap, VecDeque},
+    fmt,
+    time::Duration,
+};
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -16,7 +20,11 @@ use crate::{
     helius::helius_ws_url,
     pump::PUMP_PROGRAM_ID,
     pump_realtime::{parse_pump_realtime_log_notification, PumpRealtimeNotification},
-    realtime_scope::{pump_realtime_initial_mentions, pump_realtime_logs_subscribe_request},
+    realtime_scope::{
+        parse_pump_realtime_unsubscribe_ack, pump_realtime_initial_mentions,
+        pump_realtime_logs_subscribe_request, pump_realtime_logs_unsubscribe_request,
+        pump_realtime_subscription_changes, PumpRealtimeSubscriptionChange,
+    },
     ProviderError, ProviderErrorKind,
 };
 
@@ -28,6 +36,12 @@ const SUBSCRIPTION_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 const ALCHEMY_MAINNET_WS_BASE: &str = "wss://solana-mainnet.g.alchemy.com/v2/";
 
 type BoundedPumpRealtimeSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type BoundedPumpRealtimeFrame = Option<Result<Message, tokio_tungstenite::tungstenite::Error>>;
+
+enum BoundedPumpRealtimeWake {
+    TargetsChanged(Result<(), watch::error::RecvError>),
+    SocketFrame(Result<BoundedPumpRealtimeFrame, tokio::time::error::Elapsed>),
+}
 
 #[derive(Clone)]
 pub struct BoundedPumpRealtimeLogStreamConfig {
@@ -147,6 +161,7 @@ pub struct BoundedPumpRealtimeLogStream {
     pool_subscriptions: BTreeMap<String, u64>,
     pending_notifications: VecDeque<PumpRealtimeNotification>,
     reconnect_attempt: u32,
+    next_request_id: u64,
 }
 
 impl BoundedPumpRealtimeLogStream {
@@ -162,6 +177,7 @@ impl BoundedPumpRealtimeLogStream {
             pool_subscriptions: BTreeMap::new(),
             pending_notifications: VecDeque::new(),
             reconnect_attempt: 0,
+            next_request_id: 1,
         })
     }
 
@@ -174,16 +190,35 @@ impl BoundedPumpRealtimeLogStream {
             }
             self.ensure_connected().await?;
             let heartbeat_interval = self.config.heartbeat_interval;
-            let next_frame = {
+            let wake = {
+                let targets = &mut self.targets;
                 let socket = self
                     .socket
                     .as_mut()
                     .expect("ensure_connected establishes a websocket");
-                timeout(heartbeat_interval, socket.next()).await
+                tokio::select! {
+                    changed = targets.changed() => BoundedPumpRealtimeWake::TargetsChanged(changed),
+                    frame = timeout(heartbeat_interval, socket.next()) => {
+                        BoundedPumpRealtimeWake::SocketFrame(frame)
+                    }
+                }
             };
 
-            match next_frame {
-                Err(_) => {
+            match wake {
+                BoundedPumpRealtimeWake::TargetsChanged(Ok(())) => {
+                    if let Err(error) = self.reconcile_targets().await {
+                        self.reset_connection();
+                        return Err(error);
+                    }
+                }
+                BoundedPumpRealtimeWake::TargetsChanged(Err(_)) => {
+                    self.reset_connection();
+                    return Err(unavailable(
+                        self.config.provider,
+                        "bounded realtime target publisher stopped",
+                    ));
+                }
+                BoundedPumpRealtimeWake::SocketFrame(Err(_)) => {
                     let sent = self
                         .socket
                         .as_mut()
@@ -194,7 +229,7 @@ impl BoundedPumpRealtimeLogStream {
                         self.disconnect_and_backoff().await;
                     }
                 }
-                Ok(Some(Ok(Message::Text(text)))) => {
+                BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Text(text))))) => {
                     if let Some(notification) = parse_notification_for_provider(
                         &text.to_string(),
                         self.config.provider,
@@ -202,7 +237,7 @@ impl BoundedPumpRealtimeLogStream {
                         return Ok(notification);
                     }
                 }
-                Ok(Some(Ok(Message::Ping(payload)))) => {
+                BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Ping(payload))))) => {
                     let sent = self
                         .socket
                         .as_mut()
@@ -213,10 +248,12 @@ impl BoundedPumpRealtimeLogStream {
                         self.disconnect_and_backoff().await;
                     }
                 }
-                Ok(Some(Ok(Message::Pong(_))))
-                | Ok(Some(Ok(Message::Binary(_))))
-                | Ok(Some(Ok(Message::Frame(_)))) => {}
-                Ok(Some(Ok(Message::Close(_)))) | Ok(Some(Err(_))) | Ok(None) => {
+                BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Pong(_)))))
+                | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Binary(_)))))
+                | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Frame(_))))) => {}
+                BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Close(_)))))
+                | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Err(_))))
+                | BoundedPumpRealtimeWake::SocketFrame(Ok(None)) => {
                     self.disconnect_and_backoff().await;
                 }
             }
@@ -226,11 +263,12 @@ impl BoundedPumpRealtimeLogStream {
     async fn ensure_connected(&mut self) -> Result<(), ProviderError> {
         while self.socket.is_none() {
             match self.connect_once().await {
-                Ok((socket, pool_subscriptions, pending_notifications)) => {
+                Ok((socket, pool_subscriptions, pending_notifications, next_request_id)) => {
                     self.socket = Some(socket);
                     self.pool_subscriptions = pool_subscriptions;
                     self.pending_notifications.extend(pending_notifications);
                     self.reconnect_attempt = 0;
+                    self.next_request_id = next_request_id;
                 }
                 Err(error) if error.is_retryable() => {
                     self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
@@ -255,6 +293,7 @@ impl BoundedPumpRealtimeLogStream {
             BoundedPumpRealtimeSocket,
             BTreeMap<String, u64>,
             VecDeque<PumpRealtimeNotification>,
+            u64,
         ),
         ProviderError,
     > {
@@ -290,12 +329,107 @@ impl BoundedPumpRealtimeLogStream {
             }
         }
 
-        Ok((socket, pool_subscriptions, pending_notifications))
+        let next_request_id = u64::try_from(mentions.len())
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .ok_or_else(|| invalid_request(provider, "realtime subscription request id overflow"))?;
+
+        Ok((
+            socket,
+            pool_subscriptions,
+            pending_notifications,
+            next_request_id,
+        ))
+    }
+
+    async fn reconcile_targets(&mut self) -> Result<(), ProviderError> {
+        let targets = self.targets.borrow().clone();
+        let changes = pump_realtime_subscription_changes(&self.pool_subscriptions, &targets)?;
+
+        for change in changes {
+            let request_id = self.take_request_id()?;
+            match change {
+                PumpRealtimeSubscriptionChange::Unsubscribe {
+                    pool,
+                    subscription_id,
+                } => {
+                    let request =
+                        pump_realtime_logs_unsubscribe_request(request_id, subscription_id);
+                    {
+                        let socket = self
+                            .socket
+                            .as_mut()
+                            .expect("target reconciliation requires a connected websocket");
+                        socket
+                            .send(Message::Text(request.to_string().into()))
+                            .await
+                            .map_err(|_| {
+                                unavailable(
+                                    self.config.provider,
+                                    "bounded realtime unsubscribe send failed",
+                                )
+                            })?;
+                        await_unsubscribe_ack(
+                            socket,
+                            request_id,
+                            self.config.provider,
+                            &mut self.pending_notifications,
+                        )
+                        .await?;
+                    }
+                    self.pool_subscriptions.remove(&pool);
+                }
+                PumpRealtimeSubscriptionChange::Subscribe { pool } => {
+                    let request = pump_realtime_logs_subscribe_request(request_id, &pool)?;
+                    let subscription_id = {
+                        let socket = self
+                            .socket
+                            .as_mut()
+                            .expect("target reconciliation requires a connected websocket");
+                        socket
+                            .send(Message::Text(request.to_string().into()))
+                            .await
+                            .map_err(|_| {
+                                unavailable(
+                                    self.config.provider,
+                                    "bounded realtime subscription send failed",
+                                )
+                            })?;
+                        await_subscription_ack(
+                            socket,
+                            request_id,
+                            self.config.provider,
+                            &mut self.pending_notifications,
+                        )
+                        .await?
+                    };
+                    self.pool_subscriptions.insert(pool, subscription_id);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn take_request_id(&mut self) -> Result<u64, ProviderError> {
+        let request_id = self.next_request_id;
+        self.next_request_id = self.next_request_id.checked_add(1).ok_or_else(|| {
+            invalid_request(
+                self.config.provider,
+                "realtime subscription request id overflow",
+            )
+        })?;
+        Ok(request_id)
+    }
+
+    fn reset_connection(&mut self) {
+        self.socket = None;
+        self.pool_subscriptions.clear();
+        self.next_request_id = 1;
     }
 
     async fn disconnect_and_backoff(&mut self) {
-        self.socket = None;
-        self.pool_subscriptions.clear();
+        self.reset_connection();
         let delay = self.config.reconnect_delay(self.reconnect_attempt);
         self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
         sleep(delay).await;
@@ -315,11 +449,9 @@ async fn await_subscription_ack(
         match frame {
             Some(Ok(Message::Text(text))) => {
                 let body = text.to_string();
-                if let Some(subscription_id) = parse_subscription_ack(
-                    &body,
-                    expected_request_id,
-                    provider,
-                )? {
+                if let Some(subscription_id) =
+                    parse_subscription_ack(&body, expected_request_id, provider)?
+                {
                     return Ok(subscription_id);
                 }
                 if let Some(notification) = parse_notification_for_provider(&body, provider)? {
@@ -345,23 +477,76 @@ async fn await_subscription_ack(
     }
 }
 
+async fn await_unsubscribe_ack(
+    socket: &mut BoundedPumpRealtimeSocket,
+    expected_request_id: u64,
+    provider: ProviderId,
+    pending_notifications: &mut VecDeque<PumpRealtimeNotification>,
+) -> Result<(), ProviderError> {
+    loop {
+        let frame = timeout(SUBSCRIPTION_ACK_TIMEOUT, socket.next())
+            .await
+            .map_err(|_| unavailable(provider, "bounded realtime unsubscribe timed out"))?;
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                let body = text.to_string();
+                if parse_pump_realtime_unsubscribe_ack(&body, expected_request_id, provider)?
+                    .is_some()
+                {
+                    return Ok(());
+                }
+                if let Some(notification) = parse_notification_for_provider(&body, provider)? {
+                    pending_notifications.push_back(notification);
+                }
+            }
+            Some(Ok(Message::Ping(payload))) => {
+                socket
+                    .send(Message::Pong(payload))
+                    .await
+                    .map_err(|_| unavailable(provider, "bounded realtime pong failed"))?;
+            }
+            Some(Ok(Message::Pong(_)))
+            | Some(Ok(Message::Binary(_)))
+            | Some(Ok(Message::Frame(_))) => {}
+            Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                return Err(unavailable(
+                    provider,
+                    "bounded realtime websocket closed before unsubscribe acknowledgement",
+                ));
+            }
+        }
+    }
+}
+
 fn parse_subscription_ack(
     body: &str,
     expected_request_id: u64,
     provider: ProviderId,
 ) -> Result<Option<u64>, ProviderError> {
-    let value: Value = serde_json::from_str(body)
-        .map_err(|_| invalid_response(provider, "invalid realtime subscription acknowledgement JSON"))?;
+    let value: Value = serde_json::from_str(body).map_err(|_| {
+        invalid_response(
+            provider,
+            "invalid realtime subscription acknowledgement JSON",
+        )
+    })?;
     if value.get("id").and_then(Value::as_u64) != Some(expected_request_id) {
         return Ok(None);
     }
     if value.get("error").is_some_and(|error| !error.is_null()) {
-        return Err(invalid_response(provider, "realtime subscription request was rejected"));
+        return Err(invalid_response(
+            provider,
+            "realtime subscription request was rejected",
+        ));
     }
     let subscription_id = value
         .get("result")
         .and_then(Value::as_u64)
-        .ok_or_else(|| invalid_response(provider, "realtime subscription acknowledgement missing numeric result"))?;
+        .ok_or_else(|| {
+            invalid_response(
+                provider,
+                "realtime subscription acknowledgement missing numeric result",
+            )
+        })?;
     Ok(Some(subscription_id))
 }
 
