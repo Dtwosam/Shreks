@@ -8,10 +8,12 @@ fn paper_evidence_binary_wires_only_the_bounded_read_only_evidence_path() {
         "EvidenceCandidateStore::open",
         "ShreksDb::open",
         "HeliusProvider::new",
+        "with_request_budget(config.helius_max_requests_per_process)",
         "JupiterProvider::new",
         "SafetyEvidenceCollector::new",
         "with_chain_provider",
         "run_paper_evidence_cycle",
+        "request_usage",
         "tokio::time::sleep",
         "tokio::signal::ctrl_c",
     ] {
@@ -35,7 +37,7 @@ fn paper_evidence_binary_wires_only_the_bounded_read_only_evidence_path() {
 }
 
 #[test]
-fn paper_evidence_binary_logs_counts_not_provider_keys() {
+fn paper_evidence_binary_logs_counts_and_budget_state_not_provider_keys() {
     let source = include_str!("../src/bin/shreks-paper-evidence/main.rs");
     assert!(source.contains("candidates_selected"));
     assert!(source.contains("mint_states_stored"));
@@ -43,6 +45,10 @@ fn paper_evidence_binary_logs_counts_not_provider_keys() {
     assert!(source.contains("entry_quote_snapshots_stored"));
     assert!(source.contains("exit_quote_snapshots_stored"));
     assert!(source.contains("provider_failures"));
+    assert!(source.contains("helius_requests_attempted"));
+    assert!(source.contains("helius_requests_limit"));
+    assert!(source.contains("helius_requests_remaining"));
+    assert!(source.contains("helius_budget_exhausted"));
 
     for line in source.lines().filter(|line| line.contains("eprintln!")) {
         assert!(!line.contains("api_key"), "credential accessor appeared in log statement");
