@@ -27,11 +27,18 @@ use crate::{Observer, ObserverError};
 
 const DEFAULT_DB_PATH: &str = "data/shreks.db";
 const DEFAULT_CYCLE_INTERVAL_SECONDS: u64 = 30;
+const PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV: &str =
+    "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS";
+const PUMPSWAP_MAX_TRACKED_POOLS_ENV: &str = "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeConfigError {
     InvalidCycleInterval(String),
     MissingHeliusRequestBudget,
+    MissingPumpSwapTrackingMaxAge,
+    InvalidPumpSwapTrackingMaxAge(String),
+    MissingPumpSwapMaxTrackedPools,
+    InvalidPumpSwapMaxTrackedPools(String),
 }
 
 impl fmt::Display for RuntimeConfigError {
@@ -43,6 +50,22 @@ impl fmt::Display for RuntimeConfigError {
             ),
             Self::MissingHeliusRequestBudget => formatter.write_str(
                 "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS must be a positive integer when HELIUS_API_KEY is configured",
+            ),
+            Self::MissingPumpSwapTrackingMaxAge => write!(
+                formatter,
+                "{PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV} must be a positive integer when realtime observation is configured"
+            ),
+            Self::InvalidPumpSwapTrackingMaxAge(value) => write!(
+                formatter,
+                "{PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV} must be a positive integer representable in milliseconds; got '{value}'"
+            ),
+            Self::MissingPumpSwapMaxTrackedPools => write!(
+                formatter,
+                "{PUMPSWAP_MAX_TRACKED_POOLS_ENV} must be a positive integer when realtime observation is configured"
+            ),
+            Self::InvalidPumpSwapMaxTrackedPools(value) => write!(
+                formatter,
+                "{PUMPSWAP_MAX_TRACKED_POOLS_ENV} must be a positive integer; got '{value}'"
             ),
         }
     }
@@ -57,6 +80,8 @@ impl Error for RuntimeConfigError {}
 pub struct ObserverRuntimeConfig {
     pub db_path: PathBuf,
     pub cycle_interval: Duration,
+    pub pumpswap_tracking_max_age: Option<Duration>,
+    pub pumpswap_max_tracked_pools: Option<usize>,
     pub providers: ProviderConfig,
 }
 
@@ -90,9 +115,49 @@ impl ObserverRuntimeConfig {
             return Err(RuntimeConfigError::MissingHeliusRequestBudget);
         }
 
+        let realtime_enabled = providers.helius_enabled()
+            || providers.chainstack_enabled()
+            || providers.alchemy_enabled();
+        let (pumpswap_tracking_max_age, pumpswap_max_tracked_pools) = if realtime_enabled {
+            let raw_age = non_blank(lookup(PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV))
+                .ok_or(RuntimeConfigError::MissingPumpSwapTrackingMaxAge)?;
+            let age_seconds = raw_age
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| *seconds > 0)
+                .filter(|seconds| {
+                    seconds
+                        .checked_mul(1_000)
+                        .and_then(|milliseconds| i64::try_from(milliseconds).ok())
+                        .is_some()
+                })
+                .ok_or_else(|| {
+                    RuntimeConfigError::InvalidPumpSwapTrackingMaxAge(raw_age.clone())
+                })?;
+
+            let raw_count = non_blank(lookup(PUMPSWAP_MAX_TRACKED_POOLS_ENV))
+                .ok_or(RuntimeConfigError::MissingPumpSwapMaxTrackedPools)?;
+            let max_tracked_pools = raw_count
+                .parse::<usize>()
+                .ok()
+                .filter(|count| *count > 0)
+                .ok_or_else(|| {
+                    RuntimeConfigError::InvalidPumpSwapMaxTrackedPools(raw_count.clone())
+                })?;
+
+            (
+                Some(Duration::from_secs(age_seconds)),
+                Some(max_tracked_pools),
+            )
+        } else {
+            (None, None)
+        };
+
         Ok(Self {
             db_path,
             cycle_interval,
+            pumpswap_tracking_max_age,
+            pumpswap_max_tracked_pools,
             providers,
         })
     }
