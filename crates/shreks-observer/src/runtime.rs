@@ -10,12 +10,11 @@ use shreks_core::ProviderId;
 use shreks_providers::{
     config::ProviderConfig,
     dexscreener::DexScreenerProvider,
-    helius::HeliusProvider,
     meteora::MeteoraProvider,
     pump::PumpLifecycleSignal,
     pump_realtime::PumpRealtimeNotification,
     solana_rpc::StandardSolanaRpcProvider,
-    ProviderError, ProviderErrorKind,
+    ProviderError,
 };
 use shreks_storage::{
     pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
@@ -34,7 +33,6 @@ const PUMPSWAP_MAX_TRACKED_POOLS_ENV: &str = "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS"
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeConfigError {
     InvalidCycleInterval(String),
-    MissingHeliusRequestBudget,
     MissingPumpSwapTrackingMaxAge,
     InvalidPumpSwapTrackingMaxAge(String),
     MissingPumpSwapMaxTrackedPools,
@@ -48,12 +46,9 @@ impl fmt::Display for RuntimeConfigError {
                 formatter,
                 "SHREKS_OBSERVER_INTERVAL_SECONDS must be a positive integer; got '{value}'"
             ),
-            Self::MissingHeliusRequestBudget => formatter.write_str(
-                "SHREKS_OBSERVER_HELIUS_MAX_REQUESTS_PER_PROCESS must be a positive integer when HELIUS_API_KEY is configured",
-            ),
             Self::MissingPumpSwapTrackingMaxAge => write!(
                 formatter,
-                "{PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV} must be a positive integer when realtime observation is configured"
+                "{PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV} must be a positive integer for bounded public realtime observation"
             ),
             Self::InvalidPumpSwapTrackingMaxAge(value) => write!(
                 formatter,
@@ -61,7 +56,7 @@ impl fmt::Display for RuntimeConfigError {
             ),
             Self::MissingPumpSwapMaxTrackedPools => write!(
                 formatter,
-                "{PUMPSWAP_MAX_TRACKED_POOLS_ENV} must be a positive integer when realtime observation is configured"
+                "{PUMPSWAP_MAX_TRACKED_POOLS_ENV} must be a positive integer for bounded public realtime observation"
             ),
             Self::InvalidPumpSwapMaxTrackedPools(value) => write!(
                 formatter,
@@ -75,8 +70,9 @@ impl Error for RuntimeConfigError {}
 
 /// Environment-derived configuration for the observe-only process.
 ///
-/// ProviderConfig's Debug implementation intentionally exposes only enablement
-/// and request budgets, never API-key contents.
+/// Paid provider configuration is retained for other binaries, but broad FL1
+/// observation is pinned to public Solana transport and therefore always
+/// requires explicit PumpSwap scope bounds.
 pub struct ObserverRuntimeConfig {
     pub db_path: PathBuf,
     pub cycle_interval: Duration,
@@ -107,57 +103,34 @@ impl ObserverRuntimeConfig {
         };
 
         let providers = ProviderConfig::from_lookup(|name| lookup(name));
-        if providers.helius_enabled()
-            && providers
-                .observer_helius_max_requests_per_process
-                .is_none()
-        {
-            return Err(RuntimeConfigError::MissingHeliusRequestBudget);
-        }
 
-        let realtime_enabled = providers.helius_enabled()
-            || providers.chainstack_enabled()
-            || providers.alchemy_enabled();
-        let (pumpswap_tracking_max_age, pumpswap_max_tracked_pools) = if realtime_enabled {
-            let raw_age = non_blank(lookup(PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV))
-                .ok_or(RuntimeConfigError::MissingPumpSwapTrackingMaxAge)?;
-            let age_seconds = raw_age
-                .parse::<u64>()
-                .ok()
-                .filter(|seconds| *seconds > 0)
-                .filter(|seconds| {
-                    seconds
-                        .checked_mul(1_000)
-                        .and_then(|milliseconds| i64::try_from(milliseconds).ok())
-                        .is_some()
-                })
-                .ok_or_else(|| {
-                    RuntimeConfigError::InvalidPumpSwapTrackingMaxAge(raw_age.clone())
-                })?;
+        let raw_age = non_blank(lookup(PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV))
+            .ok_or(RuntimeConfigError::MissingPumpSwapTrackingMaxAge)?;
+        let age_seconds = raw_age
+            .parse::<u64>()
+            .ok()
+            .filter(|seconds| *seconds > 0)
+            .filter(|seconds| {
+                seconds
+                    .checked_mul(1_000)
+                    .and_then(|milliseconds| i64::try_from(milliseconds).ok())
+                    .is_some()
+            })
+            .ok_or_else(|| RuntimeConfigError::InvalidPumpSwapTrackingMaxAge(raw_age.clone()))?;
 
-            let raw_count = non_blank(lookup(PUMPSWAP_MAX_TRACKED_POOLS_ENV))
-                .ok_or(RuntimeConfigError::MissingPumpSwapMaxTrackedPools)?;
-            let max_tracked_pools = raw_count
-                .parse::<usize>()
-                .ok()
-                .filter(|count| *count > 0)
-                .ok_or_else(|| {
-                    RuntimeConfigError::InvalidPumpSwapMaxTrackedPools(raw_count.clone())
-                })?;
-
-            (
-                Some(Duration::from_secs(age_seconds)),
-                Some(max_tracked_pools),
-            )
-        } else {
-            (None, None)
-        };
+        let raw_count = non_blank(lookup(PUMPSWAP_MAX_TRACKED_POOLS_ENV))
+            .ok_or(RuntimeConfigError::MissingPumpSwapMaxTrackedPools)?;
+        let max_tracked_pools = raw_count
+            .parse::<usize>()
+            .ok()
+            .filter(|count| *count > 0)
+            .ok_or_else(|| RuntimeConfigError::InvalidPumpSwapMaxTrackedPools(raw_count.clone()))?;
 
         Ok(Self {
             db_path,
             cycle_interval,
-            pumpswap_tracking_max_age,
-            pumpswap_max_tracked_pools,
+            pumpswap_tracking_max_age: Some(Duration::from_secs(age_seconds)),
+            pumpswap_max_tracked_pools: Some(max_tracked_pools),
             providers,
         })
     }
@@ -197,14 +170,11 @@ impl ObserveProviderPlan {
 }
 
 /// Resolve the provider set that the observe-only runtime is allowed to use.
-/// Jupiter is deliberately absent: quotes/execution do not belong in Phase A
-/// observation even when a Jupiter API key happens to be configured.
+/// Broad chain truth, transaction verification, and realtime Pump capture are
+/// deliberately public-only. Paid credentials cannot re-enter these FL1 roles.
 pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPlan {
     let mut discovery = Vec::new();
     let mut market = Vec::new();
-    let mut chain = Vec::new();
-    let mut transactions = Vec::new();
-    let mut realtime = Vec::new();
 
     if config.dexscreener_enabled {
         discovery.push(ProviderId::DexScreener);
@@ -213,27 +183,13 @@ pub fn free_observe_provider_plan(config: &ProviderConfig) -> ObserveProviderPla
     if config.meteora_enabled {
         market.push(ProviderId::Meteora);
     }
-    if config.helius_enabled() {
-        chain.push(ProviderId::Helius);
-        realtime.push(ProviderId::Helius);
-    }
-    if config.chainstack_enabled() {
-        chain.push(ProviderId::Chainstack);
-        transactions.push(ProviderId::Chainstack);
-        realtime.push(ProviderId::Chainstack);
-    } else if config.helius_enabled() {
-        transactions.push(ProviderId::Helius);
-    }
-    if config.alchemy_enabled() {
-        realtime.push(ProviderId::Alchemy);
-    }
 
     ObserveProviderPlan {
         discovery,
         market,
-        chain,
-        transactions,
-        realtime,
+        chain: vec![ProviderId::SolanaPublic],
+        transactions: vec![ProviderId::SolanaPublic],
+        realtime: vec![ProviderId::SolanaPublic],
     }
 }
 
@@ -256,31 +212,10 @@ pub fn build_free_observer(
         observer = observer.with_market_provider(Arc::new(MeteoraProvider::new()));
     }
 
-    if let Some(api_key) = config.helius_api_key() {
-        let max_requests = config
-            .observer_helius_max_requests_per_process
-            .ok_or_else(|| {
-                ProviderError::new(
-                    ProviderId::Helius,
-                    ProviderErrorKind::InvalidRequest,
-                    "observer Helius process request budget is required",
-                )
-            })?;
-        let helius = Arc::new(
-            HeliusProvider::new(api_key)?.with_request_budget(max_requests)?,
-        );
-        observer = observer.with_chain_provider(helius.clone());
-        if !config.chainstack_enabled() {
-            observer = observer.with_transaction_provider(helius);
-        }
-    }
-
-    if let Some(endpoint) = config.chainstack_solana_wss_url() {
-        let chainstack = Arc::new(StandardSolanaRpcProvider::chainstack(endpoint)?);
-        observer = observer
-            .with_chain_provider(chainstack.clone())
-            .with_transaction_provider(chainstack);
-    }
+    let solana_public = Arc::new(StandardSolanaRpcProvider::solana_public()?);
+    observer = observer
+        .with_chain_provider(solana_public.clone())
+        .with_transaction_provider(solana_public);
 
     Ok(observer)
 }
