@@ -19,6 +19,7 @@ pub struct FastEventNormalizationReport {
     pub scanned: usize,
     pub normalized: usize,
     pub unresolved_decimals: usize,
+    pub invalid_economics: usize,
 }
 
 #[derive(Debug)]
@@ -218,6 +219,16 @@ fn normalize_bonding_curve_row(
 ) -> Result<(), FastEventNormalizationError> {
     require_realtime_provider(raw.provider)?;
 
+    // Direct program logs are immutable source evidence, not guaranteed
+    // canonical economics. A successful on-chain transaction can still emit a
+    // tradeEvent with zero executed base/quote quantity. Keep that raw row for
+    // audit, but do not let one non-economic event terminate the mandatory
+    // normalizer task or consume a canonical sequence number.
+    if !pump_trade_has_positive_economics(&raw) {
+        report.invalid_economics = report.invalid_economics.saturating_add(1);
+        return Ok(());
+    }
+
     let Some(base_decimals) = db.verified_mint_decimals(&raw.mint)? else {
         report.unresolved_decimals += 1;
         return Ok(());
@@ -255,6 +266,18 @@ fn normalize_bonding_curve_row(
         report.normalized += 1;
     }
     Ok(())
+}
+
+fn pump_trade_has_positive_economics(raw: &PumpTradeEvidenceWrite) -> bool {
+    if raw.token_amount_raw == 0 {
+        return false;
+    }
+
+    if pump_quote_is_sol(&raw.quote_mint) {
+        raw.sol_amount_raw > 0
+    } else {
+        raw.quote_amount_raw > 0
+    }
 }
 
 fn normalize_pump_swap_row(
