@@ -207,6 +207,32 @@ fn fast_event_normalizer_is_bounded_periodic_and_fail_closed_supervised() {
 }
 
 #[test]
+fn fast_event_normalizer_yields_between_sub_timeout_write_bursts() {
+    assert!(
+        OBSERVE_SOURCE.contains("const FAST_EVENT_NORMALIZER_BATCH_LIMIT: usize = 256;"),
+        "normalizer burst must stay small enough to release SQLite writer pressure well inside the five-second storage busy timeout"
+    );
+
+    let start = OBSERVE_SOURCE
+        .find("async fn run_fast_event_normalizer")
+        .expect("FastEvent normalizer runtime must exist");
+    let end = OBSERVE_SOURCE[start..]
+        .find("fn normalizer_unix_time_ms")
+        .map(|offset| start + offset)
+        .expect("normalizer clock helper must follow the runtime loop");
+    let runtime = &OBSERVE_SOURCE[start..end];
+
+    assert!(
+        runtime.contains("tokio::time::sleep(FAST_EVENT_NORMALIZER_INTERVAL).await"),
+        "every completed normalization burst must yield for a real wall-clock interval before the next burst"
+    );
+    assert!(
+        !runtime.contains("tokio::time::interval"),
+        "an overrun must not immediately catch up and recreate continuous SQLite writer pressure"
+    );
+}
+
+#[test]
 fn observe_v2_runtime_remains_observe_only() {
     for forbidden in [
         "TradeIntent",
