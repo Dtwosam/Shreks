@@ -54,6 +54,20 @@ fn raw_trade() -> PumpTradeEvidenceWrite {
     }
 }
 
+fn mint_state(mint: &str) -> TokenMintState {
+    TokenMintState {
+        provider: ProviderId::SolanaPublic,
+        mint: mint.to_owned(),
+        owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+        supply: 1_000_000_000_000,
+        decimals: 6,
+        mint_authority: None,
+        freeze_authority: None,
+        slot: 43,
+        observed_at_unix_ms: OBSERVED_MS + 100_000,
+    }
+}
+
 struct RecordingPublicChain {
     requests: Arc<Mutex<Vec<String>>>,
 }
@@ -66,30 +80,51 @@ impl ChainDataProvider for RecordingPublicChain {
 
     async fn token_mint_state(&self, mint: &str) -> Result<TokenMintState, ProviderError> {
         self.requests.lock().unwrap().push(mint.to_owned());
-        Ok(TokenMintState {
-            provider: ProviderId::SolanaPublic,
-            mint: mint.to_owned(),
-            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
-            supply: 1_000_000_000_000,
-            decimals: 6,
-            mint_authority: None,
-            freeze_authority: None,
-            slot: 43,
-            observed_at_unix_ms: OBSERVED_MS + 100_000,
-        })
+        Ok(mint_state(mint))
+    }
+}
+
+struct LockBeforeMintStateWritePublicChain {
+    db_path: PathBuf,
+    requests: Arc<Mutex<Vec<String>>>,
+    release_lock: Arc<Mutex<Option<thread::JoinHandle<()>>>>,
+}
+
+#[async_trait]
+impl ChainDataProvider for LockBeforeMintStateWritePublicChain {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::SolanaPublic
+    }
+
+    async fn token_mint_state(&self, mint: &str) -> Result<TokenMintState, ProviderError> {
+        self.requests.lock().unwrap().push(mint.to_owned());
+
+        // Candidate upsert has already succeeded when the provider is called.
+        // Acquire the competing writer here so the following mint-state insert,
+        // not the candidate upsert, is the operation that crosses busy_timeout.
+        let blocker = Connection::open(&self.db_path).unwrap();
+        blocker
+            .execute_batch("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;")
+            .unwrap();
+        let handle = thread::spawn(move || {
+            thread::sleep(BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT);
+            blocker.execute_batch("COMMIT;").unwrap();
+        });
+        *self.release_lock.lock().unwrap() = Some(handle);
+
+        Ok(mint_state(mint))
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn metadata_hydration_survives_one_transient_sqlite_busy_interval() {
+async fn candidate_upsert_survives_one_transient_sqlite_busy_interval() {
     let root = unique_test_dir();
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     db.record_pump_trade_evidence(&raw_trade()).unwrap();
 
     // Hold a real competing writer lock just beyond ShreksDb's existing
-    // five-second SQLite busy timeout. Production FL1.5 hit this exact class
-    // while the new metadata hydration lane was writing candidate/mint state.
+    // five-second SQLite busy timeout before the observer reaches upsert.
     let blocker = Connection::open(&db_path).unwrap();
     blocker
         .execute_batch("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;")
@@ -107,9 +142,52 @@ async fn metadata_hydration_survives_one_transient_sqlite_busy_interval() {
     let report = tokio::time::timeout(Duration::from_secs(8), observer.run_cycle())
         .await
         .expect("bounded SQLite busy recovery must complete after the competing lock clears")
-        .expect("one transient SQLite busy interval must not terminate metadata hydration");
+        .expect("one transient SQLite busy interval must not terminate candidate upsert");
 
     release_lock.join().unwrap();
+    assert_eq!(requests.lock().unwrap().as_slice(), &[MINT.to_owned()]);
+    assert_eq!(report.mint_states_stored, 1);
+
+    drop(observer);
+    let reopened = ShreksDb::open(&db_path).unwrap();
+    assert_eq!(reopened.verified_mint_decimals(MINT).unwrap(), Some(6));
+
+    drop(reopened);
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mint_state_insert_survives_one_transient_sqlite_busy_without_replaying_provider_call() {
+    let root = unique_test_dir();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    db.record_pump_trade_evidence(&raw_trade()).unwrap();
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let release_lock = Arc::new(Mutex::new(None));
+    let mut observer = Observer::new(db).with_chain_provider(Arc::new(
+        LockBeforeMintStateWritePublicChain {
+            db_path: db_path.clone(),
+            requests: Arc::clone(&requests),
+            release_lock: Arc::clone(&release_lock),
+        },
+    ));
+
+    let report = tokio::time::timeout(Duration::from_secs(8), observer.run_cycle())
+        .await
+        .expect("bounded SQLite busy recovery must complete after the insert lock clears")
+        .expect("one transient SQLite busy interval must not terminate mint-state insert");
+
+    release_lock
+        .lock()
+        .unwrap()
+        .take()
+        .expect("provider must have installed the competing writer lock")
+        .join()
+        .unwrap();
+
+    // SQLite recovery is per durability operation. It must not replay the
+    // public RPC request merely because the post-request insert hit BUSY.
     assert_eq!(requests.lock().unwrap().as_slice(), &[MINT.to_owned()]);
     assert_eq!(report.mint_states_stored, 1);
 
