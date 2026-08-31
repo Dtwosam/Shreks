@@ -199,6 +199,16 @@ fn normalize_pending_rows(
             break;
         }
 
+        // `accepted_at_unix_ms` is the canonical acceptance snapshot for this
+        // normalization burst. Raw ingestion runs concurrently, so a pending
+        // query can discover a row observed just after that snapshot was taken.
+        // Such a row is valid immutable evidence, but cannot truthfully become
+        // canonical at an earlier timestamp. Leave it pending for the next
+        // burst rather than weakening the storage ordering invariant.
+        if pending.observed_at_unix_ms() > accepted_at_unix_ms {
+            continue;
+        }
+
         match pending {
             PendingEvidence::Pump(raw) => {
                 normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, report)?;
