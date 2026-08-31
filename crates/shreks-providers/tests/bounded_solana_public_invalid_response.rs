@@ -10,7 +10,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use shreks_core::ProviderId;
 use shreks_providers::{
-    bounded_pump_realtime::{BoundedPumpRealtimeLogStream, BoundedPumpRealtimeLogStreamConfig},
+    bounded_pump_realtime::BoundedPumpRealtimeLogStreamConfig,
+    bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
     ProviderErrorKind,
 };
 use tokio::{net::TcpListener, sync::watch};
@@ -40,6 +41,27 @@ async fn acknowledge_initial_pump_subscription(
         .expect("subscription acknowledgement");
 }
 
+fn public_failover(
+    address: std::net::SocketAddr,
+    targets_receiver: watch::Receiver<Vec<String>>,
+    max_reconnects: u32,
+) -> BoundedPumpRealtimeFailoverStream {
+    let config = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::SolanaPublic,
+        format!("ws://{address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(3);
+
+    BoundedPumpRealtimeFailoverStream::new(vec![config], targets_receiver)
+        .unwrap()
+        .with_public_invalid_response_reconnect_policy(
+            max_reconnects,
+            Duration::from_millis(5),
+        )
+}
+
 #[tokio::test]
 async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -60,7 +82,7 @@ async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
         let (tcp, _) = listener
             .accept()
             .await
-            .expect("public stream must reconnect after transient invalid response");
+            .expect("public supervisor must reconnect after transient invalid response");
         server_connections.fetch_add(1, Ordering::SeqCst);
         let mut socket = accept_async(tcp).await.expect("second websocket handshake");
         acknowledge_initial_pump_subscription(&mut socket, 201).await;
@@ -68,14 +90,7 @@ async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
     });
 
     let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
-    let config = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
-        ProviderId::SolanaPublic,
-        format!("ws://{address}"),
-    )
-    .unwrap()
-    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
-    .with_max_connect_attempts(3);
-    let mut stream = BoundedPumpRealtimeLogStream::new(config, targets_receiver).unwrap();
+    let mut stream = public_failover(address, targets_receiver, 3);
     let client = tokio::spawn(async move { stream.next_realtime_notification().await });
 
     tokio::time::timeout(Duration::from_millis(500), async {
@@ -123,14 +138,7 @@ async fn solana_public_still_fails_closed_after_bounded_invalid_response_exhaust
     });
 
     let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
-    let config = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
-        ProviderId::SolanaPublic,
-        format!("ws://{address}"),
-    )
-    .unwrap()
-    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
-    .with_max_connect_attempts(ATTEMPTS as u32);
-    let mut stream = BoundedPumpRealtimeLogStream::new(config, targets_receiver).unwrap();
+    let mut stream = public_failover(address, targets_receiver, ATTEMPTS as u32);
 
     let error = tokio::time::timeout(
         Duration::from_secs(1),
