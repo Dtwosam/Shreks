@@ -2,6 +2,7 @@
 
 mod conflict_quarantine;
 mod fast_lane;
+mod fast_lane_metadata;
 mod lifecycle;
 mod outcomes;
 mod pump_swap_fast_lane;
