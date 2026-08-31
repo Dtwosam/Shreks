@@ -116,12 +116,10 @@ fn fast_event_normalizer_survives_one_transient_sqlite_busy_interval() {
             "mint-busy-normalizer",
             WRAPPED_SOL_MINT,
             VenueId::PumpFunBondingCurve,
-            0,
-            3_000,
         )
         .unwrap();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].provider, ProviderId::SolanaPublic);
+    assert_eq!(events[0].event.provider, ProviderId::SolanaPublic);
 
     drop(db);
     let _ = fs::remove_dir_all(root);
