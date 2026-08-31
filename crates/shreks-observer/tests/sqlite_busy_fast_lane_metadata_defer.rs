@@ -122,7 +122,7 @@ async fn exhausted_metadata_busy_is_deferred_without_killing_observer_and_retrie
         requests: Arc::clone(&requests),
         release_lock: Arc::clone(&release_lock),
     });
-    let mut observer = Observer::new(db).with_chain_provider(provider);
+    let mut observer = Observer::new(db).with_chain_provider(provider.clone());
 
     let first = tokio::time::timeout(Duration::from_secs(13), observer.run_cycle())
         .await
@@ -138,24 +138,27 @@ async fn exhausted_metadata_busy_is_deferred_without_killing_observer_and_retrie
         .join()
         .unwrap();
 
-    // The durable raw event remains the queue. No guessed metadata is allowed
-    // through while persistence was unavailable.
-    assert_eq!(observer.database().verified_mint_decimals(MINT).unwrap(), None);
+    // Reopen exactly as a process restart would. The raw event is the durable
+    // queue, and no guessed metadata may appear while persistence was blocked.
+    drop(observer);
+    let reopened = ShreksDb::open(&db_path).unwrap();
+    assert_eq!(reopened.verified_mint_decimals(MINT).unwrap(), None);
+    let mut observer = Observer::new(reopened).with_chain_provider(provider);
 
     let second = observer
         .run_cycle()
         .await
         .expect("the next unlocked cycle must retry deferred metadata");
     assert_eq!(second.mint_states_stored, 1);
-    assert_eq!(
-        observer.database().verified_mint_decimals(MINT).unwrap(),
-        Some(6)
-    );
+
+    drop(observer);
+    let reopened = ShreksDb::open(&db_path).unwrap();
+    assert_eq!(reopened.verified_mint_decimals(MINT).unwrap(), Some(6));
     assert_eq!(
         requests.lock().unwrap().as_slice(),
         &[MINT.to_owned(), MINT.to_owned()]
     );
 
-    drop(observer);
+    drop(reopened);
     let _ = fs::remove_dir_all(root);
 }
