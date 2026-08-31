@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use rusqlite::params;
-use shreks_core::{DiscoveredToken, ProviderId, VenueId};
+use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
 
-use crate::{ShreksDb, StorageError};
+use crate::{unix_time_ms, ShreksDb, StorageError};
 
 const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
 const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
@@ -63,6 +63,91 @@ impl ShreksDb {
             }
         }
         Ok(selected)
+    }
+
+    /// Persist the candidate identity and its verified public-Solana mint state
+    /// in one short SQLite transaction.
+    ///
+    /// Fast-lane raw evidence is already the durable restart-safe queue, so
+    /// hydration should not acquire the writer twice around a provider call.
+    /// The transaction either makes the verified metadata usable by the
+    /// canonicalizer as one unit or leaves the raw evidence pending unchanged.
+    pub fn persist_fast_lane_mint_state(
+        &self,
+        candidate: &DiscoveredToken,
+        state: &TokenMintState,
+    ) -> Result<(), StorageError> {
+        if candidate.mint.trim().is_empty() {
+            return Err(StorageError::InvalidData(
+                "fast-lane metadata candidate mint must not be empty".to_owned(),
+            ));
+        }
+        if state.mint.trim().is_empty() || state.owner_program.trim().is_empty() {
+            return Err(StorageError::InvalidData(
+                "fast-lane mint state requires mint and owner program".to_owned(),
+            ));
+        }
+        if state.mint != candidate.mint {
+            return Err(StorageError::InvalidData(format!(
+                "fast-lane mint-state identity mismatch: candidate={} state={}",
+                candidate.mint, state.mint
+            )));
+        }
+        if state.provider != ProviderId::SolanaPublic {
+            return Err(StorageError::InvalidData(format!(
+                "fast-lane mint-state provider must be solana_public, got {}",
+                state.provider
+            )));
+        }
+
+        let pair_address = candidate.pair_address.as_deref().unwrap_or("");
+        let venue = candidate.venue.map(|value| value.as_str());
+        let created_at = unix_time_ms()?;
+        let transaction = self.connection.unchecked_transaction()?;
+
+        transaction.execute(
+            r#"INSERT INTO token_candidates (
+                   mint, pair_address, discovery_source, discovered_at_unix_ms, created_at_unix_ms, venue
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+               ON CONFLICT(mint, pair_address, discovery_source) DO UPDATE SET
+                   venue = COALESCE(excluded.venue, token_candidates.venue),
+                   discovered_at_unix_ms = MIN(token_candidates.discovered_at_unix_ms, excluded.discovered_at_unix_ms)"#,
+            params![
+                candidate.mint,
+                pair_address,
+                candidate.source.as_str(),
+                candidate.discovered_at_unix_ms,
+                created_at,
+                venue,
+            ],
+        )?;
+
+        let candidate_id: i64 = transaction.query_row(
+            "SELECT id FROM token_candidates WHERE mint = ?1 AND pair_address = ?2 AND discovery_source = ?3",
+            params![candidate.mint, pair_address, candidate.source.as_str()],
+            |row| row.get(0),
+        )?;
+
+        transaction.execute(
+            r#"INSERT OR IGNORE INTO token_mint_states (
+                   candidate_id, provider, owner_program, supply, decimals, mint_authority,
+                   freeze_authority, slot, observed_at_unix_ms
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+            params![
+                candidate_id,
+                state.provider.as_str(),
+                state.owner_program,
+                state.supply.to_string(),
+                i64::from(state.decimals),
+                state.mint_authority,
+                state.freeze_authority,
+                state.slot.to_string(),
+                state.observed_at_unix_ms,
+            ],
+        )?;
+
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Read only a fixed newest-first Pump raw frontier before applying any

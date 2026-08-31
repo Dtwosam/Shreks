@@ -20,11 +20,14 @@ impl Observer {
     /// Raw evidence remains the restart-safe queue. The selector prioritizes
     /// fresh active mints and this fixed per-cycle budget prevents metadata
     /// catch-up from monopolizing the public RPC lane. Provider failures are
-    /// isolated in normal observer health state. Storage/integrity failures stay
-    /// fatal except for the same bounded transient SQLite BUSY/LOCKED recovery
-    /// already used by the mandatory realtime and canonicalization write paths.
-    /// No market, strategy, signing, execution, or paid-provider authority is
-    /// introduced here.
+    /// isolated in normal observer health state. Candidate identity and verified
+    /// mint state are persisted together after the provider call, using the same
+    /// bounded SQLite BUSY/LOCKED recovery as other hot write paths. If that
+    /// bounded recovery is exhausted, metadata enrichment is safely deferred:
+    /// raw evidence remains durable and canonicalization continues to fail closed
+    /// until a later cycle can persist the verified state. Non-contention storage
+    /// and integrity failures remain fatal. No market, strategy, signing,
+    /// execution, or paid-provider authority is introduced here.
     pub(crate) async fn hydrate_fast_lane_mint_metadata(
         &mut self,
         report: &mut ObserverCycleReport,
@@ -45,10 +48,6 @@ impl Observer {
             .db
             .fast_lane_mints_missing_state(FAST_LANE_METADATA_HYDRATION_BUDGET)?;
         for candidate in candidates {
-            let candidate_id = retry_bounded(
-                || self.db.upsert_candidate(&candidate),
-                is_storage_sqlite_busy_or_locked,
-            )?;
             self.pacer.wait(PacingLane::Chain(provider_id)).await;
 
             match provider.token_mint_state(&candidate.mint).await {
@@ -70,11 +69,24 @@ impl Observer {
                         continue;
                     }
 
-                    retry_bounded(
-                        || self.db.insert_mint_state(candidate_id, &state),
+                    match retry_bounded(
+                        || self.db.persist_fast_lane_mint_state(&candidate, &state),
                         is_storage_sqlite_busy_or_locked,
-                    )?;
-                    report.mint_states_stored = report.mint_states_stored.saturating_add(1);
+                    ) {
+                        Ok(()) => {
+                            report.mint_states_stored =
+                                report.mint_states_stored.saturating_add(1);
+                        }
+                        Err(error) if is_storage_sqlite_busy_or_locked(&error) => {
+                            // Metadata is derived enrichment. The immutable raw
+                            // event remains the restart-safe queue, so exhausted
+                            // writer contention must not take down broad capture.
+                            // A later cycle will select this mint again because no
+                            // verified mint state became durable.
+                            continue;
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 }
                 Err(error) => {
                     report.provider_failures = report.provider_failures.saturating_add(1);
