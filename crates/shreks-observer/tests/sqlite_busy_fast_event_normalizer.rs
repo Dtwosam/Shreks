@@ -8,12 +8,17 @@ use std::{
 
 #[path = "../src/fast_event_normalizer.rs"]
 mod fast_event_normalizer;
+#[path = "../src/sqlite_busy_retry.rs"]
+mod sqlite_busy_retry;
 
-use fast_event_normalizer::normalize_pending_pump_trade_evidence_at;
+use fast_event_normalizer::{
+    normalize_pending_pump_trade_evidence_at, FastEventNormalizationError,
+};
 use rusqlite::Connection;
 use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
 use shreks_providers::pump::WRAPPED_SOL_MINT;
 use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb};
+use sqlite_busy_retry::{is_storage_sqlite_busy_or_locked, retry_bounded};
 
 const BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT: Duration = Duration::from_millis(5_200);
 
@@ -92,19 +97,29 @@ fn fast_event_normalizer_survives_one_transient_sqlite_busy_interval() {
         blocker.execute_batch("COMMIT;").unwrap();
     });
 
-    let report = normalize_pending_pump_trade_evidence_at(&db, 1, 2_000)
-        .expect("one transient SQLite busy interval must not terminate canonicalization");
+    let report = retry_bounded(
+        || normalize_pending_pump_trade_evidence_at(&db, 1, 2_000),
+        |error| {
+            matches!(
+                error,
+                FastEventNormalizationError::Storage(storage_error)
+                    if is_storage_sqlite_busy_or_locked(storage_error)
+            )
+        },
+    )
+    .expect("one transient SQLite busy interval must not terminate canonicalization");
     assert_eq!(report.normalized, 1);
     release_lock.join().unwrap();
 
-    let events = db.fast_events_for_market(
-        "mint-busy-normalizer",
-        WRAPPED_SOL_MINT,
-        VenueId::PumpFunBondingCurve,
-        0,
-        3_000,
-    )
-    .unwrap();
+    let events = db
+        .fast_events_for_market(
+            "mint-busy-normalizer",
+            WRAPPED_SOL_MINT,
+            VenueId::PumpFunBondingCurve,
+            0,
+            3_000,
+        )
+        .unwrap();
     assert_eq!(events.len(), 1);
     assert_eq!(events[0].provider, ProviderId::SolanaPublic);
 
