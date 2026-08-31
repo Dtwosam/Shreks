@@ -1,3 +1,6 @@
+#[path = "sqlite_busy_retry.rs"]
+mod sqlite_busy_retry;
+
 use std::{
     error::Error,
     fmt,
@@ -20,6 +23,7 @@ use shreks_storage::{
     pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
     PumpTradeEvidenceWrite, ShreksDb, StorageError,
 };
+use sqlite_busy_retry::{is_storage_sqlite_busy_or_locked, retry_bounded};
 use tokio::sync::mpsc;
 
 use crate::{Observer, ObserverError};
@@ -240,15 +244,25 @@ impl Observer {
 
             if let Some(lifecycle) = &notification.lifecycle {
                 match lifecycle {
-                    PumpLifecycleSignal::Creation(signal) => db.record_pump_launch_signal(
-                        &signal.signature,
-                        signal.slot,
-                        observed_at_unix_ms,
+                    PumpLifecycleSignal::Creation(signal) => retry_bounded(
+                        || {
+                            db.record_pump_launch_signal(
+                                &signal.signature,
+                                signal.slot,
+                                observed_at_unix_ms,
+                            )
+                        },
+                        is_storage_sqlite_busy_or_locked,
                     )?,
-                    PumpLifecycleSignal::Migration(signal) => db.record_pump_migration_signal(
-                        &signal.signature,
-                        signal.slot,
-                        observed_at_unix_ms,
+                    PumpLifecycleSignal::Migration(signal) => retry_bounded(
+                        || {
+                            db.record_pump_migration_signal(
+                                &signal.signature,
+                                signal.slot,
+                                observed_at_unix_ms,
+                            )
+                        },
+                        is_storage_sqlite_busy_or_locked,
                     )?,
                 }
             }
@@ -284,7 +298,10 @@ impl Observer {
                     ix_name: trade.ix_name.clone(),
                 };
 
-                match db.record_pump_trade_evidence_or_quarantine(&write)? {
+                match retry_bounded(
+                    || db.record_pump_trade_evidence_or_quarantine(&write),
+                    is_storage_sqlite_busy_or_locked,
+                )? {
                     EvidenceWriteOutcome::Inserted => {
                         trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
                     }
@@ -313,7 +330,10 @@ impl Observer {
                     pool_quote_reserves_raw: trade.pool_quote_reserves_raw,
                 };
 
-                match db.record_pump_swap_trade_evidence_or_quarantine(&write)? {
+                match retry_bounded(
+                    || db.record_pump_swap_trade_evidence_or_quarantine(&write),
+                    is_storage_sqlite_busy_or_locked,
+                )? {
                     EvidenceWriteOutcome::Inserted => {
                         trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
                     }
