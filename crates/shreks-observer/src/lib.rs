@@ -4,6 +4,7 @@
 //! intents. Its only responsibilities are provider orchestration, normalized
 //! persistence, pacing, and operational provider-health tracking.
 
+mod fast_lane_metadata_hydration;
 mod runtime;
 mod safety_evidence;
 pub use runtime::{
@@ -336,6 +337,8 @@ impl Observer {
         let due_outcome_candidates = self.due_outcome_candidates()?;
 
         let mut health: HashMap<ProviderId, CycleHealth> = HashMap::new();
+        self.hydrate_fast_lane_mint_metadata(&mut report, &mut health)
+            .await?;
         let mut candidates = Vec::new();
         let mut seen_candidate_ids = HashSet::new();
 
