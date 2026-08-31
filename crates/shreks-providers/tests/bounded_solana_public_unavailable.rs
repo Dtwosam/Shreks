@@ -12,6 +12,7 @@ use shreks_core::ProviderId;
 use shreks_providers::{
     bounded_pump_realtime::BoundedPumpRealtimeLogStreamConfig,
     bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
+    ProviderErrorKind,
 };
 use tokio::{net::TcpListener, sync::watch};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -54,7 +55,7 @@ fn public_failover(
 
     BoundedPumpRealtimeFailoverStream::new(vec![config], targets_receiver)
         .unwrap()
-        .with_public_invalid_response_reconnect_policy(3, Duration::from_millis(10))
+        .with_public_reconnect_policy(3, Duration::from_millis(10))
 }
 
 #[tokio::test]
@@ -117,5 +118,35 @@ async fn solana_public_reconnects_after_transient_unavailable_exhausts_inner_att
 
     client.abort();
     let _ = client.await;
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn solana_public_persistent_unavailable_still_fails_closed_after_outer_bound() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.expect("initial public connection");
+        let mut socket = accept_async(tcp).await.expect("initial websocket handshake");
+        acknowledge_initial_pump_subscription(&mut socket, 301).await;
+        socket.close(None).await.expect("close initial public socket");
+        drop(socket);
+        drop(listener);
+    });
+
+    let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
+    let mut stream = public_failover(address, targets_receiver);
+
+    let error = tokio::time::timeout(
+        Duration::from_millis(500),
+        stream.next_realtime_notification(),
+    )
+    .await
+    .expect("persistent public unavailability must terminate within the outer bound")
+    .expect_err("persistent public unavailability must still fail closed");
+
+    assert_eq!(error.provider, ProviderId::SolanaPublic);
+    assert_eq!(error.kind, ProviderErrorKind::Unavailable);
     server.await.unwrap();
 }
