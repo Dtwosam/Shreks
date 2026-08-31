@@ -46,11 +46,10 @@ use shreks_storage::{ShreksDb, StorageError};
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
-    time::MissedTickBehavior,
 };
 
 const PUMP_REALTIME_CHANNEL_CAPACITY: usize = 4_096;
-const FAST_EVENT_NORMALIZER_BATCH_LIMIT: usize = 1_024;
+const FAST_EVENT_NORMALIZER_BATCH_LIMIT: usize = 256;
 const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 
 #[tokio::main]
@@ -220,17 +219,14 @@ fn build_high_resolution_sampler(
 async fn run_fast_event_normalizer(
     db: ShreksDb,
 ) -> Result<(), FastEventNormalizationError> {
-    let mut ticker = tokio::time::interval(FAST_EVENT_NORMALIZER_INTERVAL);
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
     loop {
-        ticker.tick().await;
         let accepted_at_unix_ms = normalizer_unix_time_ms()?;
         normalize_pending_pump_trade_evidence_at(
             &db,
             FAST_EVENT_NORMALIZER_BATCH_LIMIT,
             accepted_at_unix_ms,
         )?;
+        tokio::time::sleep(FAST_EVENT_NORMALIZER_INTERVAL).await;
     }
 }
 
