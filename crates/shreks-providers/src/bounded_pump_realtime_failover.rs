@@ -12,8 +12,8 @@ use crate::{
     ProviderError, ProviderErrorKind,
 };
 
-const DEFAULT_MAX_PUBLIC_INVALID_RESPONSE_RECONNECTS: u32 = 5;
-const DEFAULT_PUBLIC_INVALID_RESPONSE_RECONNECT_DELAY: Duration = Duration::from_secs(1);
+const DEFAULT_MAX_PUBLIC_RECONNECTS: u32 = 5;
+const DEFAULT_PUBLIC_RECONNECT_DELAY: Duration = Duration::from_secs(1);
 
 /// Ordered bounded Pump realtime sources. The currently working source is
 /// sticky; retryable provider exhaustion rotates to the next configured
@@ -25,9 +25,9 @@ pub struct BoundedPumpRealtimeFailoverStream {
     targets: watch::Receiver<Vec<String>>,
     streams: Vec<BoundedPumpRealtimeLogStream>,
     active_index: usize,
-    public_invalid_response_reconnects: u32,
-    max_public_invalid_response_reconnects: u32,
-    public_invalid_response_reconnect_delay: Duration,
+    public_reconnects: u32,
+    max_public_reconnects: u32,
+    public_reconnect_delay: Duration,
 }
 
 impl BoundedPumpRealtimeFailoverStream {
@@ -54,25 +54,34 @@ impl BoundedPumpRealtimeFailoverStream {
             targets,
             streams,
             active_index: 0,
-            public_invalid_response_reconnects: 0,
-            max_public_invalid_response_reconnects:
-                DEFAULT_MAX_PUBLIC_INVALID_RESPONSE_RECONNECTS,
-            public_invalid_response_reconnect_delay:
-                DEFAULT_PUBLIC_INVALID_RESPONSE_RECONNECT_DELAY,
+            public_reconnects: 0,
+            max_public_reconnects: DEFAULT_MAX_PUBLIC_RECONNECTS,
+            public_reconnect_delay: DEFAULT_PUBLIC_RECONNECT_DELAY,
         })
     }
 
-    /// Override the bounded public-Solana malformed-response reconnect policy.
+    /// Override the bounded single-source public-Solana recovery policy.
     /// Production uses the conservative defaults; this hook also makes the
     /// bound deterministic in local regression tests.
-    pub fn with_public_invalid_response_reconnect_policy(
+    pub fn with_public_reconnect_policy(
         mut self,
         max_reconnects: u32,
         delay: Duration,
     ) -> Self {
-        self.max_public_invalid_response_reconnects = max_reconnects.max(1);
-        self.public_invalid_response_reconnect_delay = delay;
+        self.max_public_reconnects = max_reconnects.max(1);
+        self.public_reconnect_delay = delay;
         self
+    }
+
+    /// Compatibility alias for the policy introduced for malformed public
+    /// responses. The same bounded counter now also covers retryable public
+    /// endpoint exhaustion so alternating error kinds cannot evade the bound.
+    pub fn with_public_invalid_response_reconnect_policy(
+        self,
+        max_reconnects: u32,
+        delay: Duration,
+    ) -> Self {
+        self.with_public_reconnect_policy(max_reconnects, delay)
     }
 
     pub async fn next_realtime_notification(
@@ -81,28 +90,31 @@ impl BoundedPumpRealtimeFailoverStream {
         loop {
             match self.next_failover_round().await {
                 Ok(notification) => {
-                    self.public_invalid_response_reconnects = 0;
+                    self.public_reconnects = 0;
                     return Ok(notification);
                 }
-                Err(error) if is_public_invalid_response(&error) => {
-                    self.public_invalid_response_reconnects =
-                        self.public_invalid_response_reconnects.saturating_add(1);
-                    if self.public_invalid_response_reconnects
-                        >= self.max_public_invalid_response_reconnects
-                    {
+                Err(error)
+                    if self.configs.len() == 1 && is_public_reconnect_error(&error) =>
+                {
+                    self.public_reconnects = self.public_reconnects.saturating_add(1);
+                    if self.public_reconnects >= self.max_public_reconnects {
                         return Err(error);
                     }
 
-                    // The raw stream intentionally treats malformed provider
-                    // responses as terminal. Rebuild only the same public lane
-                    // from the latest verified targets, then retry after a
-                    // bounded delay. This adds no paid-provider fallback and
-                    // persistent corruption still fails closed at the bound.
+                    // The raw stream already has its own bounded connection
+                    // retry budget. Production FL1 intentionally configures
+                    // exactly one official public Solana source, so exhausting
+                    // that inner budget must not force an immediate process
+                    // restart when the same endpoint can recover shortly
+                    // afterward. Rebuild only that same public lane from the
+                    // latest verified targets and retry after a bounded delay.
+                    // No paid-provider fallback is authorized, and persistent
+                    // unavailability/corruption still fails closed here.
                     self.rebuild_stream(self.active_index)?;
-                    sleep(self.public_invalid_response_reconnect_delay).await;
+                    sleep(self.public_reconnect_delay).await;
                 }
                 Err(error) => {
-                    self.public_invalid_response_reconnects = 0;
+                    self.public_reconnects = 0;
                     return Err(error);
                 }
             }
@@ -160,8 +172,9 @@ impl PumpRealtimeSignalSource for BoundedPumpRealtimeFailoverStream {
     }
 }
 
-fn is_public_invalid_response(error: &ProviderError) -> bool {
-    error.provider == ProviderId::SolanaPublic && error.kind == ProviderErrorKind::InvalidResponse
+fn is_public_reconnect_error(error: &ProviderError) -> bool {
+    error.provider == ProviderId::SolanaPublic
+        && (error.kind == ProviderErrorKind::InvalidResponse || error.is_retryable())
 }
 
 fn with_failover_attempt_trace(mut error: ProviderError, attempts: &[String]) -> ProviderError {
