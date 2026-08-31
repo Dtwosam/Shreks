@@ -11,6 +11,8 @@ mod realtime_target_publisher;
 
 #[path = "../fast_event_normalizer.rs"]
 mod fast_event_normalizer;
+#[path = "../sqlite_busy_retry.rs"]
+mod sqlite_busy_retry;
 
 use std::{
     error::Error,
@@ -43,6 +45,7 @@ use shreks_providers::{
     DiscoveryProvider, ProviderError,
 };
 use shreks_storage::{ShreksDb, StorageError};
+use sqlite_busy_retry::{is_storage_sqlite_busy_or_locked, retry_bounded};
 use tokio::{
     sync::{mpsc, watch},
     task::{JoinError, JoinHandle},
@@ -221,10 +224,21 @@ async fn run_fast_event_normalizer(
 ) -> Result<(), FastEventNormalizationError> {
     loop {
         let accepted_at_unix_ms = normalizer_unix_time_ms()?;
-        normalize_pending_pump_trade_evidence_at(
-            &db,
-            FAST_EVENT_NORMALIZER_BATCH_LIMIT,
-            accepted_at_unix_ms,
+        retry_bounded(
+            || {
+                normalize_pending_pump_trade_evidence_at(
+                    &db,
+                    FAST_EVENT_NORMALIZER_BATCH_LIMIT,
+                    accepted_at_unix_ms,
+                )
+            },
+            |error| {
+                matches!(
+                    error,
+                    FastEventNormalizationError::Storage(storage_error)
+                        if is_storage_sqlite_busy_or_locked(storage_error)
+                )
+            },
         )?;
         tokio::time::sleep(FAST_EVENT_NORMALIZER_INTERVAL).await;
     }
