@@ -53,7 +53,7 @@ fn fl1_acceptance_runbook_distinguishes_database_and_host_only_evidence() {
         "attempted duplicate",
         "CPU",
         "RSS",
-        "provider/reconnect",
+        "public-RPC/reconnect",
         "DB/WAL growth",
         "CI is necessary but insufficient",
     ] {
