@@ -133,7 +133,7 @@ impl ChainDataProvider for RecordingPublicChain {
 
 #[test]
 fn selector_bounds_raw_frontiers_before_deduplicating_missing_mints() {
-    let source = include_str!("../src/fast_lane_metadata.rs");
+    let source = include_str!("../../shreks-storage/src/fast_lane_metadata.rs");
     assert!(source.contains("FAST_LANE_METADATA_RAW_SCAN_LIMIT"));
     assert!(source.contains("recent_pump_rows"));
     assert!(source.contains("recent_pumpswap_rows"));
