@@ -136,8 +136,12 @@ pub fn normalize_pending_pump_trade_evidence_at(
 
         normalize_pending_rows(db, pending, limit, accepted_at_unix_ms, &mut report)?;
 
-        if report.normalized > 0 || exhausted {
+        if report.normalized >= limit || exhausted {
             return Ok(report);
+        }
+
+        if report.normalized > 0 {
+            return normalize_ready_fallback(db, limit, accepted_at_unix_ms, report);
         }
 
         if scan_limit >= max_scan_limit {
@@ -158,19 +162,24 @@ fn normalize_ready_fallback(
     accepted_at_unix_ms: i64,
     mut report: FastEventNormalizationReport,
 ) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
+    let remaining = limit.saturating_sub(report.normalized);
+    if remaining == 0 {
+        return Ok(report);
+    }
+
     let mut ready = db
-        .pending_normalizable_pump_trade_evidence(limit)?
+        .pending_normalizable_pump_trade_evidence(remaining)?
         .into_iter()
         .map(PendingEvidence::Pump)
         .chain(
-            db.pending_normalizable_pump_swap_trade_evidence(limit)?
+            db.pending_normalizable_pump_swap_trade_evidence(remaining)?
                 .into_iter()
                 .map(PendingEvidence::PumpSwap),
         )
         .collect::<Vec<_>>();
 
     sort_pending(&mut ready);
-    ready.truncate(limit);
+    ready.truncate(remaining);
     report.scanned = report.scanned.saturating_add(ready.len());
     normalize_pending_rows(db, ready, limit, accepted_at_unix_ms, &mut report)?;
 
