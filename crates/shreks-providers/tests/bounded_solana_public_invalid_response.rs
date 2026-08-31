@@ -71,9 +71,9 @@ async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
 
     let server = tokio::spawn(async move {
         let (tcp, _) = listener.accept().await.expect("first public websocket connection");
-        server_connections.fetch_add(1, Ordering::SeqCst);
         let mut socket = accept_async(tcp).await.expect("first websocket handshake");
         acknowledge_initial_pump_subscription(&mut socket, 101).await;
+        server_connections.fetch_add(1, Ordering::SeqCst);
         socket
             .send(Message::Text("{malformed-public-frame".into()))
             .await
@@ -83,9 +83,9 @@ async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
             .accept()
             .await
             .expect("public supervisor must reconnect after transient invalid response");
-        server_connections.fetch_add(1, Ordering::SeqCst);
         let mut socket = accept_async(tcp).await.expect("second websocket handshake");
         acknowledge_initial_pump_subscription(&mut socket, 201).await;
+        server_connections.fetch_add(1, Ordering::SeqCst);
         tokio::time::sleep(Duration::from_millis(150)).await;
     });
 
@@ -127,9 +127,9 @@ async fn solana_public_still_fails_closed_after_bounded_invalid_response_exhaust
                 .accept()
                 .await
                 .expect("bounded public reconnect attempt");
-            server_connections.fetch_add(1, Ordering::SeqCst);
             let mut socket = accept_async(tcp).await.expect("websocket handshake");
             acknowledge_initial_pump_subscription(&mut socket, 300 + index as u64).await;
+            server_connections.fetch_add(1, Ordering::SeqCst);
             socket
                 .send(Message::Text("{persistently-malformed-public-frame".into()))
                 .await
