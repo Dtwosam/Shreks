@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use rusqlite::params;
+use rusqlite::{params, ErrorCode};
 use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
 
 use crate::{
@@ -10,25 +10,45 @@ use crate::{
 const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
 const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 
-/// Hard cap on raw evidence considered by one metadata-hydration selector call.
+/// Hard cap on raw evidence considered by one metadata-hydration selector page.
 ///
 /// The production database can contain millions of historical raw events. A
 /// metadata pass must therefore never rank or group the entire backlog just to
 /// find a handful of current mints. The raw observed-at indexes let these
-/// bounded frontiers read both current flow and historical debt without scanning
-/// the full evidence tables.
+/// bounded frontiers read current flow and advance through historical debt
+/// without scanning the full evidence tables in one cycle.
 const FAST_LANE_METADATA_RAW_SCAN_LIMIT: usize = 2_048;
+
+/// Hard cap on historical raw pages examined by one selector call.
+///
+/// A durable keyset cursor carries progress across cycles, so this is a strict
+/// per-cycle work bound rather than a permanent historical horizon.
+const FAST_LANE_METADATA_DEBT_SCAN_PAGES_PER_CALL: usize = 4;
+const FAST_LANE_METADATA_DEBT_CURSOR_STREAM: &str = "fast_lane_metadata_pump_debt_cursor_v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PumpMetadataDebtCursor {
+    observed_at_unix_ms: i64,
+    signature: String,
+    ordinal: i64,
+}
+
+#[derive(Debug)]
+struct PumpMetadataDebtRow {
+    cursor: PumpMetadataDebtCursor,
+    candidate: Option<DiscoveredToken>,
+}
 
 impl ShreksDb {
     /// Return distinct fast-lane base mints whose verified mint state is missing.
     ///
     /// Most capacity stays newest-first so current order flow can become
     /// canonical promptly. For selector requests of at least four mints, one
-    /// quarter of the capacity is reserved for the oldest positive Pump debt.
-    /// This prevents a continuously advancing newest frontier from permanently
-    /// starving historical mints while keeping every database read bounded.
-    /// PumpSwap rows remain eligible in the fresh lane only when one verified
-    /// graduation market identifies the pool's base mint; missing or
+    /// quarter of the capacity is reserved for historical Pump metadata debt.
+    /// The debt lane advances through bounded oldest-to-newest raw pages using a
+    /// durable keyset cursor, so a resolved first page cannot permanently hide
+    /// later debt. PumpSwap rows remain eligible in the fresh lane only when one
+    /// verified graduation market identifies the pool's base mint; missing or
     /// contradictory lifecycle mapping is left unresolved rather than guessed.
     pub fn fast_lane_mints_missing_state(
         &self,
@@ -77,11 +97,12 @@ impl ShreksDb {
             }
         }
 
-        for candidate in self.oldest_pump_rows(raw_scan_limit)? {
-            if !seen_mints.insert(candidate.mint.clone()) {
-                continue;
-            }
-            selected.push(candidate);
+        if debt_reserve > 0 {
+            selected.extend(self.paged_pump_metadata_debt(
+                raw_scan_limit,
+                debt_reserve,
+                &mut seen_mints,
+            )?);
             if selected.len() == limit {
                 return Ok(selected);
             }
@@ -461,16 +482,98 @@ impl ShreksDb {
             .collect()
     }
 
-    /// Read only a fixed oldest-first Pump raw frontier. The same eligibility
-    /// rules as the fresh selector apply, but this lane exists solely to make
-    /// guaranteed progress on durable metadata debt that has fallen behind the
-    /// continuously advancing newest-first window.
-    fn oldest_pump_rows(
+    /// Walk historical Pump evidence through bounded keyset pages.
+    ///
+    /// At most `FAST_LANE_METADATA_DEBT_SCAN_PAGES_PER_CALL` raw pages are read
+    /// per cycle. The cursor is stored in the existing ingestion checkpoint
+    /// table and advances only as far as rows actually inspected, so the next
+    /// cycle resumes instead of repeatedly slicing the absolute oldest 2,048
+    /// rows. Reaching the end wraps to the beginning once. If cursor persistence
+    /// encounters SQLite BUSY/LOCKED, the raw evidence remains authoritative and
+    /// the durable cursor simply stays behind, causing safe reinspection later.
+    fn paged_pump_metadata_debt(
         &self,
         raw_scan_limit: i64,
+        limit: usize,
+        seen_mints: &mut HashSet<String>,
     ) -> Result<Vec<DiscoveredToken>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let page_size = usize::try_from(raw_scan_limit).map_err(|_| {
+            StorageError::InvalidData("fast-lane metadata debt page size is invalid".to_owned())
+        })?;
+        let mut cursor = self.fast_lane_metadata_debt_cursor()?;
+        let mut may_wrap = cursor.is_some();
+        let mut selected = Vec::with_capacity(limit);
+
+        for _ in 0..FAST_LANE_METADATA_DEBT_SCAN_PAGES_PER_CALL {
+            let page = self.pump_metadata_debt_page(raw_scan_limit, cursor.as_ref())?;
+            if page.is_empty() {
+                if may_wrap {
+                    cursor = None;
+                    may_wrap = false;
+                    self.store_fast_lane_metadata_debt_cursor(None)?;
+                    continue;
+                }
+                break;
+            }
+
+            let reached_end = page.len() < page_size;
+            let mut last_scanned = None;
+            for row in page {
+                last_scanned = Some(row.cursor.clone());
+                if let Some(candidate) = row.candidate {
+                    if !seen_mints.insert(candidate.mint.clone()) {
+                        continue;
+                    }
+                    selected.push(candidate);
+                    if selected.len() == limit {
+                        break;
+                    }
+                }
+            }
+
+            if let Some(last_scanned) = last_scanned.as_ref() {
+                cursor = Some(last_scanned.clone());
+                self.store_fast_lane_metadata_debt_cursor(Some(last_scanned))?;
+            }
+
+            if selected.len() == limit {
+                break;
+            }
+
+            if reached_end {
+                if may_wrap {
+                    cursor = None;
+                    may_wrap = false;
+                    self.store_fast_lane_metadata_debt_cursor(None)?;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        Ok(selected)
+    }
+
+    /// Read one bounded historical Pump page after the durable keyset cursor.
+    ///
+    /// The inner page is bounded before any correlated eligibility checks. The
+    /// composite observed/signature/ordinal key exactly matches the production
+    /// observed-at index, avoiding OFFSET growth and table-wide ranking.
+    fn pump_metadata_debt_page(
+        &self,
+        raw_scan_limit: i64,
+        cursor: Option<&PumpMetadataDebtCursor>,
+    ) -> Result<Vec<PumpMetadataDebtRow>, StorageError> {
+        let cursor_observed_at = cursor.map(|value| value.observed_at_unix_ms);
+        let cursor_signature = cursor.map(|value| value.signature.as_str());
+        let cursor_ordinal = cursor.map(|value| value.ordinal);
+
         let mut statement = self.connection.prepare(
-            r#"WITH oldest_pump_rows AS MATERIALIZED (
+            r#"WITH pump_debt_page AS MATERIALIZED (
                    SELECT
                        p.mint,
                        p.quote_mint,
@@ -482,38 +585,45 @@ impl ShreksDb {
                        p.sol_amount_raw,
                        p.quote_amount_raw
                    FROM pump_trade_evidence AS p
+                   WHERE (p.observed_at_unix_ms, p.signature, p.ordinal) > (
+                       COALESCE(?1, -1), COALESCE(?2, ''), COALESCE(?3, -1)
+                   )
                    ORDER BY p.observed_at_unix_ms ASC,
                             p.signature ASC,
                             p.ordinal ASC
-                   LIMIT ?1
+                   LIMIT ?4
                )
                SELECT
                    p.mint,
                    p.provider,
-                   p.observed_at_unix_ms
-               FROM oldest_pump_rows AS p
+                   p.observed_at_unix_ms,
+                   p.signature,
+                   p.ordinal,
+                   CASE WHEN
+                       f.sequence IS NULL
+                       AND p.token_amount_raw <> '0'
+                       AND (
+                           (p.quote_mint IN (?5, ?6) AND p.sol_amount_raw <> '0')
+                           OR
+                           (p.quote_mint NOT IN (?5, ?6) AND p.quote_amount_raw <> '0')
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM pump_trade_evidence_conflicts AS conflict
+                           WHERE conflict.signature = p.signature
+                             AND conflict.ordinal = p.ordinal
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM token_candidates AS existing_candidate
+                           JOIN token_mint_states AS state
+                             ON state.candidate_id = existing_candidate.id
+                           WHERE existing_candidate.mint = p.mint
+                       )
+                   THEN 1 ELSE 0 END AS eligible_missing_state
+               FROM pump_debt_page AS p
                LEFT JOIN fast_events AS f
                  ON f.signature = p.signature AND f.ordinal = p.ordinal
-               WHERE f.sequence IS NULL
-                 AND p.token_amount_raw <> '0'
-                 AND (
-                     (p.quote_mint IN (?2, ?3) AND p.sol_amount_raw <> '0')
-                     OR
-                     (p.quote_mint NOT IN (?2, ?3) AND p.quote_amount_raw <> '0')
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1
-                     FROM pump_trade_evidence_conflicts AS conflict
-                     WHERE conflict.signature = p.signature
-                       AND conflict.ordinal = p.ordinal
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1
-                     FROM token_candidates AS existing_candidate
-                     JOIN token_mint_states AS state
-                       ON state.candidate_id = existing_candidate.id
-                     WHERE existing_candidate.mint = p.mint
-                 )
                ORDER BY p.observed_at_unix_ms ASC,
                         p.signature ASC,
                         p.ordinal ASC"#,
@@ -521,29 +631,85 @@ impl ShreksDb {
 
         let rows = statement
             .query_map(
-                params![raw_scan_limit, SYSTEM_SOL_MINT, WRAPPED_SOL_MINT],
+                params![
+                    cursor_observed_at,
+                    cursor_signature,
+                    cursor_ordinal,
+                    raw_scan_limit,
+                    SYSTEM_SOL_MINT,
+                    WRAPPED_SOL_MINT,
+                ],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, i64>(5)?,
                     ))
                 },
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
         rows.into_iter()
-            .map(|(mint, provider, discovered_at_unix_ms)| {
-                Ok(DiscoveredToken {
-                    mint,
-                    pair_address: None,
-                    dex_id: None,
-                    venue: Some(VenueId::PumpFunBondingCurve),
-                    discovered_at_unix_ms,
-                    source: parse_provider(&provider)?,
-                })
-            })
+            .map(
+                |(mint, provider, observed_at_unix_ms, signature, ordinal, eligible)| {
+                    if eligible != 0 && eligible != 1 {
+                        return Err(StorageError::InvalidData(
+                            "fast-lane metadata debt eligibility was not boolean".to_owned(),
+                        ));
+                    }
+                    let candidate = if eligible == 1 {
+                        Some(DiscoveredToken {
+                            mint,
+                            pair_address: None,
+                            dex_id: None,
+                            venue: Some(VenueId::PumpFunBondingCurve),
+                            discovered_at_unix_ms: observed_at_unix_ms,
+                            source: parse_provider(&provider)?,
+                        })
+                    } else {
+                        None
+                    };
+                    Ok(PumpMetadataDebtRow {
+                        cursor: PumpMetadataDebtCursor {
+                            observed_at_unix_ms,
+                            signature,
+                            ordinal,
+                        },
+                        candidate,
+                    })
+                },
+            )
             .collect()
+    }
+
+    fn fast_lane_metadata_debt_cursor(
+        &self,
+    ) -> Result<Option<PumpMetadataDebtCursor>, StorageError> {
+        self.ingestion_checkpoint(
+            ProviderId::SolanaPublic,
+            FAST_LANE_METADATA_DEBT_CURSOR_STREAM,
+        )?
+        .map(|value| decode_pump_metadata_debt_cursor(&value))
+        .transpose()
+    }
+
+    fn store_fast_lane_metadata_debt_cursor(
+        &self,
+        cursor: Option<&PumpMetadataDebtCursor>,
+    ) -> Result<(), StorageError> {
+        let encoded = cursor.map(encode_pump_metadata_debt_cursor);
+        match self.set_ingestion_checkpoint(
+            ProviderId::SolanaPublic,
+            FAST_LANE_METADATA_DEBT_CURSOR_STREAM,
+            encoded.as_deref(),
+        ) {
+            Ok(()) => Ok(()),
+            Err(error) if is_sqlite_busy_or_locked(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     /// Read only a fixed newest-first PumpSwap raw frontier, then resolve the
@@ -799,6 +965,61 @@ fn decode_recent_pump_swap(raw: RecentPumpSwapRow) -> Result<PumpSwapTradeEviden
             "PumpSwap pool_quote_reserves_raw",
         )?,
     })
+}
+
+fn encode_pump_metadata_debt_cursor(cursor: &PumpMetadataDebtCursor) -> String {
+    format!(
+        "{}|{}|{}",
+        cursor.observed_at_unix_ms, cursor.signature, cursor.ordinal
+    )
+}
+
+fn decode_pump_metadata_debt_cursor(value: &str) -> Result<PumpMetadataDebtCursor, StorageError> {
+    let mut parts = value.split('|');
+    let observed_at_unix_ms = parts
+        .next()
+        .ok_or_else(|| StorageError::InvalidData("metadata debt cursor missing time".to_owned()))?
+        .parse::<i64>()
+        .map_err(|error| {
+            StorageError::InvalidData(format!("metadata debt cursor time is invalid: {error}"))
+        })?;
+    let signature = parts
+        .next()
+        .ok_or_else(|| StorageError::InvalidData("metadata debt cursor missing signature".to_owned()))?
+        .to_owned();
+    let ordinal = parts
+        .next()
+        .ok_or_else(|| StorageError::InvalidData("metadata debt cursor missing ordinal".to_owned()))?
+        .parse::<i64>()
+        .map_err(|error| {
+            StorageError::InvalidData(format!("metadata debt cursor ordinal is invalid: {error}"))
+        })?;
+    if parts.next().is_some()
+        || observed_at_unix_ms < 0
+        || signature.trim().is_empty()
+        || ordinal < 0
+        || u32::try_from(ordinal).is_err()
+    {
+        return Err(StorageError::InvalidData(
+            "metadata debt cursor is outside the supported Pump identity domain".to_owned(),
+        ));
+    }
+    Ok(PumpMetadataDebtCursor {
+        observed_at_unix_ms,
+        signature,
+        ordinal,
+    })
+}
+
+fn is_sqlite_busy_or_locked(error: &StorageError) -> bool {
+    matches!(
+        error,
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(sqlite_error, _))
+            if matches!(
+                sqlite_error.code,
+                ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+            )
+    )
 }
 
 fn parse_stored_bool(value: i64, field: &str) -> Result<bool, StorageError> {
