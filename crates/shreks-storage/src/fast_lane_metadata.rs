@@ -13,19 +13,20 @@ const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
 /// The production database can contain millions of historical raw events. A
 /// metadata pass must therefore never rank or group the entire backlog just to
 /// find a handful of current mints. The raw observed-at indexes let these
-/// frontiers read the newest evidence first while historical debt remains
-/// durable for later cycles.
+/// bounded frontiers read both current flow and historical debt without scanning
+/// the full evidence tables.
 const FAST_LANE_METADATA_RAW_SCAN_LIMIT: usize = 2_048;
 
 impl ShreksDb {
-    /// Return the freshest distinct fast-lane base mints whose verified mint
-    /// state is still missing.
+    /// Return distinct fast-lane base mints whose verified mint state is missing.
     ///
-    /// The durable raw evidence is the restart-safe queue. New/current order
-    /// flow is deliberately prioritized over historical debt so metadata
-    /// hydration can keep the canonical lane current while old evidence remains
-    /// preserved for later catch-up. PumpSwap rows are eligible only when one
-    /// verified graduation market identifies the pool's base mint; missing or
+    /// Most capacity stays newest-first so current order flow can become
+    /// canonical promptly. For selector requests of at least four mints, one
+    /// quarter of the capacity is reserved for the oldest positive Pump debt.
+    /// This prevents a continuously advancing newest frontier from permanently
+    /// starving historical mints while keeping every database read bounded.
+    /// PumpSwap rows remain eligible in the fresh lane only when one verified
+    /// graduation market identifies the pool's base mint; missing or
     /// contradictory lifecycle mapping is left unresolved rather than guessed.
     pub fn fast_lane_mints_missing_state(
         &self,
@@ -41,9 +42,9 @@ impl ShreksDb {
             )
         })?;
 
-        let mut candidates = self.recent_pump_rows(raw_scan_limit)?;
-        candidates.extend(self.recent_pumpswap_rows(raw_scan_limit)?);
-        candidates.sort_by(|left, right| {
+        let mut recent = self.recent_pump_rows(raw_scan_limit)?;
+        recent.extend(self.recent_pumpswap_rows(raw_scan_limit)?);
+        recent.sort_by(|left, right| {
             right
                 .discovered_at_unix_ms
                 .cmp(&left.discovered_at_unix_ms)
@@ -51,9 +52,40 @@ impl ShreksDb {
                 .then_with(|| left.source.as_str().cmp(right.source.as_str()))
         });
 
+        let debt_reserve = if limit >= 4 {
+            (limit / 4).max(1)
+        } else {
+            0
+        };
+        let fresh_target = limit.saturating_sub(debt_reserve);
+
         let mut seen_mints = HashSet::new();
-        let mut selected = Vec::with_capacity(limit.min(candidates.len()));
-        for candidate in candidates {
+        let mut selected = Vec::with_capacity(limit);
+        let mut recent = recent.into_iter();
+
+        if fresh_target > 0 {
+            for candidate in recent.by_ref() {
+                if !seen_mints.insert(candidate.mint.clone()) {
+                    continue;
+                }
+                selected.push(candidate);
+                if selected.len() == fresh_target {
+                    break;
+                }
+            }
+        }
+
+        for candidate in self.oldest_pump_rows(raw_scan_limit)? {
+            if !seen_mints.insert(candidate.mint.clone()) {
+                continue;
+            }
+            selected.push(candidate);
+            if selected.len() == limit {
+                return Ok(selected);
+            }
+        }
+
+        for candidate in recent {
             if !seen_mints.insert(candidate.mint.clone()) {
                 continue;
             }
@@ -204,6 +236,91 @@ impl ShreksDb {
                ORDER BY p.observed_at_unix_ms DESC,
                         p.signature DESC,
                         p.ordinal DESC"#,
+        )?;
+
+        let rows = statement
+            .query_map(
+                params![raw_scan_limit, SYSTEM_SOL_MINT, WRAPPED_SOL_MINT],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        rows.into_iter()
+            .map(|(mint, provider, discovered_at_unix_ms)| {
+                Ok(DiscoveredToken {
+                    mint,
+                    pair_address: None,
+                    dex_id: None,
+                    venue: Some(VenueId::PumpFunBondingCurve),
+                    discovered_at_unix_ms,
+                    source: parse_provider(&provider)?,
+                })
+            })
+            .collect()
+    }
+
+    /// Read only a fixed oldest-first Pump raw frontier. The same eligibility
+    /// rules as the fresh selector apply, but this lane exists solely to make
+    /// guaranteed progress on durable metadata debt that has fallen behind the
+    /// continuously advancing newest-first window.
+    fn oldest_pump_rows(
+        &self,
+        raw_scan_limit: i64,
+    ) -> Result<Vec<DiscoveredToken>, StorageError> {
+        let mut statement = self.connection.prepare(
+            r#"WITH oldest_pump_rows AS MATERIALIZED (
+                   SELECT
+                       p.mint,
+                       p.quote_mint,
+                       p.provider,
+                       p.observed_at_unix_ms,
+                       p.signature,
+                       p.ordinal,
+                       p.token_amount_raw,
+                       p.sol_amount_raw,
+                       p.quote_amount_raw
+                   FROM pump_trade_evidence AS p
+                   ORDER BY p.observed_at_unix_ms ASC,
+                            p.signature ASC,
+                            p.ordinal ASC
+                   LIMIT ?1
+               )
+               SELECT
+                   p.mint,
+                   p.provider,
+                   p.observed_at_unix_ms
+               FROM oldest_pump_rows AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+                 AND p.token_amount_raw <> '0'
+                 AND (
+                     (p.quote_mint IN (?2, ?3) AND p.sol_amount_raw <> '0')
+                     OR
+                     (p.quote_mint NOT IN (?2, ?3) AND p.quote_amount_raw <> '0')
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM pump_trade_evidence_conflicts AS conflict
+                     WHERE conflict.signature = p.signature
+                       AND conflict.ordinal = p.ordinal
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM token_candidates AS existing_candidate
+                     JOIN token_mint_states AS state
+                       ON state.candidate_id = existing_candidate.id
+                     WHERE existing_candidate.mint = p.mint
+                 )
+               ORDER BY p.observed_at_unix_ms ASC,
+                        p.signature ASC,
+                        p.ordinal ASC"#,
         )?;
 
         let rows = statement
