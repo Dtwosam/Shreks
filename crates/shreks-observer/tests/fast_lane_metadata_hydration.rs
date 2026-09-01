@@ -169,12 +169,11 @@ async fn raw_fast_lane_mint_without_state_is_hydrated_once_from_public_solana() 
 }
 
 #[tokio::test]
-async fn hydration_is_capped_at_eight_and_prioritizes_freshest_distinct_mints() {
+async fn hydration_is_capped_at_sixty_four_candidates_per_cycle() {
     let root = unique_test_dir("budget");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let mut inserted = Vec::new();
-    for index in 0..10_i64 {
+    for index in 0..70_i64 {
         let mint = format!("HydrateBudgetMint{index:02}111111111111111111111111");
         let signature = format!("sig-budget-{index:02}");
         db.record_pump_trade_evidence(&raw_trade(
@@ -183,7 +182,6 @@ async fn hydration_is_capped_at_eight_and_prioritizes_freshest_distinct_mints() 
             OBSERVED_MS + index,
         ))
         .unwrap();
-        inserted.push(mint);
     }
 
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -192,9 +190,52 @@ async fn hydration_is_capped_at_eight_and_prioritizes_freshest_distinct_mints() 
     }));
     let report = observer.run_cycle().await.unwrap();
 
-    let expected = inserted[2..].iter().rev().cloned().collect::<Vec<_>>();
-    assert_eq!(requests.lock().unwrap().as_slice(), expected.as_slice());
-    assert_eq!(report.mint_states_stored, 8);
+    assert_eq!(requests.lock().unwrap().len(), 64);
+    assert_eq!(report.mint_states_stored, 64);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn selector_reserves_two_of_eight_slots_for_oldest_metadata_debt() {
+    let root = unique_test_dir("debt");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let oldest_a = "HydrateDebtOldA111111111111111111111111111111";
+    let oldest_b = "HydrateDebtOldB111111111111111111111111111111";
+    db.record_pump_trade_evidence(&raw_trade("sig-debt-old-a", oldest_a, OBSERVED_MS))
+        .unwrap();
+    db.record_pump_trade_evidence(&raw_trade(
+        "sig-debt-old-b",
+        oldest_b,
+        OBSERVED_MS + 1,
+    ))
+    .unwrap();
+
+    let mut newest = Vec::new();
+    for index in 0..2050_i64 {
+        let mint = format!("HydrateDebtFresh{index:04}11111111111111111111111");
+        let signature = format!("sig-debt-fresh-{index:04}");
+        db.record_pump_trade_evidence(&raw_trade(
+            &signature,
+            &mint,
+            OBSERVED_MS + 100 + index,
+        ))
+        .unwrap();
+        newest.push(mint);
+    }
+
+    let selected = db.fast_lane_mints_missing_state(8).unwrap();
+    let selected_mints = selected
+        .into_iter()
+        .map(|candidate| candidate.mint)
+        .collect::<Vec<_>>();
+
+    let mut expected = newest.iter().rev().take(6).cloned().collect::<Vec<_>>();
+    expected.push(oldest_a.to_owned());
+    expected.push(oldest_b.to_owned());
+    assert_eq!(selected_mints, expected);
 
     cleanup_dir(&root);
 }

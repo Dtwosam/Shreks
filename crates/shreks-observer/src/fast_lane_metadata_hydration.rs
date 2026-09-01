@@ -11,23 +11,25 @@ use crate::{
     ObserverError, PacingLane,
 };
 
-const FAST_LANE_METADATA_HYDRATION_BUDGET: usize = 8;
+const FAST_LANE_METADATA_HYDRATION_BUDGET: usize = 64;
 
 impl Observer {
     /// Hydrate only the verified mint-state prerequisite needed by canonical
     /// fast-lane normalization, using the public Solana chain adapter only.
     ///
     /// Raw evidence remains the restart-safe queue. The selector prioritizes
-    /// fresh active mints and this fixed per-cycle budget prevents metadata
-    /// catch-up from monopolizing the public RPC lane. Provider failures are
-    /// isolated in normal observer health state. Candidate identity and verified
-    /// mint state are persisted together after the provider call, using the same
-    /// bounded SQLite BUSY/LOCKED recovery as other hot write paths. If that
-    /// bounded recovery is exhausted, metadata enrichment is safely deferred:
-    /// raw evidence remains durable and canonicalization continues to fail closed
-    /// until a later cycle can persist the verified state. Non-contention storage
-    /// and integrity failures remain fatal. No market, strategy, signing,
-    /// execution, or paid-provider authority is introduced here.
+    /// fresh active mints while reserving bounded capacity for historical debt.
+    /// This fixed per-cycle budget is sized to outrun the production FL1 mint
+    /// arrival rate while the public Solana provider's own 4-RPS pacing ceiling
+    /// still prevents an unbounded RPC burst. Provider failures are isolated in
+    /// normal observer health state. Candidate identity and verified mint state
+    /// are persisted together after the provider call, using the same bounded
+    /// SQLite BUSY/LOCKED recovery as other hot write paths. If that bounded
+    /// recovery is exhausted, metadata enrichment is safely deferred: raw
+    /// evidence remains durable and canonicalization continues to fail closed
+    /// until a later cycle can persist the verified state. Non-contention
+    /// storage and integrity failures remain fatal. No market, strategy,
+    /// signing, execution, or paid-provider authority is introduced here.
     pub(crate) async fn hydrate_fast_lane_mint_metadata(
         &mut self,
         report: &mut ObserverCycleReport,
