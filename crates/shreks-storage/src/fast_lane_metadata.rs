@@ -3,7 +3,9 @@ use std::collections::HashSet;
 use rusqlite::params;
 use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
 
-use crate::{unix_time_ms, ShreksDb, StorageError};
+use crate::{
+    unix_time_ms, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb, StorageError,
+};
 
 const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
 const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
@@ -180,6 +182,199 @@ impl ShreksDb {
 
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Execute one bounded canonicalization write burst as one SQLite
+    /// transaction. Existing ShreksDb validation methods continue to operate on
+    /// this same connection, so any late failure rolls the whole burst back.
+    pub fn with_fast_event_write_transaction<T, E, F>(&self, operation: F) -> Result<T, E>
+    where
+        E: From<StorageError>,
+        F: FnOnce() -> Result<T, E>,
+    {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(StorageError::from)
+            .map_err(E::from)?;
+
+        match operation() {
+            Ok(value) => {
+                transaction
+                    .commit()
+                    .map_err(StorageError::from)
+                    .map_err(E::from)?;
+                Ok(value)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Return the newest currently-normalizable Pump evidence at or before one
+    /// acceptance snapshot. The query is bounded by `limit` and preserves the
+    /// same conflict/economics/verified-decimals fail-closed prerequisites as
+    /// the oldest-ready selector.
+    pub fn recent_normalizable_pump_trade_evidence(
+        &self,
+        limit: usize,
+        as_of_unix_ms: i64,
+    ) -> Result<Vec<PumpTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("Pump recent-normalizable limit exceeds i64".to_owned())
+        })?;
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                   p.mint, p.quote_mint, p.user, p.is_buy,
+                   p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                   p.timestamp_unix_seconds,
+                   p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                   p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                   p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                   p.ix_name
+               FROM pump_trade_evidence AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+                 AND p.observed_at_unix_ms <= ?2
+                 AND p.token_amount_raw <> '0'
+                 AND (
+                     (p.quote_mint IN (?3, ?4) AND p.sol_amount_raw <> '0')
+                     OR
+                     (p.quote_mint NOT IN (?3, ?4) AND p.quote_amount_raw <> '0')
+                 )
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM pump_trade_evidence_conflicts AS conflict
+                     WHERE conflict.signature = p.signature
+                       AND conflict.ordinal = p.ordinal
+                 )
+                 AND EXISTS (
+                     SELECT 1
+                     FROM token_candidates AS base_candidate
+                     JOIN token_mint_states AS base_state
+                       ON base_state.candidate_id = base_candidate.id
+                     WHERE base_candidate.mint = p.mint
+                 )
+                 AND (
+                     p.quote_mint IN (?3, ?4)
+                     OR EXISTS (
+                         SELECT 1
+                         FROM token_candidates AS quote_candidate
+                         JOIN token_mint_states AS quote_state
+                           ON quote_state.candidate_id = quote_candidate.id
+                         WHERE quote_candidate.mint = p.quote_mint
+                     )
+                 )
+               ORDER BY p.observed_at_unix_ms DESC,
+                        p.signature DESC,
+                        p.ordinal DESC
+               LIMIT ?1"#,
+        )?;
+
+        let rows = statement
+            .query_map(
+                params![limit, as_of_unix_ms, SYSTEM_SOL_MINT, WRAPPED_SOL_MINT],
+                decode_recent_pump_trade_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_recent_pump_trade).collect()
+    }
+
+    /// Return the newest currently-normalizable PumpSwap evidence at or before
+    /// one acceptance snapshot. Missing lifecycle mapping remains unresolved;
+    /// contradictory verified mappings remain selected so the normalizer fails
+    /// closed through the existing market resolver.
+    pub fn recent_normalizable_pump_swap_trade_evidence(
+        &self,
+        limit: usize,
+        as_of_unix_ms: i64,
+    ) -> Result<Vec<PumpSwapTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit = i64::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("PumpSwap recent-normalizable limit exceeds i64".to_owned())
+        })?;
+
+        let mut statement = self.connection.prepare(
+            r#"WITH distinct_markets AS (
+                   SELECT DISTINCT pool_address, mint, quote_mint
+                   FROM token_lifecycle_events
+                   WHERE event_type = 'pump_graduation'
+                     AND to_venue = 'pump_swap'
+               ),
+               market_counts AS (
+                   SELECT pool_address, COUNT(*) AS market_count
+                   FROM distinct_markets
+                   GROUP BY pool_address
+               ),
+               eligible_pools AS (
+                   SELECT pool_address
+                   FROM market_counts
+                   WHERE market_count <> 1
+
+                   UNION
+
+                   SELECT market.pool_address
+                   FROM distinct_markets AS market
+                   JOIN market_counts AS counts
+                     ON counts.pool_address = market.pool_address
+                   WHERE counts.market_count = 1
+                     AND EXISTS (
+                         SELECT 1
+                         FROM token_candidates AS base_candidate
+                         JOIN token_mint_states AS base_state
+                           ON base_state.candidate_id = base_candidate.id
+                         WHERE base_candidate.mint = market.mint
+                     )
+                     AND (
+                         market.quote_mint = ?1
+                         OR market.quote_mint = ?2
+                         OR EXISTS (
+                             SELECT 1
+                             FROM token_candidates AS quote_candidate
+                             JOIN token_mint_states AS quote_state
+                               ON quote_state.candidate_id = quote_candidate.id
+                             WHERE quote_candidate.mint = market.quote_mint
+                         )
+                     )
+               )
+               SELECT
+                   p.provider, p.signature, p.ordinal, p.log_index, p.slot, p.observed_at_unix_ms,
+                   p.pool, p.user, p.is_buy,
+                   p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
+                   p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
+               FROM eligible_pools AS eligible
+               JOIN pump_swap_trade_evidence AS p
+                 ON p.pool = eligible.pool_address
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               WHERE f.sequence IS NULL
+                 AND p.observed_at_unix_ms <= ?3
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM pump_swap_trade_evidence_conflicts AS conflict
+                     WHERE conflict.signature = p.signature
+                       AND conflict.ordinal = p.ordinal
+                 )
+               ORDER BY p.observed_at_unix_ms DESC,
+                        p.signature DESC,
+                        p.log_index DESC
+               LIMIT ?4"#,
+        )?;
+
+        let rows = statement
+            .query_map(
+                params![SYSTEM_SOL_MINT, WRAPPED_SOL_MINT, as_of_unix_ms, limit],
+                decode_recent_pump_swap_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_recent_pump_swap).collect()
     }
 
     /// Read only a fixed newest-first Pump raw frontier before applying any
@@ -449,6 +644,176 @@ impl ShreksDb {
             })
             .collect()
     }
+}
+
+type RecentPumpTradeRow = (
+    String,
+    String,
+    i64,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+);
+
+type RecentPumpSwapRow = (
+    String,
+    String,
+    i64,
+    i64,
+    String,
+    i64,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+);
+
+fn decode_recent_pump_trade_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecentPumpTradeRow> {
+    Ok((
+        row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+        row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
+        row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?,
+        row.get(15)?, row.get(16)?, row.get(17)?, row.get(18)?, row.get(19)?,
+    ))
+}
+
+fn decode_recent_pump_trade(raw: RecentPumpTradeRow) -> Result<PumpTradeEvidenceWrite, StorageError> {
+    let (
+        provider, signature, ordinal, slot, observed_at_unix_ms,
+        mint, quote_mint, user, is_buy,
+        token_amount_raw, sol_amount_raw, quote_amount_raw,
+        timestamp_unix_seconds,
+        virtual_sol_reserves_raw, virtual_token_reserves_raw,
+        real_sol_reserves_raw, real_token_reserves_raw,
+        virtual_quote_reserves_raw, real_quote_reserves_raw,
+        ix_name,
+    ) = raw;
+
+    Ok(PumpTradeEvidenceWrite {
+        provider: parse_provider(&provider)?,
+        signature,
+        ordinal: u32::try_from(ordinal).map_err(|_| {
+            StorageError::InvalidData("Pump trade ordinal was outside u32 range".to_owned())
+        })?,
+        slot: parse_u64_text(&slot, "Pump trade slot")?,
+        observed_at_unix_ms,
+        mint,
+        quote_mint,
+        user,
+        is_buy: parse_stored_bool(is_buy, "Pump trade is_buy")?,
+        token_amount_raw: parse_u64_text(&token_amount_raw, "Pump trade token_amount_raw")?,
+        sol_amount_raw: parse_u64_text(&sol_amount_raw, "Pump trade sol_amount_raw")?,
+        quote_amount_raw: parse_u64_text(&quote_amount_raw, "Pump trade quote_amount_raw")?,
+        timestamp_unix_seconds,
+        virtual_sol_reserves_raw: parse_u64_text(
+            &virtual_sol_reserves_raw,
+            "Pump trade virtual_sol_reserves_raw",
+        )?,
+        virtual_token_reserves_raw: parse_u64_text(
+            &virtual_token_reserves_raw,
+            "Pump trade virtual_token_reserves_raw",
+        )?,
+        real_sol_reserves_raw: parse_u64_text(
+            &real_sol_reserves_raw,
+            "Pump trade real_sol_reserves_raw",
+        )?,
+        real_token_reserves_raw: parse_u64_text(
+            &real_token_reserves_raw,
+            "Pump trade real_token_reserves_raw",
+        )?,
+        virtual_quote_reserves_raw: parse_u64_text(
+            &virtual_quote_reserves_raw,
+            "Pump trade virtual_quote_reserves_raw",
+        )?,
+        real_quote_reserves_raw: parse_u64_text(
+            &real_quote_reserves_raw,
+            "Pump trade real_quote_reserves_raw",
+        )?,
+        ix_name,
+    })
+}
+
+fn decode_recent_pump_swap_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RecentPumpSwapRow> {
+    Ok((
+        row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?,
+        row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?, row.get(9)?,
+        row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?, row.get(14)?,
+    ))
+}
+
+fn decode_recent_pump_swap(raw: RecentPumpSwapRow) -> Result<PumpSwapTradeEvidenceWrite, StorageError> {
+    let (
+        provider, signature, ordinal, log_index, slot, observed_at_unix_ms,
+        pool, user, is_buy,
+        base_amount_raw, quote_amount_raw, user_quote_amount_raw,
+        timestamp_unix_seconds, pool_base_reserves_raw, pool_quote_reserves_raw,
+    ) = raw;
+
+    Ok(PumpSwapTradeEvidenceWrite {
+        provider: parse_provider(&provider)?,
+        signature,
+        ordinal: u32::try_from(ordinal).map_err(|_| {
+            StorageError::InvalidData("PumpSwap ordinal was outside u32 range".to_owned())
+        })?,
+        log_index: u32::try_from(log_index).map_err(|_| {
+            StorageError::InvalidData("PumpSwap log index was outside u32 range".to_owned())
+        })?,
+        slot: parse_u64_text(&slot, "PumpSwap slot")?,
+        observed_at_unix_ms,
+        pool,
+        user,
+        is_buy: parse_stored_bool(is_buy, "PumpSwap is_buy")?,
+        base_amount_raw: parse_u64_text(&base_amount_raw, "PumpSwap base_amount_raw")?,
+        quote_amount_raw: parse_u64_text(&quote_amount_raw, "PumpSwap quote_amount_raw")?,
+        user_quote_amount_raw: parse_u64_text(
+            &user_quote_amount_raw,
+            "PumpSwap user_quote_amount_raw",
+        )?,
+        timestamp_unix_seconds,
+        pool_base_reserves_raw: parse_u64_text(
+            &pool_base_reserves_raw,
+            "PumpSwap pool_base_reserves_raw",
+        )?,
+        pool_quote_reserves_raw: parse_u64_text(
+            &pool_quote_reserves_raw,
+            "PumpSwap pool_quote_reserves_raw",
+        )?,
+    })
+}
+
+fn parse_stored_bool(value: i64, field: &str) -> Result<bool, StorageError> {
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(StorageError::InvalidData(format!(
+            "{field} stored invalid value {other}"
+        ))),
+    }
+}
+
+fn parse_u64_text(value: &str, field: &str) -> Result<u64, StorageError> {
+    value.parse::<u64>().map_err(|error| {
+        StorageError::InvalidData(format!("{field} is not u64 decimal text: {error}"))
+    })
 }
 
 fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
