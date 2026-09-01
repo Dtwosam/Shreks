@@ -173,6 +173,7 @@ pub struct BoundedPumpRealtimeLogStream {
     pending_notifications: VecDeque<PumpRealtimeNotification>,
     reconnect_attempt: u32,
     next_request_id: u64,
+    awaiting_heartbeat_response: bool,
 }
 
 impl BoundedPumpRealtimeLogStream {
@@ -189,6 +190,7 @@ impl BoundedPumpRealtimeLogStream {
             pending_notifications: VecDeque::new(),
             reconnect_attempt: 0,
             next_request_id: 1,
+            awaiting_heartbeat_response: false,
         })
     }
 
@@ -230,6 +232,10 @@ impl BoundedPumpRealtimeLogStream {
                     ));
                 }
                 BoundedPumpRealtimeWake::SocketFrame(Err(_)) => {
+                    if self.awaiting_heartbeat_response {
+                        self.disconnect_and_backoff().await;
+                        continue;
+                    }
                     let sent = self
                         .socket
                         .as_mut()
@@ -238,9 +244,12 @@ impl BoundedPumpRealtimeLogStream {
                         .await;
                     if sent.is_err() {
                         self.disconnect_and_backoff().await;
+                    } else {
+                        self.awaiting_heartbeat_response = true;
                     }
                 }
                 BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Text(text))))) => {
+                    self.awaiting_heartbeat_response = false;
                     if let Some(notification) = parse_notification_for_provider(
                         &text.to_string(),
                         self.config.provider,
@@ -249,6 +258,7 @@ impl BoundedPumpRealtimeLogStream {
                     }
                 }
                 BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Ping(payload))))) => {
+                    self.awaiting_heartbeat_response = false;
                     let sent = self
                         .socket
                         .as_mut()
@@ -261,7 +271,9 @@ impl BoundedPumpRealtimeLogStream {
                 }
                 BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Pong(_)))))
                 | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Binary(_)))))
-                | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Frame(_))))) => {}
+                | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Frame(_))))) => {
+                    self.awaiting_heartbeat_response = false;
+                }
                 BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Ok(Message::Close(_)))))
                 | BoundedPumpRealtimeWake::SocketFrame(Ok(Some(Err(_))))
                 | BoundedPumpRealtimeWake::SocketFrame(Ok(None)) => {
@@ -280,6 +292,7 @@ impl BoundedPumpRealtimeLogStream {
                     self.pending_notifications.extend(pending_notifications);
                     self.reconnect_attempt = 0;
                     self.next_request_id = next_request_id;
+                    self.awaiting_heartbeat_response = false;
                 }
                 Err(error) if error.is_retryable() => {
                     self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
@@ -388,6 +401,7 @@ impl BoundedPumpRealtimeLogStream {
                         )
                         .await?;
                     }
+                    self.awaiting_heartbeat_response = false;
                     self.pool_subscriptions.remove(&pool);
                 }
                 PumpRealtimeSubscriptionChange::Subscribe { pool } => {
@@ -414,6 +428,7 @@ impl BoundedPumpRealtimeLogStream {
                         )
                         .await?
                     };
+                    self.awaiting_heartbeat_response = false;
                     self.pool_subscriptions.insert(pool, subscription_id);
                 }
             }
@@ -437,6 +452,7 @@ impl BoundedPumpRealtimeLogStream {
         self.socket = None;
         self.pool_subscriptions.clear();
         self.next_request_id = 1;
+        self.awaiting_heartbeat_response = false;
     }
 
     async fn disconnect_and_backoff(&mut self) {
