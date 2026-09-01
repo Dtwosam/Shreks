@@ -10,9 +10,13 @@ use std::{
 use async_trait::async_trait;
 use rusqlite::Connection;
 use shreks_core::{DiscoveredToken, PairMarketData, ProviderId};
-use shreks_observer::Observer;
-use shreks_providers::{DiscoveryProvider, MarketDataProvider, ProviderError};
+use shreks_observer::{Observer, ObserverError};
+use shreks_providers::{
+    pump::{PumpCreationSignal, PumpLifecycleSignal},
+    DiscoveryProvider, MarketDataProvider, ProviderError,
+};
 use shreks_storage::ShreksDb;
+use tokio::sync::mpsc;
 
 #[path = "../src/bin/observer_v2/sampling.rs"]
 mod sampling;
@@ -145,5 +149,42 @@ async fn v2_sampler_defers_reconstructible_cycle_after_persistent_sqlite_busy() 
     );
 
     drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn raw_pump_signal_persistence_remains_fail_closed_on_sqlite_busy() {
+    let root = unique_test_dir("raw-signal");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let blocker = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (sender, receiver) = mpsc::channel(1);
+    sender
+        .send(PumpLifecycleSignal::Creation(PumpCreationSignal {
+            signature: "busy-raw-pump-signal".to_owned(),
+            slot: 42,
+        }))
+        .await
+        .unwrap();
+
+    let mut observer = Observer::new(db).with_pump_signal_receiver(receiver);
+    let result = tokio::time::timeout(
+        Duration::from_secs(7),
+        observer.run_until_shutdown(Duration::from_secs(60), async {
+            tokio::time::sleep(Duration::from_secs(6)).await;
+        }),
+    )
+    .await
+    .expect("raw signal BUSY failure must stay bounded");
+
+    blocker.join().unwrap();
+    assert!(
+        matches!(result, Err(ObserverError::Storage(_))),
+        "raw Pump signal durability must remain fail-closed under SQLite BUSY: {result:?}"
+    );
+
+    drop(observer);
     cleanup_dir(&root);
 }
