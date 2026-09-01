@@ -13,6 +13,7 @@ use shreks_storage::{
 };
 
 const MAX_BLOCKED_FRONTIER_SCAN_MULTIPLIER: usize = 8;
+const MAX_FAST_EVENT_WRITE_TRANSACTION_ROWS: usize = 64;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FastEventNormalizationReport {
@@ -20,6 +21,19 @@ pub struct FastEventNormalizationReport {
     pub normalized: usize,
     pub unresolved_decimals: usize,
     pub invalid_economics: usize,
+}
+
+impl FastEventNormalizationReport {
+    fn absorb(&mut self, other: Self) {
+        self.scanned = self.scanned.saturating_add(other.scanned);
+        self.normalized = self.normalized.saturating_add(other.normalized);
+        self.unresolved_decimals = self
+            .unresolved_decimals
+            .saturating_add(other.unresolved_decimals);
+        self.invalid_economics = self
+            .invalid_economics
+            .saturating_add(other.invalid_economics);
+    }
 }
 
 #[derive(Debug)]
@@ -108,6 +122,53 @@ pub fn normalize_pending_pump_trade_evidence_at(
         return Ok(FastEventNormalizationReport::default());
     }
 
+    // Small diagnostic/test batches keep the historical oldest-first contract.
+    // Production-sized bursts reserve one quarter for deterministic debt
+    // progress and protect the other three quarters for newest ready evidence.
+    // If either lane cannot fill its reserve, the remaining capacity falls back
+    // to oldest-ready work so no usable output budget is wasted.
+    if limit < 4 {
+        return normalize_oldest_capacity(db, limit, accepted_at_unix_ms);
+    }
+
+    let debt_target = (limit / 4).max(1);
+    let fresh_target = limit.saturating_sub(debt_target);
+    let mut report = normalize_oldest_capacity(db, debt_target, accepted_at_unix_ms)?;
+
+    if fresh_target > 0 {
+        let fresh = recent_ready_rows(db, fresh_target, accepted_at_unix_ms)?;
+        report.scanned = report.scanned.saturating_add(fresh.len());
+        let fresh_stop = report.normalized.saturating_add(fresh_target).min(limit);
+        normalize_pending_rows(
+            db,
+            fresh,
+            fresh_stop,
+            accepted_at_unix_ms,
+            &mut report,
+        )?;
+    }
+
+    let remaining = limit.saturating_sub(report.normalized);
+    if remaining > 0 {
+        report.absorb(normalize_oldest_capacity(
+            db,
+            remaining,
+            accepted_at_unix_ms,
+        )?);
+    }
+
+    Ok(report)
+}
+
+fn normalize_oldest_capacity(
+    db: &ShreksDb,
+    limit: usize,
+    accepted_at_unix_ms: i64,
+) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
+    if limit == 0 {
+        return Ok(FastEventNormalizationReport::default());
+    }
+
     let max_scan_limit = limit
         .saturating_mul(MAX_BLOCKED_FRONTIER_SCAN_MULTIPLIER)
         .max(limit);
@@ -186,12 +247,48 @@ fn normalize_ready_fallback(
     Ok(report)
 }
 
+fn recent_ready_rows(
+    db: &ShreksDb,
+    limit: usize,
+    accepted_at_unix_ms: i64,
+) -> Result<Vec<PendingEvidence>, FastEventNormalizationError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+
+    let mut ready = db
+        .recent_normalizable_pump_trade_evidence(limit, accepted_at_unix_ms)?
+        .into_iter()
+        .map(PendingEvidence::Pump)
+        .chain(
+            db.recent_normalizable_pump_swap_trade_evidence(limit, accepted_at_unix_ms)?
+                .into_iter()
+                .map(PendingEvidence::PumpSwap),
+        )
+        .collect::<Vec<_>>();
+
+    sort_pending_recent(&mut ready);
+    ready.truncate(limit);
+    Ok(ready)
+}
+
 fn sort_pending(pending: &mut [PendingEvidence]) {
     pending.sort_by(|left, right| {
         left.observed_at_unix_ms()
             .cmp(&right.observed_at_unix_ms())
             .then_with(|| left.signature().cmp(right.signature()))
             .then_with(|| left.ordinal().cmp(&right.ordinal()))
+            .then_with(|| left.source_rank().cmp(&right.source_rank()))
+    });
+}
+
+fn sort_pending_recent(pending: &mut [PendingEvidence]) {
+    pending.sort_by(|left, right| {
+        right
+            .observed_at_unix_ms()
+            .cmp(&left.observed_at_unix_ms())
+            .then_with(|| right.signature().cmp(left.signature()))
+            .then_with(|| right.ordinal().cmp(&left.ordinal()))
             .then_with(|| left.source_rank().cmp(&right.source_rank()))
     });
 }
@@ -203,29 +300,43 @@ fn normalize_pending_rows(
     accepted_at_unix_ms: i64,
     report: &mut FastEventNormalizationReport,
 ) -> Result<(), FastEventNormalizationError> {
-    for pending in pending {
-        if report.normalized >= limit {
+    let mut pending = pending.into_iter();
+
+    while report.normalized < limit {
+        let chunk = pending
+            .by_ref()
+            .take(MAX_FAST_EVENT_WRITE_TRANSACTION_ROWS)
+            .collect::<Vec<_>>();
+        if chunk.is_empty() {
             break;
         }
 
-        // `accepted_at_unix_ms` is the canonical acceptance snapshot for this
-        // normalization burst. Raw ingestion runs concurrently, so a pending
-        // query can discover a row observed just after that snapshot was taken.
-        // Such a row is valid immutable evidence, but cannot truthfully become
-        // canonical at an earlier timestamp. Leave it pending for the next
-        // burst rather than weakening the storage ordering invariant.
-        if pending.observed_at_unix_ms() > accepted_at_unix_ms {
-            continue;
-        }
+        db.with_fast_event_write_transaction(|| -> Result<(), FastEventNormalizationError> {
+            for pending in chunk {
+                if report.normalized >= limit {
+                    break;
+                }
 
-        match pending {
-            PendingEvidence::Pump(raw) => {
-                normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, report)?;
+                // `accepted_at_unix_ms` is the canonical acceptance snapshot
+                // for this normalization burst. Raw ingestion runs concurrently,
+                // so a pending query can discover a row observed just after that
+                // snapshot was taken. Leave it pending for the next burst rather
+                // than weakening the storage ordering invariant.
+                if pending.observed_at_unix_ms() > accepted_at_unix_ms {
+                    continue;
+                }
+
+                match pending {
+                    PendingEvidence::Pump(raw) => {
+                        normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, report)?;
+                    }
+                    PendingEvidence::PumpSwap(raw) => {
+                        normalize_pump_swap_row(db, raw, accepted_at_unix_ms, report)?;
+                    }
+                }
             }
-            PendingEvidence::PumpSwap(raw) => {
-                normalize_pump_swap_row(db, raw, accepted_at_unix_ms, report)?;
-            }
-        }
+            Ok(())
+        })?;
     }
     Ok(())
 }
