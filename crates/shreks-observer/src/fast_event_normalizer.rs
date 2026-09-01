@@ -23,19 +23,6 @@ pub struct FastEventNormalizationReport {
     pub invalid_economics: usize,
 }
 
-impl FastEventNormalizationReport {
-    fn absorb(&mut self, other: Self) {
-        self.scanned = self.scanned.saturating_add(other.scanned);
-        self.normalized = self.normalized.saturating_add(other.normalized);
-        self.unresolved_decimals = self
-            .unresolved_decimals
-            .saturating_add(other.unresolved_decimals);
-        self.invalid_economics = self
-            .invalid_economics
-            .saturating_add(other.invalid_economics);
-    }
-}
-
 #[derive(Debug)]
 pub enum FastEventNormalizationError {
     Storage(StorageError),
@@ -123,38 +110,28 @@ pub fn normalize_pending_pump_trade_evidence_at(
     }
 
     // Small diagnostic/test batches keep the historical oldest-first contract.
-    // Production-sized bursts reserve one quarter for deterministic debt
-    // progress and protect the other three quarters for newest ready evidence.
-    // If either lane cannot fill its reserve, the remaining capacity falls back
-    // to oldest-ready work so no usable output budget is wasted.
+    // Production-sized bursts reserve at most one quarter for deterministic
+    // debt progress, then give every unused slot to newest ready evidence. The
+    // oldest lane already performs its own ready fallback, so running it a
+    // second time in the same burst would only rescan unresolved durable debt.
     if limit < 4 {
         return normalize_oldest_capacity(db, limit, accepted_at_unix_ms);
     }
 
     let debt_target = (limit / 4).max(1);
-    let fresh_target = limit.saturating_sub(debt_target);
     let mut report = normalize_oldest_capacity(db, debt_target, accepted_at_unix_ms)?;
+    let fresh_capacity = limit.saturating_sub(report.normalized);
 
-    if fresh_target > 0 {
-        let fresh = recent_ready_rows(db, fresh_target, accepted_at_unix_ms)?;
+    if fresh_capacity > 0 {
+        let fresh = recent_ready_rows(db, fresh_capacity, accepted_at_unix_ms)?;
         report.scanned = report.scanned.saturating_add(fresh.len());
-        let fresh_stop = report.normalized.saturating_add(fresh_target).min(limit);
         normalize_pending_rows(
             db,
             fresh,
-            fresh_stop,
+            limit,
             accepted_at_unix_ms,
             &mut report,
         )?;
-    }
-
-    let remaining = limit.saturating_sub(report.normalized);
-    if remaining > 0 {
-        report.absorb(normalize_oldest_capacity(
-            db,
-            remaining,
-            accepted_at_unix_ms,
-        )?);
     }
 
     Ok(report)
