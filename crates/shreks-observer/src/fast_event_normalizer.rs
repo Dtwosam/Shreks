@@ -1,4 +1,4 @@
-use std::{error::Error, fmt};
+use std::{collections::HashMap, error::Error, fmt};
 
 use shreks_core::ProviderId;
 use shreks_providers::{
@@ -9,7 +9,7 @@ use shreks_providers::{
     ProviderError,
 };
 use shreks_storage::{
-    PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb, StorageError,
+    PumpSwapMarket, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb, StorageError,
 };
 
 const MAX_BLOCKED_FRONTIER_SCAN_MULTIPLIER: usize = 8;
@@ -97,6 +97,60 @@ impl PendingEvidence {
             Self::Pump(_) => 0,
             Self::PumpSwap(_) => 1,
         }
+    }
+}
+
+struct NormalizationChunkCache {
+    next_sequence: u64,
+    verified_decimals: HashMap<String, Option<u8>>,
+    pump_swap_markets: HashMap<String, Option<PumpSwapMarket>>,
+}
+
+impl NormalizationChunkCache {
+    fn new(db: &ShreksDb) -> Result<Self, FastEventNormalizationError> {
+        Ok(Self {
+            next_sequence: db.next_fast_event_sequence()?,
+            verified_decimals: HashMap::new(),
+            pump_swap_markets: HashMap::new(),
+        })
+    }
+
+    fn verified_decimals(
+        &mut self,
+        db: &ShreksDb,
+        mint: &str,
+    ) -> Result<Option<u8>, FastEventNormalizationError> {
+        if let Some(value) = self.verified_decimals.get(mint) {
+            return Ok(*value);
+        }
+        let value = db.verified_mint_decimals(mint)?;
+        self.verified_decimals.insert(mint.to_owned(), value);
+        Ok(value)
+    }
+
+    fn pump_swap_market(
+        &mut self,
+        db: &ShreksDb,
+        pool: &str,
+    ) -> Result<Option<PumpSwapMarket>, FastEventNormalizationError> {
+        if let Some(value) = self.pump_swap_markets.get(pool) {
+            return Ok(value.clone());
+        }
+        let value = db.pump_swap_market_for_pool(pool)?;
+        self.pump_swap_markets
+            .insert(pool.to_owned(), value.clone());
+        Ok(value)
+    }
+
+    fn sequence(&self) -> u64 {
+        self.next_sequence
+    }
+
+    fn accepted_insert(&mut self) -> Result<(), FastEventNormalizationError> {
+        self.next_sequence = self.next_sequence.checked_add(1).ok_or_else(|| {
+            StorageError::InvalidData("FastEvent sequence exhausted u64 range".to_owned())
+        })?;
+        Ok(())
     }
 }
 
@@ -289,6 +343,11 @@ fn normalize_pending_rows(
         }
 
         db.with_fast_event_write_transaction(|| -> Result<(), FastEventNormalizationError> {
+            // The cache lifetime is exactly one IMMEDIATE transaction. Reusing
+            // sequence/metadata/source prerequisites therefore cannot mask a
+            // concurrent writer: the snapshot is fixed until this chunk commits.
+            let mut cache = NormalizationChunkCache::new(db)?;
+
             for pending in chunk {
                 if report.normalized >= limit {
                     break;
@@ -305,10 +364,22 @@ fn normalize_pending_rows(
 
                 match pending {
                     PendingEvidence::Pump(raw) => {
-                        normalize_bonding_curve_row(db, raw, accepted_at_unix_ms, report)?;
+                        normalize_bonding_curve_row(
+                            db,
+                            raw,
+                            accepted_at_unix_ms,
+                            report,
+                            &mut cache,
+                        )?;
                     }
                     PendingEvidence::PumpSwap(raw) => {
-                        normalize_pump_swap_row(db, raw, accepted_at_unix_ms, report)?;
+                        normalize_pump_swap_row(
+                            db,
+                            raw,
+                            accepted_at_unix_ms,
+                            report,
+                            &mut cache,
+                        )?;
                     }
                 }
             }
@@ -323,6 +394,7 @@ fn normalize_bonding_curve_row(
     raw: PumpTradeEvidenceWrite,
     accepted_at_unix_ms: i64,
     report: &mut FastEventNormalizationReport,
+    cache: &mut NormalizationChunkCache,
 ) -> Result<(), FastEventNormalizationError> {
     require_realtime_provider(raw.provider)?;
 
@@ -336,27 +408,26 @@ fn normalize_bonding_curve_row(
         return Ok(());
     }
 
-    let Some(base_decimals) = db.verified_mint_decimals(&raw.mint)? else {
+    let Some(base_decimals) = cache.verified_decimals(db, &raw.mint)? else {
         report.unresolved_decimals += 1;
         return Ok(());
     };
     let quote_decimals = if pump_quote_is_sol(&raw.quote_mint) {
         SOL_QUOTE_DECIMALS
     } else {
-        let Some(decimals) = db.verified_mint_decimals(&raw.quote_mint)? else {
+        let Some(decimals) = cache.verified_decimals(db, &raw.quote_mint)? else {
             report.unresolved_decimals += 1;
             return Ok(());
         };
         decimals
     };
 
-    let sequence = db.next_fast_event_sequence()?;
     let evidence = as_provider_evidence(&raw);
     let mut event = pump_trade_evidence_to_fast_event(
         &evidence,
         &raw.signature,
         raw.ordinal,
-        sequence,
+        cache.sequence(),
         raw.slot,
         accepted_at_unix_ms,
         base_decimals,
@@ -364,13 +435,9 @@ fn normalize_bonding_curve_row(
     )?;
     event.provider = raw.provider;
 
-    if db.record_fast_event(
-        &event,
-        raw.observed_at_unix_ms,
-        base_decimals,
-        quote_decimals,
-    )? {
+    if db.record_pump_fast_event_from_source(&event, &raw, base_decimals, quote_decimals)? {
         report.normalized += 1;
+        cache.accepted_insert()?;
     }
     Ok(())
 }
@@ -392,17 +459,18 @@ fn normalize_pump_swap_row(
     raw: PumpSwapTradeEvidenceWrite,
     accepted_at_unix_ms: i64,
     report: &mut FastEventNormalizationReport,
+    cache: &mut NormalizationChunkCache,
 ) -> Result<(), FastEventNormalizationError> {
     require_realtime_provider(raw.provider)?;
 
-    let Some(market) = db.pump_swap_market_for_pool(&raw.pool)? else {
+    let Some(market) = cache.pump_swap_market(db, &raw.pool)? else {
         // A direct PumpSwap trade may arrive before its verified migration has
         // been normalized. Keep the immutable raw row pending rather than
         // guessing mint identity or fetching a transaction on the hot path.
         return Ok(());
     };
 
-    let Some(base_decimals) = db.verified_mint_decimals(&market.mint)? else {
+    let Some(base_decimals) = cache.verified_decimals(db, &market.mint)? else {
         report.unresolved_decimals += 1;
         return Ok(());
     };
@@ -410,20 +478,19 @@ fn normalize_pump_swap_row(
     let (quote_mint, quote_decimals) = if pump_quote_is_sol(&market.quote_mint) {
         (WRAPPED_SOL_MINT.to_owned(), SOL_QUOTE_DECIMALS)
     } else {
-        let Some(decimals) = db.verified_mint_decimals(&market.quote_mint)? else {
+        let Some(decimals) = cache.verified_decimals(db, &market.quote_mint)? else {
             report.unresolved_decimals += 1;
             return Ok(());
         };
         (market.quote_mint.clone(), decimals)
     };
 
-    let sequence = db.next_fast_event_sequence()?;
     let evidence = as_provider_pump_swap_evidence(&raw);
     let mut event = pump_swap_trade_evidence_to_fast_event(
         &evidence,
         &raw.signature,
         raw.ordinal,
-        sequence,
+        cache.sequence(),
         raw.slot,
         accepted_at_unix_ms,
         &market.mint,
@@ -433,13 +500,15 @@ fn normalize_pump_swap_row(
     )?;
     event.provider = raw.provider;
 
-    if db.record_fast_event(
+    if db.record_pump_swap_fast_event_from_source(
         &event,
-        raw.observed_at_unix_ms,
+        &raw,
+        &market,
         base_decimals,
         quote_decimals,
     )? {
         report.normalized += 1;
+        cache.accepted_insert()?;
     }
     Ok(())
 }
