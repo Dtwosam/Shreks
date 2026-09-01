@@ -10,6 +10,7 @@ use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb};
 
 const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
 const OBSERVED_MS: i64 = 1_788_193_719_960;
+const DEBT_CURSOR_STREAM: &str = "fast_lane_metadata_pump_debt_cursor_v1";
 
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -132,6 +133,25 @@ fn selector_pages_past_resolved_oldest_chunk_to_find_metadata_debt() {
     expected.push(debt_a.to_owned());
     expected.push(debt_b.to_owned());
     assert_eq!(selected_mints, expected);
+
+    let expected_cursor = format!("{}|sig-paged-debt-b|0", OBSERVED_MS + 3_001);
+    assert_eq!(
+        db.ingestion_checkpoint(ProviderId::SolanaPublic, DEBT_CURSOR_STREAM)
+            .unwrap()
+            .as_deref(),
+        Some(expected_cursor.as_str())
+    );
+
+    drop(db);
+    let reopened = ShreksDb::open(&db_path).unwrap();
+    assert_eq!(
+        reopened
+            .ingestion_checkpoint(ProviderId::SolanaPublic, DEBT_CURSOR_STREAM)
+            .unwrap()
+            .as_deref(),
+        Some(expected_cursor.as_str())
+    );
+    drop(reopened);
 
     cleanup_dir(&root);
 }
