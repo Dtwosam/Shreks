@@ -262,18 +262,6 @@ impl ShreksDb {
             }
         }
 
-        if source_observed_at_unix_ms < 0 {
-            return Err(StorageError::InvalidData(
-                "FastEvent source observation timestamp must be non-negative".to_owned(),
-            ));
-        }
-        if source_observed_at_unix_ms > event.observed_at_unix_ms {
-            return Err(StorageError::InvalidData(format!(
-                "FastEvent source observation {source_observed_at_unix_ms} is later than canonical observation {}",
-                event.observed_at_unix_ms
-            )));
-        }
-
         let source = self
             .pump_trade_evidence_by_identity(&event.id.signature, event.id.ordinal)?
             .ok_or_else(|| {
@@ -291,7 +279,43 @@ impl ShreksDb {
                 source_observed_at_unix_ms
             )));
         }
-        validate_pump_canonical_source(event, &source, base_decimals, quote_decimals)?;
+        self.record_pump_fast_event_from_source(event, &source, base_decimals, quote_decimals)
+    }
+
+    /// Append one Pump bonding-curve canonical event from a source row already
+    /// selected from this connection's current transaction snapshot. The
+    /// database source-existence and contiguous-sequence triggers remain the
+    /// final durable authority on every insert.
+    pub fn record_pump_fast_event_from_source(
+        &self,
+        event: &FastEvent,
+        source: &PumpTradeEvidenceWrite,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> Result<bool, StorageError> {
+        if event.market.venue != VenueId::PumpFunBondingCurve {
+            return Err(StorageError::InvalidData(
+                "Pump FastEvent source writer requires pump_fun_bonding_curve venue".to_owned(),
+            ));
+        }
+        if event.id.signature != source.signature || event.id.ordinal != source.ordinal {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent identity does not match supplied Pump source '{}' ordinal {}",
+                source.signature, source.ordinal
+            )));
+        }
+        if source.observed_at_unix_ms < 0 {
+            return Err(StorageError::InvalidData(
+                "FastEvent source observation timestamp must be non-negative".to_owned(),
+            ));
+        }
+        if source.observed_at_unix_ms > event.observed_at_unix_ms {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent source observation {} is later than canonical observation {}",
+                source.observed_at_unix_ms, event.observed_at_unix_ms
+            )));
+        }
+        validate_pump_canonical_source(event, source, base_decimals, quote_decimals)?;
 
         let sequence = i64::try_from(event.sequence).map_err(|_| {
             StorageError::InvalidData("FastEvent sequence exceeds SQLite integer range".to_owned())
@@ -319,7 +343,7 @@ impl ShreksDb {
                 ordinal,
                 event.provider.as_str(),
                 event.slot.to_string(),
-                source_observed_at_unix_ms,
+                source.observed_at_unix_ms,
                 event.occurred_at_unix_ms,
                 event.observed_at_unix_ms,
                 event.market.mint,
@@ -351,7 +375,7 @@ impl ShreksDb {
         if same_canonical_event(
             &existing,
             event,
-            source_observed_at_unix_ms,
+            source.observed_at_unix_ms,
             base_decimals,
             quote_decimals,
         ) {
