@@ -293,11 +293,6 @@ impl ShreksDb {
                 "PumpSwap FastEvent writer requires pump_swap venue".to_owned(),
             ));
         }
-        if source_observed_at_unix_ms < 0 || source_observed_at_unix_ms > event.observed_at_unix_ms {
-            return Err(StorageError::InvalidData(
-                "PumpSwap FastEvent source observation timestamp is invalid".to_owned(),
-            ));
-        }
 
         let source = self
             .pump_swap_trade_evidence_by_identity(&event.id.signature, event.id.ordinal)?
@@ -319,7 +314,49 @@ impl ShreksDb {
                 source.pool
             ))
         })?;
-        validate_canonical_source(event, &source, &market, base_decimals, quote_decimals)?;
+        self.record_pump_swap_fast_event_from_source(
+            event,
+            &source,
+            &market,
+            base_decimals,
+            quote_decimals,
+        )
+    }
+
+    /// Append one PumpSwap canonical event from raw/lifecycle rows already
+    /// selected in this connection's current transaction snapshot. Existing
+    /// database triggers still require the raw identity and contiguous sequence.
+    pub fn record_pump_swap_fast_event_from_source(
+        &self,
+        event: &FastEvent,
+        source: &PumpSwapTradeEvidenceWrite,
+        market: &PumpSwapMarket,
+        base_decimals: u8,
+        quote_decimals: u8,
+    ) -> Result<bool, StorageError> {
+        if event.market.venue != VenueId::PumpSwap {
+            return Err(StorageError::InvalidData(
+                "PumpSwap FastEvent writer requires pump_swap venue".to_owned(),
+            ));
+        }
+        if event.id.signature != source.signature || event.id.ordinal != source.ordinal {
+            return Err(StorageError::InvalidData(format!(
+                "PumpSwap FastEvent identity does not match supplied source '{}' ordinal {}",
+                source.signature, source.ordinal
+            )));
+        }
+        if market.pool_address != source.pool {
+            return Err(StorageError::InvalidData(format!(
+                "PumpSwap verified market pool '{}' does not match source pool '{}'",
+                market.pool_address, source.pool
+            )));
+        }
+        if source.observed_at_unix_ms < 0 || source.observed_at_unix_ms > event.observed_at_unix_ms {
+            return Err(StorageError::InvalidData(
+                "PumpSwap FastEvent source observation timestamp is invalid".to_owned(),
+            ));
+        }
+        validate_canonical_source(event, source, market, base_decimals, quote_decimals)?;
 
         let sequence = i64::try_from(event.sequence).map_err(|_| {
             StorageError::InvalidData("PumpSwap FastEvent sequence exceeds SQLite integer range".to_owned())
@@ -348,7 +385,7 @@ impl ShreksDb {
                 i64::from(event.id.ordinal),
                 event.provider.as_str(),
                 event.slot.to_string(),
-                source_observed_at_unix_ms,
+                source.observed_at_unix_ms,
                 event.occurred_at_unix_ms,
                 event.observed_at_unix_ms,
                 event.market.mint,
@@ -397,7 +434,7 @@ impl ShreksDb {
         };
         let same = existing.1 == event.provider.as_str()
             && existing.2 == event.slot.to_string()
-            && existing.3 == source_observed_at_unix_ms
+            && existing.3 == source.observed_at_unix_ms
             && existing.4 == event.occurred_at_unix_ms
             && existing.5 == event.observed_at_unix_ms
             && existing.6 == event.market.mint
