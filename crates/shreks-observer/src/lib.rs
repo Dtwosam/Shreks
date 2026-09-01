@@ -7,6 +7,7 @@
 mod fast_lane_metadata_hydration;
 mod runtime;
 mod safety_evidence;
+mod sqlite_busy_retry;
 pub use runtime::{
     build_free_observer, free_observe_provider_plan, ObserveProviderPlan, ObserverRuntimeConfig,
     RuntimeConfigError,
@@ -40,6 +41,7 @@ use shreks_providers::{
 use shreks_storage::{
     PumpMigrationSignalRecord, ShreksDb, StorageError, OUTCOME_HORIZONS_SECONDS,
 };
+use sqlite_busy_retry::is_storage_sqlite_busy_or_locked;
 use tokio::{
     sync::mpsc,
     time::{sleep_until, Instant},
@@ -303,8 +305,20 @@ impl Observer {
                 _ = &mut shutdown => return Ok(completed_cycles),
                 result = self.run_cycle() => result,
             };
-            cycle_result?;
-            completed_cycles = completed_cycles.saturating_add(1);
+            match cycle_result {
+                Ok(_) => {
+                    completed_cycles = completed_cycles.saturating_add(1);
+                }
+                Err(ObserverError::Storage(error))
+                    if self.pump_signal_receiver.is_none()
+                        && is_storage_sqlite_busy_or_locked(&error) =>
+                {
+                    eprintln!(
+                        "Shreks lifecycle observer deferred reconstructible cycle after SQLite writer contention: {error}"
+                    );
+                }
+                Err(error) => return Err(error),
+            }
 
             let next_cycle = Instant::now() + cycle_interval;
             loop {

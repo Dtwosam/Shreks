@@ -11,6 +11,10 @@ use shreks_providers::{DiscoveryProvider, MarketDataProvider, ProviderError};
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::time::{sleep, Instant};
 
+#[path = "../../sqlite_busy_retry.rs"]
+mod sqlite_busy_retry;
+use sqlite_busy_retry::is_storage_sqlite_busy_or_locked;
+
 use super::sampling::{
     representative_sample, ActivityClass, SamplingError, SamplingPolicy, SamplingRegistry,
     TrackedCandidate,
@@ -181,10 +185,17 @@ impl HighResolutionSampler {
             };
 
             match cycle_result {
-                Some(result) => {
-                    result?;
+                Some(Ok(_)) => {
                     cycles = cycles.saturating_add(1);
                 }
+                Some(Err(SamplerError::Storage(error)))
+                    if is_storage_sqlite_busy_or_locked(&error) =>
+                {
+                    eprintln!(
+                        "Observer V2 deferred reconstructible cycle after SQLite writer contention: {error}"
+                    );
+                }
+                Some(Err(error)) => return Err(error),
                 None => {
                     self.flush_registry()?;
                     return Ok(cycles);
