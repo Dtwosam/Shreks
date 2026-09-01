@@ -2,7 +2,11 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::{mpsc as std_mpsc, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc as std_mpsc,
+        Arc,
+    },
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -16,7 +20,7 @@ use shreks_providers::{
     DiscoveryProvider, MarketDataProvider, ProviderError,
 };
 use shreks_storage::ShreksDb;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 #[path = "../src/bin/observer_v2/sampling.rs"]
 mod sampling;
@@ -25,6 +29,9 @@ mod sampler;
 
 use sampler::{HighResolutionSampler, SamplerProvider};
 use sampling::SamplingPolicy;
+
+const BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT: Duration = Duration::from_millis(6_500);
+const GUARANTEED_FIRST_BUSY_INTERVAL: Duration = Duration::from_millis(5_300);
 
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -56,6 +63,27 @@ fn spawn_writer_lock(
     (handle, ready_rx)
 }
 
+fn spawn_writer_lock_until_released(
+    db_path: PathBuf,
+) -> (
+    thread::JoinHandle<()>,
+    std_mpsc::Receiver<()>,
+    std_mpsc::Sender<()>,
+) {
+    let (ready_tx, ready_rx) = std_mpsc::channel();
+    let (release_tx, release_rx) = std_mpsc::channel();
+    let handle = thread::spawn(move || {
+        let connection = Connection::open(db_path).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        ready_tx.send(()).unwrap();
+        release_rx
+            .recv_timeout(Duration::from_secs(12))
+            .expect("test controller must release SQLite writer lock");
+        connection.execute_batch("ROLLBACK").unwrap();
+    });
+    (handle, ready_rx, release_tx)
+}
+
 fn wait_for_writer_lock(ready: std_mpsc::Receiver<()>) {
     ready
         .recv_timeout(Duration::from_secs(5))
@@ -63,7 +91,9 @@ fn wait_for_writer_lock(ready: std_mpsc::Receiver<()>) {
 }
 
 #[derive(Clone)]
-struct StaticDiscovery;
+struct StaticDiscovery {
+    calls: Arc<AtomicUsize>,
+}
 
 #[async_trait]
 impl DiscoveryProvider for StaticDiscovery {
@@ -72,6 +102,7 @@ impl DiscoveryProvider for StaticDiscovery {
     }
 
     async fn discover(&self) -> Result<Vec<DiscoveredToken>, ProviderError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
         Ok(vec![DiscoveredToken {
             mint: "busy-observer-mint".to_owned(),
             pair_address: None,
@@ -97,23 +128,73 @@ impl MarketDataProvider for EmptyMarket {
     }
 }
 
+async fn wait_until_provider_health_is_durable(db_path: &Path) {
+    tokio::time::timeout(Duration::from_secs(4), async {
+        loop {
+            let connection = Connection::open(db_path).unwrap();
+            let count: i64 = connection
+                .query_row("SELECT COUNT(*) FROM provider_health", [], |row| row.get(0))
+                .unwrap();
+            if count > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("legacy observer must reach its end-of-cycle provider-health write after lock release");
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_busy() {
     let root = unique_test_dir("legacy");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    let (blocker, ready, release_lock) = spawn_writer_lock_until_released(db_path.clone());
     wait_for_writer_lock(ready);
 
-    let mut observer = Observer::new(db).with_discovery_provider(Arc::new(StaticDiscovery));
-    let result = tokio::time::timeout(
-        Duration::from_secs(14),
-        observer.run_until_shutdown(Duration::from_millis(50), async {
-            tokio::time::sleep(Duration::from_secs(11)).await;
-        }),
-    )
+    let discovery_calls = Arc::new(AtomicUsize::new(0));
+    let mut observer = Observer::new(db).with_discovery_provider(Arc::new(StaticDiscovery {
+        calls: discovery_calls.clone(),
+    }));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let run = observer.run_until_shutdown(Duration::from_millis(50), async move {
+        let _ = shutdown_rx.await;
+    });
+    let controller_db_path = db_path.clone();
+    let controller_calls = discovery_calls.clone();
+    let controller = async move {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while controller_calls.load(Ordering::SeqCst) == 0 {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("legacy observer must enter discovery while the writer lock is held");
+
+        // Start this interval only after discovery has returned. The candidate
+        // upsert follows immediately, so holding the writer for >5s from here
+        // guarantees the first write crosses ShreksDb's SQLite busy timeout.
+        tokio::time::sleep(GUARANTEED_FIRST_BUSY_INTERVAL).await;
+        release_lock.send(()).unwrap();
+
+        // Provider health is persisted at the end of a successful legacy cycle,
+        // so this proves more than a second discovery call: the loop recovered,
+        // completed reconstructible work, and reached its durable cycle tail.
+        wait_until_provider_health_is_durable(&controller_db_path).await;
+        assert!(
+            controller_calls.load(Ordering::SeqCst) >= 2,
+            "legacy observer must retry discovery after deferring the first BUSY cycle"
+        );
+        shutdown_tx.send(()).unwrap();
+    };
+
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(11), async {
+        tokio::join!(run, controller)
+    })
     .await
-    .expect("observer BUSY handling must stay bounded");
+    .expect("event-driven legacy BUSY recovery must stay bounded");
 
     blocker.join().unwrap();
     let completed_cycles = result.expect(
@@ -133,7 +214,7 @@ async fn v2_sampler_defers_reconstructible_cycle_after_persistent_sqlite_busy() 
     let root = unique_test_dir("sampler");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    let (blocker, ready) = spawn_writer_lock(db_path.clone(), BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT);
     wait_for_writer_lock(ready);
 
     let mut sampler = HighResolutionSampler::new(
@@ -171,7 +252,7 @@ async fn raw_pump_signal_persistence_remains_fail_closed_on_sqlite_busy() {
     let root = unique_test_dir("raw-signal");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    let (blocker, ready) = spawn_writer_lock(db_path.clone(), BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT);
     wait_for_writer_lock(ready);
 
     let (sender, receiver) = mpsc::channel(1);
