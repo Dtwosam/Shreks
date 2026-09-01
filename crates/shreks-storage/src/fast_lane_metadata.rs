@@ -192,11 +192,12 @@ impl ShreksDb {
         E: From<StorageError>,
         F: FnOnce() -> Result<T, E>,
     {
-        let transaction = self
-            .connection
-            .unchecked_transaction()
-            .map_err(StorageError::from)
-            .map_err(E::from)?;
+        let transaction = rusqlite::Transaction::new_unchecked(
+            &self.connection,
+            rusqlite::TransactionBehavior::Immediate,
+        )
+        .map_err(StorageError::from)
+        .map_err(E::from)?;
 
         match operation() {
             Ok(value) => {
