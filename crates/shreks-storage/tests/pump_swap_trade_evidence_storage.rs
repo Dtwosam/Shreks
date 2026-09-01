@@ -76,7 +76,7 @@ fn pumpswap_raw_evidence_is_immutable_restart_safe_and_namespace_separated() {
     let root = unique_test_dir("raw");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 13);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 14);
 
     assert_eq!(pump_swap_event_ordinal(0).unwrap(), 0x8000_0000);
     assert_eq!(pump_swap_event_ordinal(17).unwrap(), 0x8000_0011);
