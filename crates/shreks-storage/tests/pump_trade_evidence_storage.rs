@@ -53,7 +53,7 @@ fn migration_ten_persists_full_width_raw_trade_economics_losslessly() {
     let root = unique_test_dir("roundtrip");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 13);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 14);
 
     let input = write();
     assert!(db.record_pump_trade_evidence(&input).unwrap());
