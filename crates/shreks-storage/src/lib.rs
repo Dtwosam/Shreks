@@ -107,6 +107,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "fast_lane_conflict_quarantine",
         sql: include_str!("../migrations/0013_fast_lane_conflict_quarantine.sql"),
     },
+    Migration {
+        version: 14,
+        name: "fast_lane_pumpswap_pool_lookup",
+        sql: include_str!("../migrations/0014_fast_lane_pumpswap_pool_lookup.sql"),
+    },
 ];
 
 /// Read-only operational diagnostics for a Shreks database connection.
