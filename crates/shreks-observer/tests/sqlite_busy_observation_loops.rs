@@ -107,9 +107,12 @@ async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_bu
     .expect("observer BUSY handling must stay bounded");
 
     blocker.join().unwrap();
+    let completed_cycles = result.expect(
+        "reconstructible legacy observation must defer persistent SQLite BUSY instead of exiting",
+    );
     assert!(
-        result.is_ok(),
-        "reconstructible legacy observation must defer persistent SQLite BUSY instead of exiting: {result:?}"
+        completed_cycles > 0,
+        "legacy observer must complete at least one cycle after the writer lock clears"
     );
 
     drop(observer);
@@ -143,9 +146,12 @@ async fn v2_sampler_defers_reconstructible_cycle_after_persistent_sqlite_busy() 
     .expect("sampler BUSY handling must stay bounded");
 
     blocker.join().unwrap();
+    let completed_cycles = result.expect(
+        "reconstructible Observer V2 sampling must defer persistent SQLite BUSY instead of exiting",
+    );
     assert!(
-        result.is_ok(),
-        "reconstructible Observer V2 sampling must defer persistent SQLite BUSY instead of exiting: {result:?}"
+        completed_cycles > 0,
+        "Observer V2 sampler must complete at least one cycle after the writer lock clears"
     );
 
     drop(sampler);
