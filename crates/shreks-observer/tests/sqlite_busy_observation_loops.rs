@@ -131,10 +131,12 @@ impl MarketDataProvider for EmptyMarket {
 async fn wait_until_provider_health_is_durable(db_path: &Path) {
     tokio::time::timeout(Duration::from_secs(4), async {
         loop {
-            let connection = Connection::open(db_path).unwrap();
-            let count: i64 = connection
-                .query_row("SELECT COUNT(*) FROM provider_health", [], |row| row.get(0))
-                .unwrap();
+            let count: i64 = {
+                let connection = Connection::open(db_path).unwrap();
+                connection
+                    .query_row("SELECT COUNT(*) FROM provider_health", [], |row| row.get(0))
+                    .unwrap()
+            };
             if count > 0 {
                 return;
             }
@@ -159,12 +161,9 @@ async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_bu
     }));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
-    let run = observer.run_until_shutdown(Duration::from_millis(50), async move {
-        let _ = shutdown_rx.await;
-    });
     let controller_db_path = db_path.clone();
     let controller_calls = discovery_calls.clone();
-    let controller = async move {
+    let controller_task = tokio::spawn(async move {
         tokio::time::timeout(Duration::from_secs(2), async {
             while controller_calls.load(Ordering::SeqCst) == 0 {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -188,14 +187,20 @@ async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_bu
             "legacy observer must retry discovery after deferring the first BUSY cycle"
         );
         shutdown_tx.send(()).unwrap();
-    };
+    });
 
-    let (result, ()) = tokio::time::timeout(Duration::from_secs(11), async {
-        tokio::join!(run, controller)
-    })
+    let result = tokio::time::timeout(
+        Duration::from_secs(11),
+        observer.run_until_shutdown(Duration::from_millis(50), async move {
+            let _ = shutdown_rx.await;
+        }),
+    )
     .await
     .expect("event-driven legacy BUSY recovery must stay bounded");
 
+    controller_task
+        .await
+        .expect("legacy BUSY recovery controller must complete without panicking");
     blocker.join().unwrap();
     let completed_cycles = result.expect(
         "reconstructible legacy observation must defer persistent SQLite BUSY instead of exiting",
