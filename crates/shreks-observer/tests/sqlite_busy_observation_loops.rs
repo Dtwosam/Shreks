@@ -2,7 +2,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::Arc,
+    sync::{mpsc as std_mpsc, Arc},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -41,13 +41,25 @@ fn cleanup_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
 }
 
-fn spawn_writer_lock(db_path: PathBuf, hold_for: Duration) -> thread::JoinHandle<()> {
-    thread::spawn(move || {
+fn spawn_writer_lock(
+    db_path: PathBuf,
+    hold_for: Duration,
+) -> (thread::JoinHandle<()>, std_mpsc::Receiver<()>) {
+    let (ready_tx, ready_rx) = std_mpsc::channel();
+    let handle = thread::spawn(move || {
         let connection = Connection::open(db_path).unwrap();
         connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        ready_tx.send(()).unwrap();
         thread::sleep(hold_for);
         connection.execute_batch("ROLLBACK").unwrap();
-    })
+    });
+    (handle, ready_rx)
+}
+
+fn wait_for_writer_lock(ready: std_mpsc::Receiver<()>) {
+    ready
+        .recv_timeout(Duration::from_secs(5))
+        .expect("writer lock thread must acquire BEGIN IMMEDIATE before observer starts");
 }
 
 #[derive(Clone)]
@@ -90,11 +102,8 @@ async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_bu
     let root = unique_test_dir("legacy");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let blocker = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
-
-    // Give the blocking connection time to acquire BEGIN IMMEDIATE before the
-    // observer attempts its first reconstructible discovery write.
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    wait_for_writer_lock(ready);
 
     let mut observer = Observer::new(db).with_discovery_provider(Arc::new(StaticDiscovery));
     let result = tokio::time::timeout(
@@ -124,9 +133,8 @@ async fn v2_sampler_defers_reconstructible_cycle_after_persistent_sqlite_busy() 
     let root = unique_test_dir("sampler");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let blocker = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    wait_for_writer_lock(ready);
 
     let mut sampler = HighResolutionSampler::new(
         db,
@@ -163,8 +171,8 @@ async fn raw_pump_signal_persistence_remains_fail_closed_on_sqlite_busy() {
     let root = unique_test_dir("raw-signal");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    let blocker = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (blocker, ready) = spawn_writer_lock(db_path.clone(), Duration::from_millis(6_500));
+    wait_for_writer_lock(ready);
 
     let (sender, receiver) = mpsc::channel(1);
     sender
