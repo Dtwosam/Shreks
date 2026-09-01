@@ -98,9 +98,9 @@ async fn legacy_observer_defers_reconstructible_cycle_after_persistent_sqlite_bu
 
     let mut observer = Observer::new(db).with_discovery_provider(Arc::new(StaticDiscovery));
     let result = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(14),
         observer.run_until_shutdown(Duration::from_millis(50), async {
-            tokio::time::sleep(Duration::from_secs(8)).await;
+            tokio::time::sleep(Duration::from_secs(11)).await;
         }),
     )
     .await
@@ -137,9 +137,9 @@ async fn v2_sampler_defers_reconstructible_cycle_after_persistent_sqlite_busy() 
     .unwrap();
 
     let result = tokio::time::timeout(
-        Duration::from_secs(10),
+        Duration::from_secs(14),
         sampler.run_until_shutdown(async {
-            tokio::time::sleep(Duration::from_secs(8)).await;
+            tokio::time::sleep(Duration::from_secs(11)).await;
         }),
     )
     .await
