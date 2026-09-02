@@ -565,6 +565,10 @@ fn require_realtime_provider(provider: ProviderId) -> Result<(), FastEventNormal
     Ok(())
 }
 
+// FL1 canonical FastEvent reconstruction intentionally does not carry FL3 fee authority.
+// The provider conversion functions consume only the FL1 amount/reserve fields below;
+// these neutral placeholders are never an FL3 economics source. FL3 decisions must load
+// exact fee evidence from the durable execution-economics sidecar tables instead.
 fn as_provider_evidence(raw: &PumpTradeEvidenceWrite) -> PumpTradeEvidence {
     PumpTradeEvidence {
         mint: raw.mint.clone(),
@@ -581,6 +585,16 @@ fn as_provider_evidence(raw: &PumpTradeEvidenceWrite) -> PumpTradeEvidence {
         real_token_reserves_raw: raw.real_token_reserves_raw,
         virtual_quote_reserves_raw: raw.virtual_quote_reserves_raw,
         real_quote_reserves_raw: raw.real_quote_reserves_raw,
+        fee_recipient: String::new(),
+        fee_basis_points: 0,
+        fee_raw: 0,
+        creator: String::new(),
+        creator_fee_basis_points: 0,
+        creator_fee_raw: 0,
+        cashback_fee_basis_points: 0,
+        cashback_raw: 0,
+        buyback_fee_basis_points: 0,
+        buyback_fee_raw: 0,
         ix_name: raw.ix_name.clone(),
     }
 }
@@ -597,5 +611,11 @@ fn as_provider_pump_swap_evidence(raw: &PumpSwapTradeEvidenceWrite) -> PumpSwapT
         timestamp_unix_seconds: raw.timestamp_unix_seconds,
         pool_base_reserves_raw: raw.pool_base_reserves_raw,
         pool_quote_reserves_raw: raw.pool_quote_reserves_raw,
+        lp_fee_basis_points: 0,
+        lp_fee_raw: 0,
+        protocol_fee_basis_points: 0,
+        protocol_fee_raw: 0,
+        quote_amount_with_or_without_lp_fee_raw: 0,
+        current_economics: None,
     }
 }
