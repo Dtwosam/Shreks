@@ -1,9 +1,15 @@
+mod baseline;
 mod capacity;
 mod economics;
 mod event;
 mod future_path;
 mod state;
 
+pub use baseline::{
+    assess_impulse_scalp, FastLaneAction, ImpulseScalpAssessment, ImpulseScalpError,
+    ImpulseScalpExecutionInput, ImpulseScalpPolicy, ImpulseScalpReason,
+    IMPULSE_SCALP_BASELINE_VERSION,
+};
 pub use capacity::{
     maximum_exit_capacity, project_exit, ExitCapacity, ExitCapacityError, ExitProjection,
 };
