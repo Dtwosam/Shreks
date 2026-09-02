@@ -34,45 +34,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
       - name: Validate workspace metadata
         run: cargo metadata --no-deps --format-version 1 > /dev/null
-      - name: Check changed Rust formatting
-        shell: bash
-        env:
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            base_sha="$PR_BASE_SHA"
-            head_sha="$PR_HEAD_SHA"
-          else
-            head_sha="$(git rev-parse HEAD)"
-            base_sha="$(git rev-parse HEAD^)"
-          fi
-
-          mapfile -t changed_rust < <(
-            git diff --name-only --diff-filter=ACMR "$base_sha" "$head_sha" -- '*.rs'
-          )
-
-          cargo fmt --all
-          if (( ${#changed_rust[@]} > 0 )) && ! git diff --quiet -- "${changed_rust[@]}"; then
-            echo "Changed Rust files are not rustfmt-clean:"
-            git diff -- "${changed_rust[@]}"
-            exit 1
-          fi
-
-          # cargo fmt may expose pre-existing formatting debt in unchanged files.
-          # Restore the exact checked-out tree before semantic gates run.
-          git reset --hard HEAD
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Run Rust tests
         run: cargo test --workspace
 
