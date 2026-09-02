@@ -194,6 +194,92 @@ class EntryCounterfactualContext:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenPositionCounterfactualContext:
+    decision_id: str
+    mint: str
+    quote_mint: str
+    action_observed_at_unix_ms: int
+    position_base_quantity: float
+    position_cost_basis_quote: float
+    horizon_ms: int
+    horizon_complete: bool
+    sell_now: ExecutableTradeEvidence | None
+    hold_exit: ExecutableTradeEvidence | None
+    reduce_quantity: float | None = None
+    reduce_now: ExecutableTradeEvidence | None = None
+
+    def __post_init__(self) -> None:
+        _require_text("decision_id", self.decision_id)
+        _require_text("mint", self.mint)
+        _require_text("quote_mint", self.quote_mint)
+        _require_non_negative_int(
+            "action_observed_at_unix_ms", self.action_observed_at_unix_ms
+        )
+        _require_positive_finite(
+            "position_base_quantity", self.position_base_quantity
+        )
+        _require_positive_finite(
+            "position_cost_basis_quote", self.position_cost_basis_quote
+        )
+        _require_positive_int("horizon_ms", self.horizon_ms)
+        if not isinstance(self.horizon_complete, bool):
+            raise CounterfactualLabelError("horizon_complete must be bool")
+
+        horizon_end = self.action_observed_at_unix_ms + self.horizon_ms
+        if self.sell_now is not None:
+            _validate_trade_for_context(
+                "sell_now",
+                self.sell_now,
+                TradeSide.SELL,
+                self.position_base_quantity,
+            )
+            if self.sell_now.observed_at_unix_ms != self.action_observed_at_unix_ms:
+                raise CounterfactualLabelError(
+                    "sell_now evidence must be observed at the action timestamp"
+                )
+
+        if self.hold_exit is not None:
+            _validate_trade_for_context(
+                "hold_exit",
+                self.hold_exit,
+                TradeSide.SELL,
+                self.position_base_quantity,
+            )
+            if not (
+                self.action_observed_at_unix_ms
+                < self.hold_exit.observed_at_unix_ms
+                <= horizon_end
+            ):
+                raise CounterfactualLabelError(
+                    "hold_exit evidence must be after the action and within the horizon"
+                )
+
+        if self.reduce_quantity is None:
+            if self.reduce_now is not None:
+                raise CounterfactualLabelError(
+                    "reduce_now evidence requires an explicit reduce_quantity"
+                )
+            return
+
+        _require_positive_finite("reduce_quantity", self.reduce_quantity)
+        if self.reduce_quantity > self.position_base_quantity:
+            raise CounterfactualLabelError(
+                "reduce_quantity cannot exceed the open position quantity"
+            )
+        if self.reduce_now is not None:
+            _validate_trade_for_context(
+                "reduce_now",
+                self.reduce_now,
+                TradeSide.SELL,
+                self.reduce_quantity,
+            )
+            if self.reduce_now.observed_at_unix_ms != self.action_observed_at_unix_ms:
+                raise CounterfactualLabelError(
+                    "reduce_now evidence must be observed at the action timestamp"
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class CounterfactualActionOutcome:
     label_version: int
     decision_id: str
@@ -212,6 +298,10 @@ class CounterfactualActionOutcome:
     return_bps: float | None
     entry_evidence_id: str | None
     exit_evidence_id: str | None
+    position_cost_basis_quote: float | None = None
+    realized_cost_basis_quote: float | None = None
+    remaining_base_quantity: float | None = None
+    remaining_cost_basis_quote: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,11 +377,22 @@ def label_entry_counterfactuals(
             )
         )
 
-    result = tuple(outcomes)
-    return CounterfactualOutcomeSet(
-        outcomes=result,
-        fingerprint_sha256=_fingerprint_outcomes(result),
-    )
+    return _outcome_set(tuple(outcomes))
+
+
+def label_open_position_counterfactuals(
+    context: OpenPositionCounterfactualContext,
+) -> CounterfactualOutcomeSet:
+    if type(context) is not OpenPositionCounterfactualContext:
+        raise CounterfactualLabelError(
+            "context must be an exact OpenPositionCounterfactualContext"
+        )
+
+    outcomes = [_hold_outcome(context)]
+    if context.reduce_quantity is not None:
+        outcomes.append(_reduce_outcome(context))
+    outcomes.append(_sell_now_outcome(context))
+    return _outcome_set(tuple(outcomes))
 
 
 def _entry_outcome(
@@ -342,6 +443,148 @@ def _entry_outcome(
     )
 
 
+def _hold_outcome(
+    context: OpenPositionCounterfactualContext,
+) -> CounterfactualActionOutcome:
+    status = _future_sell_status(
+        context.hold_exit,
+        horizon_complete=context.horizon_complete,
+    )
+    exit_net_quote: float | None = None
+    net_pnl_quote: float | None = None
+    return_bps: float | None = None
+    if status is ExecutionStatus.EXECUTABLE:
+        assert context.hold_exit is not None
+        assert context.hold_exit.quote_amount is not None
+        exit_net_quote = context.hold_exit.quote_amount
+        net_pnl_quote = exit_net_quote - context.position_cost_basis_quote
+        return_bps = (
+            exit_net_quote / context.position_cost_basis_quote - 1.0
+        ) * 10_000.0
+
+    return CounterfactualActionOutcome(
+        label_version=COUNTERFACTUAL_ACTION_LABEL_VERSION,
+        decision_id=context.decision_id,
+        mint=context.mint,
+        quote_mint=context.quote_mint,
+        action=CounterfactualAction.HOLD,
+        alternative_id=None,
+        action_observed_at_unix_ms=context.action_observed_at_unix_ms,
+        horizon_ms=context.horizon_ms,
+        delay_ms=0,
+        base_quantity=context.position_base_quantity,
+        execution_status=status,
+        entry_total_quote=None,
+        exit_net_quote=exit_net_quote,
+        net_pnl_quote=net_pnl_quote,
+        return_bps=return_bps,
+        entry_evidence_id=None,
+        exit_evidence_id=(
+            None if context.hold_exit is None else context.hold_exit.evidence_id
+        ),
+        position_cost_basis_quote=context.position_cost_basis_quote,
+    )
+
+
+def _sell_now_outcome(
+    context: OpenPositionCounterfactualContext,
+) -> CounterfactualActionOutcome:
+    status = _immediate_sell_status(context.sell_now)
+    exit_net_quote: float | None = None
+    net_pnl_quote: float | None = None
+    return_bps: float | None = None
+    if status is ExecutionStatus.EXECUTABLE:
+        assert context.sell_now is not None
+        assert context.sell_now.quote_amount is not None
+        exit_net_quote = context.sell_now.quote_amount
+        net_pnl_quote = exit_net_quote - context.position_cost_basis_quote
+        return_bps = (
+            exit_net_quote / context.position_cost_basis_quote - 1.0
+        ) * 10_000.0
+
+    return CounterfactualActionOutcome(
+        label_version=COUNTERFACTUAL_ACTION_LABEL_VERSION,
+        decision_id=context.decision_id,
+        mint=context.mint,
+        quote_mint=context.quote_mint,
+        action=CounterfactualAction.SELL_NOW,
+        alternative_id=None,
+        action_observed_at_unix_ms=context.action_observed_at_unix_ms,
+        horizon_ms=context.horizon_ms,
+        delay_ms=0,
+        base_quantity=context.position_base_quantity,
+        execution_status=status,
+        entry_total_quote=None,
+        exit_net_quote=exit_net_quote,
+        net_pnl_quote=net_pnl_quote,
+        return_bps=return_bps,
+        entry_evidence_id=None,
+        exit_evidence_id=(
+            None if context.sell_now is None else context.sell_now.evidence_id
+        ),
+        position_cost_basis_quote=context.position_cost_basis_quote,
+    )
+
+
+def _reduce_outcome(
+    context: OpenPositionCounterfactualContext,
+) -> CounterfactualActionOutcome:
+    assert context.reduce_quantity is not None
+    status = _immediate_sell_status(context.reduce_now)
+    realized_cost_basis_quote: float | None = None
+    remaining_base_quantity: float | None = None
+    remaining_cost_basis_quote: float | None = None
+    exit_net_quote: float | None = None
+    net_pnl_quote: float | None = None
+    return_bps: float | None = None
+
+    if status is ExecutionStatus.EXECUTABLE:
+        assert context.reduce_now is not None
+        assert context.reduce_now.quote_amount is not None
+        realized_cost_basis_quote = (
+            context.position_cost_basis_quote
+            * context.reduce_quantity
+            / context.position_base_quantity
+        )
+        remaining_base_quantity = (
+            context.position_base_quantity - context.reduce_quantity
+        )
+        remaining_cost_basis_quote = (
+            context.position_cost_basis_quote - realized_cost_basis_quote
+        )
+        exit_net_quote = context.reduce_now.quote_amount
+        net_pnl_quote = exit_net_quote - realized_cost_basis_quote
+        return_bps = (
+            exit_net_quote / realized_cost_basis_quote - 1.0
+        ) * 10_000.0
+
+    return CounterfactualActionOutcome(
+        label_version=COUNTERFACTUAL_ACTION_LABEL_VERSION,
+        decision_id=context.decision_id,
+        mint=context.mint,
+        quote_mint=context.quote_mint,
+        action=CounterfactualAction.REDUCE_NOW,
+        alternative_id=None,
+        action_observed_at_unix_ms=context.action_observed_at_unix_ms,
+        horizon_ms=context.horizon_ms,
+        delay_ms=0,
+        base_quantity=context.reduce_quantity,
+        execution_status=status,
+        entry_total_quote=None,
+        exit_net_quote=exit_net_quote,
+        net_pnl_quote=net_pnl_quote,
+        return_bps=return_bps,
+        entry_evidence_id=None,
+        exit_evidence_id=(
+            None if context.reduce_now is None else context.reduce_now.evidence_id
+        ),
+        position_cost_basis_quote=context.position_cost_basis_quote,
+        realized_cost_basis_quote=realized_cost_basis_quote,
+        remaining_base_quantity=remaining_base_quantity,
+        remaining_cost_basis_quote=remaining_cost_basis_quote,
+    )
+
+
 def _path_execution_status(
     *,
     entry: ExecutableTradeEvidence | None,
@@ -353,12 +596,38 @@ def _path_execution_status(
         return ExecutionStatus.NOT_EXECUTABLE
     if not horizon_complete or entry is None or exit is None:
         return ExecutionStatus.UNKNOWN
-    if (
-        entry.status is ExecutionStatus.UNKNOWN
-        or exit.status is ExecutionStatus.UNKNOWN
-    ):
+    if entry.status is ExecutionStatus.UNKNOWN or exit.status is ExecutionStatus.UNKNOWN:
         return ExecutionStatus.UNKNOWN
     return ExecutionStatus.EXECUTABLE
+
+
+def _immediate_sell_status(
+    evidence: ExecutableTradeEvidence | None,
+) -> ExecutionStatus:
+    if evidence is None or evidence.status is ExecutionStatus.UNKNOWN:
+        return ExecutionStatus.UNKNOWN
+    return evidence.status
+
+
+def _future_sell_status(
+    evidence: ExecutableTradeEvidence | None,
+    *,
+    horizon_complete: bool,
+) -> ExecutionStatus:
+    if evidence is not None and evidence.status is ExecutionStatus.NOT_EXECUTABLE:
+        return ExecutionStatus.NOT_EXECUTABLE
+    if not horizon_complete or evidence is None:
+        return ExecutionStatus.UNKNOWN
+    return evidence.status
+
+
+def _outcome_set(
+    outcomes: tuple[CounterfactualActionOutcome, ...],
+) -> CounterfactualOutcomeSet:
+    return CounterfactualOutcomeSet(
+        outcomes=outcomes,
+        fingerprint_sha256=_fingerprint_outcomes(outcomes),
+    )
 
 
 def _fingerprint_outcomes(
