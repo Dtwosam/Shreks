@@ -3,7 +3,7 @@
 mod fast_lane;
 pub use fast_lane::{
     FastEvent, FastEventError, FastEventId, FastEventKind, FastMarketKey, FastMarketSnapshot,
-    FastMarketState, FastStateError, FastWindowSummary, DEFAULT_FAST_WINDOWS_MS,
+    FastMarketState, FastReserveContext, FastStateError, FastWindowSummary, DEFAULT_FAST_WINDOWS_MS,
 };
 mod lifecycle;
 pub use lifecycle::{LifecycleEventKind, TokenLifecycleEvent};

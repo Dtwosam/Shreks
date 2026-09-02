@@ -5,7 +5,7 @@ fn binary() -> &'static str {
 }
 
 #[test]
-fn benchmark_subcommand_reports_capacity_latency_and_memory_metrics() {
+fn benchmark_subcommand_reports_final_fl2_capacity_latency_and_memory_metrics() {
     let output = Command::new(binary())
         .args(["fast-state-benchmark", "16", "2000", "64"])
         .output()
@@ -20,6 +20,7 @@ fn benchmark_subcommand_reports_capacity_latency_and_memory_metrics() {
     let stdout = String::from_utf8(output.stdout).expect("benchmark stdout must be UTF-8");
     for key in [
         "benchmark_version",
+        "state_shape",
         "active_markets",
         "burst_events",
         "state_update_samples",
@@ -45,7 +46,8 @@ fn benchmark_subcommand_reports_capacity_latency_and_memory_metrics() {
         );
     }
 
-    assert!(stdout.contains("benchmark_version=1"));
+    assert!(stdout.contains("benchmark_version=2"));
+    assert!(stdout.contains("state_shape=reserve+lifecycle"));
     assert!(stdout.contains("active_markets=16"));
     assert!(stdout.contains("burst_events=2000"));
     assert!(stdout.contains("state_update_samples=64"));

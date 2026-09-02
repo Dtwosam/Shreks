@@ -6,6 +6,7 @@ mod fast_lane_metadata;
 mod lifecycle;
 mod outcomes;
 mod pump_swap_fast_lane;
+mod reserve_context;
 mod safety_evidence;
 mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
@@ -17,6 +18,9 @@ pub use outcomes::{
 };
 pub use pump_swap_fast_lane::{
     pump_swap_event_ordinal, PumpSwapMarket, PumpSwapTradeEvidenceWrite,
+};
+pub use reserve_context::{
+    pump_reserve_context_from_source, pump_swap_reserve_context_from_source,
 };
 pub use wallet::WalletObservationWrite;
 

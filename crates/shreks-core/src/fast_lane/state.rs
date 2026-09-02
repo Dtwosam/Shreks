@@ -4,7 +4,9 @@ use std::{
     fmt,
 };
 
-use super::{FastEvent, FastEventKind, FastMarketKey};
+use crate::TokenLifecycleEvent;
+
+use super::{FastEvent, FastEventKind, FastMarketKey, FastReserveContext};
 
 pub const DEFAULT_FAST_WINDOWS_MS: [u64; 7] = [100, 250, 500, 1_000, 2_000, 5_000, 10_000];
 
@@ -138,6 +140,8 @@ pub struct FastMarketSnapshot {
     pub as_of_unix_ms: i64,
     pub last_sequence: Option<u64>,
     pub last_price_quote: Option<f64>,
+    pub last_reserve_context: Option<FastReserveContext>,
+    pub last_lifecycle_event: Option<TokenLifecycleEvent>,
     pub windows: Vec<FastWindowSummary>,
 }
 
@@ -155,6 +159,8 @@ pub struct FastMarketState {
     last_sequence: Option<u64>,
     last_observed_at_unix_ms: Option<i64>,
     last_price_quote: Option<f64>,
+    last_reserve_context: Option<FastReserveContext>,
+    last_lifecycle_event: Option<TokenLifecycleEvent>,
 }
 
 impl FastMarketState {
@@ -166,6 +172,8 @@ impl FastMarketState {
             last_sequence: None,
             last_observed_at_unix_ms: None,
             last_price_quote: None,
+            last_reserve_context: None,
+            last_lifecycle_event: None,
         }
     }
 
@@ -194,6 +202,7 @@ impl FastMarketState {
         self.last_sequence = Some(event.sequence);
         self.last_observed_at_unix_ms = Some(observed_at_unix_ms);
         self.last_price_quote = Some(event.price_quote);
+        self.last_reserve_context = event.reserve_context.clone();
         self.events.push_back(event);
 
         let max_window_ms = self.windows_ms.iter().copied().max().unwrap_or(0) as i64;
@@ -209,6 +218,44 @@ impl FastMarketState {
         Ok(())
     }
 
+    /// Apply point-in-time lifecycle truth on its own decision-safe detection
+    /// clock. Lifecycle events are deliberately not assigned FastEvent
+    /// sequences because the durable lifecycle and trade streams do not share
+    /// one authoritative total order.
+    pub fn apply_lifecycle(&mut self, event: TokenLifecycleEvent) -> Result<(), FastStateError> {
+        if event.detected_at_unix_ms < 0 {
+            return Err(FastStateError::NegativeLifecycleObservation(
+                event.detected_at_unix_ms,
+            ));
+        }
+        if event.mint != self.market.mint
+            || event.quote_mint != self.market.quote_mint
+            || (event.from_venue != self.market.venue && event.to_venue != self.market.venue)
+        {
+            return Err(FastStateError::LifecycleMarketMismatch);
+        }
+
+        if let Some(last) = self.last_lifecycle_event.as_ref() {
+            if event.detected_at_unix_ms < last.detected_at_unix_ms {
+                return Err(FastStateError::LifecycleObservationTimeMovedBackward {
+                    last: last.detected_at_unix_ms,
+                    incoming: event.detected_at_unix_ms,
+                });
+            }
+            if event.detected_at_unix_ms == last.detected_at_unix_ms {
+                if event == *last {
+                    return Ok(());
+                }
+                return Err(FastStateError::ConflictingLifecycleObservationTime {
+                    at_unix_ms: event.detected_at_unix_ms,
+                });
+            }
+        }
+
+        self.last_lifecycle_event = Some(event);
+        Ok(())
+    }
+
     pub fn snapshot(&self, as_of_unix_ms: i64) -> Result<FastMarketSnapshot, FastStateError> {
         if as_of_unix_ms < 0 {
             return Err(FastStateError::NegativeAsOf(as_of_unix_ms));
@@ -217,6 +264,14 @@ impl FastMarketState {
             if as_of_unix_ms < last_observed_at_unix_ms {
                 return Err(FastStateError::SnapshotBeforeLastObservation {
                     last_observed_at_unix_ms,
+                    as_of_unix_ms,
+                });
+            }
+        }
+        if let Some(last_lifecycle_event) = self.last_lifecycle_event.as_ref() {
+            if as_of_unix_ms < last_lifecycle_event.detected_at_unix_ms {
+                return Err(FastStateError::SnapshotBeforeLastLifecycleObservation {
+                    last_detected_at_unix_ms: last_lifecycle_event.detected_at_unix_ms,
                     as_of_unix_ms,
                 });
             }
@@ -277,6 +332,8 @@ impl FastMarketState {
             as_of_unix_ms,
             last_sequence: self.last_sequence,
             last_price_quote: self.last_price_quote,
+            last_reserve_context: self.last_reserve_context.clone(),
+            last_lifecycle_event: self.last_lifecycle_event.clone(),
             windows,
         })
     }
@@ -287,9 +344,17 @@ pub enum FastStateError {
     MarketMismatch,
     NonMonotonicSequence { last: u64, incoming: u64 },
     ObservationTimeMovedBackward { last: i64, incoming: i64 },
+    NegativeLifecycleObservation(i64),
+    LifecycleMarketMismatch,
+    LifecycleObservationTimeMovedBackward { last: i64, incoming: i64 },
+    ConflictingLifecycleObservationTime { at_unix_ms: i64 },
     NegativeAsOf(i64),
     SnapshotBeforeLastObservation {
         last_observed_at_unix_ms: i64,
+        as_of_unix_ms: i64,
+    },
+    SnapshotBeforeLastLifecycleObservation {
+        last_detected_at_unix_ms: i64,
         as_of_unix_ms: i64,
     },
 }
@@ -308,6 +373,21 @@ impl fmt::Display for FastStateError {
                 formatter,
                 "fast-lane event observation time moved backward; last {last}, incoming {incoming}"
             ),
+            Self::NegativeLifecycleObservation(value) => write!(
+                formatter,
+                "fast-lane lifecycle detection timestamp must be non-negative; got {value}"
+            ),
+            Self::LifecycleMarketMismatch => formatter.write_str(
+                "fast-lane lifecycle event does not map to the state market",
+            ),
+            Self::LifecycleObservationTimeMovedBackward { last, incoming } => write!(
+                formatter,
+                "fast-lane lifecycle detection time moved backward; last {last}, incoming {incoming}"
+            ),
+            Self::ConflictingLifecycleObservationTime { at_unix_ms } => write!(
+                formatter,
+                "fast-lane lifecycle stream has conflicting events at detection time {at_unix_ms}"
+            ),
             Self::NegativeAsOf(value) => write!(
                 formatter,
                 "fast-lane snapshot timestamp must be non-negative; got {value}"
@@ -318,6 +398,13 @@ impl fmt::Display for FastStateError {
             } => write!(
                 formatter,
                 "fast-lane snapshot timestamp {as_of_unix_ms} precedes latest observation {last_observed_at_unix_ms}"
+            ),
+            Self::SnapshotBeforeLastLifecycleObservation {
+                last_detected_at_unix_ms,
+                as_of_unix_ms,
+            } => write!(
+                formatter,
+                "fast-lane snapshot timestamp {as_of_unix_ms} precedes latest lifecycle detection {last_detected_at_unix_ms}"
             ),
         }
     }

@@ -64,6 +64,36 @@ pub enum FastEventKind {
     Sell,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FastReserveContext {
+    PumpCurve {
+        virtual_base_reserve_raw: u64,
+        virtual_quote_reserve_raw: u64,
+        real_base_reserve_raw: u64,
+        real_quote_reserve_raw: u64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    },
+    PumpSwapPool {
+        pool_base_reserve_raw: u64,
+        pool_quote_reserve_raw: u64,
+        base_decimals: u8,
+        quote_decimals: u8,
+    },
+}
+
+impl FastReserveContext {
+    fn matches_venue(&self, venue: &VenueId) -> bool {
+        matches!(
+            (self, venue),
+            (
+                Self::PumpCurve { .. },
+                VenueId::PumpFunBondingCurve
+            ) | (Self::PumpSwapPool { .. }, VenueId::PumpSwap)
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct FastEvent {
     pub id: FastEventId,
@@ -78,6 +108,7 @@ pub struct FastEvent {
     pub base_quantity: f64,
     pub quote_quantity: f64,
     pub price_quote: f64,
+    pub reserve_context: Option<FastReserveContext>,
 }
 
 impl FastEvent {
@@ -142,7 +173,19 @@ impl FastEvent {
             base_quantity,
             quote_quantity,
             price_quote,
+            reserve_context: None,
         })
+    }
+
+    pub fn with_reserve_context(
+        mut self,
+        reserve_context: FastReserveContext,
+    ) -> Result<Self, FastEventError> {
+        if !reserve_context.matches_venue(&self.market.venue) {
+            return Err(FastEventError::ReserveContextVenueMismatch);
+        }
+        self.reserve_context = Some(reserve_context);
+        Ok(self)
     }
 }
 
@@ -158,6 +201,7 @@ pub enum FastEventError {
     InvalidBaseQuantity,
     InvalidQuoteQuantity,
     InvalidPriceQuote,
+    ReserveContextVenueMismatch,
 }
 
 impl fmt::Display for FastEventError {
@@ -188,6 +232,9 @@ impl fmt::Display for FastEventError {
             Self::InvalidPriceQuote => {
                 formatter.write_str("fast-lane quote price must be positive and finite")
             }
+            Self::ReserveContextVenueMismatch => formatter.write_str(
+                "fast-lane reserve context does not match the event market venue",
+            ),
         }
     }
 }
