@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
 use shreks_core::{
-    FastEvent, FastEventId, FastEventKind, FastMarketKey, ProviderId, VenueId,
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, FastReserveContext, ProviderId, VenueId,
 };
 
 use crate::{pump::PUMP_AMM_PROGRAM_ID, ProviderError, ProviderErrorKind};
@@ -130,7 +130,7 @@ pub fn pump_swap_trade_evidence_to_fast_event(
         .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent id: {error}")))?;
     let market = FastMarketKey::new(mint, quote_mint, VenueId::PumpSwap)
         .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent market: {error}")))?;
-    FastEvent::new(
+    let event = FastEvent::new(
         id,
         sequence,
         ProviderId::Helius,
@@ -148,7 +148,16 @@ pub fn pump_swap_trade_evidence_to_fast_event(
         quote_quantity,
         price_quote,
     )
-    .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent economics: {error}")))
+    .map_err(|error| invalid_response(format!("invalid PumpSwap FastEvent economics: {error}")))?;
+
+    event
+        .with_reserve_context(FastReserveContext::PumpSwapPool {
+            pool_base_reserve_raw: evidence.pool_base_reserves_raw,
+            pool_quote_reserve_raw: evidence.pool_quote_reserves_raw,
+            base_decimals,
+            quote_decimals,
+        })
+        .map_err(|error| invalid_response(format!("invalid PumpSwap reserve context: {error}")))
 }
 
 fn decimal_scale(decimals: u8) -> Result<f64, ProviderError> {
