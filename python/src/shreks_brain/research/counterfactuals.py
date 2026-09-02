@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 import hashlib
 import json
@@ -302,6 +302,8 @@ class CounterfactualActionOutcome:
     realized_cost_basis_quote: float | None = None
     remaining_base_quantity: float | None = None
     remaining_cost_basis_quote: float | None = None
+    entry_quote_savings_vs_buy_now: float | None = None
+    return_bps_delta_vs_buy_now: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,15 +337,23 @@ def label_entry_counterfactuals(
             "context must be an exact EntryCounterfactualContext"
         )
 
+    buy_now = _entry_outcome(
+        context=context,
+        action=CounterfactualAction.BUY_NOW,
+        alternative_id=None,
+        entry=context.buy_now,
+        exit=context.exit_at_horizon,
+        action_observed_at_unix_ms=context.decision_observed_at_unix_ms,
+    )
+    if buy_now.execution_status is ExecutionStatus.EXECUTABLE:
+        buy_now = replace(
+            buy_now,
+            entry_quote_savings_vs_buy_now=0.0,
+            return_bps_delta_vs_buy_now=0.0,
+        )
+
     outcomes = [
-        _entry_outcome(
-            context=context,
-            action=CounterfactualAction.BUY_NOW,
-            alternative_id=None,
-            entry=context.buy_now,
-            exit=context.exit_at_horizon,
-            action_observed_at_unix_ms=context.decision_observed_at_unix_ms,
-        ),
+        buy_now,
         CounterfactualActionOutcome(
             label_version=COUNTERFACTUAL_ACTION_LABEL_VERSION,
             decision_id=context.decision_id,
@@ -366,16 +376,32 @@ def label_entry_counterfactuals(
     ]
 
     for alternative in context.delayed_entries:
-        outcomes.append(
-            _entry_outcome(
-                context=context,
-                action=CounterfactualAction.DELAY_ENTRY,
-                alternative_id=alternative.alternative_id,
-                entry=alternative.entry,
-                exit=alternative.exit,
-                action_observed_at_unix_ms=alternative.entry.observed_at_unix_ms,
-            )
+        delayed = _entry_outcome(
+            context=context,
+            action=CounterfactualAction.DELAY_ENTRY,
+            alternative_id=alternative.alternative_id,
+            entry=alternative.entry,
+            exit=alternative.exit,
+            action_observed_at_unix_ms=alternative.entry.observed_at_unix_ms,
         )
+        if (
+            buy_now.execution_status is ExecutionStatus.EXECUTABLE
+            and delayed.execution_status is ExecutionStatus.EXECUTABLE
+        ):
+            assert buy_now.entry_total_quote is not None
+            assert buy_now.return_bps is not None
+            assert delayed.entry_total_quote is not None
+            assert delayed.return_bps is not None
+            delayed = replace(
+                delayed,
+                entry_quote_savings_vs_buy_now=(
+                    buy_now.entry_total_quote - delayed.entry_total_quote
+                ),
+                return_bps_delta_vs_buy_now=(
+                    delayed.return_bps - buy_now.return_bps
+                ),
+            )
+        outcomes.append(delayed)
 
     return _outcome_set(tuple(outcomes))
 
