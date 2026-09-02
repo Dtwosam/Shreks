@@ -200,23 +200,31 @@ fn normalize_paged_debt_capacity(
         return Ok(FastEventNormalizationReport::default());
     }
 
-    // Keep both venues making durable historical progress without allowing
-    // either table to force an unbounded readiness scan. Production uses a
-    // 64-row debt reserve, so this is 32 raw rows per venue per burst.
-    let pump_target = (limit + 1) / 2;
-    let pumpswap_target = limit.saturating_sub(pump_target);
+    // Each venue gets at most one bounded keyset page of the full debt reserve.
+    // We then choose the globally-oldest `limit` rows. This keeps total raw
+    // inspection bounded at 2x the debt reserve while ensuring an empty or
+    // sparse venue cannot waste the production 25% historical allocation.
+    // Rows paged past but not selected remain authoritative pending evidence and
+    // are revisited when that venue's durable cursor wraps.
     let mut pending = db
-        .paged_normalizer_pump_debt_evidence(pump_target)?
+        .paged_normalizer_pump_debt_evidence(limit)?
         .into_iter()
         .map(PendingEvidence::Pump)
         .chain(
-            db.paged_normalizer_pumpswap_debt_evidence(pumpswap_target)?
+            db.paged_normalizer_pumpswap_debt_evidence(limit)?
                 .into_iter()
                 .map(PendingEvidence::PumpSwap),
         )
         .collect::<Vec<_>>();
 
     sort_pending(&mut pending);
+    pending.dedup_by(|left, right| {
+        left.source_rank() == right.source_rank()
+            && left.signature() == right.signature()
+            && left.ordinal() == right.ordinal()
+    });
+    pending.truncate(limit);
+
     let mut report = FastEventNormalizationReport {
         scanned: pending.len(),
         ..FastEventNormalizationReport::default()
