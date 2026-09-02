@@ -165,15 +165,15 @@ pub fn normalize_pending_pump_trade_evidence_at(
 
     // Small diagnostic/test batches keep the historical oldest-first contract.
     // Production-sized bursts reserve at most one quarter for deterministic
-    // debt progress, then give every unused slot to newest ready evidence. The
-    // oldest lane already performs its own ready fallback, so running it a
-    // second time in the same burst would only rescan unresolved durable debt.
+    // historical progress, but advance that debt lane through durable bounded
+    // keyset pages instead of re-running absolute-oldest metadata/market scans.
+    // Every unused debt slot is still returned to newest ready evidence.
     if limit < 4 {
         return normalize_oldest_capacity(db, limit, accepted_at_unix_ms);
     }
 
     let debt_target = (limit / 4).max(1);
-    let mut report = normalize_oldest_capacity(db, debt_target, accepted_at_unix_ms)?;
+    let mut report = normalize_paged_debt_capacity(db, debt_target, accepted_at_unix_ms)?;
     let fresh_capacity = limit.saturating_sub(report.normalized);
 
     if fresh_capacity > 0 {
@@ -188,6 +188,40 @@ pub fn normalize_pending_pump_trade_evidence_at(
         )?;
     }
 
+    Ok(report)
+}
+
+fn normalize_paged_debt_capacity(
+    db: &ShreksDb,
+    limit: usize,
+    accepted_at_unix_ms: i64,
+) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
+    if limit == 0 {
+        return Ok(FastEventNormalizationReport::default());
+    }
+
+    // Keep both venues making durable historical progress without allowing
+    // either table to force an unbounded readiness scan. Production uses a
+    // 64-row debt reserve, so this is 32 raw rows per venue per burst.
+    let pump_target = (limit + 1) / 2;
+    let pumpswap_target = limit.saturating_sub(pump_target);
+    let mut pending = db
+        .paged_normalizer_pump_debt_evidence(pump_target)?
+        .into_iter()
+        .map(PendingEvidence::Pump)
+        .chain(
+            db.paged_normalizer_pumpswap_debt_evidence(pumpswap_target)?
+                .into_iter()
+                .map(PendingEvidence::PumpSwap),
+        )
+        .collect::<Vec<_>>();
+
+    sort_pending(&mut pending);
+    let mut report = FastEventNormalizationReport {
+        scanned: pending.len(),
+        ..FastEventNormalizationReport::default()
+    };
+    normalize_pending_rows(db, pending, limit, accepted_at_unix_ms, &mut report)?;
     Ok(report)
 }
 
