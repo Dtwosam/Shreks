@@ -287,21 +287,26 @@ def test_invalid_evidence_and_context_fail_closed() -> None:
             exit_at_horizon=None,
         )
 
+    not_later = DelayedEntryAlternative(
+        alternative_id="not-later",
+        entry=trade(
+            "late-buy",
+            observed_at_unix_ms=1_000,
+            side=TradeSide.BUY,
+            quote_amount=0.10,
+        ),
+        exit=trade(
+            "late-exit",
+            observed_at_unix_ms=2_000,
+            side=TradeSide.SELL,
+            quote_amount=0.132,
+        ),
+    )
     with pytest.raises(CounterfactualLabelError):
-        DelayedEntryAlternative(
-            alternative_id="not-later",
-            entry=trade(
-                "late-buy",
-                observed_at_unix_ms=1_000,
-                side=TradeSide.BUY,
-                quote_amount=0.10,
-            ),
-            exit=trade(
-                "late-exit",
-                observed_at_unix_ms=2_000,
-                side=TradeSide.SELL,
-                quote_amount=0.132,
-            ),
+        context(
+            buy_now=None,
+            exit_at_horizon=None,
+            delayed_entries=(not_later,),
         )
 
 
