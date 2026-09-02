@@ -24,6 +24,16 @@ fn pump_conversion_carries_exact_source_reserves_into_fast_event() {
         real_token_reserves_raw: 10_000_000_000,
         virtual_quote_reserves_raw: 77,
         real_quote_reserves_raw: 88,
+        fee_recipient: "fee-recipient".to_owned(),
+        fee_basis_points: 95,
+        fee_raw: 950_000,
+        creator: "creator".to_owned(),
+        creator_fee_basis_points: 30,
+        creator_fee_raw: 300_000,
+        cashback_fee_basis_points: 5,
+        cashback_raw: 50_000,
+        buyback_fee_basis_points: 7,
+        buyback_fee_raw: 70_000,
         ix_name: "buy".to_owned(),
     };
 
@@ -65,6 +75,12 @@ fn pumpswap_conversion_carries_exact_source_reserves_into_fast_event() {
         timestamp_unix_seconds: 1,
         pool_base_reserves_raw: 9_500_000_000,
         pool_quote_reserves_raw: 52_500_000_000,
+        lp_fee_basis_points: 20,
+        lp_fee_raw: 5_000_000,
+        protocol_fee_basis_points: 93,
+        protocol_fee_raw: 23_250_000,
+        quote_amount_with_or_without_lp_fee_raw: 2_505_000_000,
+        current_economics: None,
     };
 
     let event = pump_swap_trade_evidence_to_fast_event(
