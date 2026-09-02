@@ -4,6 +4,8 @@ mod observer_v2 {
 }
 #[path = "shreks-observe/fast_lane_acceptance_cli.rs"]
 mod fast_lane_acceptance_cli;
+#[path = "shreks-observe/fast_state_benchmark_cli.rs"]
+mod fast_state_benchmark_cli;
 #[path = "shreks-observe/realtime_targets.rs"]
 mod realtime_targets;
 #[path = "shreks-observe/realtime_target_publisher.rs"]
@@ -58,6 +60,9 @@ const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     if fast_lane_acceptance_cli::run_fast_lane_acceptance_subcommand_if_requested()? {
+        return Ok(());
+    }
+    if fast_state_benchmark_cli::run_fast_state_benchmark_subcommand_if_requested()? {
         return Ok(());
     }
 
