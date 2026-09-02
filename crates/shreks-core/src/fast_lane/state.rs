@@ -29,7 +29,14 @@ pub struct FastWindowSummary {
     pub quote_flow_velocity_per_second: f64,
     pub quote_flow_acceleration_per_second2: f64,
     pub local_high_price_quote: Option<f64>,
+    pub local_high_sequence: Option<u64>,
+    pub local_high_observed_at_unix_ms: Option<i64>,
     pub local_low_price_quote: Option<f64>,
+    pub local_low_sequence: Option<u64>,
+    pub local_low_observed_at_unix_ms: Option<i64>,
+    pub post_high_low_price_quote: Option<f64>,
+    pub post_high_low_sequence: Option<u64>,
+    pub post_high_low_observed_at_unix_ms: Option<i64>,
     pub last_price_quote: Option<f64>,
     pub drawdown_from_local_high: f64,
     pub recovery_from_local_low: f64,
@@ -55,7 +62,14 @@ impl FastWindowSummary {
             quote_flow_velocity_per_second: 0.0,
             quote_flow_acceleration_per_second2: 0.0,
             local_high_price_quote: None,
+            local_high_sequence: None,
+            local_high_observed_at_unix_ms: None,
             local_low_price_quote: None,
+            local_low_sequence: None,
+            local_low_observed_at_unix_ms: None,
+            post_high_low_price_quote: None,
+            post_high_low_sequence: None,
+            post_high_low_observed_at_unix_ms: None,
             last_price_quote: None,
             drawdown_from_local_high: 0.0,
             recovery_from_local_low: 0.0,
@@ -76,14 +90,50 @@ impl FastWindowSummary {
             }
         }
         self.net_quote_quantity = self.buy_quote_quantity - self.sell_quote_quantity;
-        self.local_high_price_quote = Some(
-            self.local_high_price_quote
-                .map_or(event.price_quote, |high| high.max(event.price_quote)),
-        );
-        self.local_low_price_quote = Some(
-            self.local_low_price_quote
-                .map_or(event.price_quote, |low| low.min(event.price_quote)),
-        );
+
+        match self.local_high_price_quote {
+            None => {
+                self.local_high_price_quote = Some(event.price_quote);
+                self.local_high_sequence = Some(event.sequence);
+                self.local_high_observed_at_unix_ms = Some(event.observed_at_unix_ms);
+            }
+            Some(high) if event.price_quote > high => {
+                self.local_high_price_quote = Some(event.price_quote);
+                self.local_high_sequence = Some(event.sequence);
+                self.local_high_observed_at_unix_ms = Some(event.observed_at_unix_ms);
+                self.post_high_low_price_quote = None;
+                self.post_high_low_sequence = None;
+                self.post_high_low_observed_at_unix_ms = None;
+            }
+            Some(_) => {
+                if self
+                    .local_high_sequence
+                    .is_some_and(|high_sequence| event.sequence > high_sequence)
+                    && self
+                        .post_high_low_price_quote
+                        .is_none_or(|low| event.price_quote < low)
+                {
+                    self.post_high_low_price_quote = Some(event.price_quote);
+                    self.post_high_low_sequence = Some(event.sequence);
+                    self.post_high_low_observed_at_unix_ms = Some(event.observed_at_unix_ms);
+                }
+            }
+        }
+
+        match self.local_low_price_quote {
+            None => {
+                self.local_low_price_quote = Some(event.price_quote);
+                self.local_low_sequence = Some(event.sequence);
+                self.local_low_observed_at_unix_ms = Some(event.observed_at_unix_ms);
+            }
+            Some(low) if event.price_quote < low => {
+                self.local_low_price_quote = Some(event.price_quote);
+                self.local_low_sequence = Some(event.sequence);
+                self.local_low_observed_at_unix_ms = Some(event.observed_at_unix_ms);
+            }
+            Some(_) => {}
+        }
+
         self.last_price_quote = Some(event.price_quote);
     }
 
