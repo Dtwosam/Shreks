@@ -7,10 +7,12 @@ use std::{
 };
 
 use shreks_core::{
-    FastEvent, FastEventId, FastEventKind, FastMarketKey, FastMarketState, ProviderId, VenueId,
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, FastMarketState, FastReserveContext,
+    LifecycleEventKind, ProviderId, TokenLifecycleEvent, VenueId,
 };
 
-const BENCHMARK_VERSION: u64 = 1;
+const BENCHMARK_VERSION: u64 = 2;
+const BENCHMARK_STATE_SHAPE: &str = "reserve+lifecycle";
 const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
 const OBSERVED_BASE_UNIX_MS: i64 = 1_800_000_000_000;
 
@@ -98,6 +100,18 @@ fn run_benchmark(
                 io::Error::other("active market index exceeds i64 milliseconds")
             })?)
             .ok_or_else(|| io::Error::other("seed observation timestamp overflow"))?;
+        let lifecycle_detected_at_unix_ms = observed_at_unix_ms
+            .checked_sub(1)
+            .ok_or_else(|| io::Error::other("benchmark lifecycle timestamp underflow"))?;
+
+        state
+            .apply_lifecycle(benchmark_lifecycle_event(
+                index,
+                &markets[index],
+                sequence,
+                lifecycle_detected_at_unix_ms,
+            ))
+            .map_err(|error| io::Error::other(error.to_string()))?;
         state
             .apply(benchmark_event(
                 sequence,
@@ -164,11 +178,47 @@ fn run_benchmark(
         let one_second = snapshot
             .window(1_000)
             .ok_or_else(|| io::Error::other("benchmark snapshot missing 1s window"))?;
+        let reserve_checksum = match snapshot.last_reserve_context.as_ref() {
+            Some(FastReserveContext::PumpCurve {
+                virtual_base_reserve_raw,
+                virtual_quote_reserve_raw,
+                real_base_reserve_raw,
+                real_quote_reserve_raw,
+                base_decimals,
+                quote_decimals,
+            }) => virtual_base_reserve_raw
+                ^ virtual_quote_reserve_raw.rotate_left(7)
+                ^ real_base_reserve_raw.rotate_left(13)
+                ^ real_quote_reserve_raw.rotate_left(19)
+                ^ u64::from(*base_decimals).rotate_left(29)
+                ^ u64::from(*quote_decimals).rotate_left(37),
+            Some(FastReserveContext::PumpSwapPool { .. }) => {
+                return Err(io::Error::other(
+                    "benchmark Pump market unexpectedly carried PumpSwap reserve context",
+                ));
+            }
+            None => {
+                return Err(io::Error::other(
+                    "benchmark snapshot missing reserve-aware FL2 state",
+                ));
+            }
+        };
+        let lifecycle = snapshot
+            .last_lifecycle_event
+            .as_ref()
+            .ok_or_else(|| io::Error::other("benchmark snapshot missing lifecycle-aware FL2 state"))?;
+        let lifecycle_checksum = lifecycle.slot
+            ^ u64::try_from(lifecycle.detected_at_unix_ms)
+                .map_err(|_| io::Error::other("benchmark lifecycle timestamp is negative"))?
+                .rotate_left(23);
+
         snapshot_checksum = snapshot_checksum
             .wrapping_mul(1_099_511_628_211)
             .wrapping_add(snapshot.last_sequence.unwrap_or(0))
             ^ one_second.net_quote_quantity.to_bits()
-            ^ one_second.quote_flow_acceleration_per_second2.to_bits().rotate_left(17);
+            ^ one_second.quote_flow_acceleration_per_second2.to_bits().rotate_left(17)
+            ^ reserve_checksum.rotate_left(31)
+            ^ lifecycle_checksum;
         black_box(snapshot_checksum);
 
         next_sequence = next_sequence
@@ -204,6 +254,27 @@ fn benchmark_market(index: usize) -> io::Result<FastMarketKey> {
     .map_err(|error| io::Error::other(error.to_string()))
 }
 
+fn benchmark_lifecycle_event(
+    index: usize,
+    market: &FastMarketKey,
+    slot: u64,
+    detected_at_unix_ms: i64,
+) -> TokenLifecycleEvent {
+    TokenLifecycleEvent {
+        kind: LifecycleEventKind::PumpGraduation,
+        provider: ProviderId::SolanaPublic,
+        mint: market.mint.clone(),
+        quote_mint: market.quote_mint.clone(),
+        from_venue: VenueId::PumpFunBondingCurve,
+        to_venue: VenueId::PumpSwap,
+        pool_address: format!("BenchmarkPool{index:016}"),
+        signature: format!("benchmark-graduation-{index}"),
+        slot,
+        detected_at_unix_ms,
+        occurred_at_unix_ms: Some(detected_at_unix_ms),
+    }
+}
+
 fn benchmark_event(
     sequence: u64,
     market: FastMarketKey,
@@ -217,8 +288,9 @@ fn benchmark_event(
     let quote_quantity = 1.0 + (sequence % 17) as f64 / 10.0;
     let base_quantity = 100.0 + (sequence % 29) as f64;
     let price_quote = quote_quantity / base_quantity;
+    let reserve_offset = sequence % 1_000_000;
 
-    FastEvent::new(
+    let event = FastEvent::new(
         FastEventId::new(format!("benchmark-signature-{sequence}"), 0)
             .map_err(|error| io::Error::other(error.to_string()))?,
         sequence,
@@ -233,7 +305,18 @@ fn benchmark_event(
         quote_quantity,
         price_quote,
     )
-    .map_err(|error| io::Error::other(error.to_string()))
+    .map_err(|error| io::Error::other(error.to_string()))?;
+
+    event
+        .with_reserve_context(FastReserveContext::PumpCurve {
+            virtual_base_reserve_raw: 1_000_000_000_000 + reserve_offset,
+            virtual_quote_reserve_raw: 30_000_000_000 + reserve_offset,
+            real_base_reserve_raw: 700_000_000_000 + reserve_offset,
+            real_quote_reserve_raw: 15_000_000_000 + reserve_offset,
+            base_decimals: 6,
+            quote_decimals: 9,
+        })
+        .map_err(|error| io::Error::other(error.to_string()))
 }
 
 fn latency_summary(mut samples: Vec<u128>) -> io::Result<LatencySummary> {
@@ -322,6 +405,7 @@ fn usage(program: &OsString) -> String {
 
 fn print_report(report: &FastStateBenchmarkReport) {
     println!("benchmark_version={BENCHMARK_VERSION}");
+    println!("state_shape={BENCHMARK_STATE_SHAPE}");
     println!("active_markets={}", report.active_markets);
     println!("burst_events={}", report.burst_events);
     println!("state_update_samples={}", report.state_update_samples);
