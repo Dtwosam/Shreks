@@ -40,6 +40,7 @@ pub fn pump_swap_reserve_context_from_source(
     FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: source.pool_base_reserves_raw,
         pool_quote_reserve_raw: source.pool_quote_reserves_raw,
+        virtual_quote_reserve_raw: None,
         base_decimals,
         quote_decimals,
     }
@@ -196,9 +197,17 @@ impl ShreksDb {
             )));
         };
 
+        let virtual_quote_reserve_raw = self
+            .pump_swap_execution_economics(
+                &stored.event.id.signature,
+                stored.event.id.ordinal,
+            )?
+            .and_then(|economics| economics.virtual_quote_reserves_raw);
+
         Ok(FastReserveContext::PumpSwapPool {
             pool_base_reserve_raw: parse_u64_text(&pool_base, "PumpSwap pool base reserves")?,
             pool_quote_reserve_raw: parse_u64_text(&pool_quote, "PumpSwap pool quote reserves")?,
+            virtual_quote_reserve_raw,
             base_decimals: stored.base_decimals,
             quote_decimals: stored.quote_decimals,
         })
