@@ -2,14 +2,16 @@
 
 mod fast_lane;
 pub use fast_lane::{
-    label_future_paths, maximum_exit_capacity, project_exit, ExecutionCostModel,
-    ExecutionEconomics, ExecutionEconomicsError, ExecutionLegCostInput, ExecutionTradeInput,
-    ExitCapacity, ExitCapacityError, ExitProjection, FastEvent, FastEventError, FastEventId,
-    FastEventKind, FastMarketKey, FastMarketSnapshot, FastMarketState, FastReserveContext,
-    FastStateError, FastWindowSummary, FuturePathCompleteness, FuturePathCoverage,
-    FuturePathDecision, FuturePathLabel, FuturePathLabelError, FuturePathObservation,
-    DEFAULT_FAST_WINDOWS_MS, DEFAULT_FUTURE_PATH_HORIZONS_MS, EXECUTION_ECONOMICS_VERSION,
-    FUTURE_PATH_LABEL_VERSION,
+    assess_impulse_scalp, label_future_paths, maximum_exit_capacity, project_exit,
+    ExecutionCostModel, ExecutionEconomics, ExecutionEconomicsError, ExecutionLegCostInput,
+    ExecutionTradeInput, ExitCapacity, ExitCapacityError, ExitProjection, FastEvent,
+    FastEventError, FastEventId, FastEventKind, FastLaneAction, FastMarketKey, FastMarketSnapshot,
+    FastMarketState, FastReserveContext, FastStateError, FastWindowSummary,
+    FuturePathCompleteness, FuturePathCoverage, FuturePathDecision, FuturePathLabel,
+    FuturePathLabelError, FuturePathObservation, ImpulseScalpAssessment, ImpulseScalpError,
+    ImpulseScalpExecutionInput, ImpulseScalpPolicy, ImpulseScalpReason, DEFAULT_FAST_WINDOWS_MS,
+    DEFAULT_FUTURE_PATH_HORIZONS_MS, EXECUTION_ECONOMICS_VERSION, FUTURE_PATH_LABEL_VERSION,
+    IMPULSE_SCALP_BASELINE_VERSION,
 };
 mod lifecycle;
 pub use lifecycle::{LifecycleEventKind, TokenLifecycleEvent};
