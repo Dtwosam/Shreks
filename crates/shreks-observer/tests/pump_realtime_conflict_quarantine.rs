@@ -46,6 +46,16 @@ fn pump_trade(sol_amount_raw: u64) -> PumpTradeEvidence {
         real_token_reserves_raw: 600_000_000_000_000,
         virtual_quote_reserves_raw: 32_000_000_000,
         real_quote_reserves_raw: 10_000_000_000,
+        fee_recipient: "FeeRecipientConflict111".to_owned(),
+        fee_basis_points: 95,
+        fee_raw: 23_750_000,
+        creator: "CreatorConflict111".to_owned(),
+        creator_fee_basis_points: 30,
+        creator_fee_raw: 7_500_000,
+        cashback_fee_basis_points: 5,
+        cashback_raw: 1_250_000,
+        buyback_fee_basis_points: 7,
+        buyback_fee_raw: 1_750_000,
         ix_name: "buy".to_owned(),
     }
 }
@@ -62,6 +72,12 @@ fn pumpswap_trade(quote_amount_raw: u64) -> PumpSwapTradeEvidence {
         timestamp_unix_seconds: 1_780_000_100,
         pool_base_reserves_raw: 500_000_000_000_000,
         pool_quote_reserves_raw: 40_000_000_000,
+        lp_fee_basis_points: 20,
+        lp_fee_raw: 7_000_000,
+        protocol_fee_basis_points: 93,
+        protocol_fee_raw: 32_550_000,
+        quote_amount_with_or_without_lp_fee_raw: quote_amount_raw + 7_000_000,
+        current_economics: None,
     }
 }
 
