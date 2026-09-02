@@ -50,7 +50,12 @@ fn raw(signature: &str, log_index: u32, observed_at_unix_ms: i64) -> PumpSwapTra
     }
 }
 
-fn migration(signature: &str, mint: &str, quote_mint: &str, pool: &str) -> TokenLifecycleEvent {
+fn migration(
+    signature: &str,
+    mint: &str,
+    quote_mint: &str,
+    pool: &str,
+) -> TokenLifecycleEvent {
     TokenLifecycleEvent {
         kind: LifecycleEventKind::PumpGraduation,
         provider: ProviderId::Helius,

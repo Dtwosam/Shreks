@@ -8,7 +8,8 @@ use std::{
 use shreks_core::ProviderId;
 use shreks_observer::Observer;
 use shreks_providers::{
-    pump_realtime::PumpRealtimeNotification, pump_swap_trade::PumpSwapTradeEvidence,
+    pump_realtime::PumpRealtimeNotification,
+    pump_swap_trade::PumpSwapTradeEvidence,
     pump_trade::PumpTradeEvidence,
 };
 use shreks_storage::ShreksDb;

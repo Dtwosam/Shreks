@@ -163,13 +163,14 @@ fn pump_replay_derives_reserve_context_from_immutable_source() {
         .unwrap());
 
     let replay = db
-        .fast_events_for_market_with_reserve_context("mint-a", WSOL, VenueId::PumpFunBondingCurve)
+        .fast_events_for_market_with_reserve_context(
+            "mint-a",
+            WSOL,
+            VenueId::PumpFunBondingCurve,
+        )
         .unwrap();
     assert_eq!(replay.len(), 1);
-    assert_eq!(
-        replay[0].event.reserve_context,
-        Some(expected_pump_context())
-    );
+    assert_eq!(replay[0].event.reserve_context, Some(expected_pump_context()));
 
     cleanup_dir(&root);
 }
@@ -185,13 +186,14 @@ fn legacy_pump_record_wrapper_enriches_reserve_aware_replay() {
         .record_fast_event(&pump_event("pump-wrapper"), 1_100, 6, 9)
         .unwrap());
     let replay = db
-        .fast_events_for_market_with_reserve_context("mint-a", WSOL, VenueId::PumpFunBondingCurve)
+        .fast_events_for_market_with_reserve_context(
+            "mint-a",
+            WSOL,
+            VenueId::PumpFunBondingCurve,
+        )
         .unwrap();
     assert_eq!(replay.len(), 1);
-    assert_eq!(
-        replay[0].event.reserve_context,
-        Some(expected_pump_context())
-    );
+    assert_eq!(replay[0].event.reserve_context, Some(expected_pump_context()));
 
     cleanup_dir(&root);
 }

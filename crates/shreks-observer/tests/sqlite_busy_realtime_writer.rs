@@ -1,14 +1,18 @@
 use std::{
     fs,
     path::PathBuf,
-    process, thread,
+    process,
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rusqlite::Connection;
 use shreks_core::ProviderId;
 use shreks_observer::Observer;
-use shreks_providers::{pump_realtime::PumpRealtimeNotification, pump_trade::PumpTradeEvidence};
+use shreks_providers::{
+    pump_realtime::PumpRealtimeNotification,
+    pump_trade::PumpTradeEvidence,
+};
 use shreks_storage::ShreksDb;
 use tokio::sync::mpsc;
 
@@ -72,9 +76,7 @@ async fn realtime_writer_survives_one_transient_sqlite_busy_interval() {
     // production ShreksDb 5-second busy timeout. This reproduces the physical
     // FL1.5 failure without changing SQLite configuration or mocking storage.
     let blocker = Connection::open(&db_path).unwrap();
-    blocker
-        .execute_batch("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;")
-        .unwrap();
+    blocker.execute_batch("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;").unwrap();
     let release_lock = thread::spawn(move || {
         thread::sleep(BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT);
         blocker.execute_batch("COMMIT;").unwrap();

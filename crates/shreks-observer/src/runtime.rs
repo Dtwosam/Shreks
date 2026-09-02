@@ -11,9 +11,13 @@ use std::{
 
 use shreks_core::ProviderId;
 use shreks_providers::{
-    config::ProviderConfig, dexscreener::DexScreenerProvider, meteora::MeteoraProvider,
-    pump::PumpLifecycleSignal, pump_realtime::PumpRealtimeNotification,
-    solana_rpc::StandardSolanaRpcProvider, ProviderError,
+    config::ProviderConfig,
+    dexscreener::DexScreenerProvider,
+    meteora::MeteoraProvider,
+    pump::PumpLifecycleSignal,
+    pump_realtime::PumpRealtimeNotification,
+    solana_rpc::StandardSolanaRpcProvider,
+    ProviderError,
 };
 use shreks_storage::{
     pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapExecutionEconomicsWrite,
@@ -27,7 +31,8 @@ use crate::{Observer, ObserverError};
 
 const DEFAULT_DB_PATH: &str = "data/shreks.db";
 const DEFAULT_CYCLE_INTERVAL_SECONDS: u64 = 30;
-const PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV: &str = "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS";
+const PUMPSWAP_TRACKING_MAX_AGE_SECONDS_ENV: &str =
+    "SHREKS_PUMPSWAP_TRACKING_MAX_AGE_SECONDS";
 const PUMPSWAP_MAX_TRACKED_POOLS_ENV: &str = "SHREKS_PUMPSWAP_MAX_TRACKED_POOLS";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,12 +317,10 @@ impl Observer {
                     || {
                         db.with_fast_event_write_transaction(
                             || -> Result<EvidenceWriteOutcome, StorageError> {
-                                let outcome =
-                                    db.record_pump_trade_evidence_or_quarantine(&write)?;
+                                let outcome = db.record_pump_trade_evidence_or_quarantine(&write)?;
                                 if matches!(
                                     outcome,
-                                    EvidenceWriteOutcome::Inserted
-                                        | EvidenceWriteOutcome::Duplicate
+                                    EvidenceWriteOutcome::Inserted | EvidenceWriteOutcome::Duplicate
                                 ) {
                                     db.record_pump_trade_execution_economics(&economics)?;
                                 }
@@ -330,8 +333,8 @@ impl Observer {
                     EvidenceWriteOutcome::Inserted => {
                         trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
                     }
-                    EvidenceWriteOutcome::Duplicate | EvidenceWriteOutcome::QuarantinedConflict => {
-                    }
+                    EvidenceWriteOutcome::Duplicate
+                    | EvidenceWriteOutcome::QuarantinedConflict => {}
                 }
             }
 
@@ -409,8 +412,7 @@ impl Observer {
                                     db.record_pump_swap_trade_evidence_or_quarantine(&write)?;
                                 if matches!(
                                     outcome,
-                                    EvidenceWriteOutcome::Inserted
-                                        | EvidenceWriteOutcome::Duplicate
+                                    EvidenceWriteOutcome::Inserted | EvidenceWriteOutcome::Duplicate
                                 ) {
                                     db.record_pump_swap_execution_economics(&economics)?;
                                 }
@@ -423,8 +425,8 @@ impl Observer {
                     EvidenceWriteOutcome::Inserted => {
                         trade_rows_inserted = increment_trade_rows(trade_rows_inserted)?;
                     }
-                    EvidenceWriteOutcome::Duplicate | EvidenceWriteOutcome::QuarantinedConflict => {
-                    }
+                    EvidenceWriteOutcome::Duplicate
+                    | EvidenceWriteOutcome::QuarantinedConflict => {}
                 }
             }
         }
@@ -441,9 +443,7 @@ fn increment_trade_rows(current: usize) -> Result<usize, ObserverError> {
     })
 }
 
-fn validate_realtime_identity(
-    notification: &PumpRealtimeNotification,
-) -> Result<(), ObserverError> {
+fn validate_realtime_identity(notification: &PumpRealtimeNotification) -> Result<(), ObserverError> {
     if !matches!(
         notification.provider,
         ProviderId::Helius

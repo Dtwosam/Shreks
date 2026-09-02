@@ -1,20 +1,22 @@
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
 use shreks_core::{
     FastEvent, FastEventId, FastEventKind, FastMarketKey, FastReserveContext, ProviderId, VenueId,
 };
 
 use crate::{
-    ProviderError, ProviderErrorKind,
     pump::{PUMP_PROGRAM_ID, WRAPPED_SOL_MINT},
+    ProviderError, ProviderErrorKind,
 };
 
 pub const PUMP_BUY_DISCRIMINATOR: [u8; 8] = [102, 6, 61, 18, 1, 218, 235, 234];
-pub const PUMP_BUY_EXACT_SOL_IN_DISCRIMINATOR: [u8; 8] = [56, 252, 116, 8, 158, 223, 205, 95];
+pub const PUMP_BUY_EXACT_SOL_IN_DISCRIMINATOR: [u8; 8] =
+    [56, 252, 116, 8, 158, 223, 205, 95];
 pub const PUMP_BUY_V2_DISCRIMINATOR: [u8; 8] = [184, 23, 238, 97, 103, 197, 211, 61];
 pub const PUMP_SELL_DISCRIMINATOR: [u8; 8] = [51, 230, 133, 164, 1, 127, 131, 173];
 pub const PUMP_SELL_V2_DISCRIMINATOR: [u8; 8] = [93, 246, 130, 60, 231, 233, 64, 178];
-pub const PUMP_TRADE_EVENT_DISCRIMINATOR: [u8; 8] = [189, 219, 127, 211, 78, 230, 97, 238];
+pub const PUMP_TRADE_EVENT_DISCRIMINATOR: [u8; 8] =
+    [189, 219, 127, 211, 78, 230, 97, 238];
 
 const DEFAULT_SOL_QUOTE_MINT: &str = "11111111111111111111111111111111";
 const MAX_SHAREHOLDERS: usize = 4_096;
@@ -64,8 +66,9 @@ pub enum PumpTradeVerification {
 pub fn parse_pump_trade_log_notification(
     body: &str,
 ) -> Result<Option<PumpTradeSignal>, ProviderError> {
-    let value: Value = serde_json::from_str(body)
-        .map_err(|error| invalid_response(format!("invalid Pump trade websocket JSON: {error}")))?;
+    let value: Value = serde_json::from_str(body).map_err(|error| {
+        invalid_response(format!("invalid Pump trade websocket JSON: {error}"))
+    })?;
 
     if value.get("method").and_then(Value::as_str) != Some("logsNotification") {
         return Ok(None);
@@ -193,9 +196,7 @@ pub fn pump_trade_evidence_to_fast_event(
     quote_decimals: u8,
 ) -> Result<FastEvent, ProviderError> {
     if evidence.token_amount_raw == 0 {
-        return Err(invalid_response(
-            "Pump tradeEvent token amount must be positive",
-        ));
+        return Err(invalid_response("Pump tradeEvent token amount must be positive"));
     }
     if evidence.timestamp_unix_seconds < 0 {
         return Err(invalid_response(
@@ -216,9 +217,7 @@ pub fn pump_trade_evidence_to_fast_event(
         evidence.quote_amount_raw
     };
     if quote_amount_raw == 0 {
-        return Err(invalid_response(
-            "Pump tradeEvent quote amount must be positive",
-        ));
+        return Err(invalid_response("Pump tradeEvent quote amount must be positive"));
     }
 
     let (virtual_quote_reserve_raw, real_quote_reserve_raw) = if is_sol_quote {
@@ -394,7 +393,10 @@ fn terminated_program(log: &str) -> Option<&str> {
     rest.split_once(" failed:").map(|(program, _)| program)
 }
 
-fn decode_trade_event(payload: &[u8], signature: &str) -> Result<PumpTradeEvidence, ProviderError> {
+fn decode_trade_event(
+    payload: &[u8],
+    signature: &str,
+) -> Result<PumpTradeEvidence, ProviderError> {
     let mut cursor = BorshCursor::new(payload, signature);
     let mint = cursor.pubkey("mint")?;
     let sol_amount_raw = cursor.u64("solAmount")?;
@@ -436,7 +438,7 @@ fn decode_trade_event(payload: &[u8], signature: &str) -> Result<PumpTradeEviden
         other => {
             return Err(invalid_response(format!(
                 "Pump trade signature {signature} emitted unsupported tradeEvent ixName '{other}'"
-            )));
+            )))
         }
     };
     if ix_side != is_buy {

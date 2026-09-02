@@ -13,8 +13,7 @@ pub fn pump_reserve_context_from_source(
     base_decimals: u8,
     quote_decimals: u8,
 ) -> FastReserveContext {
-    let quote_is_sol =
-        source.quote_mint == SYSTEM_SOL_MINT || source.quote_mint == WRAPPED_SOL_MINT;
+    let quote_is_sol = source.quote_mint == SYSTEM_SOL_MINT || source.quote_mint == WRAPPED_SOL_MINT;
     FastReserveContext::PumpCurve {
         virtual_base_reserve_raw: source.virtual_token_reserves_raw,
         virtual_quote_reserve_raw: if quote_is_sol {
@@ -145,11 +144,7 @@ impl ShreksDb {
             observed_at_unix_ms: stored.source_observed_at_unix_ms,
             mint: stored.event.market.mint.clone(),
             quote_mint: raw_quote_mint,
-            user: stored
-                .event
-                .actor
-                .clone()
-                .unwrap_or_else(|| "source-replay".to_owned()),
+            user: stored.event.actor.clone().unwrap_or_else(|| "source-replay".to_owned()),
             is_buy: matches!(stored.event.kind, shreks_core::FastEventKind::Buy),
             token_amount_raw: 0,
             sol_amount_raw: 0,
@@ -203,7 +198,10 @@ impl ShreksDb {
         };
 
         let virtual_quote_reserve_raw = self
-            .pump_swap_execution_economics(&stored.event.id.signature, stored.event.id.ordinal)?
+            .pump_swap_execution_economics(
+                &stored.event.id.signature,
+                stored.event.id.ordinal,
+            )?
             .and_then(|economics| economics.virtual_quote_reserves_raw);
 
         Ok(FastReserveContext::PumpSwapPool {

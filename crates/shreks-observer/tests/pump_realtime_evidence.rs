@@ -111,10 +111,7 @@ async fn realtime_writer_persists_lifecycle_and_trade_economics_immediately_and_
     let inserted = Observer::run_pump_realtime_writer(writer_db, receiver)
         .await
         .expect("realtime writer should drain the bounded channel");
-    assert_eq!(
-        inserted, 1,
-        "duplicate economic replay must not create a second row"
-    );
+    assert_eq!(inserted, 1, "duplicate economic replay must not create a second row");
 
     let db = ShreksDb::open(&db_path).unwrap();
     let pending = db.pending_pump_launch_signals(10).unwrap();
@@ -228,10 +225,7 @@ async fn realtime_writer_persists_pumpswap_economics_immediately_and_idempotentl
     let inserted = Observer::run_pump_realtime_writer(writer_db, receiver)
         .await
         .expect("realtime writer should drain PumpSwap evidence");
-    assert_eq!(
-        inserted, 1,
-        "duplicate PumpSwap replay must remain idempotent"
-    );
+    assert_eq!(inserted, 1, "duplicate PumpSwap replay must remain idempotent");
 
     let db = ShreksDb::open(&db_path).unwrap();
     let rows = db
@@ -335,7 +329,7 @@ async fn realtime_writer_preserves_chainstack_pumpswap_provenance() {
 
 #[tokio::test]
 async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
-    use shreks_providers::pump::{PumpLifecycleSignal, PumpMigrationSignal};
+    use shreks_providers::pump::{PumpMigrationSignal, PumpLifecycleSignal};
 
     let root = unique_test_dir("migration");
     let db_path = root.join("shreks.db");

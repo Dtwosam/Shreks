@@ -60,8 +60,9 @@ pub enum ExecutionEconomicsError {
 impl fmt::Display for ExecutionEconomicsError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidModelVersion => formatter
-                .write_str("execution economics cost model version must be greater than zero"),
+            Self::InvalidModelVersion => formatter.write_str(
+                "execution economics cost model version must be greater than zero",
+            ),
             Self::BasisPointsOutOfRange { field, value } => write!(
                 formatter,
                 "execution economics {field} must be <= 10000 basis points; got {value}"
@@ -173,7 +174,8 @@ impl ExecutionEconomics {
             .required_edge_bps
             .checked_add(trade.risk_margin_bps)
             .ok_or(ExecutionEconomicsError::RequiredReturnOverflow)?;
-        let required_return_rate = f64::from(required_return_bps) / BASIS_POINTS_DENOMINATOR;
+        let required_return_rate =
+            f64::from(required_return_bps) / BASIS_POINTS_DENOMINATOR;
         let max_entry_total_quote = finite_result(
             forecast_exit_net_quote / (1.0 + required_return_rate),
             "maximum entry total quote",
@@ -280,14 +282,20 @@ fn validate_fixed(field: &'static str, value: f64) -> Result<(), ExecutionEconom
     Ok(())
 }
 
-fn require_positive_finite(value: f64, field: &'static str) -> Result<(), ExecutionEconomicsError> {
+fn require_positive_finite(
+    value: f64,
+    field: &'static str,
+) -> Result<(), ExecutionEconomicsError> {
     if !value.is_finite() || value <= 0.0 {
         return Err(ExecutionEconomicsError::InvalidTradeValue { field });
     }
     Ok(())
 }
 
-fn finite_result(value: f64, field: &'static str) -> Result<f64, ExecutionEconomicsError> {
+fn finite_result(
+    value: f64,
+    field: &'static str,
+) -> Result<f64, ExecutionEconomicsError> {
     if !value.is_finite() {
         return Err(ExecutionEconomicsError::NonFiniteResult { field });
     }
