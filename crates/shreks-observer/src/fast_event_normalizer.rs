@@ -165,15 +165,15 @@ pub fn normalize_pending_pump_trade_evidence_at(
 
     // Small diagnostic/test batches keep the historical oldest-first contract.
     // Production-sized bursts reserve at most one quarter for deterministic
-    // debt progress, then give every unused slot to newest ready evidence. The
-    // oldest lane already performs its own ready fallback, so running it a
-    // second time in the same burst would only rescan unresolved durable debt.
+    // historical progress, but advance that debt lane through durable bounded
+    // keyset pages instead of re-running absolute-oldest metadata/market scans.
+    // Every unused debt slot is still returned to newest ready evidence.
     if limit < 4 {
         return normalize_oldest_capacity(db, limit, accepted_at_unix_ms);
     }
 
     let debt_target = (limit / 4).max(1);
-    let mut report = normalize_oldest_capacity(db, debt_target, accepted_at_unix_ms)?;
+    let mut report = normalize_paged_debt_capacity(db, debt_target, accepted_at_unix_ms)?;
     let fresh_capacity = limit.saturating_sub(report.normalized);
 
     if fresh_capacity > 0 {
@@ -188,6 +188,48 @@ pub fn normalize_pending_pump_trade_evidence_at(
         )?;
     }
 
+    Ok(report)
+}
+
+fn normalize_paged_debt_capacity(
+    db: &ShreksDb,
+    limit: usize,
+    accepted_at_unix_ms: i64,
+) -> Result<FastEventNormalizationReport, FastEventNormalizationError> {
+    if limit == 0 {
+        return Ok(FastEventNormalizationReport::default());
+    }
+
+    // Each venue gets at most one bounded keyset page of the full debt reserve.
+    // We then choose the globally-oldest `limit` rows. This keeps total raw
+    // inspection bounded at 2x the debt reserve while ensuring an empty or
+    // sparse venue cannot waste the production 25% historical allocation.
+    // Rows paged past but not selected remain authoritative pending evidence and
+    // are revisited when that venue's durable cursor wraps.
+    let mut pending = db
+        .paged_normalizer_pump_debt_evidence(limit)?
+        .into_iter()
+        .map(PendingEvidence::Pump)
+        .chain(
+            db.paged_normalizer_pumpswap_debt_evidence(limit)?
+                .into_iter()
+                .map(PendingEvidence::PumpSwap),
+        )
+        .collect::<Vec<_>>();
+
+    sort_pending(&mut pending);
+    pending.dedup_by(|left, right| {
+        left.source_rank() == right.source_rank()
+            && left.signature() == right.signature()
+            && left.ordinal() == right.ordinal()
+    });
+    pending.truncate(limit);
+
+    let mut report = FastEventNormalizationReport {
+        scanned: pending.len(),
+        ..FastEventNormalizationReport::default()
+    };
+    normalize_pending_rows(db, pending, limit, accepted_at_unix_ms, &mut report)?;
     Ok(report)
 }
 
