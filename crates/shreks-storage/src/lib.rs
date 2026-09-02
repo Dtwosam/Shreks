@@ -4,6 +4,7 @@ mod conflict_quarantine;
 mod execution_economics;
 mod fast_lane;
 mod fast_lane_metadata;
+mod future_path_labels;
 mod lifecycle;
 mod outcomes;
 mod pump_swap_fast_lane;
@@ -15,6 +16,7 @@ pub use execution_economics::{
     PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
+pub use future_path_labels::StoredFuturePathLabel;
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
@@ -124,6 +126,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 15,
         name: "fl3_execution_economics",
         sql: include_str!("../migrations/0015_fl3_execution_economics.sql"),
+    },
+    Migration {
+        version: 16,
+        name: "fast_future_path_labels",
+        sql: include_str!("../migrations/0016_fast_future_path_labels.sql"),
     },
 ];
 
