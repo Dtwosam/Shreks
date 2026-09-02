@@ -134,6 +134,7 @@ fn expected_pumpswap_context() -> FastReserveContext {
     FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: 9_500_000_000,
         pool_quote_reserve_raw: 52_500_000_000,
+        virtual_quote_reserve_raw: None,
         base_decimals: 6,
         quote_decimals: 9,
     }
@@ -207,6 +208,7 @@ fn pumpswap_replay_derives_reserve_context_from_immutable_source() {
     let deliberately_wrong_ephemeral_context = FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: 1,
         pool_quote_reserve_raw: 2,
+        virtual_quote_reserve_raw: None,
         base_decimals: 6,
         quote_decimals: 9,
     };
