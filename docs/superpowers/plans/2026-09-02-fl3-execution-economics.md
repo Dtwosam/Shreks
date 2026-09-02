@@ -10,6 +10,21 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-02-fl3-execution-economics-design.md`
 
+## Implementation record — 2026-09-02
+
+The checklist below is the original test-first execution sequence. The authoritative current state is:
+
+- Task 1 RED contract: `05914da2d89c18d60a73a9bdc8923f5750cfe53e`.
+- Task 2 provider-neutral economics implementation: closed at `6b689940d35439e202b6dc194aee174ab2972f83`; exact-head canonical CI run `33640036663` passed repository safety, Rust workspace, Python suite, and native ARM64 release verification.
+- Task 3 source evidence RED: `63320ac51bcd75c022b4df89ce28f2784c69de2d`; Pump/PumpSwap source fields retained in `95087ebb940e90237a0004c85e5fb2cce14cb07b` and `5e242a463d39728d9b9f7c2e37889303e7869ae9`.
+- Migration 15 preserves fee/virtual-reserve fields that older raw schemas physically lacked through immutable source-evidence sidecars keyed by exact `(signature, ordinal)`. These are raw-source extensions, not derived economics tables. Historical rows without a sidecar remain unknown. Realtime raw evidence and sidecar evidence are committed atomically; `35fa8cb5f39c257ce397aa70f082af22deb455a3` closes the runtime persistence gap.
+- Task 4 RED capacity contract: `b5a7f55f5da3877b9e65cf2d5c25ddc0cc7c646e`; checked venue capacity math: `de1c68a58e0ad2f64fc2959c7275d70bb6233aed`; PumpSwap virtual quote reserve propagation/replay completed through `63579d12734d9c7c2074010e3c12eba2446ee2fa`, with legacy unknown semantics proven by `3310660a95f4eb5cf7f7d89336b0ae8340c9114c` and `c94d3572c3ecc4877aa3ef73d02e78a8f843a051`.
+- Task 5 end-to-end capacity → economics → maximum-entry ceiling → reprice/abort contract: `4b288a65909754630ab39326d21c4e63371b7d7d`.
+- Final scope audit shows no signer, transaction submission, `RuntimeMode::Live` authorization, PAPER ledger authority, provider fallback selection, or release/deploy topology changes in the PR diff.
+- Final exact-head canonical four-gate CI and guarded merge/fresh merged-main four-gate CI remain the only closure steps not yet recorded as complete here. They must be proven on the final documentation-adjusted head before FL3 is closed.
+
+LIVE remains disabled throughout FL3.
+
 ## Global Constraints
 
 - LIVE remains disabled.
@@ -95,27 +110,27 @@ impl ExecutionEconomics {
 }
 ```
 
-- [ ] **Step 1: Test exact round-trip algebra**
+- [x] **Step 1: Test exact round-trip algebra**
 
 Use `Q=100`, `P_entry=0.01`, `P_exit=0.012`, entry fee/impact/slippage/latency `100/50/25/25 bps`, exit `100/40/20/40 bps`, entry fixed `0.0015` quote and exit fixed `0.001` quote. Assert `entry_total_quote`, `forecast_exit_net_quote`, `forecast_net_pnl_quote`, and break-even price against independently calculated formulas.
 
-- [ ] **Step 2: Test fixed costs penalize small notional more heavily**
+- [x] **Step 2: Test fixed costs penalize small notional more heavily**
 
 Assess two trades with identical rates/prices but different base quantity. Assert the smaller trade has a larger break-even move in bps.
 
-- [ ] **Step 3: Test maximum acceptable entry price**
+- [x] **Step 3: Test maximum acceptable entry price**
 
 For a fixed forecast exit, assert increasing `required_edge_bps` or `risk_margin_bps` strictly lowers the maximum acceptable entry price.
 
-- [ ] **Step 4: Test reprice/abort boundary**
+- [x] **Step 4: Test reprice/abort boundary**
 
 Assert exactly-at-ceiling entry is accepted, a price above the ceiling is rejected, and reduced exit capacity below intended quantity is rejected.
 
-- [ ] **Step 5: Test fail-closed validation**
+- [x] **Step 5: Test fail-closed validation**
 
 Reject zero/negative/non-finite prices or quantities, negative/non-finite fixed costs, cost components above `10_000` bps, exit total variable cost `>= 10_000` bps, model version `0`, insufficient exit capacity, and forecast inputs that produce no positive maximum entry price.
 
-- [ ] **Step 6: Commit RED only**
+- [x] **Step 6: Commit RED only**
 
 Commit message:
 
@@ -123,7 +138,7 @@ Commit message:
 test: define FL3 execution economics contract
 ```
 
-- [ ] **Step 7: Run PR CI and require Rust RED**
+- [x] **Step 7: Run PR CI and require Rust RED**
 
 Expected failure: unresolved imports/types from `shreks_core`. Repository safety/Python/ARM64 may also stop because Rust compilation is incomplete; the authoritative RED is the missing FL3 public contract.
 
@@ -138,11 +153,11 @@ Expected failure: unresolved imports/types from `shreks_core`. Repository safety
 
 **Produces:** `ExecutionLegCostInput`, `ExecutionCostModel`, `ExecutionTradeInput`, `ExecutionEconomics`, `ExecutionEconomicsError`, `EXECUTION_ECONOMICS_VERSION`.
 
-- [ ] **Step 1: Implement checked cost helpers**
+- [x] **Step 1: Implement checked cost helpers**
 
 Use `bps / 10_000.0` only after validating each component `<= 10_000`. Fixed quote costs must be finite and non-negative. Sum fee + impact + slippage + latency with checked integer addition before conversion.
 
-- [ ] **Step 2: Implement entry and exit algebra**
+- [x] **Step 2: Implement entry and exit algebra**
 
 ```text
 entry_variable_rate = sum(entry bps) / 10_000
@@ -155,14 +170,14 @@ exit_net    = Q * P_exit * (1 - exit_variable_rate) - exit_fixed
 
 Reject any non-finite result and require exit variable rate `< 1.0`.
 
-- [ ] **Step 3: Implement break-even**
+- [x] **Step 3: Implement break-even**
 
 ```text
 P_break_even = (entry_total + exit_fixed) / (Q * (1 - exit_variable_rate))
 break_even_move_bps = (P_break_even / P_entry - 1) * 10_000
 ```
 
-- [ ] **Step 4: Implement maximum acceptable entry price**
+- [x] **Step 4: Implement maximum acceptable entry price**
 
 ```text
 required_return_rate = (required_edge_bps + risk_margin_bps) / 10_000
@@ -173,11 +188,11 @@ max_entry_price = (max_entry_total - entry_fixed) / (Q * (1 + entry_rate))
 
 Require a finite, strictly positive result.
 
-- [ ] **Step 5: Implement capacity and reprice invariant**
+- [x] **Step 5: Implement capacity and reprice invariant**
 
 `assess` requires `exit_capacity_base >= base_quantity`. `entry_price_is_acceptable` validates current values and returns true only when capacity remains sufficient and current entry price is `<= maximum_acceptable_entry_price_quote`.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 ```bash
 cargo test -p shreks-core --test fast_lane_execution_economics
@@ -185,7 +200,7 @@ cargo test -p shreks-core --test fast_lane_execution_economics
 
 Expected: PASS.
 
-- [ ] **Step 7: Require exact-head four-gate GREEN and commit**
+- [x] **Step 7: Require exact-head four-gate GREEN and commit**
 
 Commit message:
 
@@ -207,27 +222,27 @@ feat: add FL3 execution economics core
 
 **Produces:** source-level fee evidence that can validate/derive `effective_fee_bps` without hard-coded protocol guesses.
 
-- [ ] **Step 1: RED Pump fee evidence test**
+- [x] **Step 1: RED Pump fee evidence test**
 
 Build a current-format Pump event fixture with distinct protocol/creator/newer fee fields. Assert the decoded evidence preserves the authoritative basis points/raw amounts instead of discarding them.
 
-- [ ] **Step 2: RED PumpSwap fee evidence test**
+- [x] **Step 2: RED PumpSwap fee evidence test**
 
 Build current Buy and Sell event fixtures with distinct LP/protocol/creator/cashback/buyback fields and a signed `virtual_quote_reserves`. Assert all fields are retained exactly.
 
-- [ ] **Step 3: Represent historical missing append-only fields as unknown**
+- [x] **Step 3: Represent historical missing append-only fields as unknown**
 
 Use `Option` for fields that genuinely may be absent from older event layouts. Do not synthesize today’s fee schedule for old rows.
 
-- [ ] **Step 4: GREEN parsers and source replay**
+- [x] **Step 4: GREEN parsers and source replay**
 
 Extend parser evidence structures minimally. If immutable raw storage already contains the complete event bytes/log evidence, derive these fields from source on replay; otherwise persist only the missing immutable source evidence, not a derived economics assessment.
 
-- [ ] **Step 5: Add effective-fee derivation only where semantics are unambiguous**
+- [x] **Step 5: Add effective-fee derivation only where semantics are unambiguous**
 
 Do not naïvely sum creator/cashback/buyback fields. Prefer an exact user-vs-market quote delta or a versioned fee configuration whose semantics are proven by protocol evidence. Return unknown when the event/config cannot support a safe derivation.
 
-- [ ] **Step 6: Exact-head four-gate GREEN**
+- [x] **Step 6: Exact-head four-gate GREEN**
 
 No provider selection/fallback changes are allowed.
 
@@ -243,27 +258,27 @@ No provider selection/fallback changes are allowed.
 
 **Produces:** deterministic capacity under an explicit minimum executable-price/economic boundary.
 
-- [ ] **Step 1: RED PumpSwap virtual-reserve test**
+- [x] **Step 1: RED PumpSwap virtual-reserve test**
 
 Require current PumpSwap source evidence to expose an optional signed virtual quote reserve and prove pricing uses physical quote reserve plus virtual quote reserve when known.
 
-- [ ] **Step 2: RED Pump capacity tests**
+- [x] **Step 2: RED Pump capacity tests**
 
 For Pump bonding-curve sell/exit math, prove quote output cannot exceed real quote reserves and that increasing intended exit size worsens executable average price under constant-product reserves.
 
-- [ ] **Step 3: RED PumpSwap capacity tests**
+- [x] **Step 3: RED PumpSwap capacity tests**
 
 Given physical base/quote reserves plus known virtual quote reserves, calculate maximum base exit quantity satisfying an explicit caller minimum executable average exit price. No arbitrary liquidity percentage is introduced.
 
-- [ ] **Step 4: GREEN checked reserve math**
+- [x] **Step 4: GREEN checked reserve math**
 
 Use checked arithmetic/conversions and fail closed on missing required evidence, non-positive effective reserves, impossible minimum-price boundary, or physical reserve exhaustion.
 
-- [ ] **Step 5: Prove deterministic replay**
+- [x] **Step 5: Prove deterministic replay**
 
 The same immutable source evidence must reconstruct the same reserve/capacity result.
 
-- [ ] **Step 6: Exact-head four-gate GREEN**
+- [x] **Step 6: Exact-head four-gate GREEN**
 
 ---
 
@@ -273,19 +288,21 @@ The same immutable source evidence must reconstruct the same reserve/capacity re
 - Add focused integration test(s) under `crates/shreks-core/tests/`.
 - Update `docs/superpowers/plans/2026-09-02-fl3-execution-economics.md` with verification SHAs.
 
-- [ ] **Step 1: End-to-end deterministic assessment test**
+- [x] **Step 1: End-to-end deterministic assessment test**
 
 Construct a reserve-aware market, explicit cost model, intended size, forecast executable exit price, and required edge/risk margin. Calculate capacity, assess economics, and assert the final max-entry ceiling.
 
-- [ ] **Step 2: Prove immediate reprice abort**
+- [x] **Step 2: Prove immediate reprice abort**
 
 At the exact ceiling: accept. One representable price above: abort. If capacity falls below intended quantity: abort regardless of price.
 
-- [ ] **Step 3: Scope audit**
+- [x] **Step 3: Scope audit**
 
 Confirm the PR does not modify signer, transaction submission, `RuntimeMode::Live` authorization, PAPER ledger authority, provider fallback selection, or release topology.
 
 - [ ] **Step 4: Exact-head four-gate GREEN**
+
+This must be recorded against the final documentation-adjusted PR head.
 
 - [ ] **Step 5: Guarded merge, fresh merged-main four-gate GREEN**
 
