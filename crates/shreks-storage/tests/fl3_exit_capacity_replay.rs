@@ -75,9 +75,7 @@ fn pumpswap_replay_recovers_virtual_quote_reserve_and_exact_capacity() {
         can_boost: Some(true),
         base_supply_raw: Some(10_000),
     };
-    assert!(db
-        .record_pump_swap_execution_economics(&economics)
-        .unwrap());
+    assert!(db.record_pump_swap_execution_economics(&economics).unwrap());
 
     let market = PumpSwapMarket {
         mint: "mint-a".to_owned(),
@@ -118,11 +116,8 @@ fn pumpswap_replay_recovers_virtual_quote_reserve_and_exact_capacity() {
         })
     );
 
-    let replay_capacity = maximum_exit_capacity(
-        replay[0].event.reserve_context.as_ref().unwrap(),
-        0.8,
-    )
-    .unwrap();
+    let replay_capacity =
+        maximum_exit_capacity(replay[0].event.reserve_context.as_ref().unwrap(), 0.8).unwrap();
     assert_eq!(replay_capacity.maximum_base_quantity_raw, 250);
     assert_eq!(replay_capacity.boundary_quote_output_raw, 200);
 

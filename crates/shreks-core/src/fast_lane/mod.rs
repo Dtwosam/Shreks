@@ -14,6 +14,5 @@ pub use event::{
     FastEvent, FastEventError, FastEventId, FastEventKind, FastMarketKey, FastReserveContext,
 };
 pub use state::{
-    FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary,
-    DEFAULT_FAST_WINDOWS_MS,
+    FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary, DEFAULT_FAST_WINDOWS_MS,
 };

@@ -1,6 +1,4 @@
-use shreks_core::{
-    maximum_exit_capacity, project_exit, ExitCapacityError, FastReserveContext,
-};
+use shreks_core::{maximum_exit_capacity, project_exit, ExitCapacityError, FastReserveContext};
 
 fn pump(real_quote_reserve_raw: u64) -> FastReserveContext {
     FastReserveContext::PumpCurve {
@@ -13,7 +11,10 @@ fn pump(real_quote_reserve_raw: u64) -> FastReserveContext {
     }
 }
 
-fn pumpswap(virtual_quote_reserve_raw: Option<i128>, physical_quote_reserve_raw: u64) -> FastReserveContext {
+fn pumpswap(
+    virtual_quote_reserve_raw: Option<i128>,
+    physical_quote_reserve_raw: u64,
+) -> FastReserveContext {
     FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: 1_000,
         pool_quote_reserve_raw: physical_quote_reserve_raw,

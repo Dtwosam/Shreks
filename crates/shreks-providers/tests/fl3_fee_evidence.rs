@@ -1,13 +1,13 @@
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use serde_json::{json, Value};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use serde_json::{Value, json};
 use shreks_providers::{
     pump::{PUMP_AMM_PROGRAM_ID, PUMP_PROGRAM_ID, WRAPPED_SOL_MINT},
     pump_realtime::parse_pump_realtime_log_notification,
+    pump_swap_trade::{PUMPSWAP_BUY_EVENT_DISCRIMINATOR, parse_pump_swap_trade_logs},
     pump_trade::{
-        classify_pump_trade_transaction, PumpTradeVerification, PUMP_BUY_V2_DISCRIMINATOR,
-        PUMP_TRADE_EVENT_DISCRIMINATOR,
+        PUMP_BUY_V2_DISCRIMINATOR, PUMP_TRADE_EVENT_DISCRIMINATOR, PumpTradeVerification,
+        classify_pump_trade_transaction,
     },
-    pump_swap_trade::{parse_pump_swap_trade_logs, PUMPSWAP_BUY_EVENT_DISCRIMINATOR},
 };
 
 const MINT: &str = "9cRCn9rGT8V2imeM2BaKs13yhMEais3ruM3rPvTGpump";
@@ -16,7 +16,9 @@ const POOL: &str = PUMP_AMM_PROGRAM_ID;
 const EVENT_TIMESTAMP_SECONDS: i64 = 1_780_000_000;
 
 fn push_pubkey(output: &mut Vec<u8>, value: &str) {
-    let decoded = bs58::decode(value).into_vec().expect("valid fixture pubkey");
+    let decoded = bs58::decode(value)
+        .into_vec()
+        .expect("valid fixture pubkey");
     assert_eq!(decoded.len(), 32);
     output.extend_from_slice(&decoded);
 }
@@ -194,17 +196,18 @@ fn pump_trade_preserves_authoritative_fee_evidence_already_present_in_event() {
 
 #[test]
 fn pumpswap_preserves_stable_prefix_fees_and_current_optional_economics_suffix() {
-    let events = parse_pump_swap_trade_logs(&direct_pumpswap_logs(
-        pumpswap_current_program_data(),
-    ))
-    .unwrap();
+    let events =
+        parse_pump_swap_trade_logs(&direct_pumpswap_logs(pumpswap_current_program_data())).unwrap();
     let evidence = &events[0];
 
     assert_eq!(evidence.lp_fee_basis_points, 20);
     assert_eq!(evidence.lp_fee_raw, 5_000_000);
     assert_eq!(evidence.protocol_fee_basis_points, 93);
     assert_eq!(evidence.protocol_fee_raw, 23_250_000);
-    assert_eq!(evidence.quote_amount_with_or_without_lp_fee_raw, 2_505_000_000);
+    assert_eq!(
+        evidence.quote_amount_with_or_without_lp_fee_raw,
+        2_505_000_000
+    );
 
     let current = evidence
         .current_economics

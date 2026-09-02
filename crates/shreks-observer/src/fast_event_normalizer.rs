@@ -33,8 +33,12 @@ pub enum FastEventNormalizationError {
 impl fmt::Display for FastEventNormalizationError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Storage(error) => write!(formatter, "FastEvent normalization storage error: {error}"),
-            Self::Provider(error) => write!(formatter, "FastEvent normalization provider error: {error}"),
+            Self::Storage(error) => {
+                write!(formatter, "FastEvent normalization storage error: {error}")
+            }
+            Self::Provider(error) => {
+                write!(formatter, "FastEvent normalization provider error: {error}")
+            }
             Self::InvalidSourceProvider(provider) => write!(
                 formatter,
                 "FastEvent normalization rejected non-realtime Pump evidence provider {provider}"
@@ -179,13 +183,7 @@ pub fn normalize_pending_pump_trade_evidence_at(
     if fresh_capacity > 0 {
         let fresh = recent_ready_rows(db, fresh_capacity, accepted_at_unix_ms)?;
         report.scanned = report.scanned.saturating_add(fresh.len());
-        normalize_pending_rows(
-            db,
-            fresh,
-            limit,
-            accepted_at_unix_ms,
-            &mut report,
-        )?;
+        normalize_pending_rows(db, fresh, limit, accepted_at_unix_ms, &mut report)?;
     }
 
     Ok(report)
@@ -415,13 +413,7 @@ fn normalize_pending_rows(
                         )?;
                     }
                     PendingEvidence::PumpSwap(raw) => {
-                        normalize_pump_swap_row(
-                            db,
-                            raw,
-                            accepted_at_unix_ms,
-                            report,
-                            &mut cache,
-                        )?;
+                        normalize_pump_swap_row(db, raw, accepted_at_unix_ms, report, &mut cache)?;
                     }
                 }
             }
@@ -558,7 +550,10 @@ fn normalize_pump_swap_row(
 fn require_realtime_provider(provider: ProviderId) -> Result<(), FastEventNormalizationError> {
     if !matches!(
         provider,
-        ProviderId::Helius | ProviderId::Chainstack | ProviderId::Alchemy | ProviderId::SolanaPublic
+        ProviderId::Helius
+            | ProviderId::Chainstack
+            | ProviderId::Alchemy
+            | ProviderId::SolanaPublic
     ) {
         return Err(FastEventNormalizationError::InvalidSourceProvider(provider));
     }

@@ -6,9 +6,7 @@ use std::{
 };
 
 use rusqlite::Connection;
-use shreks_core::{
-    DiscoveredToken, PairMarketData, ProviderId, TransactionWindow, VenueId,
-};
+use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, TransactionWindow, VenueId};
 use shreks_storage::{
     OutcomeCheckpointCompletion, OutcomeCheckpointStatus, ShreksDb, OUTCOME_HORIZONS_SECONDS,
 };
@@ -90,13 +88,20 @@ fn migration_four_schedules_the_exact_approved_horizons_idempotently() {
     assert_eq!(db.diagnostics().unwrap().schema_version, 15);
 
     let discovered_at = 1_000_000_i64;
-    let candidate_id = db.upsert_candidate(&candidate("mint-a", discovered_at)).unwrap();
-    db.ensure_outcome_checkpoints(candidate_id, discovered_at).unwrap();
-    db.ensure_outcome_checkpoints(candidate_id, discovered_at).unwrap();
+    let candidate_id = db
+        .upsert_candidate(&candidate("mint-a", discovered_at))
+        .unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, discovered_at)
+        .unwrap();
+    db.ensure_outcome_checkpoints(candidate_id, discovered_at)
+        .unwrap();
 
     let checkpoints = db.outcome_checkpoints(candidate_id).unwrap();
     assert_eq!(checkpoints.len(), 7);
-    assert_eq!(OUTCOME_HORIZONS_SECONDS, [60, 300, 900, 1_800, 3_600, 14_400, 86_400]);
+    assert_eq!(
+        OUTCOME_HORIZONS_SECONDS,
+        [60, 300, 900, 1_800, 3_600, 14_400, 86_400]
+    );
 
     let horizons: Vec<u32> = checkpoints.iter().map(|row| row.horizon_seconds).collect();
     assert_eq!(horizons, OUTCOME_HORIZONS_SECONDS);
@@ -127,8 +132,12 @@ fn due_query_returns_only_arrived_pending_rows_in_deterministic_order() {
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
-    let first_id = db.upsert_candidate(&candidate("mint-first", 1_000)).unwrap();
-    let second_id = db.upsert_candidate(&candidate("mint-second", 2_000)).unwrap();
+    let first_id = db
+        .upsert_candidate(&candidate("mint-first", 1_000))
+        .unwrap();
+    let second_id = db
+        .upsert_candidate(&candidate("mint-second", 2_000))
+        .unwrap();
     db.ensure_outcome_checkpoints(first_id, 1_000).unwrap();
     db.ensure_outcome_checkpoints(second_id, 2_000).unwrap();
 

@@ -67,11 +67,7 @@ fn reserve_capacity_economics_and_immediate_reprice_form_one_deterministic_gate(
 
     let ceiling = economics.maximum_acceptable_entry_price_quote;
     assert!(economics
-        .entry_price_is_acceptable(
-            ceiling,
-            capacity.maximum_base_quantity,
-            trade.base_quantity,
-        )
+        .entry_price_is_acceptable(ceiling, capacity.maximum_base_quantity, trade.base_quantity,)
         .unwrap());
 
     let one_ulp_above = f64::from_bits(ceiling.to_bits() + 1);

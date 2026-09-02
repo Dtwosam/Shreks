@@ -6,9 +6,7 @@ use std::{
 };
 
 use rusqlite::Connection;
-use shreks_core::{
-    LifecycleEventKind, ProviderId, TokenLifecycleEvent, VenueId,
-};
+use shreks_core::{LifecycleEventKind, ProviderId, TokenLifecycleEvent, VenueId};
 use shreks_storage::{PumpSignalStatus, ShreksDb};
 
 fn unique_test_dir(label: &str) -> PathBuf {
@@ -50,7 +48,10 @@ fn event(
 
 #[test]
 fn lifecycle_event_kind_string_is_stable() {
-    assert_eq!(LifecycleEventKind::PumpGraduation.as_str(), "pump_graduation");
+    assert_eq!(
+        LifecycleEventKind::PumpGraduation.as_str(),
+        "pump_graduation"
+    );
 }
 
 #[test]
@@ -94,7 +95,8 @@ fn migration_signal_is_idempotent_restart_safe_and_oldest_first() {
     db.record_pump_migration_signal("sig-late", 3, 300).unwrap();
     db.record_pump_migration_signal("sig-first", u64::MAX, 100)
         .unwrap();
-    db.record_pump_migration_signal("sig-middle", 2, 200).unwrap();
+    db.record_pump_migration_signal("sig-middle", 2, 200)
+        .unwrap();
     db.record_pump_migration_signal("sig-first", u64::MAX, 150)
         .unwrap();
 
@@ -122,7 +124,8 @@ fn migration_attempts_remain_pending_and_record_retry_state() {
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
-    db.record_pump_migration_signal("sig-retry", 42, 100).unwrap();
+    db.record_pump_migration_signal("sig-retry", 42, 100)
+        .unwrap();
     db.record_pump_migration_attempt("sig-retry", 150, Some("not available"))
         .unwrap();
     db.record_pump_migration_attempt("sig-retry", 175, None)
@@ -159,7 +162,10 @@ fn completion_is_atomic_normalized_and_identical_replay_is_noop() {
     assert_eq!(replayed, 0);
 
     assert_eq!(db.lifecycle_events_for_mint("mint-a").unwrap(), vec![first]);
-    assert_eq!(db.lifecycle_events_for_mint("mint-b").unwrap(), vec![second]);
+    assert_eq!(
+        db.lifecycle_events_for_mint("mint-b").unwrap(),
+        vec![second]
+    );
 
     let connection = Connection::open(&db_path).unwrap();
     let row: (String, i64, Option<i64>, Option<String>) = connection
@@ -192,7 +198,10 @@ fn verified_replay_cannot_append_or_mutate_lifecycle_truth() {
     assert!(db
         .complete_pump_migration("sig-ok", 190, &[original.clone(), changed])
         .is_err());
-    assert_eq!(db.lifecycle_events_for_mint("mint-a").unwrap(), vec![original]);
+    assert_eq!(
+        db.lifecycle_events_for_mint("mint-a").unwrap(),
+        vec![original]
+    );
 
     db.record_pump_migration_signal("sig-ok", 9, 50).unwrap();
     let connection = Connection::open(&db_path).unwrap();
@@ -220,7 +229,8 @@ fn lifecycle_lookup_is_deterministic_by_detection_signature_and_pool() {
         ("sig-b", 100, "pool-z"),
         ("sig-a", 100, "pool-a"),
     ] {
-        db.record_pump_migration_signal(signature, 1, detected).unwrap();
+        db.record_pump_migration_signal(signature, 1, detected)
+            .unwrap();
         let row = event(signature, "mint-one", "quote", pool, detected);
         db.complete_pump_migration(signature, detected + 1, &[row])
             .unwrap();
@@ -229,7 +239,13 @@ fn lifecycle_lookup_is_deterministic_by_detection_signature_and_pool() {
     let rows = db.lifecycle_events_for_mint("mint-one").unwrap();
     let order: Vec<_> = rows
         .iter()
-        .map(|row| (row.detected_at_unix_ms, row.signature.as_str(), row.pool_address.as_str()))
+        .map(|row| {
+            (
+                row.detected_at_unix_ms,
+                row.signature.as_str(),
+                row.pool_address.as_str(),
+            )
+        })
         .collect();
     assert_eq!(
         order,
@@ -286,12 +302,15 @@ fn invalid_completion_inputs_fail_closed_without_partial_event_rows() {
     let db = ShreksDb::open(&db_path).unwrap();
 
     assert!(db.record_pump_migration_signal("", 1, 100).is_err());
-    assert!(db.record_pump_migration_signal("sig-negative", 1, -1).is_err());
+    assert!(db
+        .record_pump_migration_signal("sig-negative", 1, -1)
+        .is_err());
     assert!(db
         .complete_pump_migration("unknown", 100, &[event("unknown", "m", "q", "p", 100)])
         .is_err());
 
-    db.record_pump_migration_signal("sig-empty", 1, 100).unwrap();
+    db.record_pump_migration_signal("sig-empty", 1, 100)
+        .unwrap();
     assert!(db.complete_pump_migration("sig-empty", 120, &[]).is_err());
 
     let mut invalid = event("sig-empty", "mint", "quote", "pool", 100);
@@ -308,7 +327,9 @@ fn invalid_completion_inputs_fail_closed_without_partial_event_rows() {
 
     let connection = Connection::open(&db_path).unwrap();
     let events: i64 = connection
-        .query_row("SELECT COUNT(*) FROM token_lifecycle_events", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM token_lifecycle_events", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(events, 0);
 

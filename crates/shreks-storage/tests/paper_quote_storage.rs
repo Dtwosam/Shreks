@@ -63,10 +63,7 @@ fn paper_quote_purpose_partitions_identity_and_preserves_exact_provenance() {
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
-    let request = quote_request(
-        "Mint111",
-        "So11111111111111111111111111111111111111112",
-    );
+    let request = quote_request("Mint111", "So11111111111111111111111111111111111111112");
     let snapshot = quote_snapshot(&request, 3_000);
 
     db.insert_paper_quote_snapshot(
@@ -148,10 +145,7 @@ fn paper_quote_purpose_partitions_identity_and_preserves_exact_provenance() {
         assert_eq!(row.1, "jupiter");
         assert_eq!(row.2, "probe-v1");
         assert_eq!(row.3, "Mint111");
-        assert_eq!(
-            row.4,
-            "So11111111111111111111111111111111111111112"
-        );
+        assert_eq!(row.4, "So11111111111111111111111111111111111111112");
         assert_eq!(row.5, "Taker111");
         assert_eq!(row.6, u64::MAX.to_string());
         assert_eq!(row.7, (u64::MAX - 10).to_string());
@@ -172,10 +166,7 @@ fn paper_quote_rejects_misattribution_mismatch_and_conflicting_replay() {
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
-    let request = quote_request(
-        "Mint111",
-        "So11111111111111111111111111111111111111112",
-    );
+    let request = quote_request("Mint111", "So11111111111111111111111111111111111111112");
     let snapshot = quote_snapshot(&request, 3_000);
 
     assert!(db
@@ -255,7 +246,9 @@ fn paper_quote_rejects_misattribution_mismatch_and_conflicting_replay() {
 
     let connection = Connection::open(&db_path).unwrap();
     let count: i64 = connection
-        .query_row("SELECT COUNT(*) FROM paper_quote_snapshots", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM paper_quote_snapshots", [], |row| {
+            row.get(0)
+        })
         .unwrap();
     assert_eq!(count, 1);
 
@@ -268,10 +261,7 @@ fn paper_quote_preserves_explicit_unavailable_route_without_synthesizing_fill_va
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
-    let request = quote_request(
-        "So11111111111111111111111111111111111111112",
-        "Mint111",
-    );
+    let request = quote_request("So11111111111111111111111111111111111111112", "Mint111");
     let mut snapshot = quote_snapshot(&request, 4_000);
     snapshot.output_amount = 0;
     snapshot.minimum_output_amount = 0;

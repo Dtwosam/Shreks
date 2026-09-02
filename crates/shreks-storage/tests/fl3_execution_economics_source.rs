@@ -98,8 +98,12 @@ fn pump_fee_evidence_round_trips_from_immutable_source_identity() {
         buyback_fee_basis_points: 7,
         buyback_fee_raw: 1_750_000,
     };
-    assert!(db.record_pump_trade_execution_economics(&economics).unwrap());
-    assert!(!db.record_pump_trade_execution_economics(&economics).unwrap());
+    assert!(db
+        .record_pump_trade_execution_economics(&economics)
+        .unwrap());
+    assert!(!db
+        .record_pump_trade_execution_economics(&economics)
+        .unwrap());
     assert_eq!(
         db.pump_trade_execution_economics("pump-fees", 0)
             .unwrap()
@@ -109,9 +113,7 @@ fn pump_fee_evidence_round_trips_from_immutable_source_identity() {
 
     let mut conflict = economics.clone();
     conflict.fee_raw += 1;
-    assert!(db
-        .record_pump_trade_execution_economics(&conflict)
-        .is_err());
+    assert!(db.record_pump_trade_execution_economics(&conflict).is_err());
     cleanup_dir(&root);
 }
 
@@ -142,9 +144,7 @@ fn pumpswap_fee_evidence_preserves_stable_fees_and_optional_current_suffix() {
         can_boost: Some(true),
         base_supply_raw: Some(1_000_000_000_000_000),
     };
-    assert!(db
-        .record_pump_swap_execution_economics(&economics)
-        .unwrap());
+    assert!(db.record_pump_swap_execution_economics(&economics).unwrap());
     assert_eq!(
         db.pump_swap_execution_economics("pumpswap-fees", ordinal)
             .unwrap()

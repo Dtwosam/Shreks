@@ -1,10 +1,10 @@
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde_json::Value;
 use shreks_core::{
     FastEvent, FastEventId, FastEventKind, FastMarketKey, FastReserveContext, ProviderId, VenueId,
 };
 
-use crate::{pump::PUMP_AMM_PROGRAM_ID, ProviderError, ProviderErrorKind};
+use crate::{ProviderError, ProviderErrorKind, pump::PUMP_AMM_PROGRAM_ID};
 
 pub const PUMPSWAP_BUY_EVENT_DISCRIMINATOR: [u8; 8] = [103, 244, 82, 31, 44, 245, 119, 119];
 pub const PUMPSWAP_SELL_EVENT_DISCRIMINATOR: [u8; 8] = [62, 47, 55, 10, 165, 3, 220, 42];
@@ -203,7 +203,9 @@ fn decode_trade_event_prefix(
     let mut cursor = 8_usize;
     let timestamp_unix_seconds = read_i64(bytes, &mut cursor, "timestamp")?;
     if timestamp_unix_seconds < 0 {
-        return Err(invalid_response("PumpSwap trade timestamp must be non-negative"));
+        return Err(invalid_response(
+            "PumpSwap trade timestamp must be non-negative",
+        ));
     }
 
     let base_amount_raw = read_u64(bytes, &mut cursor, "base amount")?;
@@ -215,8 +217,7 @@ fn decode_trade_event_prefix(
     let quote_amount_raw = read_u64(bytes, &mut cursor, "quote amount")?;
     let lp_fee_basis_points = read_u64(bytes, &mut cursor, "LP fee basis points")?;
     let lp_fee_raw = read_u64(bytes, &mut cursor, "LP fee")?;
-    let protocol_fee_basis_points =
-        read_u64(bytes, &mut cursor, "protocol fee basis points")?;
+    let protocol_fee_basis_points = read_u64(bytes, &mut cursor, "protocol fee basis points")?;
     let protocol_fee_raw = read_u64(bytes, &mut cursor, "protocol fee")?;
     let quote_amount_with_or_without_lp_fee_raw =
         read_u64(bytes, &mut cursor, "fee-adjusted quote amount")?;

@@ -14,10 +14,7 @@ fn unique_test_dir(label: &str) -> PathBuf {
         .unwrap()
         .as_nanos();
 
-    std::env::temp_dir().join(format!(
-        "shreks-storage-{label}-{}-{nanos}",
-        process::id()
-    ))
+    std::env::temp_dir().join(format!("shreks-storage-{label}-{}-{nanos}", process::id()))
 }
 
 fn cleanup_dir(path: &Path) {
@@ -132,8 +129,8 @@ fn reopening_database_does_not_reapply_migrations() {
 
     let connection = Connection::open(&db_path).unwrap();
     for version in [
-        1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64, 8_i64, 9_i64, 10_i64, 11_i64,
-        12_i64, 13_i64, 14_i64, 15_i64,
+        1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64, 8_i64, 9_i64, 10_i64, 11_i64, 12_i64,
+        13_i64, 14_i64, 15_i64,
     ] {
         let count: i64 = connection
             .query_row(
@@ -222,7 +219,10 @@ fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence(
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "migration {version} should remain singular after upgrade");
+        assert_eq!(
+            count, 1,
+            "migration {version} should remain singular after upgrade"
+        );
     }
 
     drop(connection);

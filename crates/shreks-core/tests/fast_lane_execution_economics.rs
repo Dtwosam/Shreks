@@ -62,16 +62,17 @@ fn round_trip_cost_break_even_and_max_entry_use_all_explicit_costs() {
 
     let expected_entry_total = 100.0 * 0.01 * (1.0 + entry_rate) + entry_fixed;
     let expected_forecast_exit_net = 100.0 * 0.012 * (1.0 - exit_rate) - exit_fixed;
-    let expected_break_even =
-        (expected_entry_total + exit_fixed) / (100.0 * (1.0 - exit_rate));
+    let expected_break_even = (expected_entry_total + exit_fixed) / (100.0 * (1.0 - exit_rate));
     let expected_break_even_move_bps = (expected_break_even / 0.01 - 1.0) * 10_000.0;
     let max_entry_total = expected_forecast_exit_net / (1.0 + required_return_rate);
-    let expected_max_entry =
-        (max_entry_total - entry_fixed) / (100.0 * (1.0 + entry_rate));
+    let expected_max_entry = (max_entry_total - entry_fixed) / (100.0 * (1.0 + entry_rate));
 
     assert_eq!(economics.version, EXECUTION_ECONOMICS_VERSION);
     assert_close(economics.entry_total_quote, expected_entry_total);
-    assert_close(economics.forecast_exit_net_quote, expected_forecast_exit_net);
+    assert_close(
+        economics.forecast_exit_net_quote,
+        expected_forecast_exit_net,
+    );
     assert_close(
         economics.forecast_net_pnl_quote,
         expected_forecast_exit_net - expected_entry_total,

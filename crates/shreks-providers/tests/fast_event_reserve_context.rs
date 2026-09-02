@@ -2,10 +2,10 @@ use shreks_core::FastReserveContext;
 use shreks_providers::{
     pump::WRAPPED_SOL_MINT,
     pump_swap_trade::{
-        pump_swap_trade_evidence_to_fast_event, PumpSwapCurrentEconomicsEvidence,
-        PumpSwapTradeEvidence,
+        PumpSwapCurrentEconomicsEvidence, PumpSwapTradeEvidence,
+        pump_swap_trade_evidence_to_fast_event,
     },
-    pump_trade::{pump_trade_evidence_to_fast_event, PumpTradeEvidence},
+    pump_trade::{PumpTradeEvidence, pump_trade_evidence_to_fast_event},
 };
 
 const SYSTEM_SOL: &str = "11111111111111111111111111111111";
@@ -40,17 +40,8 @@ fn pump_conversion_carries_exact_source_reserves_into_fast_event() {
         ix_name: "buy".to_owned(),
     };
 
-    let event = pump_trade_evidence_to_fast_event(
-        &evidence,
-        "pump-sig",
-        0,
-        1,
-        10,
-        1_100,
-        6,
-        9,
-    )
-    .unwrap();
+    let event =
+        pump_trade_evidence_to_fast_event(&evidence, "pump-sig", 0, 1, 10, 1_100, 6, 9).unwrap();
 
     assert_eq!(
         event.reserve_context,
@@ -65,7 +56,9 @@ fn pump_conversion_carries_exact_source_reserves_into_fast_event() {
     );
 }
 
-fn pumpswap_evidence(current_economics: Option<PumpSwapCurrentEconomicsEvidence>) -> PumpSwapTradeEvidence {
+fn pumpswap_evidence(
+    current_economics: Option<PumpSwapCurrentEconomicsEvidence>,
+) -> PumpSwapTradeEvidence {
     PumpSwapTradeEvidence {
         log_index: 7,
         pool: "pool-a".to_owned(),

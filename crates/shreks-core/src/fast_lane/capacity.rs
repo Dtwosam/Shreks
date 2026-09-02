@@ -37,30 +37,27 @@ impl fmt::Display for ExitCapacityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ZeroBaseQuantity => formatter.write_str("exit base quantity must be positive"),
-            Self::InvalidMinimumAverageExitPrice => formatter.write_str(
-                "minimum average exit price must be finite and strictly positive",
-            ),
+            Self::InvalidMinimumAverageExitPrice => formatter
+                .write_str("minimum average exit price must be finite and strictly positive"),
             Self::MissingPumpSwapVirtualQuoteReserve => formatter.write_str(
                 "PumpSwap exit capacity requires authoritative virtual quote reserve evidence",
             ),
             Self::NonPositiveBaseReserve => {
                 formatter.write_str("exit capacity base reserve must be positive")
             }
-            Self::NonPositiveEffectiveQuoteReserve => formatter.write_str(
-                "exit capacity effective quote reserve must be positive",
-            ),
-            Self::PhysicalQuoteReserveExhausted => formatter.write_str(
-                "projected exit exceeds the physical quote reserve",
-            ),
-            Self::ImpossibleMinimumAveragePrice => formatter.write_str(
-                "no positive exit quantity satisfies the minimum average exit price",
-            ),
+            Self::NonPositiveEffectiveQuoteReserve => {
+                formatter.write_str("exit capacity effective quote reserve must be positive")
+            }
+            Self::PhysicalQuoteReserveExhausted => {
+                formatter.write_str("projected exit exceeds the physical quote reserve")
+            }
+            Self::ImpossibleMinimumAveragePrice => formatter
+                .write_str("no positive exit quantity satisfies the minimum average exit price"),
             Self::ArithmeticOverflow => {
                 formatter.write_str("exit capacity integer arithmetic overflowed")
             }
-            Self::InvalidReserveScale => formatter.write_str(
-                "exit capacity reserve decimals produced an invalid numeric scale",
-            ),
+            Self::InvalidReserveScale => formatter
+                .write_str("exit capacity reserve decimals produced an invalid numeric scale"),
         }
     }
 }
@@ -91,9 +88,7 @@ pub fn maximum_exit_capacity(
     reserves: &FastReserveContext,
     minimum_average_exit_price_quote: f64,
 ) -> Result<ExitCapacity, ExitCapacityError> {
-    if !minimum_average_exit_price_quote.is_finite()
-        || minimum_average_exit_price_quote <= 0.0
-    {
+    if !minimum_average_exit_price_quote.is_finite() || minimum_average_exit_price_quote <= 0.0 {
         return Err(ExitCapacityError::InvalidMinimumAverageExitPrice);
     }
 
@@ -122,8 +117,8 @@ pub fn maximum_exit_capacity(
     // output is floor(q*x/(b+x)); start at the continuous boundary and walk
     // downward only to reconcile integer granularity. Every returned candidate
     // is re-projected through the exact integer formula before acceptance.
-    let continuous_boundary_quote = view.effective_quote_reserve_raw as f64
-        - view.base_reserve_raw as f64 * minimum_raw_price;
+    let continuous_boundary_quote =
+        view.effective_quote_reserve_raw as f64 - view.base_reserve_raw as f64 * minimum_raw_price;
     if !continuous_boundary_quote.is_finite() || continuous_boundary_quote <= 0.0 {
         return Err(ExitCapacityError::ImpossibleMinimumAveragePrice);
     }
@@ -145,11 +140,9 @@ pub fn maximum_exit_capacity(
         if quote_output_raw == 0 {
             break;
         }
-        if let Some(base_quantity_raw) = maximum_quantity_for_quote_bucket(
-            view,
-            quote_output_raw,
-            minimum_raw_price,
-        )? {
+        if let Some(base_quantity_raw) =
+            maximum_quantity_for_quote_bucket(view, quote_output_raw, minimum_raw_price)?
+        {
             let projection = project_view(view, base_quantity_raw)?;
             if projection.average_price_quote >= minimum_average_exit_price_quote {
                 return Ok(ExitCapacity {
@@ -230,8 +223,8 @@ fn project_view(
         .checked_add(u128::from(base_quantity_raw))
         .ok_or(ExitCapacityError::ArithmeticOverflow)?;
     let quote_output_raw = numerator / denominator;
-    let quote_output_raw = u64::try_from(quote_output_raw)
-        .map_err(|_| ExitCapacityError::ArithmeticOverflow)?;
+    let quote_output_raw =
+        u64::try_from(quote_output_raw).map_err(|_| ExitCapacityError::ArithmeticOverflow)?;
 
     if quote_output_raw > view.physical_quote_reserve_raw {
         return Err(ExitCapacityError::PhysicalQuoteReserveExhausted);
@@ -330,10 +323,7 @@ fn ceil_div(numerator: u128, denominator: u128) -> Result<u128, ExitCapacityErro
         .ok_or(ExitCapacityError::ArithmeticOverflow)
 }
 
-fn decimal_scales(
-    base_decimals: u8,
-    quote_decimals: u8,
-) -> Result<(f64, f64), ExitCapacityError> {
+fn decimal_scales(base_decimals: u8, quote_decimals: u8) -> Result<(f64, f64), ExitCapacityError> {
     let base_scale = 10_f64.powi(i32::from(base_decimals));
     let quote_scale = 10_f64.powi(i32::from(quote_decimals));
     if !base_scale.is_finite()

@@ -78,7 +78,10 @@ fn pumpswap_reserve_context_survives_into_latest_market_snapshot() {
     let mut state = FastMarketState::with_default_windows(market);
     state.apply(event).unwrap();
 
-    assert_eq!(state.snapshot(1_000).unwrap().last_reserve_context, Some(reserve));
+    assert_eq!(
+        state.snapshot(1_000).unwrap().last_reserve_context,
+        Some(reserve)
+    );
 }
 
 #[test]

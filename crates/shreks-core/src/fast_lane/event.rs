@@ -42,10 +42,7 @@ pub struct FastEventId {
 }
 
 impl FastEventId {
-    pub fn new(
-        signature: impl Into<String>,
-        ordinal: u32,
-    ) -> Result<Self, FastEventError> {
+    pub fn new(signature: impl Into<String>, ordinal: u32) -> Result<Self, FastEventError> {
         let signature = signature.into();
         let signature = signature.trim();
         if signature.is_empty() {
@@ -87,10 +84,8 @@ impl FastReserveContext {
     fn matches_venue(&self, venue: &VenueId) -> bool {
         matches!(
             (self, venue),
-            (
-                Self::PumpCurve { .. },
-                VenueId::PumpFunBondingCurve
-            ) | (Self::PumpSwapPool { .. }, VenueId::PumpSwap)
+            (Self::PumpCurve { .. }, VenueId::PumpFunBondingCurve)
+                | (Self::PumpSwapPool { .. }, VenueId::PumpSwap)
         )
     }
 }

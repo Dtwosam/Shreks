@@ -186,15 +186,27 @@ impl ShreksDb {
                 economics.lp_fee_raw.to_string(),
                 economics.protocol_fee_basis_points.to_string(),
                 economics.protocol_fee_raw.to_string(),
-                economics.quote_amount_with_or_without_lp_fee_raw.to_string(),
+                economics
+                    .quote_amount_with_or_without_lp_fee_raw
+                    .to_string(),
                 economics.coin_creator,
-                economics.coin_creator_fee_basis_points.map(|value| value.to_string()),
-                economics.coin_creator_fee_raw.map(|value| value.to_string()),
-                economics.cashback_fee_basis_points.map(|value| value.to_string()),
+                economics
+                    .coin_creator_fee_basis_points
+                    .map(|value| value.to_string()),
+                economics
+                    .coin_creator_fee_raw
+                    .map(|value| value.to_string()),
+                economics
+                    .cashback_fee_basis_points
+                    .map(|value| value.to_string()),
                 economics.cashback_raw.map(|value| value.to_string()),
-                economics.buyback_fee_basis_points.map(|value| value.to_string()),
+                economics
+                    .buyback_fee_basis_points
+                    .map(|value| value.to_string()),
                 economics.buyback_fee_raw.map(|value| value.to_string()),
-                economics.virtual_quote_reserves_raw.map(|value| value.to_string()),
+                economics
+                    .virtual_quote_reserves_raw
+                    .map(|value| value.to_string()),
                 economics.can_boost.map(i64::from),
                 economics.base_supply_raw.map(|value| value.to_string()),
             ],
@@ -395,15 +407,17 @@ fn decode_pump_swap(
 
 fn validate_nonempty(value: &str, field: &str) -> Result<(), StorageError> {
     if value.trim().is_empty() {
-        return Err(StorageError::InvalidData(format!("{field} must be non-empty")));
+        return Err(StorageError::InvalidData(format!(
+            "{field} must be non-empty"
+        )));
     }
     Ok(())
 }
 
 fn parse_u64(value: &str, field: &str) -> Result<u64, StorageError> {
-    value.parse::<u64>().map_err(|error| {
-        StorageError::InvalidData(format!("invalid {field} '{value}': {error}"))
-    })
+    value
+        .parse::<u64>()
+        .map_err(|error| StorageError::InvalidData(format!("invalid {field} '{value}': {error}")))
 }
 
 fn parse_optional_u64(value: Option<String>, field: &str) -> Result<Option<u64>, StorageError> {

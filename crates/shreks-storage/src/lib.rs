@@ -11,9 +11,7 @@ mod reserve_context;
 mod safety_evidence;
 mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
-pub use execution_economics::{
-    PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
-};
+pub use execution_economics::{PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite};
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
@@ -194,7 +192,9 @@ impl fmt::Display for StorageError {
             Self::Io(error) => write!(formatter, "storage filesystem error: {error}"),
             Self::Sqlite(error) => write!(formatter, "storage SQLite error: {error}"),
             Self::Clock(error) => write!(formatter, "storage clock error: {error}"),
-            Self::InvalidData(message) => write!(formatter, "storage rejected invalid data: {message}"),
+            Self::InvalidData(message) => {
+                write!(formatter, "storage rejected invalid data: {message}")
+            }
         }
     }
 }
@@ -238,7 +238,10 @@ impl ShreksDb {
     /// known schema version before returning it to the caller.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
         let path = path.as_ref();
-        if let Some(parent) = path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
 
@@ -501,7 +504,8 @@ impl ShreksDb {
 
         validate_optional_decimal_text(snapshot.price_native.as_deref(), "price_native")?;
         let price_usd = parse_optional_decimal_text(snapshot.price_usd.as_deref(), "price_usd")?;
-        let liquidity_usd = validate_optional_nonnegative_f64(snapshot.liquidity_usd, "liquidity_usd")?;
+        let liquidity_usd =
+            validate_optional_nonnegative_f64(snapshot.liquidity_usd, "liquidity_usd")?;
         let volume_5m = validate_optional_nonnegative_f64(snapshot.volume_5m, "volume_5m")?;
         let volume_1h = validate_optional_nonnegative_f64(snapshot.volume_1h, "volume_1h")?;
         let volume_6h = validate_optional_nonnegative_f64(snapshot.volume_6h, "volume_6h")?;
@@ -601,7 +605,8 @@ impl ShreksDb {
         consecutive_failures: u64,
     ) -> Result<(), StorageError> {
         let latency_ms = optional_u64_as_i64(latency_ms, "provider latency_ms")?;
-        let consecutive_failures = u64_as_i64(consecutive_failures, "provider consecutive_failures")?;
+        let consecutive_failures =
+            u64_as_i64(consecutive_failures, "provider consecutive_failures")?;
 
         self.connection.execute(
             r#"INSERT INTO provider_health (
@@ -674,7 +679,9 @@ impl ShreksDb {
 }
 
 fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
-    connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))?;
+    connection.query_row("PRAGMA journal_mode = WAL", [], |row| {
+        row.get::<_, String>(0)
+    })?;
     connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))?;
     connection.execute_batch(
         "PRAGMA foreign_keys = ON;\
@@ -780,13 +787,11 @@ fn parse_optional_decimal_text(
 }
 
 fn parse_decimal_text(value: &str, field: &str) -> Result<f64, StorageError> {
-    let parsed = value.parse::<f64>().map_err(|error| {
-        StorageError::InvalidData(format!("{field} is not numeric: {error}"))
-    })?;
+    let parsed = value
+        .parse::<f64>()
+        .map_err(|error| StorageError::InvalidData(format!("{field} is not numeric: {error}")))?;
     if !parsed.is_finite() {
-        return Err(StorageError::InvalidData(format!(
-            "{field} must be finite"
-        )));
+        return Err(StorageError::InvalidData(format!("{field} must be finite")));
     }
     Ok(parsed)
 }
@@ -817,9 +822,8 @@ fn u64_as_i64(value: u64, field: &str) -> Result<i64, StorageError> {
 
 fn unix_time_ms() -> Result<i64, StorageError> {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH)?;
-    i64::try_from(elapsed.as_millis()).map_err(|_| {
-        StorageError::InvalidData("system clock exceeds i64 milliseconds".to_owned())
-    })
+    i64::try_from(elapsed.as_millis())
+        .map_err(|_| StorageError::InvalidData("system clock exceeds i64 milliseconds".to_owned()))
 }
 
 #[cfg(test)]

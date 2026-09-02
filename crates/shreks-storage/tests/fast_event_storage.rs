@@ -155,9 +155,7 @@ fn canonical_fast_event_duplicate_is_idempotent_but_conflict_fails_closed() {
     let mut conflict = fast_event("sig-a", 0, 2, 1_300);
     conflict.quote_quantity = 0.2;
     conflict.price_quote = 0.1;
-    let error = db
-        .record_fast_event(&conflict, 1_100, 6, 9)
-        .unwrap_err();
+    let error = db.record_fast_event(&conflict, 1_100, 6, 9).unwrap_err();
     assert!(matches!(error, StorageError::InvalidData(_)));
 
     let replay: Vec<StoredFastEvent> = db
