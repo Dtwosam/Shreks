@@ -1,7 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::Value;
 use shreks_core::{
-    FastEvent, FastEventId, FastEventKind, FastMarketKey, ProviderId, VenueId,
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, FastReserveContext, ProviderId, VenueId,
 };
 
 use crate::{
@@ -210,6 +210,18 @@ pub fn pump_trade_evidence_to_fast_event(
         return Err(invalid_response("Pump tradeEvent quote amount must be positive"));
     }
 
+    let (virtual_quote_reserve_raw, real_quote_reserve_raw) = if is_sol_quote {
+        (
+            evidence.virtual_sol_reserves_raw,
+            evidence.real_sol_reserves_raw,
+        )
+    } else {
+        (
+            evidence.virtual_quote_reserves_raw,
+            evidence.real_quote_reserves_raw,
+        )
+    };
+
     let base_scale = decimal_scale(base_decimals)?;
     let quote_scale = decimal_scale(quote_decimals)?;
     let base_quantity = evidence.token_amount_raw as f64 / base_scale;
@@ -230,7 +242,7 @@ pub fn pump_trade_evidence_to_fast_event(
         .map_err(|error| invalid_response(format!("invalid Pump FastEvent id: {error}")))?;
     let market = FastMarketKey::new(&evidence.mint, quote_mint, VenueId::PumpFunBondingCurve)
         .map_err(|error| invalid_response(format!("invalid Pump FastEvent market: {error}")))?;
-    FastEvent::new(
+    let event = FastEvent::new(
         id,
         sequence,
         ProviderId::Helius,
@@ -248,7 +260,18 @@ pub fn pump_trade_evidence_to_fast_event(
         quote_quantity,
         price_quote,
     )
-    .map_err(|error| invalid_response(format!("invalid Pump FastEvent economics: {error}")))
+    .map_err(|error| invalid_response(format!("invalid Pump FastEvent economics: {error}")))?;
+
+    event
+        .with_reserve_context(FastReserveContext::PumpCurve {
+            virtual_base_reserve_raw: evidence.virtual_token_reserves_raw,
+            virtual_quote_reserve_raw,
+            real_base_reserve_raw: evidence.real_token_reserves_raw,
+            real_quote_reserve_raw,
+            base_decimals,
+            quote_decimals,
+        })
+        .map_err(|error| invalid_response(format!("invalid Pump reserve context: {error}")))
 }
 
 fn decimal_scale(decimals: u8) -> Result<f64, ProviderError> {
@@ -391,7 +414,7 @@ fn decode_trade_event(
     cursor.u64("cashbackFeeBasisPoints")?;
     cursor.u64("cashback")?;
     cursor.u64("buybackFeeBasisPoints")?;
-    cursor.u64("buybackFee")?;
+    cursor.u64("buyback")?;
     cursor.shareholders()?;
     let quote_mint = cursor.pubkey("quoteMint")?;
     let quote_amount_raw = cursor.u64("quoteAmount")?;
