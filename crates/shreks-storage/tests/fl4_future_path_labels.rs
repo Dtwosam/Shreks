@@ -167,3 +167,39 @@ fn complete_no_trade_label_round_trips_with_nullable_path_metrics() {
 
     cleanup_dir(&root);
 }
+
+#[test]
+fn direct_label_persistence_rejects_decision_price_that_disagrees_with_canonical_event() {
+    let root = unique_test_dir("decision-price-source");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let raw_decision = raw_trade("decision-fl4", 900);
+    let raw_future = raw_trade("future-fl4", 1_100);
+    assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
+    assert!(db.record_pump_trade_evidence(&raw_future).unwrap());
+    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000), 900, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("future-fl4", 2, 1_250), 1_100, 6, 9).unwrap());
+
+    let mismatched_decision = FuturePathDecision::new(
+        FastMarketKey::new("mint-fl4", WSOL, VenueId::PumpFunBondingCurve).unwrap(),
+        FastEventId::new("decision-fl4", 0).unwrap(),
+        1,
+        1_000,
+        0.051,
+    )
+    .unwrap()
+    .with_entry_total_quote(0.11)
+    .unwrap();
+    let coverage = FuturePathCoverage::new(1_500, true).unwrap();
+
+    let error = db
+        .record_future_path_label(&mismatched_decision, coverage, &label())
+        .unwrap_err();
+    assert!(matches!(error, StorageError::InvalidData(_)));
+    assert!(db
+        .future_path_labels_for_decision("decision-fl4", 0, FUTURE_PATH_LABEL_VERSION)
+        .unwrap()
+        .is_empty());
+
+    cleanup_dir(&root);
+}
