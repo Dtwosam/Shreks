@@ -8,9 +8,50 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  rust-format-autofix:
+    name: Rust changed-file format autofix
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Format and commit changed Rust files only
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          head_sha="$(git rev-parse HEAD)"
+          mapfile -t changed_rust < <(
+            git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$head_sha" -- '*.rs'
+          )
+          if (( ${#changed_rust[@]} == 0 )); then
+            echo "no changed Rust files"
+            exit 0
+          fi
+
+          cargo fmt --all
+          if git diff --quiet -- "${changed_rust[@]}"; then
+            echo "changed Rust files already rustfmt-clean"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "${changed_rust[@]}"
+          git commit -m "style: rustfmt FL3 Rust changes"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+
   repository-safety:
     name: Repository safety
     runs-on: ubuntu-latest
@@ -68,8 +109,6 @@ jobs:
             exit 1
           fi
 
-          # cargo fmt may expose pre-existing formatting debt in unchanged files.
-          # Restore the exact checked-out tree before semantic gates run.
           git reset --hard HEAD
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
