@@ -77,6 +77,7 @@ pub enum FastReserveContext {
     PumpSwapPool {
         pool_base_reserve_raw: u64,
         pool_quote_reserve_raw: u64,
+        virtual_quote_reserve_raw: Option<i128>,
         base_decimals: u8,
         quote_decimals: u8,
     },
