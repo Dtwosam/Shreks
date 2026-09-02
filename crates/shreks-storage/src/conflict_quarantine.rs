@@ -1,4 +1,4 @@
-use rusqlite::params;
+use rusqlite::{params, ErrorCode};
 use shreks_core::ProviderId;
 
 use crate::{
@@ -8,6 +8,16 @@ use crate::{
 
 const SYSTEM_SOL_MINT: &str = "11111111111111111111111111111111";
 const WRAPPED_SOL_MINT: &str = "So11111111111111111111111111111111111111112";
+const PUMP_NORMALIZER_DEBT_CURSOR_STREAM: &str = "fast_lane_normalizer_pump_debt_cursor_v1";
+const PUMPSWAP_NORMALIZER_DEBT_CURSOR_STREAM: &str =
+    "fast_lane_normalizer_pumpswap_debt_cursor_v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NormalizerDebtCursor {
+    observed_at_unix_ms: i64,
+    signature: String,
+    ordinal: i64,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceWriteOutcome {
@@ -346,6 +356,259 @@ impl ShreksDb {
             .collect::<Result<Vec<_>, _>>()?;
         rows.into_iter().map(decode_pumpswap_row).collect()
     }
+
+    /// Read one bounded Pump raw page after the durable normalizer-debt cursor.
+    /// Readiness is intentionally *not* part of this query: the normalizer keeps
+    /// verified metadata/economics/provider checks authoritative after selection.
+    pub fn paged_normalizer_pump_debt_evidence(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit_i64 = sqlite_limit(limit, "Pump normalizer debt page limit")?;
+        let cursor = self.normalizer_debt_cursor(PUMP_NORMALIZER_DEBT_CURSOR_STREAM)?;
+        let (rows, last_cursor, reached_end) =
+            self.normalizer_pump_debt_page(limit_i64, cursor.as_ref())?;
+        if let Some(last_cursor) = last_cursor.as_ref() {
+            self.store_normalizer_debt_cursor(
+                PUMP_NORMALIZER_DEBT_CURSOR_STREAM,
+                Some(last_cursor),
+            )?;
+        }
+
+        if rows.is_empty() && reached_end && cursor.is_some() {
+            self.store_normalizer_debt_cursor(PUMP_NORMALIZER_DEBT_CURSOR_STREAM, None)?;
+            let (wrapped, wrapped_cursor, _) = self.normalizer_pump_debt_page(limit_i64, None)?;
+            if let Some(wrapped_cursor) = wrapped_cursor.as_ref() {
+                self.store_normalizer_debt_cursor(
+                    PUMP_NORMALIZER_DEBT_CURSOR_STREAM,
+                    Some(wrapped_cursor),
+                )?;
+            }
+            return Ok(wrapped);
+        }
+        Ok(rows)
+    }
+
+    /// Read one bounded PumpSwap raw page after its independent durable debt cursor.
+    pub fn paged_normalizer_pumpswap_debt_evidence(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<PumpSwapTradeEvidenceWrite>, StorageError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let limit_i64 = sqlite_limit(limit, "PumpSwap normalizer debt page limit")?;
+        let cursor = self.normalizer_debt_cursor(PUMPSWAP_NORMALIZER_DEBT_CURSOR_STREAM)?;
+        let (rows, last_cursor, reached_end) =
+            self.normalizer_pumpswap_debt_page(limit_i64, cursor.as_ref())?;
+        if let Some(last_cursor) = last_cursor.as_ref() {
+            self.store_normalizer_debt_cursor(
+                PUMPSWAP_NORMALIZER_DEBT_CURSOR_STREAM,
+                Some(last_cursor),
+            )?;
+        }
+
+        if rows.is_empty() && reached_end && cursor.is_some() {
+            self.store_normalizer_debt_cursor(PUMPSWAP_NORMALIZER_DEBT_CURSOR_STREAM, None)?;
+            let (wrapped, wrapped_cursor, _) =
+                self.normalizer_pumpswap_debt_page(limit_i64, None)?;
+            if let Some(wrapped_cursor) = wrapped_cursor.as_ref() {
+                self.store_normalizer_debt_cursor(
+                    PUMPSWAP_NORMALIZER_DEBT_CURSOR_STREAM,
+                    Some(wrapped_cursor),
+                )?;
+            }
+            return Ok(wrapped);
+        }
+        Ok(rows)
+    }
+
+    fn normalizer_pump_debt_page(
+        &self,
+        limit: i64,
+        cursor: Option<&NormalizerDebtCursor>,
+    ) -> Result<(Vec<PumpTradeEvidenceWrite>, Option<NormalizerDebtCursor>, bool), StorageError> {
+        let observed = cursor.map(|value| value.observed_at_unix_ms);
+        let signature = cursor.map(|value| value.signature.as_str());
+        let ordinal = cursor.map(|value| value.ordinal);
+        let mut statement = self.connection.prepare(
+            r#"WITH debt_page AS MATERIALIZED (
+                   SELECT
+                       p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                       p.mint, p.quote_mint, p.user, p.is_buy,
+                       p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                       p.timestamp_unix_seconds,
+                       p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                       p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                       p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                       p.ix_name
+                   FROM pump_trade_evidence AS p
+                   WHERE ?1 IS NULL
+                      OR (p.observed_at_unix_ms, p.signature, p.ordinal) > (?1, ?2, ?3)
+                   ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
+                   LIMIT ?4
+               )
+               SELECT
+                   p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                   p.mint, p.quote_mint, p.user, p.is_buy,
+                   p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                   p.timestamp_unix_seconds,
+                   p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                   p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                   p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                   p.ix_name,
+                   CASE WHEN
+                       f.sequence IS NULL
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pump_trade_evidence_conflicts AS c
+                           WHERE c.signature = p.signature AND c.ordinal = p.ordinal
+                       )
+                   THEN 1 ELSE 0 END AS eligible
+               FROM debt_page AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC"#,
+        )?;
+        let page = statement
+            .query_map(params![observed, signature, ordinal, limit], |row| {
+                Ok(((
+                    row.get::<_, String>(0)?, row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?, row.get::<_, String>(3)?, row.get::<_, i64>(4)?,
+                    row.get::<_, String>(5)?, row.get::<_, String>(6)?, row.get::<_, String>(7)?,
+                    row.get::<_, i64>(8)?, row.get::<_, String>(9)?, row.get::<_, String>(10)?,
+                    row.get::<_, String>(11)?, row.get::<_, i64>(12)?, row.get::<_, String>(13)?,
+                    row.get::<_, String>(14)?, row.get::<_, String>(15)?, row.get::<_, String>(16)?,
+                    row.get::<_, String>(17)?, row.get::<_, String>(18)?, row.get::<_, String>(19)?,
+                ), row.get::<_, i64>(20)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let page_limit = usize::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("Pump normalizer debt page limit was negative".to_owned())
+        })?;
+        let reached_end = page.len() < page_limit;
+        let last_cursor = page.last().map(|(raw, _)| NormalizerDebtCursor {
+            observed_at_unix_ms: raw.4,
+            signature: raw.1.clone(),
+            ordinal: raw.2,
+        });
+        let mut selected = Vec::with_capacity(page.len());
+        for (raw, eligible) in page {
+            match eligible {
+                0 => {}
+                1 => selected.push(decode_pump_row(raw)?),
+                other => {
+                    return Err(StorageError::InvalidData(format!(
+                        "Pump normalizer debt eligibility was not boolean: {other}"
+                    )))
+                }
+            }
+        }
+        Ok((selected, last_cursor, reached_end))
+    }
+
+    fn normalizer_pumpswap_debt_page(
+        &self,
+        limit: i64,
+        cursor: Option<&NormalizerDebtCursor>,
+    ) -> Result<(
+        Vec<PumpSwapTradeEvidenceWrite>,
+        Option<NormalizerDebtCursor>,
+        bool,
+    ), StorageError> {
+        let observed = cursor.map(|value| value.observed_at_unix_ms);
+        let signature = cursor.map(|value| value.signature.as_str());
+        let ordinal = cursor.map(|value| value.ordinal);
+        let mut statement = self.connection.prepare(
+            r#"WITH debt_page AS MATERIALIZED (
+                   SELECT
+                       p.provider, p.signature, p.ordinal, p.log_index, p.slot,
+                       p.observed_at_unix_ms, p.pool, p.user, p.is_buy,
+                       p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
+                       p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
+                   FROM pump_swap_trade_evidence AS p
+                   WHERE ?1 IS NULL
+                      OR (p.observed_at_unix_ms, p.signature, p.ordinal) > (?1, ?2, ?3)
+                   ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
+                   LIMIT ?4
+               )
+               SELECT
+                   p.provider, p.signature, p.ordinal, p.log_index, p.slot,
+                   p.observed_at_unix_ms, p.pool, p.user, p.is_buy,
+                   p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
+                   p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw,
+                   CASE WHEN
+                       f.sequence IS NULL
+                       AND NOT EXISTS (
+                           SELECT 1 FROM pump_swap_trade_evidence_conflicts AS c
+                           WHERE c.signature = p.signature AND c.ordinal = p.ordinal
+                       )
+                   THEN 1 ELSE 0 END AS eligible
+               FROM debt_page AS p
+               LEFT JOIN fast_events AS f
+                 ON f.signature = p.signature AND f.ordinal = p.ordinal
+               ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC"#,
+        )?;
+        let page = statement
+            .query_map(params![observed, signature, ordinal, limit], |row| {
+                Ok(((
+                    row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?,
+                    row.get::<_, i64>(3)?, row.get::<_, String>(4)?, row.get::<_, i64>(5)?,
+                    row.get::<_, String>(6)?, row.get::<_, String>(7)?, row.get::<_, i64>(8)?,
+                    row.get::<_, String>(9)?, row.get::<_, String>(10)?, row.get::<_, String>(11)?,
+                    row.get::<_, i64>(12)?, row.get::<_, String>(13)?, row.get::<_, String>(14)?,
+                ), row.get::<_, i64>(15)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let page_limit = usize::try_from(limit).map_err(|_| {
+            StorageError::InvalidData("PumpSwap normalizer debt page limit was negative".to_owned())
+        })?;
+        let reached_end = page.len() < page_limit;
+        let last_cursor = page.last().map(|(raw, _)| NormalizerDebtCursor {
+            observed_at_unix_ms: raw.5,
+            signature: raw.1.clone(),
+            ordinal: raw.2,
+        });
+        let mut selected = Vec::with_capacity(page.len());
+        for (raw, eligible) in page {
+            match eligible {
+                0 => {}
+                1 => selected.push(decode_pumpswap_row(raw)?),
+                other => {
+                    return Err(StorageError::InvalidData(format!(
+                        "PumpSwap normalizer debt eligibility was not boolean: {other}"
+                    )))
+                }
+            }
+        }
+        Ok((selected, last_cursor, reached_end))
+    }
+
+    fn normalizer_debt_cursor(
+        &self,
+        stream: &str,
+    ) -> Result<Option<NormalizerDebtCursor>, StorageError> {
+        self.ingestion_checkpoint(ProviderId::SolanaPublic, stream)?
+            .map(|value| decode_normalizer_debt_cursor(&value))
+            .transpose()
+    }
+
+    fn store_normalizer_debt_cursor(
+        &self,
+        stream: &str,
+        cursor: Option<&NormalizerDebtCursor>,
+    ) -> Result<(), StorageError> {
+        let encoded = cursor.map(encode_normalizer_debt_cursor);
+        match self.set_ingestion_checkpoint(ProviderId::SolanaPublic, stream, encoded.as_deref()) {
+            Ok(()) => Ok(()),
+            Err(error) if is_sqlite_busy_or_locked(&error) => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 fn validate_pump_trade_evidence(evidence: &PumpTradeEvidenceWrite) -> Result<(), StorageError> {
@@ -603,4 +866,61 @@ fn decode_pumpswap_row(
             "PumpSwap pool_quote_reserves_raw",
         )?,
     })
+}
+
+fn encode_normalizer_debt_cursor(cursor: &NormalizerDebtCursor) -> String {
+    format!(
+        "{}|{}|{}",
+        cursor.observed_at_unix_ms, cursor.signature, cursor.ordinal
+    )
+}
+
+fn decode_normalizer_debt_cursor(value: &str) -> Result<NormalizerDebtCursor, StorageError> {
+    let mut parts = value.split('|');
+    let observed_at_unix_ms = parts
+        .next()
+        .ok_or_else(|| StorageError::InvalidData("normalizer debt cursor missing time".to_owned()))?
+        .parse::<i64>()
+        .map_err(|error| {
+            StorageError::InvalidData(format!("normalizer debt cursor time is invalid: {error}"))
+        })?;
+    let signature = parts
+        .next()
+        .ok_or_else(|| {
+            StorageError::InvalidData("normalizer debt cursor missing signature".to_owned())
+        })?
+        .to_owned();
+    let ordinal = parts
+        .next()
+        .ok_or_else(|| StorageError::InvalidData("normalizer debt cursor missing ordinal".to_owned()))?
+        .parse::<i64>()
+        .map_err(|error| {
+            StorageError::InvalidData(format!("normalizer debt cursor ordinal is invalid: {error}"))
+        })?;
+    if parts.next().is_some()
+        || observed_at_unix_ms < 0
+        || signature.trim().is_empty()
+        || ordinal < 0
+        || u32::try_from(ordinal).is_err()
+    {
+        return Err(StorageError::InvalidData(
+            "normalizer debt cursor is outside the supported evidence identity domain".to_owned(),
+        ));
+    }
+    Ok(NormalizerDebtCursor {
+        observed_at_unix_ms,
+        signature,
+        ordinal,
+    })
+}
+
+fn is_sqlite_busy_or_locked(error: &StorageError) -> bool {
+    matches!(
+        error,
+        StorageError::Sqlite(rusqlite::Error::SqliteFailure(sqlite_error, _))
+            if matches!(
+                sqlite_error.code,
+                ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked
+            )
+    )
 }
