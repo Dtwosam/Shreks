@@ -40,7 +40,12 @@ fn raw_trade(signature: &str, observed_at_unix_ms: i64) -> PumpTradeEvidenceWrit
     }
 }
 
-fn canonical_event(signature: &str, sequence: u64, observed_at_unix_ms: i64) -> FastEvent {
+fn canonical_event(
+    signature: &str,
+    sequence: u64,
+    observed_at_unix_ms: i64,
+    price_quote: f64,
+) -> FastEvent {
     FastEvent::new(
         FastEventId::new(signature, 0).unwrap(),
         sequence,
@@ -52,8 +57,8 @@ fn canonical_event(signature: &str, sequence: u64, observed_at_unix_ms: i64) -> 
         1_000,
         observed_at_unix_ms,
         2.0,
-        0.1,
-        0.05,
+        2.0 * price_quote,
+        price_quote,
     ).unwrap()
 }
 
@@ -102,8 +107,8 @@ fn fl4_labels_are_versioned_exact_idempotent_and_source_linked() {
     let raw_future = raw_trade("future-fl4", 1_100);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
     assert!(db.record_pump_trade_evidence(&raw_future).unwrap());
-    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000), 900, 6, 9).unwrap());
-    assert!(db.record_fast_event(&canonical_event("future-fl4", 2, 1_250), 1_100, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("future-fl4", 2, 1_250, 0.06), 1_100, 6, 9).unwrap());
 
     let decision = decision();
     let coverage = FuturePathCoverage::new(1_500, true).unwrap();
@@ -133,7 +138,7 @@ fn complete_no_trade_label_round_trips_with_nullable_path_metrics() {
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     let raw_decision = raw_trade("decision-fl4", 900);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
-    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000), 900, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
 
     let decision = decision();
     let coverage = FuturePathCoverage::new(2_000, true).unwrap();
@@ -177,8 +182,8 @@ fn direct_label_persistence_rejects_decision_price_that_disagrees_with_canonical
     let raw_future = raw_trade("future-fl4", 1_100);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
     assert!(db.record_pump_trade_evidence(&raw_future).unwrap());
-    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000), 900, 6, 9).unwrap());
-    assert!(db.record_fast_event(&canonical_event("future-fl4", 2, 1_250), 1_100, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
+    assert!(db.record_fast_event(&canonical_event("future-fl4", 2, 1_250, 0.06), 1_100, 6, 9).unwrap());
 
     let mismatched_decision = FuturePathDecision::new(
         FastMarketKey::new("mint-fl4", WSOL, VenueId::PumpFunBondingCurve).unwrap(),
