@@ -1,6 +1,6 @@
 # FL3 Execution Economics Design
 
-**Status:** Approved by standing project instruction for autonomous implementation  
+**Status:** Implemented on PR #140; final merge verification pending  
 **Date:** 2026-09-02  
 **Phase:** FL3 — Execution economics and maximum acceptable entry price
 
@@ -117,9 +117,13 @@ If source evidence is insufficient to prove the required reserve/capacity state,
 
 ### 9. Historical evidence remains truthful
 
-Older stored raw events may predate newer appended Pump/PumpSwap event fields. When a historical source row does not carry the newer fee/virtual-reserve evidence, Shreks must represent that field as unknown rather than fabricating current values into the past.
+Older stored raw events may predate newer appended Pump/PumpSwap event fields. When a historical source row does not carry the newer fee/virtual-reserve evidence, Shreks represents that field as unknown rather than fabricating current values into the past.
 
-Storage replay remains source-derived. No duplicate canonical fee table is introduced merely to copy immutable raw event truth.
+Migration 15 adds `pump_trade_execution_economics` and `pump_swap_execution_economics` as **immutable raw-source evidence extensions** keyed by the exact `(signature, ordinal)` identity of the pre-existing raw source rows. They exist because the older raw table schemas physically lacked several fee and PumpSwap virtual-reserve fields that the current onchain event layouts expose. These sidecars preserve source truth needed for deterministic FL3 replay; they do not store derived `ExecutionEconomics`, strategy scores, or a second canonical fee schedule.
+
+Realtime persistence writes the raw source row and its source-evidence extension inside one existing Fast Lane SQLite transaction. Exact duplicates remain idempotent. Conflicting economics evidence for the same immutable source identity fails closed. A quarantined raw-source conflict is not granted sidecar authority.
+
+Historical raw rows that predate the new source fields naturally have no migration-15 sidecar. Their missing economics evidence therefore remains unknown. Current protocol fee values are never backfilled into historical rows.
 
 ## Core domain surface
 
@@ -171,15 +175,15 @@ Basis-point component inputs that directly represent a cost are individually bou
 
 ## Provider fee-evidence surface
 
-Provider parsers should retain authoritative onchain fee evidence needed for research/config verification.
+Provider parsers retain authoritative onchain fee evidence needed for research/config verification.
 
-Pump evidence should preserve fee basis points/raw amounts that are actually present in the decoded trade event. PumpSwap evidence should preserve the current LP/protocol/creator/newer fee fields when present and retain `virtual_quote_reserves` as optional source evidence.
+Pump evidence preserves fee basis points/raw amounts that are actually present in the decoded trade event. PumpSwap evidence preserves the stable LP/protocol fields and the current creator/cashback/buyback/virtual-reserve suffix when present.
 
 The Fast Lane source-normalization path may derive an `ExecutionLegCostInput` only when fee semantics for that exact source/event/config are known. Otherwise it returns unknown/not-assessable rather than guessing.
 
 ## PumpSwap reserve correction
 
-The current FL2 `FastReserveContext::PumpSwapPool` stores physical pool base/quote reserves. FL3 must extend this context only if needed to represent the documented virtual quote reserve without losing historical truth. The preferred shape is an optional signed virtual quote reserve because the current IDL exposes it as `i128` and older stored events may not contain the appended field.
+FL3 extends `FastReserveContext::PumpSwapPool` with an optional signed virtual quote reserve. The current IDL exposes it as `i128`, while historical source events may not contain the appended field.
 
 Pricing helpers use:
 
@@ -204,17 +208,19 @@ Errors are explicit domain errors, not booleans that erase the reason an assessm
 
 ## TDD and verification
 
-Every production behavior is introduced test-first:
+Production behavior was introduced test-first in this order:
 
 1. RED core economics contract tests;
 2. GREEN minimal core algebra;
 3. RED provider fee/virtual-reserve evidence tests;
-4. GREEN parsers/source-derived replay;
+4. GREEN parsers and immutable source-evidence replay;
 5. RED capacity tests for Pump and PumpSwap reserve contexts;
 6. GREEN venue-specific capacity math;
 7. end-to-end deterministic economics/reprice tests.
 
-Each RED must fail for the intended missing behavior. Each GREEN head must pass all four repository gates: repository safety, Rust workspace, Python suite, and native ARM64 release build/verification.
+The final end-to-end contract proves reserve-derived exit capacity feeds the economics assessment, the maximum acceptable entry ceiling accepts exactly at the boundary, the next representable price above it aborts, and insufficient capacity aborts independently of entry price.
+
+Final FL3 merge requires the repository's canonical four gates on the exact reviewed head and again on merged main: repository safety, Rust workspace, Python suite, and native ARM64 release build/verification.
 
 ## Authority and release boundary
 
@@ -225,6 +231,7 @@ FL3 remains pure decision/economic infrastructure. It does not:
 - add signer/wallet access;
 - submit Solana transactions;
 - enable `RuntimeMode::Live`;
+- change provider fallback selection; or
 - weaken release verification or deployment controls.
 
 A later FL7 PAPER action engine may consume this economics contract. A later live-capital phase must independently pass shadow/profitability/risk/operations promotion gates.
