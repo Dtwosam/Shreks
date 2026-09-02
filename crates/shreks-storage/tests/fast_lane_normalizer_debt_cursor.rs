@@ -11,6 +11,7 @@ use shreks_storage::{
 };
 
 const SOL: &str = "So11111111111111111111111111111111111111112";
+const STORAGE_SOURCE: &str = include_str!("../src/conflict_quarantine.rs");
 
 fn unique_test_dir() -> PathBuf {
     let nanos = SystemTime::now()
@@ -73,7 +74,7 @@ fn pumpswap(signature: &str, observed_at_unix_ms: i64, log_index: u32) -> PumpSw
 }
 
 #[test]
-fn normalizer_debt_pages_advance_durable_keyset_cursors_across_reopen() {
+fn normalizer_debt_pages_advance_durable_keyset_cursors_across_reopen_and_wrap() {
     let root = unique_test_dir();
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
@@ -128,6 +129,54 @@ fn normalizer_debt_pages_advance_durable_keyset_cursors_across_reopen() {
         vec!["swap-2", "swap-3"]
     );
 
+    let pump_third = reopened.paged_normalizer_pump_debt_evidence(2).unwrap();
+    assert_eq!(
+        pump_third
+            .iter()
+            .map(|row| row.signature.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pump-4", "pump-5"]
+    );
+    let swap_third = reopened.paged_normalizer_pumpswap_debt_evidence(2).unwrap();
+    assert_eq!(
+        swap_third
+            .iter()
+            .map(|row| row.signature.as_str())
+            .collect::<Vec<_>>(),
+        vec!["swap-4", "swap-5"]
+    );
+
+    let pump_wrapped = reopened.paged_normalizer_pump_debt_evidence(2).unwrap();
+    assert_eq!(
+        pump_wrapped
+            .iter()
+            .map(|row| row.signature.as_str())
+            .collect::<Vec<_>>(),
+        vec!["pump-0", "pump-1"]
+    );
+    let swap_wrapped = reopened.paged_normalizer_pumpswap_debt_evidence(2).unwrap();
+    assert_eq!(
+        swap_wrapped
+            .iter()
+            .map(|row| row.signature.as_str())
+            .collect::<Vec<_>>(),
+        vec!["swap-0", "swap-1"]
+    );
+
     drop(reopened);
     cleanup_dir(&root);
+}
+
+#[test]
+fn normalizer_debt_keyset_predicate_keeps_range_search_shape() {
+    assert!(
+        STORAGE_SOURCE.contains(
+            "(p.observed_at_unix_ms, p.signature, p.ordinal) > (\n                       COALESCE(?1, -1), COALESCE(?2, ''), COALESCE(?3, -1)"
+        ),
+        "normalizer debt pages must use the same tuple-range keyset shape as the proven metadata debt walker"
+    );
+    assert!(
+        !STORAGE_SOURCE.contains("WHERE ?1 IS NULL"),
+        "cursor-null OR predicates degrade the observed-at keyset from an index range search to an index scan"
+    );
 }
