@@ -4,6 +4,7 @@ mod conflict_quarantine;
 mod execution_economics;
 mod fast_lane;
 mod fast_lane_metadata;
+mod future_path_generation;
 mod future_path_labels;
 mod lifecycle;
 mod outcomes;
