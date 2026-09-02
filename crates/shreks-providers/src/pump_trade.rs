@@ -414,7 +414,7 @@ fn decode_trade_event(
     cursor.u64("cashbackFeeBasisPoints")?;
     cursor.u64("cashback")?;
     cursor.u64("buybackFeeBasisPoints")?;
-    cursor.u64("buyback")?;
+    cursor.u64("buybackFee")?;
     cursor.shareholders()?;
     let quote_mint = cursor.pubkey("quoteMint")?;
     let quote_amount_raw = cursor.u64("quoteAmount")?;
