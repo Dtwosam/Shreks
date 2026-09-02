@@ -1,6 +1,7 @@
 mod capacity;
 mod economics;
 mod event;
+mod future_path;
 mod state;
 
 pub use capacity::{
@@ -12,6 +13,11 @@ pub use economics::{
 };
 pub use event::{
     FastEvent, FastEventError, FastEventId, FastEventKind, FastMarketKey, FastReserveContext,
+};
+pub use future_path::{
+    label_future_paths, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
+    FuturePathLabel, FuturePathLabelError, FuturePathObservation, DEFAULT_FUTURE_PATH_HORIZONS_MS,
+    FUTURE_PATH_LABEL_VERSION,
 };
 pub use state::{
     FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary,
