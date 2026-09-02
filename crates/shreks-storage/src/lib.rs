@@ -1,6 +1,7 @@
 //! Operational SQLite storage for Shreks.
 
 mod conflict_quarantine;
+mod execution_economics;
 mod fast_lane;
 mod fast_lane_metadata;
 mod lifecycle;
@@ -10,6 +11,9 @@ mod reserve_context;
 mod safety_evidence;
 mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
+pub use execution_economics::{
+    PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
+};
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
@@ -115,6 +119,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 14,
         name: "fast_lane_pumpswap_pool_lookup",
         sql: include_str!("../migrations/0014_fast_lane_pumpswap_pool_lookup.sql"),
+    },
+    Migration {
+        version: 15,
+        name: "fl3_execution_economics",
+        sql: include_str!("../migrations/0015_fl3_execution_economics.sql"),
     },
 ];
 
@@ -668,7 +677,8 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
     connection.query_row("PRAGMA journal_mode = WAL", [], |row| row.get::<_, String>(0))?;
     connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))?;
     connection.execute_batch(
-        "PRAGMA foreign_keys = ON;\n\
+        "PRAGMA foreign_keys = ON;\
+\
          PRAGMA synchronous = NORMAL;",
     )?;
 
@@ -677,10 +687,14 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
 
 fn apply_migrations(connection: &mut Connection) -> Result<(), StorageError> {
     connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS schema_migrations (\n\
-             version INTEGER PRIMARY KEY,\n\
-             name TEXT NOT NULL,\n\
-             applied_at_unix_ms INTEGER NOT NULL\n\
+        "CREATE TABLE IF NOT EXISTS schema_migrations (\
+\
+             version INTEGER PRIMARY KEY,\
+\
+             name TEXT NOT NULL,\
+\
+             applied_at_unix_ms INTEGER NOT NULL\
+\
          );",
     )?;
 
