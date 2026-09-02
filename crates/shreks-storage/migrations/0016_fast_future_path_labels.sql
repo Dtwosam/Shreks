@@ -69,6 +69,20 @@ CREATE TABLE fast_future_path_labels (
     )
 );
 
+CREATE TRIGGER fast_future_path_labels_decision_price_source_guard
+BEFORE INSERT ON fast_future_path_labels
+FOR EACH ROW
+WHEN NOT EXISTS (
+    SELECT 1
+    FROM fast_events
+    WHERE signature = NEW.decision_signature
+      AND ordinal = NEW.decision_ordinal
+      AND price_quote = NEW.decision_entry_price_quote
+)
+BEGIN
+    SELECT RAISE(ABORT, 'future-path decision price must match canonical FastEvent');
+END;
+
 CREATE INDEX idx_fast_future_path_labels_decision_sequence
     ON fast_future_path_labels (decision_sequence, horizon_ms, label_version);
 
