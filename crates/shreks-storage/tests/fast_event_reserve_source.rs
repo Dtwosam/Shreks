@@ -10,7 +10,7 @@ use shreks_core::{
 };
 use shreks_storage::{
     pump_swap_event_ordinal, PumpSwapMarket, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite,
-    ShreksDb, StorageError,
+    ShreksDb,
 };
 
 const WSOL: &str = "So11111111111111111111111111111111111111112";
@@ -140,30 +140,42 @@ fn expected_pumpswap_context() -> FastReserveContext {
 }
 
 #[test]
-fn prevalidated_pump_source_requires_exact_reserve_context() {
+fn pump_replay_derives_reserve_context_from_immutable_source() {
     let root = unique_test_dir("pump-direct");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     let raw = pump_raw("pump-direct");
     db.record_pump_trade_evidence(&raw).unwrap();
 
-    let missing = pump_event("pump-direct");
-    let error = db
-        .record_pump_fast_event_from_source(&missing, &raw, 6, 9)
-        .expect_err("prevalidated Pump canonicalization must require source-derived reserves");
-    assert!(matches!(error, StorageError::InvalidData(_)));
-
-    let exact = pump_event("pump-direct")
-        .with_reserve_context(expected_pump_context())
+    let deliberately_wrong_ephemeral_context = FastReserveContext::PumpCurve {
+        virtual_base_reserve_raw: 1,
+        virtual_quote_reserve_raw: 2,
+        real_base_reserve_raw: 3,
+        real_quote_reserve_raw: 4,
+        base_decimals: 6,
+        quote_decimals: 9,
+    };
+    let event = pump_event("pump-direct")
+        .with_reserve_context(deliberately_wrong_ephemeral_context)
         .unwrap();
     assert!(db
-        .record_pump_fast_event_from_source(&exact, &raw, 6, 9)
+        .record_pump_fast_event_from_source(&event, &raw, 6, 9)
         .unwrap());
+
+    let replay = db
+        .fast_events_for_market_with_reserve_context(
+            "mint-a",
+            WSOL,
+            VenueId::PumpFunBondingCurve,
+        )
+        .unwrap();
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].event.reserve_context, Some(expected_pump_context()));
 
     cleanup_dir(&root);
 }
 
 #[test]
-fn legacy_pump_record_wrapper_enriches_replay_from_immutable_source() {
+fn legacy_pump_record_wrapper_enriches_reserve_aware_replay() {
     let root = unique_test_dir("pump-wrapper");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     let raw = pump_raw("pump-wrapper");
@@ -173,7 +185,11 @@ fn legacy_pump_record_wrapper_enriches_replay_from_immutable_source() {
         .record_fast_event(&pump_event("pump-wrapper"), 1_100, 6, 9)
         .unwrap());
     let replay = db
-        .fast_events_for_market("mint-a", WSOL, VenueId::PumpFunBondingCurve)
+        .fast_events_for_market_with_reserve_context(
+            "mint-a",
+            WSOL,
+            VenueId::PumpFunBondingCurve,
+        )
         .unwrap();
     assert_eq!(replay.len(), 1);
     assert_eq!(replay[0].event.reserve_context, Some(expected_pump_context()));
@@ -182,24 +198,33 @@ fn legacy_pump_record_wrapper_enriches_replay_from_immutable_source() {
 }
 
 #[test]
-fn prevalidated_pumpswap_source_requires_exact_reserve_context() {
+fn pumpswap_replay_derives_reserve_context_from_immutable_source() {
     let root = unique_test_dir("pumpswap-direct");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     let raw = pumpswap_raw("swap-direct", 7);
     db.record_pump_swap_trade_evidence(&raw).unwrap();
 
-    let missing = pumpswap_event("swap-direct", 7);
-    let error = db
-        .record_pump_swap_fast_event_from_source(&missing, &raw, &pumpswap_market(), 6, 9)
-        .expect_err("prevalidated PumpSwap canonicalization must require source-derived reserves");
-    assert!(matches!(error, StorageError::InvalidData(_)));
-
-    let exact = pumpswap_event("swap-direct", 7)
-        .with_reserve_context(expected_pumpswap_context())
+    let deliberately_wrong_ephemeral_context = FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw: 1,
+        pool_quote_reserve_raw: 2,
+        base_decimals: 6,
+        quote_decimals: 9,
+    };
+    let event = pumpswap_event("swap-direct", 7)
+        .with_reserve_context(deliberately_wrong_ephemeral_context)
         .unwrap();
     assert!(db
-        .record_pump_swap_fast_event_from_source(&exact, &raw, &pumpswap_market(), 6, 9)
+        .record_pump_swap_fast_event_from_source(&event, &raw, &pumpswap_market(), 6, 9)
         .unwrap());
+
+    let replay = db
+        .fast_events_for_market_with_reserve_context("mint-a", WSOL, VenueId::PumpSwap)
+        .unwrap();
+    assert_eq!(replay.len(), 1);
+    assert_eq!(
+        replay[0].event.reserve_context,
+        Some(expected_pumpswap_context())
+    );
 
     cleanup_dir(&root);
 }
