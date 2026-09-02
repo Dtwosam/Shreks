@@ -175,6 +175,10 @@ pub fn pump_swap_trade_evidence_to_fast_event(
         .with_reserve_context(FastReserveContext::PumpSwapPool {
             pool_base_reserve_raw: evidence.pool_base_reserves_raw,
             pool_quote_reserve_raw: evidence.pool_quote_reserves_raw,
+            virtual_quote_reserve_raw: evidence
+                .current_economics
+                .as_ref()
+                .map(|current| current.virtual_quote_reserves_raw),
             base_decimals,
             quote_decimals,
         })
