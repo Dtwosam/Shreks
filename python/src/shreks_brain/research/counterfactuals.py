@@ -304,6 +304,14 @@ class CounterfactualActionOutcome:
     remaining_cost_basis_quote: float | None = None
     entry_quote_savings_vs_buy_now: float | None = None
     return_bps_delta_vs_buy_now: float | None = None
+    entry_source_event_signature: str | None = None
+    entry_source_event_ordinal: int | None = None
+    entry_evidence_observed_at_unix_ms: int | None = None
+    entry_evidence_version: str | None = None
+    exit_source_event_signature: str | None = None
+    exit_source_event_ordinal: int | None = None
+    exit_evidence_observed_at_unix_ms: int | None = None
+    exit_evidence_version: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,6 +474,7 @@ def _entry_outcome(
         return_bps=return_bps,
         entry_evidence_id=None if entry is None else entry.evidence_id,
         exit_evidence_id=None if exit is None else exit.evidence_id,
+        **_execution_provenance(entry=entry, exit=exit),
     )
 
 
@@ -509,6 +518,7 @@ def _hold_outcome(
             None if context.hold_exit is None else context.hold_exit.evidence_id
         ),
         position_cost_basis_quote=context.position_cost_basis_quote,
+        **_execution_provenance(entry=None, exit=context.hold_exit),
     )
 
 
@@ -549,6 +559,7 @@ def _sell_now_outcome(
             None if context.sell_now is None else context.sell_now.evidence_id
         ),
         position_cost_basis_quote=context.position_cost_basis_quote,
+        **_execution_provenance(entry=None, exit=context.sell_now),
     )
 
 
@@ -608,7 +619,37 @@ def _reduce_outcome(
         realized_cost_basis_quote=realized_cost_basis_quote,
         remaining_base_quantity=remaining_base_quantity,
         remaining_cost_basis_quote=remaining_cost_basis_quote,
+        **_execution_provenance(entry=None, exit=context.reduce_now),
     )
+
+
+def _execution_provenance(
+    *,
+    entry: ExecutableTradeEvidence | None,
+    exit: ExecutableTradeEvidence | None,
+) -> dict[str, str | int | None]:
+    return {
+        "entry_source_event_signature": (
+            None if entry is None else entry.source_event_signature
+        ),
+        "entry_source_event_ordinal": (
+            None if entry is None else entry.source_event_ordinal
+        ),
+        "entry_evidence_observed_at_unix_ms": (
+            None if entry is None else entry.observed_at_unix_ms
+        ),
+        "entry_evidence_version": None if entry is None else entry.evidence_version,
+        "exit_source_event_signature": (
+            None if exit is None else exit.source_event_signature
+        ),
+        "exit_source_event_ordinal": (
+            None if exit is None else exit.source_event_ordinal
+        ),
+        "exit_evidence_observed_at_unix_ms": (
+            None if exit is None else exit.observed_at_unix_ms
+        ),
+        "exit_evidence_version": None if exit is None else exit.evidence_version,
+    }
 
 
 def _path_execution_status(
