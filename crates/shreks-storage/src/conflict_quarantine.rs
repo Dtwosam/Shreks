@@ -446,8 +446,9 @@ impl ShreksDb {
                        p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
                        p.ix_name
                    FROM pump_trade_evidence AS p
-                   WHERE ?1 IS NULL
-                      OR (p.observed_at_unix_ms, p.signature, p.ordinal) > (?1, ?2, ?3)
+                   WHERE (p.observed_at_unix_ms, p.signature, p.ordinal) > (
+                       COALESCE(?1, -1), COALESCE(?2, ''), COALESCE(?3, -1)
+                   )
                    ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
                    LIMIT ?4
                )
@@ -530,8 +531,9 @@ impl ShreksDb {
                        p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
                        p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
                    FROM pump_swap_trade_evidence AS p
-                   WHERE ?1 IS NULL
-                      OR (p.observed_at_unix_ms, p.signature, p.ordinal) > (?1, ?2, ?3)
+                   WHERE (p.observed_at_unix_ms, p.signature, p.ordinal) > (
+                       COALESCE(?1, -1), COALESCE(?2, ''), COALESCE(?3, -1)
+                   )
                    ORDER BY p.observed_at_unix_ms ASC, p.signature ASC, p.ordinal ASC
                    LIMIT ?4
                )
