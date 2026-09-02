@@ -7,8 +7,8 @@ use std::{
 
 use shreks_core::ProviderId;
 use shreks_storage::{
-    PumpSwapExecutionEconomicsWrite, PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite,
-    PumpTradeExecutionEconomicsWrite, ShreksDb,
+    pump_swap_event_ordinal, PumpSwapExecutionEconomicsWrite, PumpSwapTradeEvidenceWrite,
+    PumpTradeEvidenceWrite, PumpTradeExecutionEconomicsWrite, ShreksDb,
 };
 
 fn unique_test_dir(label: &str) -> PathBuf {
@@ -51,12 +51,12 @@ fn pump_raw(signature: &str) -> PumpTradeEvidenceWrite {
     }
 }
 
-fn pumpswap_raw(signature: &str, ordinal: u32) -> PumpSwapTradeEvidenceWrite {
+fn pumpswap_raw(signature: &str, log_index: u32) -> PumpSwapTradeEvidenceWrite {
     PumpSwapTradeEvidenceWrite {
         provider: ProviderId::Helius,
         signature: signature.to_owned(),
-        ordinal,
-        log_index: 7,
+        ordinal: pump_swap_event_ordinal(log_index).unwrap(),
+        log_index,
         slot: 900,
         observed_at_unix_ms: 1_100,
         pool: "pool-a".to_owned(),
@@ -119,9 +119,9 @@ fn pump_fee_evidence_round_trips_from_immutable_source_identity() {
 fn pumpswap_fee_evidence_preserves_stable_fees_and_optional_current_suffix() {
     let root = unique_test_dir("pumpswap");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
-    let ordinal = shreks_storage::pump_swap_event_ordinal(7).unwrap();
-    db.record_pump_swap_trade_evidence(&pumpswap_raw("pumpswap-fees", ordinal))
-        .unwrap();
+    let raw = pumpswap_raw("pumpswap-fees", 7);
+    let ordinal = raw.ordinal;
+    db.record_pump_swap_trade_evidence(&raw).unwrap();
 
     let economics = PumpSwapExecutionEconomicsWrite {
         signature: "pumpswap-fees".to_owned(),
@@ -152,7 +152,7 @@ fn pumpswap_fee_evidence_preserves_stable_fees_and_optional_current_suffix() {
         economics
     );
 
-    let legacy = pumpswap_raw("pumpswap-legacy", shreks_storage::pump_swap_event_ordinal(8).unwrap());
+    let legacy = pumpswap_raw("pumpswap-legacy", 8);
     db.record_pump_swap_trade_evidence(&legacy).unwrap();
     let legacy_economics = PumpSwapExecutionEconomicsWrite {
         signature: legacy.signature.clone(),
@@ -188,9 +188,9 @@ fn pumpswap_fee_evidence_preserves_stable_fees_and_optional_current_suffix() {
 fn pumpswap_current_suffix_is_all_or_none() {
     let root = unique_test_dir("partial-suffix");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
-    let ordinal = shreks_storage::pump_swap_event_ordinal(7).unwrap();
-    db.record_pump_swap_trade_evidence(&pumpswap_raw("partial-suffix", ordinal))
-        .unwrap();
+    let raw = pumpswap_raw("partial-suffix", 7);
+    let ordinal = raw.ordinal;
+    db.record_pump_swap_trade_evidence(&raw).unwrap();
 
     let partial = PumpSwapExecutionEconomicsWrite {
         signature: "partial-suffix".to_owned(),
