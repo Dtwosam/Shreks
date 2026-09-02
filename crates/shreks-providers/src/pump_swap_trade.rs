@@ -10,6 +10,20 @@ pub const PUMPSWAP_BUY_EVENT_DISCRIMINATOR: [u8; 8] = [103, 244, 82, 31, 44, 245
 pub const PUMPSWAP_SELL_EVENT_DISCRIMINATOR: [u8; 8] = [62, 47, 55, 10, 165, 3, 220, 42];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PumpSwapCurrentEconomicsEvidence {
+    pub coin_creator: String,
+    pub coin_creator_fee_basis_points: u64,
+    pub coin_creator_fee_raw: u64,
+    pub cashback_fee_basis_points: u64,
+    pub cashback_raw: u64,
+    pub buyback_fee_basis_points: u64,
+    pub buyback_fee_raw: u64,
+    pub virtual_quote_reserves_raw: i128,
+    pub can_boost: bool,
+    pub base_supply_raw: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PumpSwapTradeEvidence {
     pub log_index: u32,
     pub pool: String,
@@ -21,14 +35,21 @@ pub struct PumpSwapTradeEvidence {
     pub timestamp_unix_seconds: i64,
     pub pool_base_reserves_raw: u64,
     pub pool_quote_reserves_raw: u64,
+    pub lp_fee_basis_points: u64,
+    pub lp_fee_raw: u64,
+    pub protocol_fee_basis_points: u64,
+    pub protocol_fee_raw: u64,
+    pub quote_amount_with_or_without_lp_fee_raw: u64,
+    pub current_economics: Option<PumpSwapCurrentEconomicsEvidence>,
 }
 
 /// Decode authoritative Anchor trade events emitted directly by PumpSwap.
 ///
 /// Only `Program data:` emitted while PumpSwap is the active invocation is
-/// eligible. The parser consumes the stable event prefix through `pool` and
-/// `user`; trailing fee/cashback fields may grow without changing the economic
-/// prefix Shreks needs for FL1.
+/// eligible. The stable event prefix remains mandatory. Newer economics fields
+/// are retained only when the complete currently-known suffix decodes exactly;
+/// older or intermediate suffixes remain valid FL1 evidence but are explicitly
+/// unknown to FL3 rather than being assigned today's fee/reserve semantics.
 pub fn parse_pump_swap_trade_logs(
     logs: &[Value],
 ) -> Result<Vec<PumpSwapTradeEvidence>, ProviderError> {
@@ -154,6 +175,10 @@ pub fn pump_swap_trade_evidence_to_fast_event(
         .with_reserve_context(FastReserveContext::PumpSwapPool {
             pool_base_reserve_raw: evidence.pool_base_reserves_raw,
             pool_quote_reserve_raw: evidence.pool_quote_reserves_raw,
+            virtual_quote_reserve_raw: evidence
+                .current_economics
+                .as_ref()
+                .map(|current| current.virtual_quote_reserves_raw),
             base_decimals,
             quote_decimals,
         })
@@ -188,12 +213,12 @@ fn decode_trade_event_prefix(
     let pool_base_reserves_raw = read_u64(bytes, &mut cursor, "pool base reserves")?;
     let pool_quote_reserves_raw = read_u64(bytes, &mut cursor, "pool quote reserves")?;
     let quote_amount_raw = read_u64(bytes, &mut cursor, "quote amount")?;
-    let _lp_fee_basis_points = read_u64(bytes, &mut cursor, "LP fee basis points")?;
-    let _lp_fee = read_u64(bytes, &mut cursor, "LP fee")?;
-    let _protocol_fee_basis_points =
+    let lp_fee_basis_points = read_u64(bytes, &mut cursor, "LP fee basis points")?;
+    let lp_fee_raw = read_u64(bytes, &mut cursor, "LP fee")?;
+    let protocol_fee_basis_points =
         read_u64(bytes, &mut cursor, "protocol fee basis points")?;
-    let _protocol_fee = read_u64(bytes, &mut cursor, "protocol fee")?;
-    let _quote_amount_with_or_without_lp_fee =
+    let protocol_fee_raw = read_u64(bytes, &mut cursor, "protocol fee")?;
+    let quote_amount_with_or_without_lp_fee_raw =
         read_u64(bytes, &mut cursor, "fee-adjusted quote amount")?;
     let user_quote_amount_raw = read_u64(bytes, &mut cursor, "user quote amount")?;
     let pool = read_pubkey(bytes, &mut cursor, "pool")?;
@@ -204,6 +229,12 @@ fn decode_trade_event_prefix(
             "PumpSwap trade event contains zero executed quantity",
         ));
     }
+
+    let current_economics = if cursor == bytes.len() {
+        None
+    } else {
+        decode_current_economics_suffix(bytes, cursor, is_buy).ok()
+    };
 
     Ok(PumpSwapTradeEvidence {
         log_index,
@@ -216,6 +247,66 @@ fn decode_trade_event_prefix(
         timestamp_unix_seconds,
         pool_base_reserves_raw,
         pool_quote_reserves_raw,
+        lp_fee_basis_points,
+        lp_fee_raw,
+        protocol_fee_basis_points,
+        protocol_fee_raw,
+        quote_amount_with_or_without_lp_fee_raw,
+        current_economics,
+    })
+}
+
+fn decode_current_economics_suffix(
+    bytes: &[u8],
+    mut cursor: usize,
+    is_buy: bool,
+) -> Result<PumpSwapCurrentEconomicsEvidence, ProviderError> {
+    let _user_base_token_account = read_pubkey(bytes, &mut cursor, "user base token account")?;
+    let _user_quote_token_account = read_pubkey(bytes, &mut cursor, "user quote token account")?;
+    let _protocol_fee_recipient = read_pubkey(bytes, &mut cursor, "protocol fee recipient")?;
+    let _protocol_fee_recipient_token_account =
+        read_pubkey(bytes, &mut cursor, "protocol fee recipient token account")?;
+    let coin_creator = read_pubkey(bytes, &mut cursor, "coin creator")?;
+    let coin_creator_fee_basis_points =
+        read_u64(bytes, &mut cursor, "coin creator fee basis points")?;
+    let coin_creator_fee_raw = read_u64(bytes, &mut cursor, "coin creator fee")?;
+
+    if is_buy {
+        let _track_volume = read_bool(bytes, &mut cursor, "track volume")?;
+        let _total_unclaimed_tokens = read_u64(bytes, &mut cursor, "total unclaimed tokens")?;
+        let _total_claimed_tokens = read_u64(bytes, &mut cursor, "total claimed tokens")?;
+        let _current_sol_volume = read_u64(bytes, &mut cursor, "current SOL volume")?;
+        let _last_update_timestamp = read_i64(bytes, &mut cursor, "last update timestamp")?;
+        let _min_base_amount_out = read_u64(bytes, &mut cursor, "minimum base amount out")?;
+        let _ix_name = read_string(bytes, &mut cursor, "instruction name")?;
+    }
+
+    let cashback_fee_basis_points = read_u64(bytes, &mut cursor, "cashback fee basis points")?;
+    let cashback_raw = read_u64(bytes, &mut cursor, "cashback")?;
+    let buyback_fee_basis_points = read_u64(bytes, &mut cursor, "buyback fee basis points")?;
+    let buyback_fee_raw = read_u64(bytes, &mut cursor, "buyback fee")?;
+    let virtual_quote_reserves_raw = read_i128(bytes, &mut cursor, "virtual quote reserves")?;
+    let can_boost = read_bool(bytes, &mut cursor, "can boost")?;
+    let base_supply_raw = read_u64(bytes, &mut cursor, "base supply")?;
+
+    if cursor != bytes.len() {
+        return Err(invalid_response(format!(
+            "PumpSwap current trade event suffix has {} unexpected trailing bytes",
+            bytes.len() - cursor
+        )));
+    }
+
+    Ok(PumpSwapCurrentEconomicsEvidence {
+        coin_creator,
+        coin_creator_fee_basis_points,
+        coin_creator_fee_raw,
+        cashback_fee_basis_points,
+        cashback_raw,
+        buyback_fee_basis_points,
+        buyback_fee_raw,
+        virtual_quote_reserves_raw,
+        can_boost,
+        base_supply_raw,
     })
 }
 
@@ -243,6 +334,62 @@ fn read_i64(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<i64, Provid
         .expect("slice length is exactly eight bytes");
     *cursor = end;
     Ok(i64::from_le_bytes(raw))
+}
+
+fn read_i128(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<i128, ProviderError> {
+    let end = cursor
+        .checked_add(16)
+        .ok_or_else(|| invalid_response(format!("PumpSwap {field} offset overflow")))?;
+    let raw: [u8; 16] = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| invalid_response(format!("PumpSwap trade event missing {field}")))?
+        .try_into()
+        .expect("slice length is exactly sixteen bytes");
+    *cursor = end;
+    Ok(i128::from_le_bytes(raw))
+}
+
+fn read_bool(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<bool, ProviderError> {
+    let value = *bytes
+        .get(*cursor)
+        .ok_or_else(|| invalid_response(format!("PumpSwap trade event missing {field}")))?;
+    *cursor = cursor
+        .checked_add(1)
+        .ok_or_else(|| invalid_response(format!("PumpSwap {field} offset overflow")))?;
+    match value {
+        0 => Ok(false),
+        1 => Ok(true),
+        other => Err(invalid_response(format!(
+            "PumpSwap trade event invalid bool {other} at {field}"
+        ))),
+    }
+}
+
+fn read_u32(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<u32, ProviderError> {
+    let end = cursor
+        .checked_add(4)
+        .ok_or_else(|| invalid_response(format!("PumpSwap {field} offset overflow")))?;
+    let raw: [u8; 4] = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| invalid_response(format!("PumpSwap trade event missing {field}")))?
+        .try_into()
+        .expect("slice length is exactly four bytes");
+    *cursor = end;
+    Ok(u32::from_le_bytes(raw))
+}
+
+fn read_string(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<String, ProviderError> {
+    let len = usize::try_from(read_u32(bytes, cursor, field)?)
+        .map_err(|_| invalid_response(format!("PumpSwap {field} length overflow")))?;
+    let end = cursor
+        .checked_add(len)
+        .ok_or_else(|| invalid_response(format!("PumpSwap {field} offset overflow")))?;
+    let raw = bytes
+        .get(*cursor..end)
+        .ok_or_else(|| invalid_response(format!("PumpSwap trade event missing {field}")))?;
+    *cursor = end;
+    String::from_utf8(raw.to_vec())
+        .map_err(|error| invalid_response(format!("PumpSwap invalid UTF-8 at {field}: {error}")))
 }
 
 fn read_pubkey(bytes: &[u8], cursor: &mut usize, field: &str) -> Result<String, ProviderError> {

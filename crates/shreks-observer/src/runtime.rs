@@ -20,8 +20,9 @@ use shreks_providers::{
     ProviderError,
 };
 use shreks_storage::{
-    pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapTradeEvidenceWrite,
-    PumpTradeEvidenceWrite, ShreksDb, StorageError,
+    pump_swap_event_ordinal, EvidenceWriteOutcome, PumpSwapExecutionEconomicsWrite,
+    PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, PumpTradeExecutionEconomicsWrite, ShreksDb,
+    StorageError,
 };
 use sqlite_busy_retry::{is_storage_sqlite_busy_or_locked, retry_bounded};
 use tokio::sync::mpsc;
@@ -297,9 +298,36 @@ impl Observer {
                     real_quote_reserves_raw: trade.real_quote_reserves_raw,
                     ix_name: trade.ix_name.clone(),
                 };
+                let economics = PumpTradeExecutionEconomicsWrite {
+                    signature: notification.signature.clone(),
+                    ordinal,
+                    fee_recipient: trade.fee_recipient.clone(),
+                    fee_basis_points: trade.fee_basis_points,
+                    fee_raw: trade.fee_raw,
+                    creator: trade.creator.clone(),
+                    creator_fee_basis_points: trade.creator_fee_basis_points,
+                    creator_fee_raw: trade.creator_fee_raw,
+                    cashback_fee_basis_points: trade.cashback_fee_basis_points,
+                    cashback_raw: trade.cashback_raw,
+                    buyback_fee_basis_points: trade.buyback_fee_basis_points,
+                    buyback_fee_raw: trade.buyback_fee_raw,
+                };
 
                 match retry_bounded(
-                    || db.record_pump_trade_evidence_or_quarantine(&write),
+                    || {
+                        db.with_fast_event_write_transaction(
+                            || -> Result<EvidenceWriteOutcome, StorageError> {
+                                let outcome = db.record_pump_trade_evidence_or_quarantine(&write)?;
+                                if matches!(
+                                    outcome,
+                                    EvidenceWriteOutcome::Inserted | EvidenceWriteOutcome::Duplicate
+                                ) {
+                                    db.record_pump_trade_execution_economics(&economics)?;
+                                }
+                                Ok(outcome)
+                            },
+                        )
+                    },
                     is_storage_sqlite_busy_or_locked,
                 )? {
                     EvidenceWriteOutcome::Inserted => {
@@ -329,9 +357,69 @@ impl Observer {
                     pool_base_reserves_raw: trade.pool_base_reserves_raw,
                     pool_quote_reserves_raw: trade.pool_quote_reserves_raw,
                 };
+                let (
+                    coin_creator,
+                    coin_creator_fee_basis_points,
+                    coin_creator_fee_raw,
+                    cashback_fee_basis_points,
+                    cashback_raw,
+                    buyback_fee_basis_points,
+                    buyback_fee_raw,
+                    virtual_quote_reserves_raw,
+                    can_boost,
+                    base_supply_raw,
+                ) = match &trade.current_economics {
+                    Some(current) => (
+                        Some(current.coin_creator.clone()),
+                        Some(current.coin_creator_fee_basis_points),
+                        Some(current.coin_creator_fee_raw),
+                        Some(current.cashback_fee_basis_points),
+                        Some(current.cashback_raw),
+                        Some(current.buyback_fee_basis_points),
+                        Some(current.buyback_fee_raw),
+                        Some(current.virtual_quote_reserves_raw),
+                        Some(current.can_boost),
+                        Some(current.base_supply_raw),
+                    ),
+                    None => (None, None, None, None, None, None, None, None, None, None),
+                };
+                let economics = PumpSwapExecutionEconomicsWrite {
+                    signature: notification.signature.clone(),
+                    ordinal,
+                    lp_fee_basis_points: trade.lp_fee_basis_points,
+                    lp_fee_raw: trade.lp_fee_raw,
+                    protocol_fee_basis_points: trade.protocol_fee_basis_points,
+                    protocol_fee_raw: trade.protocol_fee_raw,
+                    quote_amount_with_or_without_lp_fee_raw: trade
+                        .quote_amount_with_or_without_lp_fee_raw,
+                    coin_creator,
+                    coin_creator_fee_basis_points,
+                    coin_creator_fee_raw,
+                    cashback_fee_basis_points,
+                    cashback_raw,
+                    buyback_fee_basis_points,
+                    buyback_fee_raw,
+                    virtual_quote_reserves_raw,
+                    can_boost,
+                    base_supply_raw,
+                };
 
                 match retry_bounded(
-                    || db.record_pump_swap_trade_evidence_or_quarantine(&write),
+                    || {
+                        db.with_fast_event_write_transaction(
+                            || -> Result<EvidenceWriteOutcome, StorageError> {
+                                let outcome =
+                                    db.record_pump_swap_trade_evidence_or_quarantine(&write)?;
+                                if matches!(
+                                    outcome,
+                                    EvidenceWriteOutcome::Inserted | EvidenceWriteOutcome::Duplicate
+                                ) {
+                                    db.record_pump_swap_execution_economics(&economics)?;
+                                }
+                                Ok(outcome)
+                            },
+                        )
+                    },
                     is_storage_sqlite_busy_or_locked,
                 )? {
                     EvidenceWriteOutcome::Inserted => {

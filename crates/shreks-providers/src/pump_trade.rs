@@ -43,6 +43,16 @@ pub struct PumpTradeEvidence {
     pub real_token_reserves_raw: u64,
     pub virtual_quote_reserves_raw: u64,
     pub real_quote_reserves_raw: u64,
+    pub fee_recipient: String,
+    pub fee_basis_points: u64,
+    pub fee_raw: u64,
+    pub creator: String,
+    pub creator_fee_basis_points: u64,
+    pub creator_fee_raw: u64,
+    pub cashback_fee_basis_points: u64,
+    pub cashback_raw: u64,
+    pub buyback_fee_basis_points: u64,
+    pub buyback_fee_raw: u64,
     pub ix_name: String,
 }
 
@@ -398,12 +408,12 @@ fn decode_trade_event(
     let virtual_token_reserves_raw = cursor.u64("virtualTokenReserves")?;
     let real_sol_reserves_raw = cursor.u64("realSolReserves")?;
     let real_token_reserves_raw = cursor.u64("realTokenReserves")?;
-    cursor.pubkey("feeRecipient")?;
-    cursor.u64("feeBasisPoints")?;
-    cursor.u64("fee")?;
-    cursor.pubkey("creator")?;
-    cursor.u64("creatorFeeBasisPoints")?;
-    cursor.u64("creatorFee")?;
+    let fee_recipient = cursor.pubkey("feeRecipient")?;
+    let fee_basis_points = cursor.u64("feeBasisPoints")?;
+    let fee_raw = cursor.u64("fee")?;
+    let creator = cursor.pubkey("creator")?;
+    let creator_fee_basis_points = cursor.u64("creatorFeeBasisPoints")?;
+    let creator_fee_raw = cursor.u64("creatorFee")?;
     cursor.boolean("trackVolume")?;
     cursor.u64("totalUnclaimedTokens")?;
     cursor.u64("totalClaimedTokens")?;
@@ -411,10 +421,10 @@ fn decode_trade_event(
     cursor.i64("lastUpdateTimestamp")?;
     let ix_name = cursor.string("ixName")?;
     cursor.boolean("mayhemMode")?;
-    cursor.u64("cashbackFeeBasisPoints")?;
-    cursor.u64("cashback")?;
-    cursor.u64("buybackFeeBasisPoints")?;
-    cursor.u64("buybackFee")?;
+    let cashback_fee_basis_points = cursor.u64("cashbackFeeBasisPoints")?;
+    let cashback_raw = cursor.u64("cashback")?;
+    let buyback_fee_basis_points = cursor.u64("buybackFeeBasisPoints")?;
+    let buyback_fee_raw = cursor.u64("buybackFee")?;
     cursor.shareholders()?;
     let quote_mint = cursor.pubkey("quoteMint")?;
     let quote_amount_raw = cursor.u64("quoteAmount")?;
@@ -457,6 +467,16 @@ fn decode_trade_event(
         real_token_reserves_raw,
         virtual_quote_reserves_raw,
         real_quote_reserves_raw,
+        fee_recipient,
+        fee_basis_points,
+        fee_raw,
+        creator,
+        creator_fee_basis_points,
+        creator_fee_raw,
+        cashback_fee_basis_points,
+        cashback_raw,
+        buyback_fee_basis_points,
+        buyback_fee_raw,
         ix_name,
     })
 }

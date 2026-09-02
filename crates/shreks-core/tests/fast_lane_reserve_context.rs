@@ -67,6 +67,7 @@ fn pumpswap_reserve_context_survives_into_latest_market_snapshot() {
     let reserve = FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: 250_000_000_000,
         pool_quote_reserve_raw: 20_000_000_000,
+        virtual_quote_reserve_raw: None,
         base_decimals: 6,
         quote_decimals: 9,
     };
@@ -85,6 +86,7 @@ fn reserve_context_rejects_the_wrong_venue() {
     let reserve = FastReserveContext::PumpSwapPool {
         pool_base_reserve_raw: 1,
         pool_quote_reserve_raw: 1,
+        virtual_quote_reserve_raw: None,
         base_decimals: 6,
         quote_decimals: 9,
     };
