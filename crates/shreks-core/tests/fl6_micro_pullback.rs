@@ -261,7 +261,7 @@ fn weak_impulse_shallow_or_deep_pullback_and_incomplete_reclaim_skip() {
         .contains(&MicroPullbackReason::ImpulseMoveBelowMinimum));
 
     let mut structure = strong_structure();
-    structure.post_high_low_price_quote = Some(0.0118);
+    structure.post_high_low_price_quote = Some(0.0117);
     let assessment = assess_micro_pullback(
         &snapshot(structure, strong_reclaim()),
         Some(&exec),

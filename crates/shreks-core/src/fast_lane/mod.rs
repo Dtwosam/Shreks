@@ -3,6 +3,7 @@ mod capacity;
 mod economics;
 mod event;
 mod future_path;
+mod micro_pullback;
 mod state;
 
 pub use baseline::{
@@ -24,6 +25,11 @@ pub use future_path::{
     label_future_paths, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
     FuturePathLabel, FuturePathLabelError, FuturePathObservation, DEFAULT_FUTURE_PATH_HORIZONS_MS,
     FUTURE_PATH_LABEL_VERSION,
+};
+pub use micro_pullback::{
+    assess_micro_pullback, MicroPullbackAssessment, MicroPullbackError,
+    MicroPullbackExecutionInput, MicroPullbackPolicy, MicroPullbackReason,
+    MICRO_PULLBACK_BASELINE_VERSION,
 };
 pub use state::{
     FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary,
