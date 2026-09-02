@@ -49,7 +49,7 @@ fn canonical_event(signature: &str, sequence: u64, observed_at_unix_ms: i64) -> 
         FastEventKind::Buy,
         Some("wallet-fl4".to_owned()),
         55,
-        observed_at_unix_ms - 100,
+        1_000,
         observed_at_unix_ms,
         2.0,
         0.1,
