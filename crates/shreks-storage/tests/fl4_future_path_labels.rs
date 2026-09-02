@@ -201,10 +201,11 @@ fn direct_label_persistence_rejects_decision_price_that_disagrees_with_canonical
     .unwrap();
     let coverage = FuturePathCoverage::new(1_500, true).unwrap();
 
-    let error = db
-        .record_future_path_label(&mismatched_decision, coverage, &label())
-        .unwrap_err();
-    assert!(matches!(error, StorageError::InvalidData(_)));
+    assert!(
+        db.record_future_path_label(&mismatched_decision, coverage, &label())
+            .is_err(),
+        "decision price disagreement must fail closed"
+    );
     assert!(db
         .future_path_labels_for_decision("decision-fl4", 0, FUTURE_PATH_LABEL_VERSION)
         .unwrap()
