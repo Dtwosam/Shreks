@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-use super::{FastEvent, FastEventKind, FastMarketKey};
+use super::{FastEvent, FastEventKind, FastMarketKey, FastReserveContext};
 
 pub const DEFAULT_FAST_WINDOWS_MS: [u64; 7] = [100, 250, 500, 1_000, 2_000, 5_000, 10_000];
 
@@ -138,6 +138,7 @@ pub struct FastMarketSnapshot {
     pub as_of_unix_ms: i64,
     pub last_sequence: Option<u64>,
     pub last_price_quote: Option<f64>,
+    pub last_reserve_context: Option<FastReserveContext>,
     pub windows: Vec<FastWindowSummary>,
 }
 
@@ -155,6 +156,7 @@ pub struct FastMarketState {
     last_sequence: Option<u64>,
     last_observed_at_unix_ms: Option<i64>,
     last_price_quote: Option<f64>,
+    last_reserve_context: Option<FastReserveContext>,
 }
 
 impl FastMarketState {
@@ -166,6 +168,7 @@ impl FastMarketState {
             last_sequence: None,
             last_observed_at_unix_ms: None,
             last_price_quote: None,
+            last_reserve_context: None,
         }
     }
 
@@ -194,6 +197,7 @@ impl FastMarketState {
         self.last_sequence = Some(event.sequence);
         self.last_observed_at_unix_ms = Some(observed_at_unix_ms);
         self.last_price_quote = Some(event.price_quote);
+        self.last_reserve_context = event.reserve_context.clone();
         self.events.push_back(event);
 
         let max_window_ms = self.windows_ms.iter().copied().max().unwrap_or(0) as i64;
@@ -277,6 +281,7 @@ impl FastMarketState {
             as_of_unix_ms,
             last_sequence: self.last_sequence,
             last_price_quote: self.last_price_quote,
+            last_reserve_context: self.last_reserve_context.clone(),
             windows,
         })
     }
