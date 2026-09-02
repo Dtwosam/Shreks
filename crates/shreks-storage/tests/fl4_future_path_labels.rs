@@ -15,7 +15,11 @@ fn unique_test_dir(label: &str) -> PathBuf {
 
 fn cleanup_dir(path: &Path) { let _ = fs::remove_dir_all(path); }
 
-fn raw_trade(signature: &str, observed_at_unix_ms: i64) -> PumpTradeEvidenceWrite {
+fn raw_trade(
+    signature: &str,
+    observed_at_unix_ms: i64,
+    sol_amount_raw: u64,
+) -> PumpTradeEvidenceWrite {
     PumpTradeEvidenceWrite {
         provider: ProviderId::Helius,
         signature: signature.to_owned(),
@@ -27,7 +31,7 @@ fn raw_trade(signature: &str, observed_at_unix_ms: i64) -> PumpTradeEvidenceWrit
         user: "wallet-fl4".to_owned(),
         is_buy: true,
         token_amount_raw: 2_000_000,
-        sol_amount_raw: 100_000_000,
+        sol_amount_raw,
         quote_amount_raw: 0,
         timestamp_unix_seconds: 1,
         virtual_sol_reserves_raw: 10_000_000_000,
@@ -103,8 +107,8 @@ fn fl4_labels_are_versioned_exact_idempotent_and_source_linked() {
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     assert_eq!(db.diagnostics().unwrap().schema_version, 16);
 
-    let raw_decision = raw_trade("decision-fl4", 900);
-    let raw_future = raw_trade("future-fl4", 1_100);
+    let raw_decision = raw_trade("decision-fl4", 900, 100_000_000);
+    let raw_future = raw_trade("future-fl4", 1_100, 120_000_000);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
     assert!(db.record_pump_trade_evidence(&raw_future).unwrap());
     assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
@@ -136,7 +140,7 @@ fn fl4_labels_are_versioned_exact_idempotent_and_source_linked() {
 fn complete_no_trade_label_round_trips_with_nullable_path_metrics() {
     let root = unique_test_dir("nullable");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
-    let raw_decision = raw_trade("decision-fl4", 900);
+    let raw_decision = raw_trade("decision-fl4", 900, 100_000_000);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
     assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
 
@@ -178,8 +182,8 @@ fn direct_label_persistence_rejects_decision_price_that_disagrees_with_canonical
     let root = unique_test_dir("decision-price-source");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
 
-    let raw_decision = raw_trade("decision-fl4", 900);
-    let raw_future = raw_trade("future-fl4", 1_100);
+    let raw_decision = raw_trade("decision-fl4", 900, 100_000_000);
+    let raw_future = raw_trade("future-fl4", 1_100, 120_000_000);
     assert!(db.record_pump_trade_evidence(&raw_decision).unwrap());
     assert!(db.record_pump_trade_evidence(&raw_future).unwrap());
     assert!(db.record_fast_event(&canonical_event("decision-fl4", 1, 1_000, 0.05), 900, 6, 9).unwrap());
