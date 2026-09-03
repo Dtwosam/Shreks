@@ -23,6 +23,21 @@ from .models import (
     FastPaperMarketCursor,
     FastPaperMaterialUpdate,
 )
+from .position import (
+    apply_fast_paper_position_action,
+    create_fast_paper_position_action_state,
+)
+from .position_models import (
+    FAST_PAPER_EXIT_RISK_POLICY_SENTINEL,
+    FAST_PAPER_POSITION_ACTION_VERSION,
+    FastPaperPositionActionApproval,
+    FastPaperPositionActionError,
+    FastPaperPositionActionPolicy,
+    FastPaperPositionActionResult,
+    FastPaperPositionActionState,
+    FastPaperPositionOutcome,
+    FastPaperPositionQuote,
+)
 from .skip import (
     FAST_PAPER_SKIP_AUDIT_VERSION,
     FastPaperSkipAuditError,
@@ -37,6 +52,8 @@ from .skip import (
 __all__ = (
     "FAST_PAPER_BUY_VERSION",
     "FAST_PAPER_EVENT_LOOP_VERSION",
+    "FAST_PAPER_EXIT_RISK_POLICY_SENTINEL",
+    "FAST_PAPER_POSITION_ACTION_VERSION",
     "FAST_PAPER_SKIP_AUDIT_VERSION",
     "FastPaperAction",
     "FastPaperActionAssessment",
@@ -56,12 +73,21 @@ __all__ = (
     "FastPaperLoopState",
     "FastPaperMarketCursor",
     "FastPaperMaterialUpdate",
+    "FastPaperPositionActionApproval",
+    "FastPaperPositionActionError",
+    "FastPaperPositionActionPolicy",
+    "FastPaperPositionActionResult",
+    "FastPaperPositionActionState",
+    "FastPaperPositionOutcome",
+    "FastPaperPositionQuote",
     "FastPaperSkipAuditError",
     "FastPaperSkipAuditRecord",
     "FastPaperSkipAuditView",
     "FastPaperSkipFutureLabel",
     "FastPaperSkipLabelLink",
+    "apply_fast_paper_position_action",
     "create_fast_paper_loop_state",
+    "create_fast_paper_position_action_state",
     "execute_fast_paper_buy",
     "load_fast_paper_skip_with_future_labels",
     "record_fast_paper_skip",
