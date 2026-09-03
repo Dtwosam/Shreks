@@ -8,6 +8,7 @@ import math
 import os
 import sqlite3
 
+from shreks_brain.exits import ExitPolicy, ExitState
 from shreks_brain.fast_paper import (
     FastPaperAction,
     FastPaperActionAssessment,
@@ -18,6 +19,7 @@ from shreks_brain.fast_paper import (
     FastPaperPositionActionApproval,
     FastPaperPositionActionPolicy,
     FastPaperPositionActionState,
+    FastPaperProtectiveExitPolicy,
 )
 from shreks_brain.paper import (
     PaperExecutionReasonCode,
@@ -40,6 +42,11 @@ from .fast_models import (
     FastPaperRuntimeState,
 )
 from .models import AccountingValidationReport, AccountingValidationStatus
+from .protected_models import (
+    FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION,
+    FastPaperProtectedCheckpointRecord,
+    FastPaperProtectedRuntimeState,
+)
 
 
 _TABLE_NAME = "paper_loop_checkpoints"
@@ -59,6 +66,10 @@ _DATACLASS_TYPES = (
     FastPaperPositionActionApproval,
     FastPaperPositionActionState,
     FastPaperRuntimeState,
+    ExitPolicy,
+    ExitState,
+    FastPaperProtectiveExitPolicy,
+    FastPaperProtectedRuntimeState,
 )
 _DATACLASS_BY_NAME = {item.__name__: item for item in _DATACLASS_TYPES}
 _DATACLASS_NAME_BY_TYPE = {item: item.__name__ for item in _DATACLASS_TYPES}
@@ -347,7 +358,298 @@ def validate_fast_paper_restart_equivalence(
     )
 
 
+def encode_fast_paper_protected_checkpoint(
+    run_id: str,
+    sequence: int,
+    state: FastPaperProtectedRuntimeState,
+    created_at_unix_ms: int,
+) -> bytes:
+    _require_non_empty_string("run_id", run_id)
+    _require_non_negative_int("sequence", sequence)
+    if not isinstance(state, FastPaperProtectedRuntimeState):
+        raise FastPaperCheckpointError(
+            "state must be a FastPaperProtectedRuntimeState"
+        )
+    _require_non_negative_int("created_at_unix_ms", created_at_unix_ms)
+    state_time = state.base_runtime_state.as_of_unix_ms
+    if created_at_unix_ms < state_time:
+        raise FastPaperCheckpointError(
+            "created_at_unix_ms must not precede Fast PAPER protected runtime state"
+        )
+
+    envelope = {
+        "checkpoint_schema_version": FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION,
+        "run_id": run_id,
+        "sequence": sequence,
+        "created_at_unix_ms": created_at_unix_ms,
+        "state_as_of_unix_ms": state_time,
+        "state": _encode_value(state),
+    }
+    return _canonical_json(envelope)
+
+
+def decode_fast_paper_protected_checkpoint(
+    payload: bytes | str,
+    *,
+    expected_sha256: str | None = None,
+) -> FastPaperProtectedCheckpointRecord:
+    raw = _payload_bytes(payload)
+    payload_sha256 = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is not None:
+        _require_sha256("expected_sha256", expected_sha256)
+        if payload_sha256 != expected_sha256:
+            raise FastPaperCheckpointError(
+                "Fast PAPER protected checkpoint checksum mismatch"
+            )
+
+    try:
+        envelope = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint payload is not valid UTF-8 JSON"
+        ) from error
+    if not isinstance(envelope, dict):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint envelope must be an object"
+        )
+    expected_keys = {
+        "checkpoint_schema_version",
+        "run_id",
+        "sequence",
+        "created_at_unix_ms",
+        "state_as_of_unix_ms",
+        "state",
+    }
+    if set(envelope) != expected_keys:
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint envelope is malformed"
+        )
+    if (
+        envelope["checkpoint_schema_version"]
+        != FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION
+    ):
+        raise FastPaperCheckpointError(
+            "unsupported Fast PAPER protected checkpoint schema version"
+        )
+
+    run_id = envelope["run_id"]
+    sequence = envelope["sequence"]
+    created_at_unix_ms = envelope["created_at_unix_ms"]
+    state_as_of_unix_ms = envelope["state_as_of_unix_ms"]
+    _require_non_empty_string("run_id", run_id)
+    _require_non_negative_int("sequence", sequence)
+    _require_non_negative_int("created_at_unix_ms", created_at_unix_ms)
+    _require_non_negative_int("state_as_of_unix_ms", state_as_of_unix_ms)
+
+    state = _decode_value(envelope["state"])
+    if not isinstance(state, FastPaperProtectedRuntimeState):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint state must decode to FastPaperProtectedRuntimeState"
+        )
+    if state.base_runtime_state.as_of_unix_ms != state_as_of_unix_ms:
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint state timestamp mismatch"
+        )
+    if created_at_unix_ms < state_as_of_unix_ms:
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint creation time precedes state"
+        )
+
+    canonical = encode_fast_paper_protected_checkpoint(
+        run_id,
+        sequence,
+        state,
+        created_at_unix_ms,
+    )
+    if canonical != raw:
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint payload is not canonical"
+        )
+
+    try:
+        return FastPaperProtectedCheckpointRecord(
+            run_id=run_id,
+            sequence=sequence,
+            checkpoint_schema_version=FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION,
+            state_as_of_unix_ms=state_as_of_unix_ms,
+            created_at_unix_ms=created_at_unix_ms,
+            payload_sha256=payload_sha256,
+            state=state,
+        )
+    except ValueError as error:
+        raise FastPaperCheckpointError(str(error)) from error
+
+
+def save_fast_paper_protected_checkpoint(
+    database_path: str | os.PathLike[str],
+    run_id: str,
+    sequence: int,
+    state: FastPaperProtectedRuntimeState,
+    created_at_unix_ms: int,
+) -> FastPaperProtectedCheckpointRecord:
+    payload = encode_fast_paper_protected_checkpoint(
+        run_id,
+        sequence,
+        state,
+        created_at_unix_ms,
+    )
+    record = decode_fast_paper_protected_checkpoint(payload)
+    payload_json = payload.decode("utf-8")
+
+    connection = _connect(database_path)
+    try:
+        _require_checkpoint_table(connection)
+        connection.execute("BEGIN IMMEDIATE")
+        _require_protected_schema_namespace(connection, run_id)
+
+        existing = connection.execute(
+            f"""SELECT run_id, sequence, checkpoint_schema_version,
+                       state_as_of_unix_ms, created_at_unix_ms,
+                       payload_sha256, payload_json
+                FROM {_TABLE_NAME}
+                WHERE run_id = ? AND sequence = ?""",
+            (run_id, sequence),
+        ).fetchone()
+        if existing is not None:
+            if _stored_row_matches_protected_record(existing, record, payload_json):
+                connection.rollback()
+                return record
+            connection.rollback()
+            raise FastPaperCheckpointError(
+                "Fast PAPER protected checkpoint sequence collision with different state or metadata"
+            )
+
+        latest_sequence = connection.execute(
+            f"SELECT MAX(sequence) FROM {_TABLE_NAME} WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0]
+        if latest_sequence is not None and sequence < latest_sequence:
+            connection.rollback()
+            raise FastPaperCheckpointError(
+                "Fast PAPER protected checkpoint sequence must be monotonic for a run"
+            )
+
+        connection.execute(
+            f"""INSERT INTO {_TABLE_NAME} (
+                    run_id, sequence, checkpoint_schema_version,
+                    state_as_of_unix_ms, created_at_unix_ms,
+                    payload_sha256, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                record.run_id,
+                record.sequence,
+                record.checkpoint_schema_version,
+                record.state_as_of_unix_ms,
+                record.created_at_unix_ms,
+                record.payload_sha256,
+                payload_json,
+            ),
+        )
+        connection.commit()
+        return record
+    except FastPaperCheckpointError:
+        _rollback_if_needed(connection)
+        raise
+    except sqlite3.Error as error:
+        _rollback_if_needed(connection)
+        raise FastPaperCheckpointError(
+            f"Fast PAPER protected checkpoint storage error: {error}"
+        ) from error
+    finally:
+        connection.close()
+
+
+def load_latest_fast_paper_protected_checkpoint(
+    database_path: str | os.PathLike[str],
+    run_id: str,
+) -> FastPaperProtectedCheckpointRecord | None:
+    _require_non_empty_string("run_id", run_id)
+    connection = _connect(database_path)
+    try:
+        _require_checkpoint_table(connection)
+        _require_protected_schema_namespace(connection, run_id)
+        row = connection.execute(
+            f"""SELECT run_id, sequence, checkpoint_schema_version,
+                       state_as_of_unix_ms, created_at_unix_ms,
+                       payload_sha256, payload_json
+                FROM {_TABLE_NAME}
+                WHERE run_id = ?
+                ORDER BY sequence DESC
+                LIMIT 1""",
+            (run_id,),
+        ).fetchone()
+    except FastPaperCheckpointError:
+        raise
+    except sqlite3.Error as error:
+        raise FastPaperCheckpointError(
+            f"Fast PAPER protected checkpoint storage error: {error}"
+        ) from error
+    finally:
+        connection.close()
+
+    if row is None:
+        return None
+    payload_json = row[6]
+    if not isinstance(payload_json, str):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint payload_json is not text"
+        )
+    record = decode_fast_paper_protected_checkpoint(
+        payload_json.encode("utf-8"),
+        expected_sha256=row[5],
+    )
+    if not _stored_row_matches_protected_record(row, record, payload_json):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint row/envelope metadata mismatch"
+        )
+    return record
+
+
+def validate_fast_paper_protected_restart_equivalence(
+    expected: FastPaperProtectedRuntimeState,
+    restored: FastPaperProtectedRuntimeState,
+) -> FastPaperRestartValidationReport:
+    if not isinstance(expected, FastPaperProtectedRuntimeState) or not isinstance(
+        restored,
+        FastPaperProtectedRuntimeState,
+    ):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected restart validation requires FastPaperProtectedRuntimeState values"
+        )
+
+    expected_fingerprint = _protected_state_fingerprint(expected)
+    restored_fingerprint = _protected_state_fingerprint(restored)
+    expected_accounting = validate_paper_ledger(expected.base_runtime_state.ledger)
+    restored_accounting = validate_paper_ledger(restored.base_runtime_state.ledger)
+
+    differences: list[str] = []
+    if expected != restored:
+        differences.append("STATE_MISMATCH")
+    if expected_fingerprint != restored_fingerprint:
+        differences.append("STATE_FINGERPRINT_MISMATCH")
+    if expected_accounting != restored_accounting:
+        differences.append("ACCOUNTING_MISMATCH")
+    if (
+        expected_accounting.status is AccountingValidationStatus.INVALID
+        or restored_accounting.status is AccountingValidationStatus.INVALID
+    ):
+        differences.append("ACCOUNTING_INVALID")
+
+    return FastPaperRestartValidationReport(
+        equivalent=not differences,
+        expected_state_sha256=expected_fingerprint,
+        restored_state_sha256=restored_fingerprint,
+        expected_accounting=expected_accounting,
+        restored_accounting=restored_accounting,
+        differences=tuple(differences),
+    )
+
+
 def _state_fingerprint(state: FastPaperRuntimeState) -> str:
+    return hashlib.sha256(_canonical_json(_encode_value(state))).hexdigest()
+
+
+def _protected_state_fingerprint(state: FastPaperProtectedRuntimeState) -> str:
     return hashlib.sha256(_canonical_json(_encode_value(state))).hexdigest()
 
 
@@ -545,9 +847,45 @@ def _require_fast_schema_namespace(
         )
 
 
+def _require_protected_schema_namespace(
+    connection: sqlite3.Connection,
+    run_id: str,
+) -> None:
+    versions = tuple(
+        row[0]
+        for row in connection.execute(
+            f"SELECT DISTINCT checkpoint_schema_version FROM {_TABLE_NAME} WHERE run_id = ?",
+            (run_id,),
+        ).fetchall()
+    )
+    if any(
+        version != FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION
+        for version in versions
+    ):
+        raise FastPaperCheckpointError(
+            "Fast PAPER protected checkpoint run_id schema namespace conflicts with existing checkpoints"
+        )
+
+
 def _stored_row_matches_record(
     row: tuple[object, ...],
     record: FastPaperCheckpointRecord,
+    payload_json: str,
+) -> bool:
+    return row == (
+        record.run_id,
+        record.sequence,
+        record.checkpoint_schema_version,
+        record.state_as_of_unix_ms,
+        record.created_at_unix_ms,
+        record.payload_sha256,
+        payload_json,
+    )
+
+
+def _stored_row_matches_protected_record(
+    row: tuple[object, ...],
+    record: FastPaperProtectedCheckpointRecord,
     payload_json: str,
 ) -> bool:
     return row == (

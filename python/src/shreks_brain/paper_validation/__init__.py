@@ -9,10 +9,15 @@ from .checkpoint import (
 )
 from .fast_checkpoint import (
     decode_fast_paper_checkpoint,
+    decode_fast_paper_protected_checkpoint,
     encode_fast_paper_checkpoint,
+    encode_fast_paper_protected_checkpoint,
     load_latest_fast_paper_checkpoint,
+    load_latest_fast_paper_protected_checkpoint,
     save_fast_paper_checkpoint,
+    save_fast_paper_protected_checkpoint,
     validate_fast_paper_accounting,
+    validate_fast_paper_protected_restart_equivalence,
     validate_fast_paper_restart_equivalence,
 )
 from .fast_models import (
@@ -31,9 +36,17 @@ from .models import (
     PaperCheckpointRecord,
     RestartValidationReport,
 )
+from .protected_models import (
+    FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION,
+    FAST_PAPER_PROTECTED_RUNTIME_STATE_VERSION,
+    FastPaperProtectedCheckpointRecord,
+    FastPaperProtectedRuntimeState,
+)
 
 __all__ = (
     "FAST_PAPER_CHECKPOINT_SCHEMA_VERSION",
+    "FAST_PAPER_PROTECTED_CHECKPOINT_SCHEMA_VERSION",
+    "FAST_PAPER_PROTECTED_RUNTIME_STATE_VERSION",
     "FAST_PAPER_RUNTIME_STATE_VERSION",
     "AccountingFinding",
     "AccountingFindingCode",
@@ -41,20 +54,27 @@ __all__ = (
     "AccountingValidationStatus",
     "FastPaperCheckpointError",
     "FastPaperCheckpointRecord",
+    "FastPaperProtectedCheckpointRecord",
+    "FastPaperProtectedRuntimeState",
     "FastPaperRestartValidationReport",
     "FastPaperRuntimeState",
     "PaperCheckpointError",
     "PaperCheckpointRecord",
     "RestartValidationReport",
     "decode_fast_paper_checkpoint",
+    "decode_fast_paper_protected_checkpoint",
     "decode_paper_checkpoint",
     "encode_fast_paper_checkpoint",
+    "encode_fast_paper_protected_checkpoint",
     "encode_paper_checkpoint",
     "load_latest_fast_paper_checkpoint",
+    "load_latest_fast_paper_protected_checkpoint",
     "load_latest_paper_checkpoint",
     "save_fast_paper_checkpoint",
+    "save_fast_paper_protected_checkpoint",
     "save_paper_checkpoint",
     "validate_fast_paper_accounting",
+    "validate_fast_paper_protected_restart_equivalence",
     "validate_fast_paper_restart_equivalence",
     "validate_paper_accounting",
     "validate_paper_ledger",
