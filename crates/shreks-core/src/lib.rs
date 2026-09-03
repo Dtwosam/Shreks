@@ -3,21 +3,25 @@
 mod fast_lane;
 pub use fast_lane::{
     assess_graduation_flow, assess_impulse_scalp, assess_micro_pullback,
-    assess_pre_graduation_acceleration, label_future_paths, maximum_exit_capacity, project_exit,
-    ExecutionCostModel, ExecutionEconomics, ExecutionEconomicsError, ExecutionLegCostInput,
-    ExecutionTradeInput, ExitCapacity, ExitCapacityError, ExitProjection, FastEvent, FastEventError,
-    FastEventId, FastEventKind, FastLaneAction, FastMarketKey, FastMarketSnapshot, FastMarketState,
-    FastReserveContext, FastStateError, FastWindowSummary, FuturePathCompleteness,
-    FuturePathCoverage, FuturePathDecision, FuturePathLabel, FuturePathLabelError,
-    FuturePathObservation, GraduationBoostContext, GraduationFlowAssessment, GraduationFlowError,
+    assess_pre_graduation_acceleration, assess_wallet_cohort_ride_fade, label_future_paths,
+    maximum_exit_capacity, project_exit, ExecutionCostModel, ExecutionEconomics,
+    ExecutionEconomicsError, ExecutionLegCostInput, ExecutionTradeInput, ExitCapacity,
+    ExitCapacityError, ExitProjection, FastEvent, FastEventError, FastEventId, FastEventKind,
+    FastLaneAction, FastMarketKey, FastMarketSnapshot, FastMarketState, FastReserveContext,
+    FastStateError, FastWindowSummary, FuturePathCompleteness, FuturePathCoverage,
+    FuturePathDecision, FuturePathLabel, FuturePathLabelError, FuturePathObservation,
+    GraduationBoostContext, GraduationFlowAssessment, GraduationFlowError,
     GraduationFlowExecutionInput, GraduationFlowPolicy, GraduationFlowReason,
     ImpulseScalpAssessment, ImpulseScalpError, ImpulseScalpExecutionInput, ImpulseScalpPolicy,
     ImpulseScalpReason, MicroPullbackAssessment, MicroPullbackError, MicroPullbackExecutionInput,
     MicroPullbackPolicy, MicroPullbackReason, PreGraduationAssessment, PreGraduationError,
-    PreGraduationExecutionInput, PreGraduationPolicy, PreGraduationReason, DEFAULT_FAST_WINDOWS_MS,
+    PreGraduationExecutionInput, PreGraduationPolicy, PreGraduationReason, WalletCohortAssessment,
+    WalletCohortError, WalletCohortEvidence, WalletCohortPolicy, WalletCohortPositionInput,
+    WalletCohortPosture, WalletCohortReason, WalletCohortSideSummary, DEFAULT_FAST_WINDOWS_MS,
     DEFAULT_FUTURE_PATH_HORIZONS_MS, EXECUTION_ECONOMICS_VERSION, FUTURE_PATH_LABEL_VERSION,
     GRADUATION_FLOW_BASELINE_VERSION, IMPULSE_SCALP_BASELINE_VERSION,
     MICRO_PULLBACK_BASELINE_VERSION, PRE_GRADUATION_BASELINE_VERSION,
+    WALLET_COHORT_BASELINE_VERSION, WALLET_COHORT_EVIDENCE_VERSION,
 };
 mod lifecycle;
 pub use lifecycle::{LifecycleEventKind, TokenLifecycleEvent};
