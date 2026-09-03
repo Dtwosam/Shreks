@@ -1,6 +1,7 @@
 mod action_policy;
 mod baseline;
 mod capacity;
+mod campaign;
 mod economics;
 mod event;
 mod forecast;
@@ -25,6 +26,17 @@ pub use baseline::{
 };
 pub use capacity::{
     maximum_exit_capacity, project_exit, ExitCapacity, ExitCapacityError, ExitProjection,
+};
+pub use campaign::{
+    assess_continuous_action_from_champion, decode_fast_campaign_decision_batch_json,
+    encode_fast_campaign_decision_results_json, evaluate_fast_campaign_decision_batch,
+    FastCampaignActionCandidateWire, FastCampaignActionConstraintsWire,
+    FastCampaignContinuousActionPolicyWire, FastCampaignDecisionBatchWire,
+    FastCampaignDecisionError, FastCampaignDecisionPositionWire,
+    FastCampaignDecisionRequestWire, FastCampaignDecisionResultWire,
+    FastCampaignDecisionResultsWire, FastCampaignHorizonEvidenceWire,
+    FastCampaignReduceExecutionCostWire, FAST_CAMPAIGN_DECISION_REQUEST_SCHEMA_NAME,
+    FAST_CAMPAIGN_DECISION_RESULT_SCHEMA_NAME, FAST_CAMPAIGN_DECISION_SCHEMA_VERSION,
 };
 pub use economics::{
     ExecutionCostModel, ExecutionEconomics, ExecutionEconomicsError, ExecutionLegCostInput,
