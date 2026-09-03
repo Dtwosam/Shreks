@@ -4,18 +4,31 @@ import shreks_brain.paper_validation as paper_validation
 
 
 EXPECTED_PUBLIC_API = (
+    "FAST_PAPER_CHECKPOINT_SCHEMA_VERSION",
+    "FAST_PAPER_RUNTIME_STATE_VERSION",
     "AccountingFinding",
     "AccountingFindingCode",
     "AccountingValidationReport",
     "AccountingValidationStatus",
+    "FastPaperCheckpointError",
+    "FastPaperCheckpointRecord",
+    "FastPaperRestartValidationReport",
+    "FastPaperRuntimeState",
     "PaperCheckpointError",
     "PaperCheckpointRecord",
     "RestartValidationReport",
+    "decode_fast_paper_checkpoint",
     "decode_paper_checkpoint",
+    "encode_fast_paper_checkpoint",
     "encode_paper_checkpoint",
+    "load_latest_fast_paper_checkpoint",
     "load_latest_paper_checkpoint",
+    "save_fast_paper_checkpoint",
     "save_paper_checkpoint",
+    "validate_fast_paper_accounting",
+    "validate_fast_paper_restart_equivalence",
     "validate_paper_accounting",
+    "validate_paper_ledger",
     "validate_restart_equivalence",
 )
 
