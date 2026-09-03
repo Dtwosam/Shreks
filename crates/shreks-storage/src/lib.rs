@@ -11,6 +11,7 @@ mod outcomes;
 mod pump_swap_fast_lane;
 mod reserve_context;
 mod safety_evidence;
+mod training_features;
 mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
 pub use execution_economics::{
@@ -29,6 +30,11 @@ pub use pump_swap_fast_lane::{
 pub use reserve_context::{
     pump_reserve_context_from_source, pump_swap_reserve_context_from_source,
 };
+pub use training_features::{
+    FastTrainingFeatureExportManifest, FastTrainingFeatureRecord, FastTrainingLifecycleEvent,
+    FastTrainingReserveContext, FastTrainingWindowSummary, FAST_TRAINING_FEATURE_SCHEMA_NAME,
+    FAST_TRAINING_FEATURE_SCHEMA_VERSION,
+};
 pub use wallet::WalletObservationWrite;
 
 use std::{
@@ -38,7 +44,7 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use shreks_core::{
     DiscoveredToken, PairMarketData, ProviderHealthState, ProviderId, TokenMintState,
     TransactionWindow,
@@ -259,6 +265,25 @@ impl ShreksDb {
         configure_connection(&connection)?;
         apply_migrations(&mut connection)?;
 
+        Ok(Self { connection })
+    }
+
+    /// Open an existing current-schema database without creating, migrating,
+    /// or mutating it. This is the only storage open path used by FL8 research
+    /// exporters so historical feature generation cannot become operational
+    /// database authority.
+    pub fn open_existing_read_only<P: AsRef<Path>>(path: P) -> Result<Self, StorageError> {
+        let path = path.as_ref();
+        if !path.is_file() {
+            return Err(StorageError::InvalidData(format!(
+                "read-only Shreks database does not exist as a file: {}",
+                path.display()
+            )));
+        }
+
+        let connection = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        configure_read_only_connection(&connection)?;
+        validate_current_schema(&connection)?;
         Ok(Self { connection })
     }
 
@@ -695,6 +720,42 @@ fn configure_connection(connection: &Connection) -> Result<(), StorageError> {
          PRAGMA synchronous = NORMAL;",
     )?;
 
+    Ok(())
+}
+
+fn configure_read_only_connection(connection: &Connection) -> Result<(), StorageError> {
+    connection.busy_timeout(Duration::from_millis(BUSY_TIMEOUT_MS))?;
+    connection.execute_batch(
+        "PRAGMA foreign_keys = ON;\
+\
+         PRAGMA query_only = ON;",
+    )?;
+    Ok(())
+}
+
+fn validate_current_schema(connection: &Connection) -> Result<(), StorageError> {
+    let mut statement = connection.prepare(
+        "SELECT version, name FROM schema_migrations ORDER BY version ASC",
+    )?;
+    let applied = statement
+        .query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if applied.len() != MIGRATIONS.len() {
+        return Err(StorageError::InvalidData(format!(
+            "read-only Shreks database schema history has {} migrations; expected {}",
+            applied.len(),
+            MIGRATIONS.len()
+        )));
+    }
+    for (actual, expected) in applied.iter().zip(MIGRATIONS) {
+        if actual.0 != expected.version || actual.1 != expected.name {
+            return Err(StorageError::InvalidData(format!(
+                "read-only Shreks database schema history diverges at version {}",
+                expected.version
+            )));
+        }
+    }
     Ok(())
 }
 
