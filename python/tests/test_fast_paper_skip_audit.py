@@ -50,6 +50,7 @@ def _link(*, label_version: int = 1, venue: str = "pump") -> FastPaperSkipLabelL
 
 
 def _database(tmp_path: Path) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "shreks.db"
     connection = sqlite3.connect(path)
     try:

@@ -36,7 +36,7 @@ fn open_creates_parent_directory_and_configures_sqlite() {
     let diagnostics = db.diagnostics().unwrap();
     assert_eq!(diagnostics.journal_mode, "wal");
     assert!(diagnostics.foreign_keys_enabled);
-    assert_eq!(diagnostics.schema_version, 16);
+    assert_eq!(diagnostics.schema_version, 17);
 
     drop(db);
     cleanup_dir(&root);
@@ -76,6 +76,7 @@ fn migrations_create_operational_lifecycle_paper_wallet_safety_and_fast_lane_tab
         "pump_trade_execution_economics",
         "pump_swap_execution_economics",
         "fast_future_path_labels",
+        "fast_paper_skip_records",
     ] {
         let count: i64 = connection
             .query_row(
@@ -108,6 +109,8 @@ fn migrations_create_operational_lifecycle_paper_wallet_safety_and_fast_lane_tab
         "idx_token_lifecycle_events_pumpswap_pool_market",
         "idx_fast_future_path_labels_decision_sequence",
         "idx_fast_future_path_labels_market_horizon",
+        "idx_fast_paper_skip_records_future_labels",
+        "idx_fast_paper_skip_records_market_time",
     ] {
         let count: i64 = connection
             .query_row(
@@ -130,13 +133,13 @@ fn reopening_database_does_not_reapply_migrations() {
 
     drop(ShreksDb::open(&db_path).unwrap());
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 16);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 17);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();
     for version in [
         1_i64, 2_i64, 3_i64, 4_i64, 5_i64, 6_i64, 7_i64, 8_i64, 9_i64, 10_i64, 11_i64,
-        12_i64, 13_i64, 14_i64, 15_i64, 16_i64,
+        12_i64, 13_i64, 14_i64, 15_i64, 16_i64, 17_i64,
     ] {
         let count: i64 = connection
             .query_row(
@@ -186,7 +189,7 @@ fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence(
     drop(connection);
 
     let upgraded = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(upgraded.diagnostics().unwrap().schema_version, 16);
+    assert_eq!(upgraded.diagnostics().unwrap().schema_version, 17);
     drop(upgraded);
 
     let connection = Connection::open(&db_path).unwrap();
@@ -218,7 +221,7 @@ fn schema_nine_upgrade_preserves_existing_e14_candidate_and_exit_quote_evidence(
     assert_eq!(paper_quote_table_count, 1);
 
     for version in [
-        8_i64, 9_i64, 10_i64, 11_i64, 12_i64, 13_i64, 14_i64, 15_i64, 16_i64,
+        8_i64, 9_i64, 10_i64, 11_i64, 12_i64, 13_i64, 14_i64, 15_i64, 16_i64, 17_i64,
     ] {
         let count: i64 = connection
             .query_row(

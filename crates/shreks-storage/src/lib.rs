@@ -133,6 +133,11 @@ const MIGRATIONS: &[Migration] = &[
         name: "fast_future_path_labels",
         sql: include_str!("../migrations/0016_fast_future_path_labels.sql"),
     },
+    Migration {
+        version: 17,
+        name: "fast_paper_skip_records",
+        sql: include_str!("../migrations/0017_fast_paper_skip_records.sql"),
+    },
 ];
 
 /// Read-only operational diagnostics for a Shreks database connection.

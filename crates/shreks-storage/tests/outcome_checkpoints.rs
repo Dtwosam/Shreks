@@ -87,7 +87,7 @@ fn migration_four_schedules_the_exact_approved_horizons_idempotently() {
     let root = unique_test_dir("schema-schedule");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 16);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 17);
 
     let discovered_at = 1_000_000_i64;
     let candidate_id = db.upsert_candidate(&candidate("mint-a", discovered_at)).unwrap();
