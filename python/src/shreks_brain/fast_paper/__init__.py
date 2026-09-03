@@ -1,3 +1,12 @@
+from .buy import execute_fast_paper_buy
+from .buy_models import (
+    FAST_PAPER_BUY_VERSION,
+    FastPaperBuyApproval,
+    FastPaperBuyError,
+    FastPaperBuyOutcome,
+    FastPaperBuyQuote,
+    FastPaperBuyResult,
+)
 from .engine import FastPaperEvaluator, create_fast_paper_loop_state, run_fast_paper_event
 from .models import (
     FAST_PAPER_EVENT_LOOP_VERSION,
@@ -16,10 +25,16 @@ from .models import (
 )
 
 __all__ = (
+    "FAST_PAPER_BUY_VERSION",
     "FAST_PAPER_EVENT_LOOP_VERSION",
     "FastPaperAction",
     "FastPaperActionAssessment",
     "FastPaperAssessmentMismatchError",
+    "FastPaperBuyApproval",
+    "FastPaperBuyError",
+    "FastPaperBuyOutcome",
+    "FastPaperBuyQuote",
+    "FastPaperBuyResult",
     "FastPaperEvaluator",
     "FastPaperEventOutcome",
     "FastPaperEventRecord",
@@ -31,5 +46,6 @@ __all__ = (
     "FastPaperMarketCursor",
     "FastPaperMaterialUpdate",
     "create_fast_paper_loop_state",
+    "execute_fast_paper_buy",
     "run_fast_paper_event",
 )

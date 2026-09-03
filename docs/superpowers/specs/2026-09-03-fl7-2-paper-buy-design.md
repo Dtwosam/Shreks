@@ -41,9 +41,22 @@ The preserved `assess_entry_risk` API accepts a legacy `TradeDecision.ENTER` and
 
 Fast Lane `BUY` assessments do not contain those legacy artifacts. Constructing a fake legacy decision would create evidence that never existed and would make risk audit trails misleading.
 
-FL7.2 therefore adds a **parallel Fast Lane entry-risk entrypoint** that reuses the preserved `RiskPolicy`, `RiskContext`, `RiskState`, `RiskFinding`, `RiskReasonCode`, `TradeIntent`, sizing caps, and PAPER-only mode, but consumes truthful Fast Lane metadata directly.
+FL7.2 therefore adds a **parallel Fast Lane entry-risk entrypoint** that reuses the preserved `RiskPolicy`, `RiskContext`, `RiskState`, `RiskFinding`, stable `RiskReasonCode`, `TradeIntent`, sizing caps, and PAPER-only mode, but consumes truthful Fast Lane metadata directly.
 
-The existing `assess_entry_risk` behavior remains unchanged.
+The existing `assess_entry_risk` behavior and the legacy `RiskReasonCode` enum remain unchanged.
+
+## Stable risk-enum compatibility
+
+The first implementation candidate attempted to add `REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP` directly to the legacy `RiskReasonCode` enum. The existing Python regression suite correctly rejected that change because the enum's exact public member sequence is a sealed compatibility contract.
+
+The final design preserves the legacy enum byte-for-byte and adds Fast Lane-specific typed evidence in `risk/fast_entry.py` instead:
+
+- `FastEntryRiskReasonCode.REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP`;
+- `FastEntryRiskFinding`.
+
+Existing guardrail rejections continue to use preserved `RiskFinding/RiskReasonCode` values. Only the new exact-size rejection uses the Fast Lane-specific finding. Approved Fast Lane risk continues to use preserved `RiskReasonCode.RISK_APPROVED` evidence.
+
+This isolates new Fast Lane semantics without mutating legacy public contracts.
 
 ## Exact-size invariant
 
@@ -160,7 +173,7 @@ Fields:
 3. uses `RiskPolicy.required_feature_schema_version` as the compatibility fence for the Fast Lane state version;
 4. applies the same preserved health, halt, portfolio, loss, liquidity, impact, freshness, and duplicate-intent guardrails;
 5. computes the existing risk-sized upper bound using the preserved sizing formula;
-6. rejects when `requested_notional_usd` exceeds that bound;
+6. rejects with `FastEntryRiskReasonCode.REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP` when `requested_notional_usd` exceeds that bound;
 7. otherwise approves **exactly** `requested_notional_usd`;
 8. creates a preserved PAPER `TradeIntent` with the original decision timestamp.
 
@@ -168,7 +181,7 @@ The compatibility `TradeIntent.score_policy_version` is set to an explicit `not-
 
 The compatibility `TradeIntent.decision_policy_version` is the actual Fast Lane action-assessment version.
 
-A new additive `RiskReasonCode.REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP` reports exact-size rejection rather than silently shrinking the trade.
+The new exact-size reason is intentionally **not** added to legacy `RiskReasonCode`.
 
 ## Fast PAPER BUY approval
 
@@ -190,7 +203,7 @@ Construction requires `assessment.action == BUY`.
 
 `FastPaperBuyQuote` is a point-in-time execution bridge, not a provider adapter. Providers remain outside FL7.2.
 
-For `EXECUTABLE` state, price, capacity, and quote-to-USD fields must all be present and positive.
+For `EXECUTABLE` or `FAILED_AFTER_SUBMISSION` state, price, capacity, and quote-to-USD fields must all be present and positive.
 
 Identity mismatch, future quote time, invalid units, or malformed numeric state fails closed.
 
@@ -230,6 +243,8 @@ If the supplied quote state is `FAILED_AFTER_SUBMISSION` and it carries the pric
 The FL7.2 result distinguishes at least:
 
 - `DEFERRED`;
+- `ABORTED_QUOTE_UNAVAILABLE`;
+- `ABORTED_QUOTE_TOO_LATE`;
 - `ABORTED_PRICE_ABOVE_MAXIMUM`;
 - `ABORTED_INSUFFICIENT_CAPACITY`;
 - `RISK_REJECTED`;
@@ -251,13 +266,15 @@ Active-intent duplication remains governed by `RiskContext.active_intent_keys`.
 
 ## Compatibility and scope
 
-Expected production changes are additive or narrowly exported:
+Final production changes are additive or export-only:
 
-- new Fast Lane risk request/assessment implementation;
-- one additive risk reason code and public exports;
+- new `risk/fast_entry.py` Fast Lane request/assessment/reason/finding implementation;
+- export-only `risk/__init__.py` change;
 - new FL7.2 buy models/engine under `shreks_brain.fast_paper`;
-- fast_paper public exports;
+- export-only `fast_paper/__init__.py` change;
 - tests and docs.
+
+`risk/models.py` remains byte-identical to sealed main. The stable legacy `RiskReasonCode` enum is not modified.
 
 Do not edit:
 
@@ -276,7 +293,8 @@ The RED contract must prove the new public API is absent before implementation.
 GREEN tests must cover:
 
 - exact-notional Fast Lane risk approval;
-- exact-size risk-cap rejection (no silent resize);
+- exact-size risk-cap rejection using Fast Lane-specific typed evidence with no silent resize;
+- stable legacy risk enum unchanged;
 - kill switch / health guardrail rejection;
 - action/state version compatibility fences;
 - original decision timestamp retained on compatibility `TradeIntent`;

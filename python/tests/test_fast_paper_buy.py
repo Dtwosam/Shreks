@@ -23,6 +23,7 @@ from shreks_brain.paper import (
     create_paper_ledger,
 )
 from shreks_brain.risk import (
+    FastEntryRiskReasonCode,
     FastEntryRiskRequest,
     RiskContext,
     RiskPolicy,
@@ -199,7 +200,10 @@ def test_fast_entry_risk_rejects_requested_notional_above_preserved_risk_cap() -
     assert assessment.requested_notional_usd == 100.01
     assert assessment.approved_notional_usd is None
     assert assessment.intent is None
-    assert assessment.findings[0].code is RiskReasonCode.REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP
+    assert (
+        assessment.findings[0].code
+        is FastEntryRiskReasonCode.REQUESTED_NOTIONAL_EXCEEDS_RISK_CAP
+    )
 
 
 def test_fast_entry_risk_reuses_kill_switch_and_health_guardrails() -> None:
