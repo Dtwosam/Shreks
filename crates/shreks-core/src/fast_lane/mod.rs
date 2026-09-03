@@ -2,6 +2,7 @@ mod baseline;
 mod capacity;
 mod economics;
 mod event;
+mod forecast;
 mod future_path;
 mod graduation_flow;
 mod longer_runner;
@@ -24,6 +25,13 @@ pub use economics::{
 };
 pub use event::{
     FastEvent, FastEventError, FastEventId, FastEventKind, FastMarketKey, FastReserveContext,
+};
+pub use forecast::{
+    load_fast_forecast_champion_json, predict_fast_forecast, FastForecastArtifact,
+    FastForecastChampion, FastForecastChampionMember, FastForecastChampionSelection,
+    FastForecastFeatureTransform, FastForecastInferenceError, FastForecastModelFamily,
+    FastForecastPrediction, FastForecastTarget, FastForecastTargetKind,
+    FAST_FORECAST_FEATURE_COUNT, FAST_FORECAST_FEATURE_SCHEMA_VERSION,
 };
 pub use future_path::{
     label_future_paths, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
