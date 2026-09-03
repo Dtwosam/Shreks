@@ -75,7 +75,7 @@ fn pumpswap_raw(signature: &str, log_index: u32) -> PumpSwapTradeEvidenceWrite {
 fn pump_fee_evidence_round_trips_from_immutable_source_identity() {
     let root = unique_test_dir("pump");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 16);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 17);
 
     let raw = pump_raw("pump-fees");
     db.record_pump_trade_evidence(&raw).unwrap();

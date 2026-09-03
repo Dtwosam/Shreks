@@ -105,7 +105,7 @@ fn label() -> FuturePathLabel {
 fn fl4_labels_are_versioned_exact_idempotent_and_source_linked() {
     let root = unique_test_dir("roundtrip");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 16);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 17);
 
     let raw_decision = raw_trade("decision-fl4", 900, 100_000_000);
     let raw_future = raw_trade("future-fl4", 1_100, 120_000_000);
