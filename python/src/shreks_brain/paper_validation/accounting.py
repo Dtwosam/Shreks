@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 
-from shreks_brain.paper import PaperExecutionState, PaperPositionState
+from shreks_brain.paper import PaperExecutionState, PaperLedger, PaperPositionState
 from shreks_brain.paper_loop import PaperLoopState
 from shreks_brain.risk import TradeSide
 
@@ -23,8 +23,15 @@ def validate_paper_accounting(state: PaperLoopState) -> AccountingValidationRepo
 
     if not isinstance(state, PaperLoopState):
         raise ValueError("state must be a PaperLoopState")
+    return validate_paper_ledger(state.ledger)
 
-    ledger = state.ledger
+
+def validate_paper_ledger(ledger: PaperLedger) -> AccountingValidationReport:
+    """Independently reconcile one authoritative C3 PAPER ledger without mutation."""
+
+    if not isinstance(ledger, PaperLedger):
+        raise ValueError("ledger must be a PaperLedger")
+
     findings: list[AccountingFinding] = []
 
     actual_sequences = tuple(entry.sequence for entry in ledger.entries)
