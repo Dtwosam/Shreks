@@ -7,6 +7,7 @@ mod graduation_flow;
 mod micro_pullback;
 mod pre_graduation;
 mod state;
+mod wallet_cohort;
 
 pub use baseline::{
     assess_impulse_scalp, FastLaneAction, ImpulseScalpAssessment, ImpulseScalpError,
@@ -46,4 +47,10 @@ pub use pre_graduation::{
 pub use state::{
     FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary,
     DEFAULT_FAST_WINDOWS_MS,
+};
+pub use wallet_cohort::{
+    assess_wallet_cohort_ride_fade, WalletCohortAssessment, WalletCohortError,
+    WalletCohortEvidence, WalletCohortPolicy, WalletCohortPositionInput, WalletCohortPosture,
+    WalletCohortReason, WalletCohortSideSummary, WALLET_COHORT_BASELINE_VERSION,
+    WALLET_COHORT_EVIDENCE_VERSION,
 };
