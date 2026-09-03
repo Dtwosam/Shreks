@@ -4,6 +4,7 @@ mod economics;
 mod event;
 mod future_path;
 mod graduation_flow;
+mod longer_runner;
 mod micro_pullback;
 mod pre_graduation;
 mod state;
@@ -33,6 +34,11 @@ pub use graduation_flow::{
     assess_graduation_flow, GraduationBoostContext, GraduationFlowAssessment,
     GraduationFlowError, GraduationFlowExecutionInput, GraduationFlowPolicy, GraduationFlowReason,
     GRADUATION_FLOW_BASELINE_VERSION,
+};
+pub use longer_runner::{
+    assess_longer_runner, LongerRunnerAssessment, LongerRunnerContinuationEvidence,
+    LongerRunnerError, LongerRunnerPolicy, LongerRunnerProtectiveState, LongerRunnerReason,
+    LONGER_RUNNER_BASELINE_VERSION, LONGER_RUNNER_EVIDENCE_VERSION,
 };
 pub use micro_pullback::{
     assess_micro_pullback, MicroPullbackAssessment, MicroPullbackError,

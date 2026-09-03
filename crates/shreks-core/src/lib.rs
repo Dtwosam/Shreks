@@ -2,7 +2,7 @@
 
 mod fast_lane;
 pub use fast_lane::{
-    assess_graduation_flow, assess_impulse_scalp, assess_micro_pullback,
+    assess_graduation_flow, assess_impulse_scalp, assess_longer_runner, assess_micro_pullback,
     assess_pre_graduation_acceleration, assess_wallet_cohort_ride_fade, label_future_paths,
     maximum_exit_capacity, project_exit, ExecutionCostModel, ExecutionEconomics,
     ExecutionEconomicsError, ExecutionLegCostInput, ExecutionTradeInput, ExitCapacity,
@@ -13,13 +13,16 @@ pub use fast_lane::{
     GraduationBoostContext, GraduationFlowAssessment, GraduationFlowError,
     GraduationFlowExecutionInput, GraduationFlowPolicy, GraduationFlowReason,
     ImpulseScalpAssessment, ImpulseScalpError, ImpulseScalpExecutionInput, ImpulseScalpPolicy,
-    ImpulseScalpReason, MicroPullbackAssessment, MicroPullbackError, MicroPullbackExecutionInput,
-    MicroPullbackPolicy, MicroPullbackReason, PreGraduationAssessment, PreGraduationError,
-    PreGraduationExecutionInput, PreGraduationPolicy, PreGraduationReason, WalletCohortAssessment,
-    WalletCohortError, WalletCohortEvidence, WalletCohortPolicy, WalletCohortPositionInput,
-    WalletCohortPosture, WalletCohortReason, WalletCohortSideSummary, DEFAULT_FAST_WINDOWS_MS,
+    ImpulseScalpReason, LongerRunnerAssessment, LongerRunnerContinuationEvidence,
+    LongerRunnerError, LongerRunnerPolicy, LongerRunnerProtectiveState, LongerRunnerReason,
+    MicroPullbackAssessment, MicroPullbackError, MicroPullbackExecutionInput, MicroPullbackPolicy,
+    MicroPullbackReason, PreGraduationAssessment, PreGraduationError, PreGraduationExecutionInput,
+    PreGraduationPolicy, PreGraduationReason, WalletCohortAssessment, WalletCohortError,
+    WalletCohortEvidence, WalletCohortPolicy, WalletCohortPositionInput, WalletCohortPosture,
+    WalletCohortReason, WalletCohortSideSummary, DEFAULT_FAST_WINDOWS_MS,
     DEFAULT_FUTURE_PATH_HORIZONS_MS, EXECUTION_ECONOMICS_VERSION, FUTURE_PATH_LABEL_VERSION,
     GRADUATION_FLOW_BASELINE_VERSION, IMPULSE_SCALP_BASELINE_VERSION,
+    LONGER_RUNNER_BASELINE_VERSION, LONGER_RUNNER_EVIDENCE_VERSION,
     MICRO_PULLBACK_BASELINE_VERSION, PRE_GRADUATION_BASELINE_VERSION,
     WALLET_COHORT_BASELINE_VERSION, WALLET_COHORT_EVIDENCE_VERSION,
 };
