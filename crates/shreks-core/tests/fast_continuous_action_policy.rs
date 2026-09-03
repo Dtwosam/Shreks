@@ -482,7 +482,7 @@ fn missing_open_forecast_reduce_fallback_uses_largest_legal_target() {
     );
     assert_eq!(assessment.selected_horizon_ms, None);
     assert_eq!(assessment.target_exposure_fraction, 0.5);
-    assert_eq!(assessment.selected_execution_cost_bps, 3.0);
+    assert!((assessment.selected_execution_cost_bps - 3.0).abs() <= 1e-12);
     assert!(assessment.horizon_evidence.is_empty());
 }
 

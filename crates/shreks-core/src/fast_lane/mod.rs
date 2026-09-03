@@ -1,3 +1,4 @@
+mod action_policy;
 mod baseline;
 mod capacity;
 mod economics;
@@ -11,6 +12,12 @@ mod pre_graduation;
 mod state;
 mod wallet_cohort;
 
+pub use action_policy::{
+    assess_continuous_action, FastActionCandidateAssessment, FastActionConstraints,
+    FastActionForecastSet, FastActionPositionState, FastContinuousActionAssessment,
+    FastContinuousActionError, FastContinuousActionPolicy, FastContinuousActionReason,
+    FastHorizonActionEvidence, FastReduceExecutionCost, CONTINUOUS_ACTION_POLICY_VERSION,
+};
 pub use baseline::{
     assess_impulse_scalp, FastLaneAction, ImpulseScalpAssessment, ImpulseScalpError,
     ImpulseScalpExecutionInput, ImpulseScalpPolicy, ImpulseScalpReason,
