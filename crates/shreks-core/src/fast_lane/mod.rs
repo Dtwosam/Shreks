@@ -3,6 +3,7 @@ mod capacity;
 mod economics;
 mod event;
 mod future_path;
+mod graduation_flow;
 mod micro_pullback;
 mod pre_graduation;
 mod state;
@@ -26,6 +27,11 @@ pub use future_path::{
     label_future_paths, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
     FuturePathLabel, FuturePathLabelError, FuturePathObservation, DEFAULT_FUTURE_PATH_HORIZONS_MS,
     FUTURE_PATH_LABEL_VERSION,
+};
+pub use graduation_flow::{
+    assess_graduation_flow, GraduationBoostContext, GraduationFlowAssessment,
+    GraduationFlowError, GraduationFlowExecutionInput, GraduationFlowPolicy, GraduationFlowReason,
+    GRADUATION_FLOW_BASELINE_VERSION,
 };
 pub use micro_pullback::{
     assess_micro_pullback, MicroPullbackAssessment, MicroPullbackError,
