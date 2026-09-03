@@ -330,11 +330,17 @@ def test_protected_runtime_rejects_state_identity_policy_time_and_high_water_con
     state = _protected_runtime()
     protective = state.protective_states[0]
     entry = state.base_runtime_state.ledger.positions[0].weighted_entry_price_usd
+    shifted_time = protective.initialized_at_unix_ms + 1
 
     invalid_states = (
         replace(protective, mint="other-mint"),
         replace(protective, policy_version="other-policy"),
-        replace(protective, initialized_at_unix_ms=protective.initialized_at_unix_ms + 1),
+        replace(
+            protective,
+            initialized_at_unix_ms=shifted_time,
+            last_evaluated_at_unix_ms=shifted_time,
+            high_water_at_unix_ms=shifted_time,
+        ),
         replace(
             protective,
             last_evaluated_at_unix_ms=state.base_runtime_state.as_of_unix_ms + 1,

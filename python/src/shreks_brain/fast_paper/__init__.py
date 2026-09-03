@@ -38,6 +38,18 @@ from .position_models import (
     FastPaperPositionOutcome,
     FastPaperPositionQuote,
 )
+from .protective import (
+    create_fast_paper_protective_exit_state,
+    run_fast_paper_protective_event,
+)
+from .protective_models import (
+    FAST_PAPER_PROTECTIVE_EXIT_VERSION,
+    FAST_PAPER_PROTECTIVE_STRATEGY_FAMILY,
+    FastPaperPositionApprovalEvaluator,
+    FastPaperProtectiveEventResult,
+    FastPaperProtectiveExitError,
+    FastPaperProtectiveExitPolicy,
+)
 from .skip import (
     FAST_PAPER_SKIP_AUDIT_VERSION,
     FastPaperSkipAuditError,
@@ -54,6 +66,8 @@ __all__ = (
     "FAST_PAPER_EVENT_LOOP_VERSION",
     "FAST_PAPER_EXIT_RISK_POLICY_SENTINEL",
     "FAST_PAPER_POSITION_ACTION_VERSION",
+    "FAST_PAPER_PROTECTIVE_EXIT_VERSION",
+    "FAST_PAPER_PROTECTIVE_STRATEGY_FAMILY",
     "FAST_PAPER_SKIP_AUDIT_VERSION",
     "FastPaperAction",
     "FastPaperActionAssessment",
@@ -78,8 +92,12 @@ __all__ = (
     "FastPaperPositionActionPolicy",
     "FastPaperPositionActionResult",
     "FastPaperPositionActionState",
+    "FastPaperPositionApprovalEvaluator",
     "FastPaperPositionOutcome",
     "FastPaperPositionQuote",
+    "FastPaperProtectiveEventResult",
+    "FastPaperProtectiveExitError",
+    "FastPaperProtectiveExitPolicy",
     "FastPaperSkipAuditError",
     "FastPaperSkipAuditRecord",
     "FastPaperSkipAuditView",
@@ -88,8 +106,10 @@ __all__ = (
     "apply_fast_paper_position_action",
     "create_fast_paper_loop_state",
     "create_fast_paper_position_action_state",
+    "create_fast_paper_protective_exit_state",
     "execute_fast_paper_buy",
     "load_fast_paper_skip_with_future_labels",
     "record_fast_paper_skip",
     "run_fast_paper_event",
+    "run_fast_paper_protective_event",
 )
