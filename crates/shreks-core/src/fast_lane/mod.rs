@@ -4,6 +4,7 @@ mod economics;
 mod event;
 mod future_path;
 mod micro_pullback;
+mod pre_graduation;
 mod state;
 
 pub use baseline::{
@@ -30,6 +31,11 @@ pub use micro_pullback::{
     assess_micro_pullback, MicroPullbackAssessment, MicroPullbackError,
     MicroPullbackExecutionInput, MicroPullbackPolicy, MicroPullbackReason,
     MICRO_PULLBACK_BASELINE_VERSION,
+};
+pub use pre_graduation::{
+    assess_pre_graduation_acceleration, PreGraduationAssessment, PreGraduationError,
+    PreGraduationExecutionInput, PreGraduationPolicy, PreGraduationReason,
+    PRE_GRADUATION_BASELINE_VERSION,
 };
 pub use state::{
     FastMarketSnapshot, FastMarketState, FastStateError, FastWindowSummary,
