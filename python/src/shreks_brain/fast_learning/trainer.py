@@ -41,12 +41,70 @@ def train_fast_forecast_baseline(
     bundle: FastTrainingBundle,
     request: FastForecastTrainingRequest,
 ) -> FastForecastBaselineArtifact:
+    return _train_fast_forecast_baseline(
+        bundle,
+        request,
+        allowed_decision_identities=None,
+    )
+
+
+def train_fast_forecast_baseline_for_decision_identities(
+    bundle: FastTrainingBundle,
+    request: FastForecastTrainingRequest,
+    decision_identities: tuple[tuple[object, ...], ...],
+) -> FastForecastBaselineArtifact:
+    if type(bundle) is not FastTrainingBundle:
+        raise ValueError("bundle must be an exact FastTrainingBundle")
+    if type(request) is not FastForecastTrainingRequest:
+        raise ValueError("request must be an exact FastForecastTrainingRequest")
+    if not isinstance(decision_identities, tuple) or not decision_identities:
+        raise ValueError("decision_identities must be a non-empty tuple")
+    if not all(isinstance(value, tuple) for value in decision_identities):
+        raise ValueError("decision_identities must contain tuple identities")
+    try:
+        allowed = frozenset(decision_identities)
+    except TypeError as exc:
+        raise ValueError("decision identities must be hashable") from exc
+    if len(allowed) != len(decision_identities):
+        raise ValueError("decision_identities cannot contain duplicate identities")
+
+    feature_identities = {record.decision_identity for record in bundle.features.records}
+    unknown = allowed - feature_identities
+    if unknown:
+        raise ValueError("decision_identities contain an unknown FL8.1 feature identity")
+
+    horizon_identities = {
+        label.decision_identity
+        for label in bundle.future_path_labels.labels
+        if label.horizon_ms == request.horizon_ms
+    }
+    missing_horizon = allowed - horizon_identities
+    if missing_horizon:
+        raise ValueError("decision identity has no FL4 row at the requested forecast horizon")
+
+    return _train_fast_forecast_baseline(
+        bundle,
+        request,
+        allowed_decision_identities=allowed,
+    )
+
+
+def _train_fast_forecast_baseline(
+    bundle: FastTrainingBundle,
+    request: FastForecastTrainingRequest,
+    *,
+    allowed_decision_identities: frozenset[tuple[object, ...]] | None,
+) -> FastForecastBaselineArtifact:
     if type(bundle) is not FastTrainingBundle:
         raise ValueError("bundle must be an exact FastTrainingBundle")
     if type(request) is not FastForecastTrainingRequest:
         raise ValueError("request must be an exact FastForecastTrainingRequest")
 
-    prepared = _prepare_fast_forecast_training_data(bundle, request)
+    prepared = _prepare_fast_forecast_training_data(
+        bundle,
+        request,
+        allowed_decision_identities=allowed_decision_identities,
+    )
     targets = prepared.targets
     training_row_count = len(targets)
     positive_row_count: int | None = None
@@ -129,6 +187,8 @@ def train_fast_forecast_baseline(
 def _prepare_fast_forecast_training_data(
     bundle: FastTrainingBundle,
     request: FastForecastTrainingRequest,
+    *,
+    allowed_decision_identities: frozenset[tuple[object, ...]] | None,
 ) -> _PreparedFastForecastTrainingData:
     feature_by_identity = {
         record.decision_identity: record for record in bundle.features.records
@@ -140,6 +200,10 @@ def _prepare_fast_forecast_training_data(
         label
         for label in bundle.future_path_labels.labels
         if label.horizon_ms == request.horizon_ms
+        and (
+            allowed_decision_identities is None
+            or label.decision_identity in allowed_decision_identities
+        )
     )
     if not selected:
         raise ValueError("requested forecast horizon has no FL4 training label rows")
@@ -172,6 +236,10 @@ def _prepare_fast_forecast_training_data(
         identities.append(identity)
         timestamps.append(record.decision_observed_at_unix_ms)
 
+    if allowed_decision_identities is not None and seen_identities != set(
+        allowed_decision_identities
+    ):
+        raise ValueError("requested decision identities do not map exactly to FL4 horizon rows")
     if not targets:
         raise ValueError("requested forecast target has no complete target-eligible rows")
 
