@@ -10,7 +10,7 @@
 5. Canonicalize caller context order by timestamp, sequence, signature, ordinal.
 6. Reject duplicate decision identities.
 7. Require exact row fields only.
-8. Encode optional finite floats with `float.hex()` tags.
+8. Preserve integer numeric scalars exactly; encode Python float values with `float.hex()` tags.
 9. Reject raw JSON floats and non-finite constants.
 10. Encode compact sorted canonical JSON with exactly one trailing newline.
 11. Decode exact keys/types and reconstruct exact FL8.4 contexts.
