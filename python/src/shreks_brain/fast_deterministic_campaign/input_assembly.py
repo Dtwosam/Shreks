@@ -302,6 +302,7 @@ def assemble_fast_deterministic_comparison_hydration_inputs(
             _validate_champion_execution_proof(
                 proof,
                 probe,
+                record,
                 execution_policy,
                 index=index,
             )
@@ -371,10 +372,34 @@ def assemble_fast_deterministic_comparison_hydration_inputs(
 def _validate_champion_execution_proof(
     proof: FastChampionEntryExecutionEvidence,
     probe: FastObserverDirectionalProbeEvidence,
+    record: FastTrainingFeatureRecord,
     policy: FastDeterministicComparisonExecutionPolicy,
     *,
     index: int,
 ) -> None:
+    if probe.intended_base_quantity is None or probe.exit_capacity_base is None:
+        raise ValueError(
+            f"champion execution proof exists without executable directional probe at row {index}"
+        )
+    if proof.prediction.decision_identity != record.decision_identity:
+        raise ValueError(
+            f"champion execution prediction identity mismatch at row {index}"
+        )
+    if (
+        proof.execution.trade.executable_entry_price_quote
+        != record.decision_executable_entry_price_quote
+    ):
+        raise ValueError(
+            f"champion execution entry price mismatch at row {index}"
+        )
+    if proof.execution.trade.base_quantity != probe.intended_base_quantity:
+        raise ValueError(
+            f"champion execution base quantity does not match observer probe at row {index}"
+        )
+    if proof.execution.trade.exit_capacity_base != probe.exit_capacity_base:
+        raise ValueError(
+            f"champion execution exit capacity does not match observer probe at row {index}"
+        )
     if proof.execution_policy_source_version != policy.version:
         raise ValueError(
             f"champion execution policy provenance mismatch at row {index}"
