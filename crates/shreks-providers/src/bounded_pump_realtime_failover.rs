@@ -2,7 +2,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use shreks_core::ProviderId;
-use tokio::{sync::watch, time::sleep};
+use tokio::{
+    sync::{mpsc, watch},
+    time::sleep,
+};
 
 use crate::{
     bounded_pump_realtime::{
@@ -256,4 +259,17 @@ fn with_failover_attempt_trace(mut error: ProviderError, attempts: &[String]) ->
         );
     }
     error
+}
+
+
+pub async fn forward_bounded_pump_realtime_sessions(
+    mut source: BoundedPumpRealtimeFailoverStream,
+    sender: mpsc::Sender<BoundedPumpRealtimeSessionNotification>,
+) -> Result<(), ProviderError> {
+    loop {
+        let notification = source.next_realtime_session_notification().await?;
+        if sender.send(notification).await.is_err() {
+            return Ok(());
+        }
+    }
 }
