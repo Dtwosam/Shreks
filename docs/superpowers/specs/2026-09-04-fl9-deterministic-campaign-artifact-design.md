@@ -61,12 +61,13 @@ Only after:
 5. all eight PAPER candidates succeed;
 6. canonical run-batch encoding succeeds;
 7. root manifest construction succeeds;
+8. the complete staged artifact is read back through the strict artifact reader and its manifest round-trips exactly;
 
 is the staging directory renamed to the final destination.
 
 Any exception recursively removes staging.
 
-A failed matrix or failed child artifact therefore never leaves a published partial campaign directory.
+A failed matrix, failed child artifact, or failed staged self-verification therefore never leaves a published partial campaign directory.
 
 ## Pipeline delegation
 
