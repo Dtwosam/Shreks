@@ -347,6 +347,7 @@ def test_hydration_artifact_binds_db_wal_policy_population_and_contexts(
     assert manifest.schema_name == FAST_FORECAST_CONTEXT_HYDRATION_ARTIFACT_SCHEMA_NAME
     assert manifest.schema_version == FAST_FORECAST_CONTEXT_HYDRATION_ARTIFACT_SCHEMA_VERSION
     assert reopened.manifest == manifest
+    assert reopened.manifest.validation_policy == chronological_policy()
     assert reopened.policy == _policy()
     assert reopened.context_corpus.context_fingerprint_sha256 == (
         manifest.context_fingerprint_sha256
