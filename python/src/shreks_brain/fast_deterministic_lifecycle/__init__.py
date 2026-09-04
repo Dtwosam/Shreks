@@ -1,5 +1,6 @@
 from .candidate_manifest import decode_fast_deterministic_candidate_manifest
 from .codec import (
+    build_fast_deterministic_lifecycle_results,
     decode_fast_deterministic_lifecycle_results,
     fast_deterministic_lifecycle_to_paper_assessment,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "FastDeterministicLifecycleDecision",
     "FastDeterministicLifecyclePolicy",
     "FastDeterministicLifecycleResults",
+    "build_fast_deterministic_lifecycle_results",
     "decode_fast_deterministic_lifecycle_results",
     "fast_deterministic_lifecycle_to_paper_assessment",
 ]
