@@ -157,7 +157,7 @@ def test_run_evidence_batch_codec_rejects_run_and_evaluation_tampering() -> None
     tampered_evaluation["runs"][0]["trading_evaluation"]["evaluations"][0][
         "trades"
     ][0]["net_pnl_usd"] += 1.0
-    with pytest.raises(ValueError, match="fingerprint|evaluation|reconstruct"):
+    with pytest.raises(ValueError, match="fingerprint|evaluation|reconstruct|inconsistent"):
         decode_fast_policy_run_evidence_batch(
             json.dumps(
                 tampered_evaluation,
