@@ -11,6 +11,7 @@ dependencies = []
 
 [project.scripts]
 shreks-fast-deterministic-campaign = "shreks_brain.fast_deterministic_campaign.cli:main"
+shreks-fast-proof-workspace = "shreks_brain.fast_proof_workspace:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
