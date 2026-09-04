@@ -10,12 +10,12 @@ from shreks_brain.evaluation import TradingEvaluationPolicy
 from shreks_brain.fast_campaign import (
     FAST_CAMPAIGN_DECISION_RESULT_SCHEMA_NAME,
     FAST_CAMPAIGN_DECISION_SCHEMA_VERSION,
-    FastCampaignActionCandidate,
     FastCampaignActionConstraints,
     FastCampaignContinuousActionPolicy,
     FastCampaignDecisionResult,
     FastCampaignDecisionResults,
 )
+from shreks_brain.fast_campaign.models import FastCampaignActionCandidate
 from shreks_brain.fast_campaign_paper import (
     FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
     FastCampaignPaperCandidateIdentity,
