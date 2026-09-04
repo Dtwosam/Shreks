@@ -341,13 +341,14 @@ def test_file_runner_resolves_paths_and_delegates_exact_request(
     captured = {}
     sentinel = SimpleNamespace(artifact_fingerprint_sha256="a" * 64)
 
+    def fake_read_features(path):
+        captured["feature_read_path"] = Path(path)
+        return features
+
     monkeypatch.setattr(
         "shreks_brain.fast_deterministic_campaign.request."
         "read_fast_training_feature_parquet",
-        lambda path: (
-            captured.setdefault("feature_read_path", Path(path))
-            or features
-        ),
+        fake_read_features,
     )
     monkeypatch.setattr(
         "shreks_brain.fast_deterministic_campaign.request."
