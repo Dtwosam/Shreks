@@ -201,6 +201,13 @@ def test_installed_materialization_tolerates_only_generated_python_cache(
     cache.mkdir()
     (cache / "__init__.cpython-312.pyc").write_bytes(b"interpreter-cache")
 
+    with pytest.raises(ValueError, match="regular files only"):
+        verify_fast_proof_tools_package(
+            package,
+            expected_source_sha="f" * 40,
+            expected_platform="aarch64-unknown-linux-gnu",
+        )
+
     monkeypatch.setattr(
         fast_proof_tools_module,
         "files",
