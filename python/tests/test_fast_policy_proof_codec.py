@@ -22,9 +22,12 @@ from shreks_brain.fast_paper import (
 from shreks_brain.fast_policy_proof import (
     FastPolicySuperiorityPolicy,
     build_fast_policy_run_evidence,
+    decode_fast_policy_run_evidence_batch,
     decode_fast_policy_superiority_report,
+    encode_fast_policy_run_evidence_batch,
     encode_fast_policy_superiority_report,
     evaluate_fast_policy_superiority,
+    fast_policy_run_evidence_fingerprint_sha256,
 )
 
 
@@ -105,6 +108,77 @@ def _report():
         min_baseline_expectancy_advantage_pct=1.0,
     )
     return evaluate_fast_policy_superiority(candidate, (baseline,), policy)
+
+
+def test_run_evidence_batch_codec_is_canonical_and_round_trips_exact_runs() -> None:
+    runs = (
+        _run("baseline-a", "b" * 64, (15.0, -5.0)),
+        _run("learned-v1", "a" * 64, (25.0, -5.0)),
+    )
+    assert all(
+        fast_policy_run_evidence_fingerprint_sha256(run)
+        == run.run_evidence_fingerprint_sha256
+        for run in runs
+    )
+
+    payload = encode_fast_policy_run_evidence_batch(runs)
+    assert payload == json.dumps(
+        json.loads(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    assert decode_fast_policy_run_evidence_batch(payload) == runs
+    assert encode_fast_policy_run_evidence_batch(
+        decode_fast_policy_run_evidence_batch(payload)
+    ) == payload
+
+
+def test_run_evidence_batch_codec_rejects_run_and_evaluation_tampering() -> None:
+    runs = (
+        _run("baseline-a", "b" * 64, (15.0, -5.0)),
+        _run("learned-v1", "a" * 64, (25.0, -5.0)),
+    )
+    document = json.loads(encode_fast_policy_run_evidence_batch(runs))
+
+    tampered_run = json.loads(json.dumps(document))
+    tampered_run["runs"][0]["run_evidence_fingerprint_sha256"] = "f" * 64
+    with pytest.raises(ValueError, match="fingerprint"):
+        decode_fast_policy_run_evidence_batch(
+            json.dumps(
+                tampered_run,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+
+    tampered_evaluation = json.loads(json.dumps(document))
+    tampered_evaluation["runs"][0]["trading_evaluation"]["evaluations"][0][
+        "trades"
+    ][0]["net_pnl_usd"] += 1.0
+    with pytest.raises(ValueError, match="fingerprint|evaluation|reconstruct|inconsistent"):
+        decode_fast_policy_run_evidence_batch(
+            json.dumps(
+                tampered_evaluation,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+
+
+def test_run_evidence_batch_codec_rejects_noncanonical_or_nonlexical_input() -> None:
+    baseline = _run("baseline-a", "b" * 64, (15.0, -5.0))
+    learned = _run("learned-v1", "a" * 64, (25.0, -5.0))
+
+    with pytest.raises(ValueError, match="lexical|order"):
+        encode_fast_policy_run_evidence_batch((learned, baseline))
+
+    payload = encode_fast_policy_run_evidence_batch((baseline, learned))
+    with pytest.raises(ValueError, match="canonical"):
+        decode_fast_policy_run_evidence_batch(
+            json.dumps(json.loads(payload), sort_keys=False, indent=2)
+        )
 
 
 def test_codec_is_canonical_and_round_trips_exact_report() -> None:
