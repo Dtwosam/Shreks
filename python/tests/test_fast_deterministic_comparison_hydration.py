@@ -798,6 +798,71 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
     )
 
 
+def test_hydrator_rejects_execution_size_or_capacity_drift_from_observer_probe(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-size-drift.db"
+    authority_binary = tmp_path / "authority"
+    _create_observer_db(database)
+    _fake_authority_binary(authority_binary)
+
+    source = _input(record)
+    execution = source.impulse_scalp_evidence.execution
+    assert execution is not None
+
+    for drift_trade, message in (
+        (
+            replace(execution.trade, base_quantity=9.0),
+            "size|quantity|probe",
+        ),
+        (
+            replace(execution.trade, exit_capacity_base=11.0),
+            "capacity|probe",
+        ),
+    ):
+        drift_execution = replace(execution, trade=drift_trade)
+        drift = replace(
+            source,
+            impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
+                execution=drift_execution
+            ),
+            micro_pullback_evidence=FastOfflineMicroPullbackEvidence(
+                execution=drift_execution
+            ),
+            pre_graduation_evidence=FastOfflinePreGraduationEvidence(
+                execution=drift_execution
+            ),
+            graduation_flow_evidence=FastOfflineGraduationFlowEvidence(
+                pre_snapshot=source.graduation_flow_evidence.pre_snapshot,
+                boost_context=source.graduation_flow_evidence.boost_context,
+                execution=drift_execution,
+            ),
+        )
+        with pytest.raises(ValueError, match=message):
+            hydrate_fast_deterministic_comparison_evidence(
+                database_path=database,
+                feature_dataset=_dataset(record),
+                catalog=_catalog(),
+                hydration_inputs=(drift,),
+                entry_authority_binary_path=authority_binary,
+            )
+
+    with pytest.raises(ValueError, match="capacity|source|provenance|probe"):
+        hydrate_fast_deterministic_comparison_evidence(
+            database_path=database,
+            feature_dataset=_dataset(record),
+            catalog=_catalog(),
+            hydration_inputs=(
+                replace(
+                    source,
+                    exit_capacity_source_version="invented-capacity-v9",
+                ),
+            ),
+            entry_authority_binary_path=authority_binary,
+        )
+
+
 def test_hydrator_rejects_family_specific_execution_economics_drift(
     tmp_path: Path,
 ) -> None:
