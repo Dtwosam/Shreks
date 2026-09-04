@@ -39,11 +39,11 @@ Each sidecar row carries only explicit decision-time comparison evidence:
 
 - exact record identity;
 - state version and evaluation clock;
-- contemporaneous PAPER quote evidence;
+- contemporaneous directional PAPER ENTRY and EXIT quote evidence;
 - MarketRegime;
 - shared deterministic risk environment;
 - exact catalog candidate entry authority;
-- explicit source provenance for quote, entry forecast/horizon, execution costs, exit capacity, wallet evidence, graduation context, continuation forecast, regime, risk environment, and entry authority;
+- explicit source provenance for ENTRY quote, EXIT quote, entry forecast/horizon, execution costs, exit capacity, wallet evidence, graduation context, continuation forecast, regime, risk environment, and entry authority;
 - Impulse Scalp evidence;
 - Micro Pullback evidence;
 - Pre-Graduation evidence;
@@ -59,7 +59,7 @@ Provenance is semantic, not decorative. If entry execution evidence is present, 
 
 Schema:
 
-`shreks.fast_deterministic_comparison_evidence_bundle` v1.
+`shreks.fast_deterministic_comparison_evidence_bundle` v2. V1 is superseded before real economic evidence collection because it carried one ambiguous generic quote.
 
 The manifest records:
 
@@ -84,7 +84,7 @@ Reading reattaches each sidecar row only to its exact FL8.1 record identity and 
 
 ## Immutability
 
-The writer refuses an existing destination.
+The writer refuses an existing destination. V2 also rejects legacy single-quote rows and requires both directional quotes.
 
 The reader requires exactly the three bundle files and authenticates physical file fingerprints before consuming their contents.
 
