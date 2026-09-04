@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
 import math
 import os
 from pathlib import Path
 
-from shreks_brain.fast_campaign_paper import FastCampaignPaperQuoteEvidence
 from shreks_brain.fast_deterministic_lifecycle import (
     FastDeterministicComparisonCatalog,
 )
@@ -21,13 +19,10 @@ from shreks_brain.fast_deterministic_offline import (
     derive_fast_deterministic_entry_authority_offline,
 )
 from shreks_brain.observer_campaign import (
-    ObserverCampaignStore,
     ObserverPaperQuoteAsset,
-    ObserverPaperQuoteEvidence,
     ObserverPaperQuoteIdentity,
     ObserverPaperQuotePurpose,
 )
-from shreks_brain.paper import PaperQuoteState
 from shreks_brain.regime import MarketRegime
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureDataset,
@@ -40,6 +35,10 @@ from .comparison import (
 )
 from .evidence_bundle import (
     FastDeterministicComparisonEvidenceProvenance,
+)
+from .observer_probe import (
+    FastObserverDirectionalProbeEvidence,
+    load_fast_observer_directional_probe,
 )
 from .risk_context import FastDeterministicCampaignRiskEnvironment
 
@@ -216,7 +215,6 @@ def hydrate_fast_deterministic_comparison_evidence(
             "hydration inputs must exactly match the FL8.1 feature population"
         )
 
-    store = ObserverCampaignStore(database_path)
     rows: list[FastDeterministicComparisonEvidenceRow] = []
     provenance: list[FastDeterministicComparisonEvidenceProvenance] = []
 
@@ -234,56 +232,31 @@ def hydrate_fast_deterministic_comparison_evidence(
             raise ValueError(
                 f"comparison hydration evaluation precedes FL8.1 decision at row {index}"
             )
-        _validate_market_attribution(record, source)
-
-        token_decimals = store.latest_token_decimals(
-            source.observer_candidate_id,
-            record.mint,
-            source.evaluated_at_unix_ms,
-        )
-        if token_decimals is None:
-            raise ValueError(
-                f"comparison hydration token decimals unavailable at row {index}"
-            )
-        entry_raw = store.latest_paper_quote(
-            source.entry_quote_identity,
-            source.evaluated_at_unix_ms,
-        )
-        exit_raw = store.latest_paper_quote(
-            source.exit_quote_identity,
-            source.evaluated_at_unix_ms,
-        )
-        if entry_raw is None or exit_raw is None:
-            raise ValueError(
-                f"comparison hydration requires persisted ENTRY and EXIT quotes at row {index}"
-            )
-
-        entry_quote = _campaign_quote(
-            record,
-            entry_raw,
-            token_decimals=token_decimals,
+        probe = load_fast_observer_directional_probe(
+            database_path=database_path,
+            record=record,
+            observer_candidate_id=source.observer_candidate_id,
+            evaluated_at_unix_ms=source.evaluated_at_unix_ms,
+            entry_quote_identity=source.entry_quote_identity,
+            exit_quote_identity=source.exit_quote_identity,
             quote_asset=source.quote_asset,
         )
-        exit_quote = _campaign_quote(
-            record,
-            exit_raw,
-            token_decimals=token_decimals,
-            quote_asset=source.quote_asset,
-        )
-        _validate_quote_chronology(
-            record,
-            source,
-            entry_quote,
-            exit_quote,
-            index=index,
-        )
-        _validate_risk_quote_consistency(
+        entry_quote = probe.entry_quote
+        exit_quote = probe.exit_quote
+        _validate_risk_probe_consistency(
             source.risk_environment,
-            entry_raw,
-            quote_asset=source.quote_asset,
+            probe_entry_route_available=probe.entry_evidence.route_available,
+            probe_entry_price_impact_pct=probe.entry_price_impact_pct,
+            probe_entry_input_notional_usd=probe.entry_input_notional_usd,
         )
 
         execution = _shared_entry_execution(source, index=index)
+        _validate_execution_probe_alignment(
+            source,
+            execution,
+            probe,
+            index=index,
+        )
         _validate_execution_provenance(source, execution, index=index)
 
         entry_authority = (
@@ -322,8 +295,8 @@ def hydrate_fast_deterministic_comparison_evidence(
         )
         proof = FastDeterministicComparisonEvidenceProvenance(
             source_event_id=expected_source_event_id,
-            entry_quote_source_version=_quote_source_version(entry_raw),
-            exit_quote_source_version=_quote_source_version(exit_raw),
+            entry_quote_source_version=probe.entry_quote_source_version,
+            exit_quote_source_version=probe.exit_quote_source_version,
             entry_forecast_source_version=(
                 source.entry_forecast_source_version
             ),
@@ -359,26 +332,6 @@ def hydrate_fast_deterministic_comparison_evidence(
     )
 
 
-def _validate_market_attribution(
-    record: FastTrainingFeatureRecord,
-    source: FastDeterministicComparisonHydrationInput,
-) -> None:
-    entry = source.entry_quote_identity
-    exit_value = source.exit_quote_identity
-    if source.quote_asset.mint != record.quote_mint:
-        raise ValueError(
-            "comparison hydration quote asset does not match FL8.1 quote mint"
-        )
-    if entry.input_mint != record.quote_mint or entry.output_mint != record.mint:
-        raise ValueError(
-            "comparison hydration ENTRY quote market attribution mismatch"
-        )
-    if exit_value.input_mint != record.mint or exit_value.output_mint != record.quote_mint:
-        raise ValueError(
-            "comparison hydration EXIT quote market attribution mismatch"
-        )
-
-
 def _shared_entry_execution(
     source: FastDeterministicComparisonHydrationInput,
     *,
@@ -403,6 +356,47 @@ def _shared_entry_execution(
             f"comparison hydration entry families must share exact execution economics at row {index}"
         )
     return first
+
+
+def _validate_execution_probe_alignment(
+    source: FastDeterministicComparisonHydrationInput,
+    execution: FastOfflineEntryExecution | None,
+    probe: FastObserverDirectionalProbeEvidence,
+    *,
+    index: int,
+) -> None:
+    if execution is None:
+        return
+    if probe.intended_base_quantity is None:
+        raise ValueError(
+            f"comparison hydration execution exists without executable ENTRY probe at row {index}"
+        )
+    if probe.exit_capacity_base is None:
+        raise ValueError(
+            f"comparison hydration execution exists without executable EXIT capacity probe at row {index}"
+        )
+    if not math.isclose(
+        execution.trade.base_quantity,
+        probe.intended_base_quantity,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            f"comparison hydration execution base quantity does not match observer probe size at row {index}"
+        )
+    if not math.isclose(
+        execution.trade.exit_capacity_base,
+        probe.exit_capacity_base,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            f"comparison hydration execution exit capacity does not match observer probe at row {index}"
+        )
+    if source.exit_capacity_source_version != probe.exit_quote_source_version:
+        raise ValueError(
+            f"comparison hydration exit capacity provenance does not match observer EXIT probe at row {index}"
+        )
 
 
 def _validate_execution_provenance(
@@ -447,113 +441,14 @@ def _validate_execution_provenance(
         )
 
 
-def _campaign_quote(
-    record: FastTrainingFeatureRecord,
-    evidence: ObserverPaperQuoteEvidence,
-    *,
-    token_decimals: int,
-    quote_asset: ObserverPaperQuoteAsset,
-) -> FastCampaignPaperQuoteEvidence:
-    if type(evidence) is not ObserverPaperQuoteEvidence:
-        raise ValueError(
-            "comparison hydration quote must be exact ObserverPaperQuoteEvidence"
-        )
-    if evidence.identity.provider != "jupiter":
-        raise ValueError(
-            "comparison hydration PAPER quote provider must be jupiter"
-        )
-    if not evidence.route_available:
-        return FastCampaignPaperQuoteEvidence(
-            provider=evidence.identity.provider,
-            mint=record.mint,
-            quote_mint=record.quote_mint,
-            observed_at_unix_ms=evidence.quoted_at_unix_ms,
-            state=PaperQuoteState.UNAVAILABLE,
-            reference_price_quote=None,
-            execution_price_quote=None,
-            quoted_base_quantity=None,
-            available_base_quantity=None,
-            quote_to_usd_rate=quote_asset.usd_per_token,
-        )
-
-    if evidence.identity.purpose is ObserverPaperQuotePurpose.ENTRY:
-        quote_quantity = _raw_quantity(
-            evidence.identity.input_amount,
-            quote_asset.decimals,
-            "ENTRY quote input",
-        )
-        base_quantity = _raw_quantity(
-            evidence.output_amount,
-            token_decimals,
-            "ENTRY token output",
-        )
-    elif evidence.identity.purpose is ObserverPaperQuotePurpose.EXIT:
-        base_quantity = _raw_quantity(
-            evidence.identity.input_amount,
-            token_decimals,
-            "EXIT token input",
-        )
-        quote_quantity = _raw_quantity(
-            evidence.output_amount,
-            quote_asset.decimals,
-            "EXIT quote output",
-        )
-    else:
-        raise ValueError("unsupported comparison hydration quote purpose")
-
-    if base_quantity <= 0.0 or quote_quantity <= 0.0:
-        raise ValueError(
-            "comparison hydration executable quote quantities must be positive"
-        )
-    execution_price = quote_quantity / base_quantity
-    if not math.isfinite(execution_price) or execution_price <= 0.0:
-        raise ValueError(
-            "comparison hydration execution price must be positive and finite"
-        )
-
-    return FastCampaignPaperQuoteEvidence(
-        provider=evidence.identity.provider,
-        mint=record.mint,
-        quote_mint=record.quote_mint,
-        observed_at_unix_ms=evidence.quoted_at_unix_ms,
-        state=PaperQuoteState.EXECUTABLE,
-        reference_price_quote=record.decision_executable_entry_price_quote,
-        execution_price_quote=execution_price,
-        quoted_base_quantity=base_quantity,
-        available_base_quantity=base_quantity,
-        quote_to_usd_rate=quote_asset.usd_per_token,
-    )
-
-
-def _validate_quote_chronology(
-    record: FastTrainingFeatureRecord,
-    source: FastDeterministicComparisonHydrationInput,
-    entry_quote: FastCampaignPaperQuoteEvidence,
-    exit_quote: FastCampaignPaperQuoteEvidence,
-    *,
-    index: int,
-) -> None:
-    for name, value in (
-        ("ENTRY", entry_quote),
-        ("EXIT", exit_quote),
-    ):
-        if not (
-            record.decision_observed_at_unix_ms
-            <= value.observed_at_unix_ms
-            <= source.evaluated_at_unix_ms
-        ):
-            raise ValueError(
-                f"comparison hydration {name} quote is outside decision-safe chronology at row {index}"
-            )
-
-
-def _validate_risk_quote_consistency(
+def _validate_risk_probe_consistency(
     environment: FastDeterministicCampaignRiskEnvironment,
-    entry_quote: ObserverPaperQuoteEvidence,
     *,
-    quote_asset: ObserverPaperQuoteAsset,
+    probe_entry_route_available: bool,
+    probe_entry_price_impact_pct: float | None,
+    probe_entry_input_notional_usd: float,
 ) -> None:
-    if not entry_quote.route_available:
+    if not probe_entry_route_available:
         if (
             environment.expected_price_impact_pct is not None
             or environment.price_impact_notional_usd is not None
@@ -563,7 +458,7 @@ def _validate_risk_quote_consistency(
             )
         return
 
-    if entry_quote.price_impact_pct is None:
+    if probe_entry_price_impact_pct is None:
         if (
             environment.expected_price_impact_pct is not None
             or environment.price_impact_notional_usd is not None
@@ -573,20 +468,6 @@ def _validate_risk_quote_consistency(
             )
         return
 
-    try:
-        impact = float(Decimal(entry_quote.price_impact_pct))
-    except (InvalidOperation, OverflowError, ValueError) as exc:
-        raise ValueError(
-            "comparison hydration ENTRY price impact is malformed"
-        ) from exc
-    notional = (
-        _raw_quantity(
-            entry_quote.identity.input_amount,
-            quote_asset.decimals,
-            "ENTRY quote notional",
-        )
-        * quote_asset.usd_per_token
-    )
     if environment.expected_price_impact_pct is None:
         raise ValueError(
             "comparison hydration risk impact is missing despite ENTRY quote evidence"
@@ -597,7 +478,7 @@ def _validate_risk_quote_consistency(
         )
     if not math.isclose(
         environment.expected_price_impact_pct,
-        impact,
+        probe_entry_price_impact_pct,
         rel_tol=1e-12,
         abs_tol=1e-12,
     ):
@@ -606,44 +487,13 @@ def _validate_risk_quote_consistency(
         )
     if not math.isclose(
         environment.price_impact_notional_usd,
-        notional,
+        probe_entry_input_notional_usd,
         rel_tol=1e-12,
         abs_tol=1e-12,
     ):
         raise ValueError(
             "comparison hydration risk impact notional does not match ENTRY quote"
         )
-
-
-def _quote_source_version(evidence: ObserverPaperQuoteEvidence) -> str:
-    identity = evidence.identity
-    return (
-        f"observer:{identity.provider}:"
-        f"{identity.probe_policy_version}:{identity.purpose.value}"
-    )
-
-
-def _raw_quantity(raw_amount: int, decimals: int, name: str) -> float:
-    if (
-        isinstance(raw_amount, bool)
-        or not isinstance(raw_amount, int)
-        or raw_amount < 0
-    ):
-        raise ValueError(f"{name} raw amount is invalid")
-    if (
-        isinstance(decimals, bool)
-        or not isinstance(decimals, int)
-        or not 0 <= decimals <= 255
-    ):
-        raise ValueError(f"{name} decimals are invalid")
-    try:
-        value = Decimal(raw_amount) / (Decimal(10) ** decimals)
-        converted = float(value)
-    except (InvalidOperation, OverflowError, ValueError) as exc:
-        raise ValueError(f"{name} cannot be converted safely") from exc
-    if not math.isfinite(converted) or converted < 0.0:
-        raise ValueError(f"{name} must be finite and non-negative")
-    return converted
 
 
 def _require_non_empty_string(name: str, value: object) -> None:

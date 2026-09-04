@@ -1,3 +1,9 @@
+from .observer_probe import (
+    FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION,
+    FastObserverDirectionalProbeEvidence,
+    build_fast_observer_champion_entry_execution,
+    load_fast_observer_directional_probe,
+)
 from .hydration import (
     FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION,
     FastDeterministicComparisonHydrationInput,
@@ -40,6 +46,10 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION",
+    "FastObserverDirectionalProbeEvidence",
+    "build_fast_observer_champion_entry_execution",
+    "load_fast_observer_directional_probe",
     "FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION",
     "FastDeterministicComparisonHydrationInput",
     "FastDeterministicComparisonHydrationResult",

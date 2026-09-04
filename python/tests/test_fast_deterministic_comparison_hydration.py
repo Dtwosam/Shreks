@@ -10,10 +10,14 @@ import pytest
 
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION,
+    FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION,
     FastDeterministicCampaignRiskEnvironment,
     FastDeterministicComparisonHydrationInput,
     FastDeterministicComparisonHydrationResult,
+    FastObserverDirectionalProbeEvidence,
+    build_fast_observer_champion_entry_execution,
     hydrate_fast_deterministic_comparison_evidence,
+    load_fast_observer_directional_probe,
     read_fast_deterministic_comparison_evidence_bundle,
     write_fast_deterministic_comparison_evidence_bundle,
 )
@@ -267,7 +271,7 @@ def _input(record: FastTrainingFeatureRecord) -> FastDeterministicComparisonHydr
         entry_forecast_source_version="ridge-return-v3",
         entry_forecast_horizon_ms=30_000,
         execution_cost_source_version="fl3-cost-policy-v1",
-        exit_capacity_source_version="jupiter-exit-probe-v2",
+        exit_capacity_source_version="observer:jupiter:probe-v2:exit",
         wallet_source_version=None,
         graduation_context_source_version="fl8.1-current-snapshot-v1",
         continuation_forecast_source_version=None,
@@ -421,6 +425,228 @@ def _fake_authority_binary(path: Path) -> None:
     path.chmod(path.stat().st_mode | 0o111)
 
 
+def test_observer_probe_derives_exact_entry_size_and_exit_capacity(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-probe.db"
+    _create_observer_db(database)
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+
+    assert type(probe) is FastObserverDirectionalProbeEvidence
+    assert probe.version == FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION
+    assert probe.source_event_id == "hydrate-sig:0"
+    assert probe.token_decimals == 6
+    assert probe.entry_quote.state is PaperQuoteState.EXECUTABLE
+    assert probe.entry_quote.execution_price_quote == pytest.approx(10.0)
+    assert probe.exit_quote.state is PaperQuoteState.EXECUTABLE
+    assert probe.exit_quote.execution_price_quote == pytest.approx(9.9)
+    assert probe.intended_base_quantity == pytest.approx(10.0)
+    assert probe.exit_capacity_base == pytest.approx(10.0)
+    assert probe.entry_quote_source_version == "observer:jupiter:probe-v2:entry"
+    assert probe.exit_quote_source_version == "observer:jupiter:probe-v2:exit"
+
+
+def test_observer_probe_supplies_champion_size_and_capacity_without_caller_values(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-probe-build.db"
+    _create_observer_db(database)
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+    captured = {}
+    sentinel = object()
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        fake_builder,
+    )
+
+    result = build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    )
+
+    assert result is sentinel
+    assert captured["base_quantity"] == pytest.approx(10.0)
+    assert captured["exit_capacity_base"] == pytest.approx(10.0)
+    assert (
+        captured["exit_capacity_source_version"]
+        == probe.exit_quote_source_version
+    )
+    assert "base_quantity" not in {
+        "probe",
+        "champion_path",
+        "record",
+        "horizon_ms",
+        "cost_model",
+        "required_edge_bps",
+        "risk_margin_bps",
+        "execution_policy_source_version",
+    }
+
+
+@pytest.mark.parametrize("purpose", ("entry", "exit"))
+def test_unavailable_direction_produces_no_champion_execution_evidence(
+    purpose: str,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / f"observer-unavailable-{purpose}.db"
+    _create_observer_db(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET output_amount = '0',
+               minimum_output_amount = '0',
+               route_available = 0,
+               price_impact_pct = NULL,
+               route_labels_json = '[]'
+           WHERE purpose = ?""",
+        (purpose,),
+    )
+    connection.commit()
+    connection.close()
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+
+    called = False
+
+    def should_not_run(**kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("champion inference must not run without both routes")
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        should_not_run,
+    )
+
+    assert build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "missing-champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    ) is None
+    assert called is False
+
+
+def test_observer_probe_preserves_positive_but_undersized_exit_capacity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-undersized-exit.db"
+    _create_observer_db(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET input_amount = '5000000',
+               output_amount = '49500000',
+               minimum_output_amount = '49000000'
+           WHERE purpose = 'exit'"""
+    )
+    connection.commit()
+    connection.close()
+    smaller_exit = replace(_exit_identity(), input_amount=5_000_000)
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=smaller_exit,
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+    assert probe.intended_base_quantity == pytest.approx(10.0)
+    assert probe.exit_capacity_base == pytest.approx(5.0)
+
+    captured = {}
+    sentinel = object()
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        fake_builder,
+    )
+    assert build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    ) is sentinel
+    assert captured["base_quantity"] == pytest.approx(10.0)
+    assert captured["exit_capacity_base"] == pytest.approx(5.0)
+
+
 def test_hydrates_real_directional_observer_quotes_and_fl3_authority(
     tmp_path: Path,
 ) -> None:
@@ -501,16 +727,39 @@ def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
     connection.commit()
     connection.close()
 
+    source = _input(record)
     risk = replace(
         _risk(),
         expected_price_impact_pct=None,
         price_impact_notional_usd=None,
     )
+    no_execution = replace(
+        source,
+        risk_environment=risk,
+        impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
+            execution=None
+        ),
+        micro_pullback_evidence=FastOfflineMicroPullbackEvidence(
+            execution=None
+        ),
+        pre_graduation_evidence=FastOfflinePreGraduationEvidence(
+            execution=None
+        ),
+        graduation_flow_evidence=FastOfflineGraduationFlowEvidence(
+            pre_snapshot=source.graduation_flow_evidence.pre_snapshot,
+            boost_context=source.graduation_flow_evidence.boost_context,
+            execution=None,
+        ),
+        entry_forecast_source_version=None,
+        entry_forecast_horizon_ms=None,
+        execution_cost_source_version=None,
+        exit_capacity_source_version=None,
+    )
     result = hydrate_fast_deterministic_comparison_evidence(
         database_path=database,
         feature_dataset=_dataset(record),
         catalog=_catalog(),
-        hydration_inputs=(replace(_input(record), risk_environment=risk),),
+        hydration_inputs=(no_execution,),
         entry_authority_binary_path=authority_binary,
     )
 
@@ -519,6 +768,10 @@ def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
     assert row.entry_quote.execution_price_quote is None
     assert row.entry_quote.quoted_base_quantity is None
     assert row.exit_quote.state is PaperQuoteState.EXECUTABLE
+    assert all(
+        item.entry_authority is None
+        for item in row.candidate_authorities
+    )
 
 
 def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
@@ -530,6 +783,17 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
     _create_observer_db(database)
     _fake_authority_binary(authority_binary)
 
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET input_amount = '9000000',
+               output_amount = '89100000',
+               minimum_output_amount = '88200000'
+           WHERE purpose = 'exit'"""
+    )
+    connection.commit()
+    connection.close()
+
     source = _input(record)
     execution = source.impulse_scalp_evidence.execution
     assert execution is not None
@@ -537,11 +801,15 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
         execution,
         trade=replace(
             execution.trade,
-            exit_capacity_base=execution.trade.base_quantity - 1.0,
+            exit_capacity_base=9.0,
         ),
     )
     hydrated_input = replace(
         source,
+        exit_quote_identity=replace(
+            source.exit_quote_identity,
+            input_amount=9_000_000,
+        ),
         impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
             execution=insufficient
         ),
@@ -570,6 +838,71 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
         item.entry_authority is None
         for item in result.rows[0].candidate_authorities
     )
+
+
+def test_hydrator_rejects_execution_size_or_capacity_drift_from_observer_probe(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-size-drift.db"
+    authority_binary = tmp_path / "authority"
+    _create_observer_db(database)
+    _fake_authority_binary(authority_binary)
+
+    source = _input(record)
+    execution = source.impulse_scalp_evidence.execution
+    assert execution is not None
+
+    for drift_trade, message in (
+        (
+            replace(execution.trade, base_quantity=9.0),
+            "size|quantity|probe",
+        ),
+        (
+            replace(execution.trade, exit_capacity_base=11.0),
+            "capacity|probe",
+        ),
+    ):
+        drift_execution = replace(execution, trade=drift_trade)
+        drift = replace(
+            source,
+            impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
+                execution=drift_execution
+            ),
+            micro_pullback_evidence=FastOfflineMicroPullbackEvidence(
+                execution=drift_execution
+            ),
+            pre_graduation_evidence=FastOfflinePreGraduationEvidence(
+                execution=drift_execution
+            ),
+            graduation_flow_evidence=FastOfflineGraduationFlowEvidence(
+                pre_snapshot=source.graduation_flow_evidence.pre_snapshot,
+                boost_context=source.graduation_flow_evidence.boost_context,
+                execution=drift_execution,
+            ),
+        )
+        with pytest.raises(ValueError, match=message):
+            hydrate_fast_deterministic_comparison_evidence(
+                database_path=database,
+                feature_dataset=_dataset(record),
+                catalog=_catalog(),
+                hydration_inputs=(drift,),
+                entry_authority_binary_path=authority_binary,
+            )
+
+    with pytest.raises(ValueError, match="capacity|source|provenance|probe"):
+        hydrate_fast_deterministic_comparison_evidence(
+            database_path=database,
+            feature_dataset=_dataset(record),
+            catalog=_catalog(),
+            hydration_inputs=(
+                replace(
+                    source,
+                    exit_capacity_source_version="invented-capacity-v9",
+                ),
+            ),
+            entry_authority_binary_path=authority_binary,
+        )
 
 
 def test_hydrator_rejects_family_specific_execution_economics_drift(
@@ -638,6 +971,31 @@ def test_hydrator_rejects_population_and_risk_quote_provenance_drift(
             ),
             entry_authority_binary_path=authority_binary,
         )
+
+
+def test_observer_probe_source_has_no_write_network_or_live_authority() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "shreks_brain"
+        / "fast_deterministic_campaign"
+        / "observer_probe.py"
+    ).read_text(encoding="utf-8")
+
+    for forbidden in (
+        "sqlite3",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        "requests.",
+        "httpx",
+        "RuntimeMode.LIVE",
+        "sign_transaction",
+        "submit_transaction",
+        "evaluate_fast_policy_superiority",
+        "promotion",
+    ):
+        assert forbidden not in source
 
 
 def test_hydrator_source_has_no_future_label_write_or_live_authority() -> None:
