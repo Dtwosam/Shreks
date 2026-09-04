@@ -139,7 +139,7 @@ def _entry_authority() -> FastCampaignPaperEntryAuthority:
     )
 
 
-def _quote() -> FastCampaignPaperQuoteEvidence:
+def _quote(*, execution: float) -> FastCampaignPaperQuoteEvidence:
     return FastCampaignPaperQuoteEvidence(
         provider="jupiter",
         mint="mint-bundle",
@@ -147,7 +147,7 @@ def _quote() -> FastCampaignPaperQuoteEvidence:
         observed_at_unix_ms=T0 + 150,
         state=PaperQuoteState.EXECUTABLE,
         reference_price_quote=10.0,
-        execution_price_quote=10.1,
+        execution_price_quote=execution,
         quoted_base_quantity=10.0,
         available_base_quantity=10.0,
         quote_to_usd_rate=1.0,
@@ -174,7 +174,8 @@ def _provenance(
 ) -> FastDeterministicComparisonEvidenceProvenance:
     return FastDeterministicComparisonEvidenceProvenance(
         source_event_id=f"{record.decision_signature}:{record.decision_ordinal}",
-        quote_source_version="jupiter-probe-v2",
+        entry_quote_source_version="jupiter-entry-probe-v2",
+        exit_quote_source_version="jupiter-exit-probe-v2",
         entry_forecast_source_version=None,
         entry_forecast_horizon_ms=None,
         execution_cost_source_version=None,
@@ -226,12 +227,14 @@ def _row(record: FastTrainingFeatureRecord) -> FastDeterministicComparisonEviden
             ),
             continuation=None,
         ),
-        state_version="state-real-v1",
+        state_version="state-real-v2",
         evaluated_at_unix_ms=T0 + 200,
-        quote=_quote(),
+        quote=None,
         market_regime=MarketRegime.NORMAL,
         risk_environment=_risk_environment(),
         candidate_authorities=authorities,
+        entry_quote=_quote(execution=10.1),
+        exit_quote=_quote(execution=9.9),
     )
 
 
@@ -283,6 +286,36 @@ def test_bundle_round_trip_is_self_contained_immutable_and_fingerprinted(
         )
 
 
+
+def test_bundle_v2_rejects_legacy_single_quote_rows(tmp_path: Path) -> None:
+    record = _record()
+    directional = _row(record)
+    legacy = FastDeterministicComparisonEvidenceRow(
+        record=directional.record,
+        impulse_scalp_evidence=directional.impulse_scalp_evidence,
+        micro_pullback_evidence=directional.micro_pullback_evidence,
+        pre_graduation_evidence=directional.pre_graduation_evidence,
+        graduation_flow_evidence=directional.graduation_flow_evidence,
+        wallet_cohort_evidence=directional.wallet_cohort_evidence,
+        longer_runner_evidence=directional.longer_runner_evidence,
+        state_version=directional.state_version,
+        evaluated_at_unix_ms=directional.evaluated_at_unix_ms,
+        quote=_quote(execution=10.0),
+        market_regime=directional.market_regime,
+        risk_environment=directional.risk_environment,
+        candidate_authorities=directional.candidate_authorities,
+    )
+
+    with pytest.raises(ValueError, match="v2|legacy|directional"):
+        write_fast_deterministic_comparison_evidence_bundle(
+            feature_dataset=_dataset(record),
+            catalog=_catalog(),
+            rows=(legacy,),
+            provenance=(_provenance(record),),
+            destination=tmp_path / "legacy",
+        )
+
+
 def test_bundle_rejects_feature_population_drift(tmp_path: Path) -> None:
     record = _record()
     changed = FastTrainingFeatureRecord(
@@ -306,7 +339,8 @@ def test_bundle_rejects_provenance_population_drift(tmp_path: Path) -> None:
     record = _record()
     bad = FastDeterministicComparisonEvidenceProvenance(
         source_event_id="wrong:0",
-        quote_source_version="jupiter-probe-v2",
+        entry_quote_source_version="jupiter-entry-probe-v2",
+        exit_quote_source_version="jupiter-exit-probe-v2",
         entry_forecast_source_version=None,
         entry_forecast_horizon_ms=None,
         execution_cost_source_version=None,
@@ -341,7 +375,7 @@ def test_bundle_detects_sidecar_tampering(tmp_path: Path) -> None:
     )
     evidence_path = destination / "comparison_evidence.jsonl"
     payload = evidence_path.read_text(encoding="utf-8")
-    evidence_path.write_text(payload.replace("state-real-v1", "state-tampered-v1"), encoding="utf-8")
+    evidence_path.write_text(payload.replace("state-real-v2", "state-tampered-v2"), encoding="utf-8")
 
     with pytest.raises(ValueError, match="fingerprint|evidence"):
         read_fast_deterministic_comparison_evidence_bundle(destination)
