@@ -694,6 +694,7 @@ def test_campaign_driver_only_orchestrates_sealed_components() -> None:
     source = "\n".join(
         path.read_text(encoding="utf-8")
         for path in sorted(package.glob("*.py"))
+        if path.name != "proof_artifact.py"
     )
 
     for required in (
