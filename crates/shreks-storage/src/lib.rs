@@ -8,6 +8,7 @@ mod fast_baseline_hydration;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
+mod fast_population_parity;
 mod future_path_labels;
 mod lifecycle;
 mod outcomes;
@@ -35,6 +36,10 @@ pub use fast_baseline_hydration::{
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
+pub use fast_population_parity::{
+    prove_fast_baseline_population_parity, FastBaselinePopulationParityError,
+    FastBaselinePopulationParityProof, FAST_BASELINE_POPULATION_PARITY_VERSION,
+};
 pub use lifecycle::PumpMigrationSignalRecord;
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
