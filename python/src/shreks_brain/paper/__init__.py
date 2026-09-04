@@ -11,6 +11,10 @@ from .ledger_models import (
     PaperPositionMark,
     PaperPositionState,
 )
+from .risk_facts import (
+    PaperRiskAccountingFacts,
+    derive_paper_risk_accounting_facts,
+)
 from .models import (
     PaperExecutionContext,
     PaperExecutionFinding,
@@ -33,6 +37,8 @@ __all__ = (
     "PaperFillPolicy",
     "PaperQuote",
     "PaperQuoteState",
+    "PaperRiskAccountingFacts",
+    "derive_paper_risk_accounting_facts",
     "execute_paper_intent",
     "PaperLedger",
     "PaperLedgerEntry",
