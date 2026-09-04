@@ -2,6 +2,8 @@ mod observer_v2 {
     pub mod sampler;
     pub mod sampling;
 }
+#[path = "shreks-observe/fast_future_path_population_cli.rs"]
+mod fast_future_path_population_cli;
 #[path = "shreks-observe/fast_lane_acceptance_cli.rs"]
 mod fast_lane_acceptance_cli;
 #[path = "shreks-observe/fast_state_benchmark_cli.rs"]
@@ -60,6 +62,9 @@ const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    if fast_future_path_population_cli::run_fast_future_path_population_subcommand_if_requested()? {
+        return Ok(());
+    }
     if fast_lane_acceptance_cli::run_fast_lane_acceptance_subcommand_if_requested()? {
         return Ok(());
     }
