@@ -756,6 +756,17 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
     _create_observer_db(database)
     _fake_authority_binary(authority_binary)
 
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET input_amount = '9000000',
+               output_amount = '89100000',
+               minimum_output_amount = '88200000'
+           WHERE purpose = 'exit'"""
+    )
+    connection.commit()
+    connection.close()
+
     source = _input(record)
     execution = source.impulse_scalp_evidence.execution
     assert execution is not None
@@ -763,11 +774,15 @@ def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
         execution,
         trade=replace(
             execution.trade,
-            exit_capacity_base=execution.trade.base_quantity - 1.0,
+            exit_capacity_base=9.0,
         ),
     )
     hydrated_input = replace(
         source,
+        exit_quote_identity=replace(
+            source.exit_quote_identity,
+            input_amount=9_000_000,
+        ),
         impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
             execution=insufficient
         ),
