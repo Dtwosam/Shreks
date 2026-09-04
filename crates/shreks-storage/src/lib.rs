@@ -2,6 +2,7 @@
 
 mod conflict_quarantine;
 mod execution_economics;
+mod fast_baseline_batch;
 mod fast_baseline_campaign;
 mod fast_baseline_hydration;
 mod fast_lane;
@@ -18,6 +19,11 @@ mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
 pub use execution_economics::{
     PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
+};
+pub use fast_baseline_batch::{
+    evaluate_fast_baseline_campaign_batch, FastBaselineCampaignBatchAssessment,
+    FastBaselineCampaignBatchError, FastBaselineCampaignRequest,
+    FAST_BASELINE_CAMPAIGN_BATCH_VERSION,
 };
 pub use fast_baseline_campaign::{
     evaluate_fast_baseline_campaign, FastBaselineCampaignAssessment, FastBaselineCampaignError,
