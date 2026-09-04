@@ -349,7 +349,10 @@ def test_preparation_reader_rejects_manifest_tampering(
     manifest = destination / "manifest.json"
     manifest.write_bytes(manifest.read_bytes() + b"tamper")
 
-    with pytest.raises(ValueError, match="canonical|JSON|fingerprint"):
+    with pytest.raises(
+        ValueError,
+        match="canonical|JSON|fingerprint|trailing newline",
+    ):
         read_fast_first_champion_preparation(destination)
 
 
