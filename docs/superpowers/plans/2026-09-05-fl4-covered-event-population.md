@@ -36,14 +36,15 @@
 - [ ] Prove partial coverage creates incomplete long horizons rather than false complete labels.
 - [ ] Run focused and full Rust tests.
 
-## Task 4 — CLI/report
+## Task 4 — Host subcommand/report
 
-- [ ] Add machine-readable report model.
-- [ ] Add `shreks-fast-populate-future-path-labels`.
-- [ ] Require all five explicit CLI inputs.
-- [ ] Print one JSON report on success.
-- [ ] Add CLI regression tests.
-- [ ] Audit the binary for no network/provider/trading/PAPER/signing/submission/LIVE authority.
+- [x] Add machine-readable report model and canonical JSON encoding.
+- [x] Add `shreks-observe populate-future-path-labels` before normal runtime-config loading.
+- [x] Require all five explicit named inputs.
+- [x] Print one JSON report on success.
+- [x] Add host-subcommand regression tests proving it works with provider/PAPER environment cleared.
+- [x] Preserve the existing release binary/proof-tool allowlists.
+- [x] Audit the subcommand for no network/provider/trading/PAPER/signing/submission/LIVE authority.
 
 ## Task 5 — Exact-head proof
 
