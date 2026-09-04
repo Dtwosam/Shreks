@@ -213,7 +213,7 @@ fn graduation_policy() -> GraduationFlowPolicy {
         min_post_count_imbalance: 0.0,
         min_post_quote_flow_imbalance: 0.0,
         min_post_quote_flow_velocity_per_second: 0.1,
-        min_post_quote_flow_acceleration_per_second2: 0.0,
+        min_post_quote_flow_acceleration_per_second2: 0.01,
         min_post_to_pre_velocity_ratio: 0.1,
     }
 }
