@@ -187,6 +187,10 @@ def run_fast_deterministic_campaign_invocation_file(
             source
         )
         campaign_created = campaign_path.exists()
+        if source.read_text(encoding="utf-8") != request_payload:
+            raise ValueError(
+                "deterministic campaign request file changed during execution"
+            )
         after = _capture_sources(base, request)
         if after != before:
             raise ValueError(
@@ -266,7 +270,7 @@ def run_fast_deterministic_campaign_invocation_file(
     except Exception:
         if staging_path is not None:
             shutil.rmtree(staging_path, ignore_errors=True)
-        if campaign_created and campaign_path.exists():
+        if campaign_path.exists():
             shutil.rmtree(campaign_path, ignore_errors=True)
         raise
 
