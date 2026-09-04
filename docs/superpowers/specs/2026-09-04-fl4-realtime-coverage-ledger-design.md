@@ -68,8 +68,8 @@ Each row stores:
 - notification count;
 - observer process-local session sequence.
 
-Rows are append-only except that the current session row may monotonically extend its
-`last_*` fields and notification count as more notifications arrive.
+Rows are append-only except that the current session row may extend its last-received
+notification metadata and monotonically extend its receive timestamp/count as more notifications arrive. Slot values are provenance, not a continuity clock, and are not required to be monotonic.
 
 A new process never resumes an older session row.
 
