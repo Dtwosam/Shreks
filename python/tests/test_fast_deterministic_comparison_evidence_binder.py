@@ -305,6 +305,45 @@ def test_binder_requires_quote_contemporaneous_with_decision() -> None:
         )
 
 
+
+def test_comparison_row_rejects_entry_authority_provenance_drift() -> None:
+    row = _row()
+    first = row.candidate_authorities[0]
+    bad_entry = FastCampaignPaperEntryAuthority(
+        mint=row.record.mint,
+        quote_mint=row.record.quote_mint,
+        intended_base_quantity=10.0,
+        decision_executable_entry_price_quote=9.9,
+        maximum_acceptable_entry_price_quote=10.5,
+        expected_entry_variable_cost_bps=200,
+        expected_entry_fixed_cost_quote=0.10,
+    )
+    authorities = (
+        FastDeterministicCandidatePaperAuthority(
+            candidate_version=first.candidate_version,
+            entry_authority=bad_entry,
+        ),
+        *row.candidate_authorities[1:],
+    )
+
+    with pytest.raises(ValueError, match="authority|decision|price|provenance"):
+        FastDeterministicComparisonEvidenceRow(
+            record=row.record,
+            impulse_scalp_evidence=row.impulse_scalp_evidence,
+            micro_pullback_evidence=row.micro_pullback_evidence,
+            pre_graduation_evidence=row.pre_graduation_evidence,
+            graduation_flow_evidence=row.graduation_flow_evidence,
+            wallet_cohort_evidence=row.wallet_cohort_evidence,
+            longer_runner_evidence=row.longer_runner_evidence,
+            state_version=row.state_version,
+            evaluated_at_unix_ms=row.evaluated_at_unix_ms,
+            quote=row.quote,
+            market_regime=row.market_regime,
+            risk_environment=row.risk_environment,
+            candidate_authorities=authorities,
+        )
+
+
 def test_run_wrapper_invokes_only_sealed_matrix(monkeypatch, tmp_path: Path) -> None:
     captured = {}
     sentinel = SimpleNamespace(version="matrix-sentinel")
