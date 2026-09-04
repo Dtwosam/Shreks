@@ -17,7 +17,7 @@
 - [ ] Add intentional RED storage tests for absent migration/API.
 - [ ] Add migration 18 `fast_realtime_coverage_sessions`.
 - [ ] Add storage types and exact append/extend/read APIs.
-- [ ] Require monotonic timestamp/slot/count evolution.
+- [ ] Require monotonic receive-time/count evolution; retain slot as provenance without assuming slot order.
 - [ ] Reject attempts to mutate an older session as the current session.
 - [ ] Run focused storage tests and full Rust workspace.
 
