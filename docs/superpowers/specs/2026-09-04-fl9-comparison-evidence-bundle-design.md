@@ -43,6 +43,7 @@ Each sidecar row carries only explicit decision-time comparison evidence:
 - MarketRegime;
 - shared deterministic risk environment;
 - exact catalog candidate entry authority;
+- explicit source provenance for quote, entry forecast/horizon, execution costs, exit capacity, wallet evidence, graduation context, continuation forecast, regime, risk environment, and entry authority;
 - Impulse Scalp evidence;
 - Micro Pullback evidence;
 - Pre-Graduation evidence;
@@ -51,6 +52,8 @@ Each sidecar row carries only explicit decision-time comparison evidence:
 - Longer Runner protective/continuation evidence.
 
 The FL8.1 record itself remains authoritative and is not duplicated in the sidecar.
+
+Provenance is semantic, not decorative. If entry execution evidence is present, forecast source/horizon, cost-model source, and exit-capacity source are required. Wallet evidence requires wallet provenance. Longer Runner continuation requires provenance matching its exact `forecast_source_version`. Provenance source identity must equal the exact FL8.1 source event.
 
 ### Manifest
 
@@ -148,7 +151,9 @@ Tests require:
 4. feature/sidecar population drift rejected;
 5. sidecar tampering rejected;
 6. feature-file tampering rejected;
-7. source firewall excludes future labels, provider/storage/subprocess execution, superiority, and LIVE authority.
+7. provenance population/source drift is rejected;
+8. execution/wallet/continuation evidence cannot exist without matching provenance;
+9. source firewall excludes future labels, provider/storage/subprocess execution, superiority, and LIVE authority.
 
 ## Following slice
 
