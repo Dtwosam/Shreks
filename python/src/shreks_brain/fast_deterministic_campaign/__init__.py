@@ -1,3 +1,11 @@
+from .proof_artifact import (
+    FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_NAME,
+    FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_VERSION,
+    FastPolicyComparisonArtifact,
+    FastPolicyComparisonArtifactManifest,
+    read_fast_policy_comparison_artifact,
+    write_fast_policy_comparison_artifact,
+)
 from .learned import (
     FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME,
     FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION,
@@ -89,6 +97,12 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_NAME",
+    "FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_VERSION",
+    "FastPolicyComparisonArtifact",
+    "FastPolicyComparisonArtifactManifest",
+    "read_fast_policy_comparison_artifact",
+    "write_fast_policy_comparison_artifact",
     "FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME",
     "FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION",
     "FastLearnedCampaignRow",
