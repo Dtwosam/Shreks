@@ -727,16 +727,39 @@ def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
     connection.commit()
     connection.close()
 
+    source = _input(record)
     risk = replace(
         _risk(),
         expected_price_impact_pct=None,
         price_impact_notional_usd=None,
     )
+    no_execution = replace(
+        source,
+        risk_environment=risk,
+        impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
+            execution=None
+        ),
+        micro_pullback_evidence=FastOfflineMicroPullbackEvidence(
+            execution=None
+        ),
+        pre_graduation_evidence=FastOfflinePreGraduationEvidence(
+            execution=None
+        ),
+        graduation_flow_evidence=FastOfflineGraduationFlowEvidence(
+            pre_snapshot=source.graduation_flow_evidence.pre_snapshot,
+            boost_context=source.graduation_flow_evidence.boost_context,
+            execution=None,
+        ),
+        entry_forecast_source_version=None,
+        entry_forecast_horizon_ms=None,
+        execution_cost_source_version=None,
+        exit_capacity_source_version=None,
+    )
     result = hydrate_fast_deterministic_comparison_evidence(
         database_path=database,
         feature_dataset=_dataset(record),
         catalog=_catalog(),
-        hydration_inputs=(replace(_input(record), risk_environment=risk),),
+        hydration_inputs=(no_execution,),
         entry_authority_binary_path=authority_binary,
     )
 
@@ -745,6 +768,10 @@ def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
     assert row.entry_quote.execution_price_quote is None
     assert row.entry_quote.quoted_base_quantity is None
     assert row.exit_quote.state is PaperQuoteState.EXECUTABLE
+    assert all(
+        item.entry_authority is None
+        for item in row.candidate_authorities
+    )
 
 
 def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
