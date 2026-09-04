@@ -39,6 +39,7 @@ pub use fast_baseline_campaign::{
     FastBaselineCampaignInput, FAST_BASELINE_CAMPAIGN_VERSION,
 };
 pub use fast_covered_future_path_population::{
+    encode_fast_covered_future_path_population_report_json,
     populate_fast_future_path_labels, FastCoveredFuturePathPopulationReport,
     FastCoveredFuturePathPopulationRequest,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
