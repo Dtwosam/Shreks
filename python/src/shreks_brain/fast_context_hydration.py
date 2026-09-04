@@ -91,7 +91,8 @@ _MANIFEST_KEYS = frozenset(
     {
         "schema_name",
         "schema_version",
-        "validation_policy_version",
+        "validation_policy",
+        "validation_policy_fingerprint_sha256",
         "horizon_ms",
         "training_bundle_fingerprint_sha256",
         "feature_source_jsonl_sha256",
@@ -247,7 +248,8 @@ class FastForecastContextHydrationResult:
 class FastForecastContextHydrationArtifactManifest:
     schema_name: str
     schema_version: int
-    validation_policy_version: str
+    validation_policy: FastChronologicalValidationPolicy
+    validation_policy_fingerprint_sha256: str
     horizon_ms: int
     training_bundle_fingerprint_sha256: str
     feature_source_jsonl_sha256: str
@@ -273,10 +275,20 @@ class FastForecastContextHydrationArtifactManifest:
             raise ValueError(
                 "unsupported context hydration artifact schema_version"
             )
-        _require_non_empty(
-            "validation_policy_version",
-            self.validation_policy_version,
+        if type(self.validation_policy) is not FastChronologicalValidationPolicy:
+            raise ValueError(
+                "validation_policy must be exact FastChronologicalValidationPolicy"
+            )
+        _require_sha256(
+            "validation_policy_fingerprint_sha256",
+            self.validation_policy_fingerprint_sha256,
         )
+        if self.validation_policy_fingerprint_sha256 != (
+            _validation_policy_fingerprint_sha256(self.validation_policy)
+        ):
+            raise ValueError(
+                "context hydration validation policy fingerprint mismatch"
+            )
         _require_positive_int("horizon_ms", self.horizon_ms)
         for name in (
             "training_bundle_fingerprint_sha256",
@@ -695,7 +707,12 @@ def write_fast_forecast_context_hydration_artifact(
             "schema_version": (
                 FAST_FORECAST_CONTEXT_HYDRATION_ARTIFACT_SCHEMA_VERSION
             ),
-            "validation_policy_version": validation_policy.version,
+            "validation_policy": _validation_policy_document(
+                validation_policy
+            ),
+            "validation_policy_fingerprint_sha256": (
+                _validation_policy_fingerprint_sha256(validation_policy)
+            ),
             "horizon_ms": horizon_ms,
             "training_bundle_fingerprint_sha256": (
                 bundle.manifest.bundle_fingerprint_sha256
@@ -728,8 +745,9 @@ def write_fast_forecast_context_hydration_artifact(
         manifest = FastForecastContextHydrationArtifactManifest(
             schema_name=material["schema_name"],
             schema_version=material["schema_version"],
-            validation_policy_version=material[
-                "validation_policy_version"
+            validation_policy=validation_policy,
+            validation_policy_fingerprint_sha256=material[
+                "validation_policy_fingerprint_sha256"
             ],
             horizon_ms=material["horizon_ms"],
             training_bundle_fingerprint_sha256=material[
@@ -821,8 +839,11 @@ def read_fast_forecast_context_hydration_artifact(
     manifest = FastForecastContextHydrationArtifactManifest(
         schema_name=document["schema_name"],
         schema_version=document["schema_version"],
-        validation_policy_version=document[
-            "validation_policy_version"
+        validation_policy=_decode_validation_policy(
+            document["validation_policy"]
+        ),
+        validation_policy_fingerprint_sha256=document[
+            "validation_policy_fingerprint_sha256"
         ],
         horizon_ms=document["horizon_ms"],
         training_bundle_fingerprint_sha256=document[
@@ -950,6 +971,107 @@ def _population_identities(
             "context population validation emitted duplicate prediction identities"
         )
     return identities
+
+
+def _validation_policy_document(
+    policy: FastChronologicalValidationPolicy,
+) -> dict[str, object]:
+    if type(policy) is not FastChronologicalValidationPolicy:
+        raise ValueError(
+            "validation policy must be exact FastChronologicalValidationPolicy"
+        )
+    return {
+        "version": policy.version,
+        "folds": [
+            {
+                "name": fold.name,
+                "training_started_at_unix_ms": (
+                    fold.training_started_at_unix_ms
+                ),
+                "training_ended_at_unix_ms": (
+                    fold.training_ended_at_unix_ms
+                ),
+                "validation_started_at_unix_ms": (
+                    fold.validation_started_at_unix_ms
+                ),
+                "validation_ended_at_unix_ms": (
+                    fold.validation_ended_at_unix_ms
+                ),
+                "test_started_at_unix_ms": fold.test_started_at_unix_ms,
+                "test_ended_at_unix_ms": fold.test_ended_at_unix_ms,
+            }
+            for fold in policy.folds
+        ],
+    }
+
+
+def _validation_policy_fingerprint_sha256(
+    policy: FastChronologicalValidationPolicy,
+) -> str:
+    return _sha256_canonical(_validation_policy_document(policy))
+
+
+def _decode_validation_policy(
+    raw: object,
+) -> FastChronologicalValidationPolicy:
+    if not isinstance(raw, dict) or frozenset(raw) != {"version", "folds"}:
+        raise ValueError("validation policy fields are incompatible")
+    version = _text(raw["version"], "validation_policy.version")
+    raw_folds = raw["folds"]
+    if not isinstance(raw_folds, list) or not raw_folds:
+        raise ValueError(
+            "validation_policy.folds must be a non-empty array"
+        )
+    from shreks_brain.fast_validation import FastChronologicalFold
+
+    fold_keys = frozenset(
+        {
+            "name",
+            "training_started_at_unix_ms",
+            "training_ended_at_unix_ms",
+            "validation_started_at_unix_ms",
+            "validation_ended_at_unix_ms",
+            "test_started_at_unix_ms",
+            "test_ended_at_unix_ms",
+        }
+    )
+    folds = []
+    for value in raw_folds:
+        if not isinstance(value, dict) or frozenset(value) != fold_keys:
+            raise ValueError("validation fold fields are incompatible")
+        folds.append(
+            FastChronologicalFold(
+                name=_text(value["name"], "validation fold name"),
+                training_started_at_unix_ms=_integer(
+                    value["training_started_at_unix_ms"],
+                    "training_started_at_unix_ms",
+                ),
+                training_ended_at_unix_ms=_integer(
+                    value["training_ended_at_unix_ms"],
+                    "training_ended_at_unix_ms",
+                ),
+                validation_started_at_unix_ms=_integer(
+                    value["validation_started_at_unix_ms"],
+                    "validation_started_at_unix_ms",
+                ),
+                validation_ended_at_unix_ms=_integer(
+                    value["validation_ended_at_unix_ms"],
+                    "validation_ended_at_unix_ms",
+                ),
+                test_started_at_unix_ms=_integer(
+                    value["test_started_at_unix_ms"],
+                    "test_started_at_unix_ms",
+                ),
+                test_ended_at_unix_ms=_integer(
+                    value["test_ended_at_unix_ms"],
+                    "test_ended_at_unix_ms",
+                ),
+            )
+        )
+    return FastChronologicalValidationPolicy(
+        version=version,
+        folds=tuple(folds),
+    )
 
 
 def _policy_document(
@@ -1183,7 +1305,12 @@ def _manifest_document(
     return {
         "schema_name": manifest.schema_name,
         "schema_version": manifest.schema_version,
-        "validation_policy_version": manifest.validation_policy_version,
+        "validation_policy": _validation_policy_document(
+            manifest.validation_policy
+        ),
+        "validation_policy_fingerprint_sha256": (
+            manifest.validation_policy_fingerprint_sha256
+        ),
         "horizon_ms": manifest.horizon_ms,
         "training_bundle_fingerprint_sha256": (
             manifest.training_bundle_fingerprint_sha256
