@@ -29,6 +29,7 @@ _PYPROJECT = _REPO_ROOT / "python" / "pyproject.toml"
 
 
 def _tools(tmp_path: Path) -> dict[str, Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     values: dict[str, Path] = {}
     for index, name in enumerate(FAST_PROOF_TOOL_NAMES):
         path = tmp_path / name
