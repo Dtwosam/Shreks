@@ -110,6 +110,71 @@ class FastDeterministicComparisonCatalog:
             )
 
 
+def encode_fast_deterministic_comparison_catalog(
+    catalog: FastDeterministicComparisonCatalog,
+) -> str:
+    if type(catalog) is not FastDeterministicComparisonCatalog:
+        raise ValueError(
+            "catalog must be exact FastDeterministicComparisonCatalog"
+        )
+    material = {
+        "schema_name": catalog.schema_name,
+        "schema_version": catalog.schema_version,
+        "catalog_version": catalog.catalog_version,
+        "candidates": [
+            _candidate_document(value) for value in catalog.candidates
+        ],
+    }
+    expected = hashlib.sha256(
+        _canonical(material).encode("utf-8")
+    ).hexdigest()
+    if catalog.catalog_fingerprint_sha256 != expected:
+        raise ValueError(
+            "deterministic comparison catalog fingerprint mismatch"
+        )
+    return _canonical(
+        {
+            **material,
+            "catalog_fingerprint_sha256": (
+                catalog.catalog_fingerprint_sha256
+            ),
+        }
+    )
+
+
+def _candidate_document(
+    value: FastDeterministicCandidateManifest,
+) -> dict[str, object]:
+    lifecycle = value.lifecycle_policy
+    return {
+        "schema_name": value.schema_name,
+        "schema_version": value.schema_version,
+        "candidate_version": value.candidate_version,
+        "strategy_family": value.strategy_family,
+        "strategy_version": value.strategy_version,
+        "lifecycle_policy": {
+            "version": lifecycle.version,
+            "entry_baseline_kind": lifecycle.entry_baseline_kind,
+            "manager_baseline_kind": lifecycle.manager_baseline_kind,
+            "entry_target_exposure_fraction": (
+                lifecycle.entry_target_exposure_fraction
+            ),
+            "reduce_remaining_fraction": lifecycle.reduce_remaining_fraction,
+        },
+        "entry_policy": {
+            "kind": value.entry_policy.kind,
+            "parameters": dict(value.entry_policy.parameters),
+        },
+        "manager_policy": {
+            "kind": value.manager_policy.kind,
+            "parameters": dict(value.manager_policy.parameters),
+        },
+        "candidate_fingerprint_sha256": (
+            value.candidate_fingerprint_sha256
+        ),
+    }
+
+
 def decode_fast_deterministic_comparison_catalog(
     payload: str,
 ) -> FastDeterministicComparisonCatalog:

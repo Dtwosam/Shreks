@@ -11,6 +11,7 @@ from shreks_brain.fast_deterministic_lifecycle import (
     FAST_DETERMINISTIC_COMPARISON_CATALOG_VERSION,
     FastDeterministicComparisonCatalog,
     decode_fast_deterministic_comparison_catalog,
+    encode_fast_deterministic_comparison_catalog,
 )
 
 
@@ -52,6 +53,22 @@ def test_python_decodes_shared_rust_comparison_catalog_exactly() -> None:
         for value in catalog.candidates
     }
     assert len(pairs) == 8
+
+
+def test_catalog_encoder_is_canonical_and_round_trips_exact_catalog() -> None:
+    catalog = decode_fast_deterministic_comparison_catalog(
+        FIXTURE.read_text(encoding="utf-8")
+    )
+    payload = encode_fast_deterministic_comparison_catalog(catalog)
+
+    assert payload == json.dumps(
+        json.loads(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+    assert decode_fast_deterministic_comparison_catalog(payload) == catalog
 
 
 def test_catalog_rejects_noncanonical_or_tampered_payload() -> None:
