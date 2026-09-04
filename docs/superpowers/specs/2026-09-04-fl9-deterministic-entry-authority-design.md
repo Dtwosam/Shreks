@@ -109,6 +109,8 @@ That is valid economics: the trade is not acceptable at the observed decision pr
 
 The Python adapter returns `None` rather than constructing invalid PAPER BUY authority.
 
+FL6 also treats explicit `exit_capacity_base < base_quantity` as a normal `InsufficientExitCapacity` SKIP rather than a campaign error. The adapter mirrors that sealed control-flow boundary before launching the authority binary and returns `None`. This is a direct capacity comparison, not a duplicate profitability/max-entry calculation.
+
 This aligns with FL6: an entry baseline using the same execution evidence must SKIP when the executable entry price is above the FL3 maximum.
 
 Accordingly candidate comparison authority can be absent. If a deterministic decision nevertheless returns BUY with no authority, the existing PAPER materializer fails closed.
