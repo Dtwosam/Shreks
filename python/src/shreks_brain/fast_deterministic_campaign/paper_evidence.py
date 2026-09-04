@@ -13,6 +13,8 @@ from shreks_brain.fast_deterministic_lifecycle import (
 from shreks_brain.regime import MarketRegime
 from shreks_brain.risk import RiskContext
 
+from .risk_context import FastDeterministicCampaignRiskEnvironment
+
 
 @dataclass(frozen=True, slots=True)
 class FastDeterministicCampaignPaperEvidence:
@@ -23,6 +25,7 @@ class FastDeterministicCampaignPaperEvidence:
     risk_context: RiskContext | None
     entry_authority: FastCampaignPaperEntryAuthority | None
     market_regime: MarketRegime | None
+    risk_environment: FastDeterministicCampaignRiskEnvironment | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string("source_event_id", self.source_event_id)
@@ -38,6 +41,20 @@ class FastDeterministicCampaignPaperEvidence:
         if self.risk_context is not None and type(self.risk_context) is not RiskContext:
             raise ValueError(
                 "risk_context must be exact RiskContext or None"
+            )
+        if (
+            self.risk_environment is not None
+            and type(self.risk_environment)
+            is not FastDeterministicCampaignRiskEnvironment
+        ):
+            raise ValueError(
+                "risk_environment must be exact "
+                "FastDeterministicCampaignRiskEnvironment or None"
+            )
+        if self.risk_context is not None and self.risk_environment is not None:
+            raise ValueError(
+                "campaign PAPER evidence cannot carry both static risk_context "
+                "and dynamic risk_environment"
             )
         if (
             self.entry_authority is not None

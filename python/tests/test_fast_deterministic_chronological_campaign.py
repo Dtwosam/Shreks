@@ -12,6 +12,7 @@ from shreks_brain.fast_campaign_paper import (
 )
 from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicCampaignPaperEvidence,
+    FastDeterministicCampaignRiskEnvironment,
     FastDeterministicCampaignRow,
     run_fast_deterministic_chronological_campaign,
 )
@@ -219,6 +220,21 @@ def _risk(at: int) -> RiskContext:
     )
 
 
+def _risk_environment(at: int) -> FastDeterministicCampaignRiskEnvironment:
+    return FastDeterministicCampaignRiskEnvironment(
+        trading_capital_usd=20_000.0,
+        day_started_at_unix_ms=T0,
+        liquidity_usd=100_000.0,
+        expected_price_impact_pct=0.0,
+        price_impact_notional_usd=10_000.0,
+        market_observed_at_unix_ms=at,
+        data_healthy=True,
+        execution_healthy=True,
+        kill_switch_active=False,
+        active_intent_keys=frozenset(),
+    )
+
+
 def _entry_authority() -> FastCampaignPaperEntryAuthority:
     return FastCampaignPaperEntryAuthority(
         mint=MINT,
@@ -275,6 +291,25 @@ def _paper_evidence(
         risk_context=_risk(at) if buy else None,
         entry_authority=_entry_authority() if buy else None,
         market_regime=MarketRegime.NORMAL if buy else None,
+    )
+
+
+def _dynamic_paper_evidence(
+    source_event_id: str,
+    at: int,
+    *,
+    reference: float = 10.0,
+    execution: float = 10.1,
+) -> FastDeterministicCampaignPaperEvidence:
+    return FastDeterministicCampaignPaperEvidence(
+        source_event_id=source_event_id,
+        state_version="state-v1",
+        evaluated_at_unix_ms=at,
+        quote=_quote(at, reference=reference, execution=execution),
+        risk_context=None,
+        entry_authority=_entry_authority(),
+        market_regime=MarketRegime.NORMAL,
+        risk_environment=_risk_environment(at),
     )
 
 
@@ -563,6 +598,63 @@ def test_unavailable_buy_keeps_next_row_flat(tmp_path: Path) -> None:
         is PaperPositionState.OPEN
     )
 
+
+
+
+def test_dynamic_risk_context_uses_candidate_ledger_after_prior_round_trip(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "row-evaluator"
+    posture_log = tmp_path / "postures"
+    _write_posture_binary(binary, posture_log)
+    rows = (
+        _row(
+            "sig-1",
+            1,
+            T0 + 100,
+            paper=_dynamic_paper_evidence("sig-1:0", T0 + 200),
+        ),
+        _row(
+            "sig-2",
+            2,
+            T0 + 300,
+            paper=FastDeterministicCampaignPaperEvidence(
+                source_event_id="sig-2:0",
+                state_version="state-v1",
+                evaluated_at_unix_ms=T0 + 400,
+                quote=_quote(T0 + 400, reference=10.5, execution=10.4),
+                risk_context=None,
+                entry_authority=None,
+                market_regime=MarketRegime.NORMAL,
+                risk_environment=_risk_environment(T0 + 400),
+            ),
+        ),
+        _row(
+            "sig-3",
+            3,
+            T0 + 500,
+            paper=_dynamic_paper_evidence("sig-3:0", T0 + 600),
+        ),
+    )
+
+    session = run_fast_deterministic_chronological_campaign(
+        **_runner_kwargs(binary, rows)
+    )
+
+    assert tuple(value.action for value in session.decisions) == (
+        "BUY",
+        "SELL",
+        "BUY",
+    )
+    first = session.evidence[0].risk_context
+    third = session.evidence[2].risk_context
+    assert first is not None
+    assert third is not None
+    assert first.open_position_count == 0
+    assert first.daily_realized_pnl_usd == 0.0
+    assert third.open_position_count == 0
+    assert third.daily_realized_pnl_usd > 0.0
+    assert third.as_of_unix_ms == T0 + 600
 
 def test_rich_predecision_paper_evidence_can_materialize_skip(
     tmp_path: Path,

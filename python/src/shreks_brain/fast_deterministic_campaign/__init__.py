@@ -1,3 +1,11 @@
+from .comparison import (
+    FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION,
+    FastDeterministicCandidatePaperAuthority,
+    FastDeterministicComparisonEvidenceRow,
+    FastDeterministicComparisonEvidenceSpec,
+    bind_fast_deterministic_comparison_evidence,
+    run_fast_deterministic_comparison_catalog_matrix,
+)
 from .engine import run_fast_deterministic_chronological_campaign
 from .models import FastDeterministicCampaignRow
 from .matrix import (
@@ -6,6 +14,10 @@ from .matrix import (
     FastDeterministicCandidateMatrixResult,
     run_fast_deterministic_candidate_matrix,
 )
+from .risk_context import (
+    FastDeterministicCampaignRiskEnvironment,
+    build_fast_deterministic_campaign_risk_context,
+)
 from .paper_evidence import (
     FastDeterministicCampaignPaperEvidence,
     materialize_fast_deterministic_campaign_paper_evidence,
@@ -13,6 +25,14 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION",
+    "FastDeterministicCandidatePaperAuthority",
+    "FastDeterministicComparisonEvidenceRow",
+    "FastDeterministicComparisonEvidenceSpec",
+    "bind_fast_deterministic_comparison_evidence",
+    "run_fast_deterministic_comparison_catalog_matrix",
+    "FastDeterministicCampaignRiskEnvironment",
+    "build_fast_deterministic_campaign_risk_context",
     "FAST_DETERMINISTIC_CANDIDATE_MATRIX_VERSION",
     "FastDeterministicCandidateCampaignSpec",
     "FastDeterministicCandidateMatrixResult",

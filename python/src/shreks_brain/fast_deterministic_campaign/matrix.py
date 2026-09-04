@@ -243,6 +243,10 @@ def _require_shared_paper_population(
         raise ValueError(
             f"deterministic matrix market-regime population mismatch at row {index}"
         )
+    if left.risk_environment != right.risk_environment:
+        raise ValueError(
+            f"deterministic matrix risk-environment population mismatch at row {index}"
+        )
 
 
 def _require_non_empty_string(name: str, value: object) -> None:
