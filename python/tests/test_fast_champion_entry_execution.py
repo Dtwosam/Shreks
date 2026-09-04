@@ -278,6 +278,31 @@ def test_champion_selected_after_decision_is_rejected(tmp_path: Path) -> None:
         )
 
 
+def test_champion_selection_cannot_predate_runtime_training(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "selection-before-training.json"
+    _champion(
+        path,
+        selected_at=T0 - 3_000,
+        max_training_at=T0 - 2_000,
+    )
+
+    with pytest.raises(ValueError, match="selection|training|chronolog"):
+        build_fast_champion_entry_execution_evidence(
+            champion_path=path,
+            record=_record(),
+            horizon_ms=30_000,
+            cost_model=_cost_model(),
+            base_quantity=10.0,
+            exit_capacity_base=12.0,
+            required_edge_bps=200,
+            risk_margin_bps=100,
+            execution_policy_source_version="fl3-economic-policy-v1",
+            exit_capacity_source_version="jupiter-exit-capacity-v2",
+        )
+
+
 def test_champion_trained_through_decision_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "future-training.json"
     _champion(path, max_training_at=T0)
