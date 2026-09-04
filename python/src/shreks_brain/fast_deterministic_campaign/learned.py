@@ -20,11 +20,13 @@ from shreks_brain.fast_campaign_offline import (
 from shreks_brain.fast_campaign_paper import (
     FastCampaignPaperCandidateIdentity,
     FastCampaignPaperRunResult,
-    FastPaperBuyOutcome,
-    FastPaperPositionOutcome,
     run_fast_campaign_paper_candidate,
 )
-from shreks_brain.fast_paper import FastPaperPositionActionPolicy
+from shreks_brain.fast_paper import (
+    FastPaperBuyOutcome,
+    FastPaperPositionActionPolicy,
+    FastPaperPositionOutcome,
+)
 from shreks_brain.paper import (
     PaperFillPolicy,
     PaperLedger,
