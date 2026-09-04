@@ -31,6 +31,7 @@ from shreks_brain.observer_campaign import (
 from shreks_brain.paper import PaperFillPolicy, create_paper_ledger
 from shreks_brain.regime import MarketRegime
 from shreks_brain.research.fast_training_features import (
+    read_fast_training_feature_jsonl,
     read_fast_training_feature_parquet,
 )
 from shreks_brain.risk import RiskPolicy
@@ -50,10 +51,30 @@ FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME = (
     "shreks.fast_deterministic_campaign_request"
 )
 FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION = 1
+FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION = 2
 
 _REQUEST_FIELDS = (
     "observer_database_path",
     "feature_parquet_path",
+    "comparison_catalog_path",
+    "champion_path",
+    "entry_authority_binary_path",
+    "candidate_binary_path",
+    "destination_path",
+    "execution_policy",
+    "contexts",
+    "paper_run_id_prefix",
+    "assessment_version",
+    "starting_cash_usd",
+    "starting_ledger_as_of_unix_ms",
+    "fill_policy",
+    "risk_policy",
+    "position_policy",
+    "evaluation_policy",
+)
+_REQUEST_FIELDS_V2 = (
+    "observer_database_path",
+    "feature_jsonl_path",
     "comparison_catalog_path",
     "champion_path",
     "entry_authority_binary_path",
@@ -206,6 +227,69 @@ class FastDeterministicCampaignRequest:
                 )
 
 
+@dataclass(frozen=True, slots=True)
+class FastDeterministicCampaignJsonlRequest:
+    schema_name: str
+    schema_version: int
+    observer_database_path: str
+    feature_jsonl_path: str
+    comparison_catalog_path: str
+    champion_path: str
+    entry_authority_binary_path: str
+    candidate_binary_path: str
+    destination_path: str
+    execution_policy: FastDeterministicComparisonExecutionPolicy
+    contexts: tuple[FastDeterministicComparisonPointInTimeContext, ...]
+    paper_run_id_prefix: str
+    assessment_version: str
+    starting_cash_usd: float
+    starting_ledger_as_of_unix_ms: int
+    fill_policy: PaperFillPolicy
+    risk_policy: RiskPolicy
+    position_policy: FastPaperPositionActionPolicy
+    evaluation_policy: TradingEvaluationPolicy
+    request_fingerprint_sha256: str
+
+    def __post_init__(self) -> None:
+        if self.schema_name != FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME:
+            raise ValueError("unsupported deterministic campaign request schema_name")
+        if (
+            self.schema_version
+            != FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION
+        ):
+            raise ValueError(
+                "unsupported deterministic campaign JSONL request schema_version"
+            )
+        for name in (
+            "observer_database_path",
+            "feature_jsonl_path",
+            "comparison_catalog_path",
+            "champion_path",
+            "entry_authority_binary_path",
+            "candidate_binary_path",
+            "destination_path",
+            "paper_run_id_prefix",
+            "assessment_version",
+        ):
+            _require_non_empty_string(name, getattr(self, name))
+        if Path(self.feature_jsonl_path).suffix != ".jsonl":
+            raise ValueError("feature_jsonl_path must end with .jsonl")
+        _validate_request_economic_fields(
+            execution_policy=self.execution_policy,
+            contexts=self.contexts,
+            starting_cash_usd=self.starting_cash_usd,
+            starting_ledger_as_of_unix_ms=self.starting_ledger_as_of_unix_ms,
+            fill_policy=self.fill_policy,
+            risk_policy=self.risk_policy,
+            position_policy=self.position_policy,
+            evaluation_policy=self.evaluation_policy,
+        )
+        _require_sha256(
+            "request_fingerprint_sha256",
+            self.request_fingerprint_sha256,
+        )
+
+
 def build_fast_deterministic_campaign_request(
     *,
     observer_database_path: str,
@@ -254,18 +338,80 @@ def build_fast_deterministic_campaign_request(
     )
 
 
+def build_fast_deterministic_campaign_jsonl_request(
+    *,
+    observer_database_path: str,
+    feature_jsonl_path: str,
+    comparison_catalog_path: str,
+    champion_path: str,
+    entry_authority_binary_path: str,
+    candidate_binary_path: str,
+    destination_path: str,
+    execution_policy: FastDeterministicComparisonExecutionPolicy,
+    contexts: tuple[FastDeterministicComparisonPointInTimeContext, ...],
+    paper_run_id_prefix: str,
+    assessment_version: str,
+    starting_cash_usd: float,
+    starting_ledger_as_of_unix_ms: int,
+    fill_policy: PaperFillPolicy,
+    risk_policy: RiskPolicy,
+    position_policy: FastPaperPositionActionPolicy,
+    evaluation_policy: TradingEvaluationPolicy,
+) -> FastDeterministicCampaignJsonlRequest:
+    values = {
+        "observer_database_path": observer_database_path,
+        "feature_jsonl_path": feature_jsonl_path,
+        "comparison_catalog_path": comparison_catalog_path,
+        "champion_path": champion_path,
+        "entry_authority_binary_path": entry_authority_binary_path,
+        "candidate_binary_path": candidate_binary_path,
+        "destination_path": destination_path,
+        "execution_policy": execution_policy,
+        "contexts": contexts,
+        "paper_run_id_prefix": paper_run_id_prefix,
+        "assessment_version": assessment_version,
+        "starting_cash_usd": starting_cash_usd,
+        "starting_ledger_as_of_unix_ms": starting_ledger_as_of_unix_ms,
+        "fill_policy": fill_policy,
+        "risk_policy": risk_policy,
+        "position_policy": position_policy,
+        "evaluation_policy": evaluation_policy,
+    }
+    material = _request_material_from_values(
+        values,
+        schema_version=FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION,
+        request_fields=_REQUEST_FIELDS_V2,
+    )
+    return FastDeterministicCampaignJsonlRequest(
+        schema_name=FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME,
+        schema_version=FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION,
+        **values,
+        request_fingerprint_sha256=_sha256_canonical(material),
+    )
+
+
 def encode_fast_deterministic_campaign_request(
-    request: FastDeterministicCampaignRequest,
+    request: FastDeterministicCampaignRequest | FastDeterministicCampaignJsonlRequest,
 ) -> str:
-    if type(request) is not FastDeterministicCampaignRequest:
+    if type(request) is FastDeterministicCampaignRequest:
+        request_fields = _REQUEST_FIELDS
+        schema_version = FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION
+    elif type(request) is FastDeterministicCampaignJsonlRequest:
+        request_fields = _REQUEST_FIELDS_V2
+        schema_version = FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION
+    else:
         raise ValueError(
-            "request must be exact FastDeterministicCampaignRequest"
+            "request must be an exact deterministic campaign request"
         )
     values = {
         name: getattr(request, name)
-        for name in _REQUEST_FIELDS
+        for name in request_fields
     }
-    material = _request_material_from_values(values)
+    material = _request_material_from_values(
+        values,
+        schema_version=schema_version,
+        request_fields=request_fields,
+    )
     expected = _sha256_canonical(material)
     if request.request_fingerprint_sha256 != expected:
         raise ValueError(
@@ -310,7 +456,14 @@ def decode_fast_deterministic_campaign_request(
         raise ValueError(
             "unsupported deterministic campaign request schema_name"
         )
-    if document["schema_version"] != FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION:
+    schema_version = document["schema_version"]
+    if schema_version == FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION:
+        request_fields = _REQUEST_FIELDS
+        request_type = FastDeterministicCampaignRequest
+    elif schema_version == FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION:
+        request_fields = _REQUEST_FIELDS_V2
+        request_type = FastDeterministicCampaignJsonlRequest
+    else:
         raise ValueError(
             "unsupported deterministic campaign request schema_version"
         )
@@ -320,17 +473,17 @@ def decode_fast_deterministic_campaign_request(
         raise ValueError(
             "deterministic campaign request body must be an object"
         )
-    if frozenset(raw_request) != frozenset(_REQUEST_FIELDS):
+    if frozenset(raw_request) != frozenset(request_fields):
         raise ValueError(
             "deterministic campaign request body has unknown or missing fields"
         )
 
     decoded = {
         name: _decode_value(raw_request[name])
-        for name in _REQUEST_FIELDS
+        for name in request_fields
     }
     try:
-        request = FastDeterministicCampaignRequest(
+        request = request_type(
             schema_name=document["schema_name"],
             schema_version=document["schema_version"],
             **decoded,
@@ -373,11 +526,24 @@ def run_fast_deterministic_campaign_request_file(
         request.observer_database_path,
         "observer_database_path",
     )
-    feature_parquet_path = _resolve_source_path(
-        base,
-        request.feature_parquet_path,
-        "feature_parquet_path",
-    )
+    if type(request) is FastDeterministicCampaignRequest:
+        feature_source_path = _resolve_source_path(
+            base,
+            request.feature_parquet_path,
+            "feature_parquet_path",
+        )
+        feature_dataset = read_fast_training_feature_parquet(
+            feature_source_path
+        )
+    else:
+        feature_source_path = _resolve_source_path(
+            base,
+            request.feature_jsonl_path,
+            "feature_jsonl_path",
+        )
+        feature_dataset = read_fast_training_feature_jsonl(
+            feature_source_path
+        )
     comparison_catalog_path = _resolve_source_path(
         base,
         request.comparison_catalog_path,
@@ -400,9 +566,6 @@ def run_fast_deterministic_campaign_request_file(
     )
     destination = _resolve_path(base, request.destination_path)
 
-    feature_dataset = read_fast_training_feature_parquet(
-        feature_parquet_path
-    )
     if len(feature_dataset.records) != len(request.contexts):
         raise ValueError(
             "request context population does not match FL8.1 feature population"
@@ -446,19 +609,87 @@ def run_fast_deterministic_campaign_request_file(
 
 def _request_material_from_values(
     values: dict[str, object],
+    *,
+    schema_version: int = FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
+    request_fields: tuple[str, ...] = _REQUEST_FIELDS,
 ) -> dict[str, object]:
-    if frozenset(values) != frozenset(_REQUEST_FIELDS):
+    if frozenset(values) != frozenset(request_fields):
         raise ValueError(
             "deterministic campaign request material field set is invalid"
         )
+    if schema_version not in {
+        FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
+        FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION,
+    }:
+        raise ValueError(
+            "deterministic campaign request material schema version is unsupported"
+        )
     return {
         "schema_name": FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME,
-        "schema_version": FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "request": {
             name: _encode_value(values[name])
-            for name in _REQUEST_FIELDS
+            for name in request_fields
         },
     }
+
+
+def _validate_request_economic_fields(
+    *,
+    execution_policy: FastDeterministicComparisonExecutionPolicy,
+    contexts: tuple[FastDeterministicComparisonPointInTimeContext, ...],
+    starting_cash_usd: float,
+    starting_ledger_as_of_unix_ms: int,
+    fill_policy: PaperFillPolicy,
+    risk_policy: RiskPolicy,
+    position_policy: FastPaperPositionActionPolicy,
+    evaluation_policy: TradingEvaluationPolicy,
+) -> None:
+    if type(execution_policy) is not FastDeterministicComparisonExecutionPolicy:
+        raise ValueError(
+            "execution_policy must be exact FastDeterministicComparisonExecutionPolicy"
+        )
+    if (
+        not isinstance(contexts, tuple)
+        or not contexts
+        or not all(
+            type(value) is FastDeterministicComparisonPointInTimeContext
+            for value in contexts
+        )
+    ):
+        raise ValueError(
+            "contexts must be a non-empty tuple of exact point-in-time contexts"
+        )
+    _require_positive_finite("starting_cash_usd", starting_cash_usd)
+    _require_non_negative_int(
+        "starting_ledger_as_of_unix_ms",
+        starting_ledger_as_of_unix_ms,
+    )
+    if type(fill_policy) is not PaperFillPolicy:
+        raise ValueError("fill_policy must be exact PaperFillPolicy")
+    if type(risk_policy) is not RiskPolicy:
+        raise ValueError("risk_policy must be exact RiskPolicy")
+    if type(position_policy) is not FastPaperPositionActionPolicy:
+        raise ValueError(
+            "position_policy must be exact FastPaperPositionActionPolicy"
+        )
+    if type(evaluation_policy) is not TradingEvaluationPolicy:
+        raise ValueError(
+            "evaluation_policy must be exact TradingEvaluationPolicy"
+        )
+    if evaluation_policy.starting_equity_usd != starting_cash_usd:
+        raise ValueError(
+            "evaluation starting equity must equal PAPER starting cash"
+        )
+    for index, context in enumerate(contexts):
+        if context.risk_environment.trading_capital_usd != starting_cash_usd:
+            raise ValueError(
+                f"risk trading capital must equal PAPER starting cash at context {index}"
+            )
+        if starting_ledger_as_of_unix_ms > context.evaluated_at_unix_ms:
+            raise ValueError(
+                f"starting ledger time cannot follow context evaluation at context {index}"
+            )
 
 
 def _encode_value(value: object) -> object:
