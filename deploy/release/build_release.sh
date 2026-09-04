@@ -7,7 +7,7 @@ RELEASE_OUT="${RELEASE_OUT:-dist/release}"
 WHEEL_OUT="dist/release-wheel"
 PYTHON_BUILD_ROOT="${RELEASE_OUT}-python-source"
 STAGING="$RELEASE_OUT/staging"
-CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"
+CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"\nFAST_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_tools"
 
 if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_SHA must be exactly 40 lowercase hex characters" >&2
@@ -48,7 +48,7 @@ mkdir -p \
   "$STAGING/wheelhouse" \
   "$WHEEL_OUT"
 
-cargo build --release --bin shreks-observe --bin shreks-paper-evidence
+cargo build --release --bin shreks-observe --bin shreks-paper-evidence \\\n  --bin export_fast_training_features \\\n  --bin shreks-fast-entry-authority \\\n  --bin shreks-fast-campaign-decision
 
 # Keep the top-level release bundle compatible with the already-installed G2
 # verifier. The sealed deployment-control scripts ride inside the already-
