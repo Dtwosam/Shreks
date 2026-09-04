@@ -14,6 +14,8 @@ from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicComparisonHydrationInput,
     FastDeterministicComparisonHydrationResult,
     hydrate_fast_deterministic_comparison_evidence,
+    read_fast_deterministic_comparison_evidence_bundle,
+    write_fast_deterministic_comparison_evidence_bundle,
 )
 from shreks_brain.fast_deterministic_lifecycle import (
     decode_fast_deterministic_comparison_catalog,
@@ -462,6 +464,19 @@ def test_hydrates_real_directional_observer_quotes_and_fl3_authority(
     assert provenance.entry_forecast_source_version == "ridge-return-v3"
     assert provenance.entry_forecast_horizon_ms == 30_000
     assert provenance.entry_authority_source_version == "fl3-execution-economics-v1"
+
+    destination = tmp_path / "real-comparison-bundle"
+    manifest = write_fast_deterministic_comparison_evidence_bundle(
+        feature_dataset=_dataset(record),
+        catalog=_catalog(),
+        rows=result.rows,
+        provenance=result.provenance,
+        destination=destination,
+    )
+    loaded = read_fast_deterministic_comparison_evidence_bundle(destination)
+    assert loaded.manifest == manifest
+    assert loaded.rows == result.rows
+    assert loaded.provenance == result.provenance
 
 
 def test_hydrator_rejects_family_specific_execution_economics_drift(
