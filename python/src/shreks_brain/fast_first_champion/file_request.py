@@ -362,7 +362,25 @@ def build_fast_first_champion_file_request(
     training_policy_version: str,
     minimum_test_scored_observations: int,
 ) -> FastFirstChampionFileRequest:
-    provisional = FastFirstChampionFileRequest(
+    material = _request_document_from_values(
+        feature_jsonl_path=feature_jsonl_path,
+        observer_database_path=observer_database_path,
+        context_corpus_path=context_corpus_path,
+        destination_path=destination_path,
+        future_path_label_version=future_path_label_version,
+        counterfactual_base_quantity=counterfactual_base_quantity,
+        validation_policy=validation_policy,
+        evaluation_policy=evaluation_policy,
+        champion_version=champion_version,
+        decision_reference=decision_reference,
+        decided_at_unix_ms=decided_at_unix_ms,
+        reason=reason,
+        horizon_ms=horizon_ms,
+        model_version_prefix=model_version_prefix,
+        training_policy_version=training_policy_version,
+        minimum_test_scored_observations=minimum_test_scored_observations,
+    )
+    return FastFirstChampionFileRequest(
         schema_name=FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_NAME,
         schema_version=FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION,
         feature_jsonl_path=feature_jsonl_path,
@@ -381,9 +399,8 @@ def build_fast_first_champion_file_request(
         model_version_prefix=model_version_prefix,
         training_policy_version=training_policy_version,
         minimum_test_scored_observations=minimum_test_scored_observations,
-        request_fingerprint_sha256="0" * 64,
+        request_fingerprint_sha256=_sha256_canonical(material),
     )
-    return _replace_request_fingerprint(provisional)
 
 
 def encode_fast_first_champion_file_request(
@@ -423,7 +440,11 @@ def decode_fast_first_champion_file_request(
     ):
         raise ValueError("unsupported first champion file request schema_version")
     raw = document["request"]
-    if not isinstance(raw, dict) or tuple(raw) != _REQUEST_FIELDS:
+    if (
+        not isinstance(raw, dict)
+        or frozenset(raw) != frozenset(_REQUEST_FIELDS)
+        or len(raw) != len(_REQUEST_FIELDS)
+    ):
         raise ValueError(
             "first champion file request fields must match the sealed schema exactly"
         )
@@ -890,12 +911,16 @@ def read_fast_first_champion_artifact(
     )
 
 
-def _replace_request_fingerprint(
+def _request_fingerprint(
     request: FastFirstChampionFileRequest,
-) -> FastFirstChampionFileRequest:
-    return FastFirstChampionFileRequest(
-        schema_name=request.schema_name,
-        schema_version=request.schema_version,
+) -> str:
+    return _sha256_canonical(_request_document(request))
+
+
+def _request_document(
+    request: FastFirstChampionFileRequest,
+) -> dict[str, object]:
+    return _request_document_from_values(
         feature_jsonl_path=request.feature_jsonl_path,
         observer_database_path=request.observer_database_path,
         context_corpus_path=request.context_corpus_path,
@@ -911,47 +936,48 @@ def _replace_request_fingerprint(
         horizon_ms=request.horizon_ms,
         model_version_prefix=request.model_version_prefix,
         training_policy_version=request.training_policy_version,
-        minimum_test_scored_observations=(
-            request.minimum_test_scored_observations
-        ),
-        request_fingerprint_sha256=_request_fingerprint(request),
+        minimum_test_scored_observations=request.minimum_test_scored_observations,
     )
 
 
-def _request_fingerprint(
-    request: FastFirstChampionFileRequest,
-) -> str:
-    return _sha256_canonical(_request_document(request))
-
-
-def _request_document(
-    request: FastFirstChampionFileRequest,
+def _request_document_from_values(
+    *,
+    feature_jsonl_path: str,
+    observer_database_path: str,
+    context_corpus_path: str,
+    destination_path: str,
+    future_path_label_version: int,
+    counterfactual_base_quantity: float,
+    validation_policy: FastChronologicalValidationPolicy,
+    evaluation_policy: FastForecastEvaluationPolicy,
+    champion_version: str,
+    decision_reference: str,
+    decided_at_unix_ms: int,
+    reason: str,
+    horizon_ms: int,
+    model_version_prefix: str,
+    training_policy_version: str,
+    minimum_test_scored_observations: int,
 ) -> dict[str, object]:
     return {
-        "feature_jsonl_path": request.feature_jsonl_path,
-        "observer_database_path": request.observer_database_path,
-        "context_corpus_path": request.context_corpus_path,
-        "destination_path": request.destination_path,
-        "future_path_label_version": request.future_path_label_version,
+        "feature_jsonl_path": feature_jsonl_path,
+        "observer_database_path": observer_database_path,
+        "context_corpus_path": context_corpus_path,
+        "destination_path": destination_path,
+        "future_path_label_version": future_path_label_version,
         "counterfactual_base_quantity": _encode_numeric(
-            request.counterfactual_base_quantity
+            counterfactual_base_quantity
         ),
-        "validation_policy": _validation_policy_document(
-            request.validation_policy
-        ),
-        "evaluation_policy": _evaluation_policy_document(
-            request.evaluation_policy
-        ),
-        "champion_version": request.champion_version,
-        "decision_reference": request.decision_reference,
-        "decided_at_unix_ms": request.decided_at_unix_ms,
-        "reason": request.reason,
-        "horizon_ms": request.horizon_ms,
-        "model_version_prefix": request.model_version_prefix,
-        "training_policy_version": request.training_policy_version,
-        "minimum_test_scored_observations": (
-            request.minimum_test_scored_observations
-        ),
+        "validation_policy": _validation_policy_document(validation_policy),
+        "evaluation_policy": _evaluation_policy_document(evaluation_policy),
+        "champion_version": champion_version,
+        "decision_reference": decision_reference,
+        "decided_at_unix_ms": decided_at_unix_ms,
+        "reason": reason,
+        "horizon_ms": horizon_ms,
+        "model_version_prefix": model_version_prefix,
+        "training_policy_version": training_policy_version,
+        "minimum_test_scored_observations": minimum_test_scored_observations,
     }
 
 
