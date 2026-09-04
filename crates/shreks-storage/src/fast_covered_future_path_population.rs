@@ -39,6 +39,16 @@ pub struct FastCoveredFuturePathPopulationReport {
     pub horizons_ms: Vec<u64>,
 }
 
+pub fn encode_fast_covered_future_path_population_report_json(
+    report: &FastCoveredFuturePathPopulationReport,
+) -> Result<String, StorageError> {
+    serde_json::to_string(report).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "covered FL4 population report JSON encoding failed: {error}"
+        ))
+    })
+}
+
 #[derive(Debug)]
 struct PreparedDecisionLabels {
     decision: FuturePathDecision,
