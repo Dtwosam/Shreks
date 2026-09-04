@@ -289,30 +289,36 @@ def _context_from_document(
         ) from exc
 
 
-def _encode_optional_float(value: float | None) -> object:
+def _encode_optional_float(value: float | int | None) -> object:
     if value is None:
         return None
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-    ):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("forecast context numeric values must be finite")
+    if isinstance(value, int):
+        return value
+    if not math.isfinite(value):
         raise ValueError("forecast context float values must be finite")
-    return {"$float": float(value).hex()}
+    return {"$float": value.hex()}
 
 
 def _decode_optional_float(
     value: object,
     name: str,
-) -> float | None:
+) -> float | int | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        raise ValueError(f"{name} boolean value is forbidden")
+    if isinstance(value, int):
+        return value
     if isinstance(value, float):
         raise ValueError(
             f"{name} raw JSON float is forbidden; tagged float is required"
         )
     if not isinstance(value, dict) or frozenset(value) != {"$float"}:
-        raise ValueError(f"{name} must be null or an exact tagged float")
+        raise ValueError(
+            f"{name} must be null, an integer, or an exact tagged float"
+        )
     encoded = value["$float"]
     if not isinstance(encoded, str):
         raise ValueError(f"{name} tagged float payload must be text")
