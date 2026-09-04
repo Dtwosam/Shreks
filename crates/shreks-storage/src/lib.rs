@@ -5,6 +5,7 @@ mod execution_economics;
 mod fast_baseline_batch;
 mod fast_baseline_campaign;
 mod fast_baseline_hydration;
+mod fast_deterministic_candidate_manifest;
 mod fast_deterministic_lifecycle;
 mod fast_deterministic_lifecycle_wire;
 mod fast_lane;
@@ -35,6 +36,17 @@ pub use fast_baseline_campaign::{
 pub use fast_baseline_hydration::{
     hydrate_fast_baseline_snapshot, FastBaselineSnapshotHydration,
     FAST_BASELINE_SNAPSHOT_HYDRATION_VERSION,
+};
+pub use fast_deterministic_candidate_manifest::{
+    build_fast_deterministic_candidate_manifest,
+    decode_fast_deterministic_candidate_manifest_json,
+    encode_fast_deterministic_candidate_manifest_json,
+    FastDeterministicCandidateManifestError, FastDeterministicCandidateManifestWire,
+    FastDeterministicComponentPolicyWire, FastDeterministicEntryPolicyRef,
+    FastDeterministicManagerPolicyRef,
+    FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME,
+    FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION,
+    FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY,
 };
 pub use fast_deterministic_lifecycle::{
     evaluate_fast_deterministic_lifecycle_batch, FastDeterministicLifecycleBatchAssessment,

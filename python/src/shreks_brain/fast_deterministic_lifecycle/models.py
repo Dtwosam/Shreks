@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import math
+from types import MappingProxyType
 
 
 FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME = (
     "shreks.fast_deterministic_lifecycle_results"
 )
 FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION = 1
+FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME = (
+    "shreks.fast_deterministic_candidate_manifest"
+)
+FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION = 1
+FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY = "fast_deterministic_lifecycle"
 
 _ENTRY_KINDS = frozenset(
     {"IMPULSE_SCALP", "MICRO_PULLBACK", "PRE_GRADUATION", "GRADUATION_FLOW"}
@@ -122,6 +129,60 @@ class FastDeterministicLifecycleResults:
                 "decisions must contain exact FastDeterministicLifecycleDecision values"
             )
         _require_sha256("batch_fingerprint_sha256", self.batch_fingerprint_sha256)
+
+
+@dataclass(frozen=True, slots=True)
+class FastDeterministicComponentPolicy:
+    kind: str
+    parameters: Mapping[str, int | float]
+
+    def __post_init__(self) -> None:
+        if self.kind not in _KIND_VERSIONS:
+            raise ValueError("component policy kind is unsupported")
+        if not isinstance(self.parameters, Mapping):
+            raise ValueError("component policy parameters must be a mapping")
+        copied: dict[str, int | float] = {}
+        for name, value in self.parameters.items():
+            _require_non_empty_string("component policy parameter name", name)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError("component policy parameters must be numeric")
+            if isinstance(value, float) and not math.isfinite(value):
+                raise ValueError("component policy parameters must be finite")
+            copied[name] = value
+        object.__setattr__(self, "parameters", MappingProxyType(copied))
+
+
+@dataclass(frozen=True, slots=True)
+class FastDeterministicCandidateManifest:
+    schema_name: str
+    schema_version: int
+    candidate_version: str
+    strategy_family: str
+    strategy_version: str
+    lifecycle_policy: FastDeterministicLifecyclePolicy
+    entry_policy: FastDeterministicComponentPolicy
+    manager_policy: FastDeterministicComponentPolicy
+    candidate_fingerprint_sha256: str
+
+    def __post_init__(self) -> None:
+        if self.schema_name != FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME:
+            raise ValueError("unsupported deterministic candidate manifest schema_name")
+        if self.schema_version != FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION:
+            raise ValueError("unsupported deterministic candidate manifest schema_version")
+        _require_non_empty_string("candidate_version", self.candidate_version)
+        if self.strategy_family != FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY:
+            raise ValueError("unsupported deterministic candidate strategy_family")
+        _require_non_empty_string("strategy_version", self.strategy_version)
+        if type(self.lifecycle_policy) is not FastDeterministicLifecyclePolicy:
+            raise ValueError("lifecycle_policy must be exact FastDeterministicLifecyclePolicy")
+        if type(self.entry_policy) is not FastDeterministicComponentPolicy:
+            raise ValueError("entry_policy must be exact FastDeterministicComponentPolicy")
+        if type(self.manager_policy) is not FastDeterministicComponentPolicy:
+            raise ValueError("manager_policy must be exact FastDeterministicComponentPolicy")
+        _require_sha256(
+            "candidate_fingerprint_sha256",
+            self.candidate_fingerprint_sha256,
+        )
 
 
 def _require_non_empty_string(name: str, value: object) -> None:
