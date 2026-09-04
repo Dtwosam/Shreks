@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from shreks_brain.fast_campaign_paper import FastCampaignPaperDecisionEvidence
 from shreks_brain.fast_deterministic_offline import (
     FastOfflineGraduationFlowEvidence,
     FastOfflineImpulseScalpEvidence,
@@ -13,6 +12,8 @@ from shreks_brain.fast_deterministic_offline import (
     FastOfflineWalletCohortEvidence,
 )
 from shreks_brain.research.fast_training_features import FastTrainingFeatureRecord
+
+from .paper_evidence import FastDeterministicCampaignPaperEvidence
 
 
 _EVIDENCE_TYPES = (
@@ -30,7 +31,7 @@ class FastDeterministicCampaignRow:
     record: FastTrainingFeatureRecord
     flat_evidence: FastOfflineRowEvidence
     open_evidence: FastOfflineRowEvidence
-    paper_evidence: FastCampaignPaperDecisionEvidence
+    paper_evidence: FastDeterministicCampaignPaperEvidence
 
     def __post_init__(self) -> None:
         if type(self.record) is not FastTrainingFeatureRecord:
@@ -43,7 +44,7 @@ class FastDeterministicCampaignRow:
             raise ValueError(
                 "open_evidence must be an exact supported offline row evidence value"
             )
-        if type(self.paper_evidence) is not FastCampaignPaperDecisionEvidence:
+        if type(self.paper_evidence) is not FastDeterministicCampaignPaperEvidence:
             raise ValueError(
-                "paper_evidence must be exact FastCampaignPaperDecisionEvidence"
+                "paper_evidence must be exact FastDeterministicCampaignPaperEvidence"
             )

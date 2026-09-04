@@ -20,6 +20,9 @@ from shreks_brain.paper import PaperFillPolicy, PaperLedger
 from shreks_brain.risk import RiskPolicy
 
 from .models import FastDeterministicCampaignRow
+from .paper_evidence import (
+    materialize_fast_deterministic_campaign_paper_evidence,
+)
 
 
 def run_fast_deterministic_chronological_campaign(
@@ -70,10 +73,14 @@ def run_fast_deterministic_chronological_campaign(
             posture=posture,
             evidence=strategy_evidence,
         )
+        paper_evidence = materialize_fast_deterministic_campaign_paper_evidence(
+            decision,
+            row.paper_evidence,
+        )
         session = apply_fast_deterministic_paper_session_step(
             session,
             decision,
-            row.paper_evidence,
+            paper_evidence,
         )
 
     if session.latest_result is None:

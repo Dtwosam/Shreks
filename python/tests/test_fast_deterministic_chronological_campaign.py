@@ -7,11 +7,11 @@ import pytest
 
 from shreks_brain.evaluation import TradingEvaluationPolicy
 from shreks_brain.fast_campaign_paper import (
-    FastCampaignPaperDecisionEvidence,
     FastCampaignPaperEntryAuthority,
     FastCampaignPaperQuoteEvidence,
 )
 from shreks_brain.fast_deterministic_campaign import (
+    FastDeterministicCampaignPaperEvidence,
     FastDeterministicCampaignRow,
     run_fast_deterministic_chronological_campaign,
 )
@@ -261,8 +261,8 @@ def _paper_evidence(
     state: PaperQuoteState = PaperQuoteState.EXECUTABLE,
     reference: float = 10.0,
     execution: float = 10.1,
-) -> FastCampaignPaperDecisionEvidence:
-    return FastCampaignPaperDecisionEvidence(
+) -> FastDeterministicCampaignPaperEvidence:
+    return FastDeterministicCampaignPaperEvidence(
         source_event_id=source_event_id,
         state_version="state-v1",
         evaluated_at_unix_ms=at,
@@ -283,7 +283,7 @@ def _row(
     sequence: int,
     at: int,
     *,
-    paper: FastCampaignPaperDecisionEvidence,
+    paper: FastDeterministicCampaignPaperEvidence,
     flat=None,
     open_=None,
 ) -> FastDeterministicCampaignRow:
@@ -328,7 +328,12 @@ def _write_marker_binary(path: Path, marker: Path) -> None:
     path.chmod(path.stat().st_mode | 0o111)
 
 
-def _write_posture_binary(path: Path, posture_log: Path) -> None:
+def _write_posture_binary(
+    path: Path,
+    posture_log: Path,
+    *,
+    flat_action: str = "BUY",
+) -> None:
     script = f"""#!/usr/bin/env python3
 import hashlib
 import json
@@ -351,9 +356,13 @@ policy_wire = {{
     "reduce_remaining_fraction": policy["reduce_remaining_fraction"],
 }}
 if posture == "FLAT":
-    action = "BUY"
+    action = {flat_action!r}
     current = None
-    target = policy["entry_target_exposure_fraction"]
+    target = (
+        policy["entry_target_exposure_fraction"]
+        if action == "BUY"
+        else 0.0
+    )
     component = policy["entry_baseline_kind"]
 else:
     action = "SELL"
@@ -553,6 +562,34 @@ def test_unavailable_buy_keeps_next_row_flat(tmp_path: Path) -> None:
         session.latest_result.final_ledger.positions[0].state
         is PaperPositionState.OPEN
     )
+
+
+def test_rich_predecision_paper_evidence_can_materialize_skip(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "row-evaluator"
+    posture_log = tmp_path / "postures"
+    _write_posture_binary(binary, posture_log, flat_action="SKIP")
+    rows = (
+        _row(
+            "sig-1",
+            1,
+            T0 + 100,
+            paper=_paper_evidence("sig-1:0", T0 + 200, buy=True),
+        ),
+    )
+
+    session = run_fast_deterministic_chronological_campaign(
+        **_runner_kwargs(binary, rows)
+    )
+
+    assert tuple(value.action for value in session.decisions) == ("SKIP",)
+    assert session.evidence[0].quote is None
+    assert session.evidence[0].risk_context is None
+    assert session.evidence[0].entry_authority is None
+    assert session.evidence[0].market_regime is None
+    assert session.latest_result is not None
+    assert session.latest_result.run_evidence.decision_count == 1
 
 
 def test_campaign_driver_only_orchestrates_sealed_components() -> None:
