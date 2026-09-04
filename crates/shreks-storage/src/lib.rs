@@ -5,6 +5,7 @@ mod execution_economics;
 mod fast_baseline_batch;
 mod fast_baseline_campaign;
 mod fast_baseline_hydration;
+mod fast_covered_future_path_population;
 mod fast_deterministic_candidate_manifest;
 mod fast_deterministic_comparison_catalog;
 mod fast_deterministic_lifecycle;
@@ -36,6 +37,12 @@ pub use fast_baseline_batch::{
 pub use fast_baseline_campaign::{
     evaluate_fast_baseline_campaign, FastBaselineCampaignAssessment, FastBaselineCampaignError,
     FastBaselineCampaignInput, FAST_BASELINE_CAMPAIGN_VERSION,
+};
+pub use fast_covered_future_path_population::{
+    populate_fast_future_path_labels, FastCoveredFuturePathPopulationReport,
+    FastCoveredFuturePathPopulationRequest,
+    FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
+    FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_VERSION,
 };
 pub use fast_baseline_hydration::{
     hydrate_fast_baseline_snapshot, FastBaselineSnapshotHydration,
