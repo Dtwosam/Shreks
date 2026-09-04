@@ -336,8 +336,8 @@ fn open_hold_preserves_authoritative_current_exposure() {
     let wallet = wallet_policy();
     let position = WalletCohortPositionInput {
         market: market(),
-        as_of_unix_ms: 1_000,
-        opened_at_unix_ms: 900,
+        as_of_unix_ms: 1_100,
+        opened_at_unix_ms: 1_000,
     };
 
     let batch = evaluate_fast_deterministic_lifecycle_batch(
@@ -368,7 +368,7 @@ fn open_reduce_applies_explicit_remaining_fraction() {
     let runner = runner_policy();
     let protective = LongerRunnerProtectiveState {
         market: market(),
-        as_of_unix_ms: 1_000,
+        as_of_unix_ms: 1_100,
         hard_stop_triggered: false,
         risk_limit_exit_required: false,
         liquidity_exit_required: false,
@@ -402,7 +402,7 @@ fn open_sell_targets_zero() {
     let runner = runner_policy();
     let protective = LongerRunnerProtectiveState {
         market: market(),
-        as_of_unix_ms: 1_000,
+        as_of_unix_ms: 1_100,
         hard_stop_triggered: true,
         risk_limit_exit_required: false,
         liquidity_exit_required: false,
@@ -434,8 +434,8 @@ fn wrong_component_family_for_posture_fails_closed() {
     let wallet = wallet_policy();
     let position = WalletCohortPositionInput {
         market: market(),
-        as_of_unix_ms: 1_000,
-        opened_at_unix_ms: 900,
+        as_of_unix_ms: 1_100,
+        opened_at_unix_ms: 1_000,
     };
 
     let error = evaluate_fast_deterministic_lifecycle_batch(
