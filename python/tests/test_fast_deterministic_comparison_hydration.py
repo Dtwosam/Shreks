@@ -479,6 +479,48 @@ def test_hydrates_real_directional_observer_quotes_and_fl3_authority(
     assert loaded.provenance == result.provenance
 
 
+def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer.db"
+    authority_binary = tmp_path / "authority"
+    _create_observer_db(database)
+    _fake_authority_binary(authority_binary)
+
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET output_amount = '0',
+               minimum_output_amount = '0',
+               route_available = 0,
+               price_impact_pct = NULL,
+               route_labels_json = '[]'
+           WHERE purpose = 'entry'"""
+    )
+    connection.commit()
+    connection.close()
+
+    risk = replace(
+        _risk(),
+        expected_price_impact_pct=None,
+        price_impact_notional_usd=None,
+    )
+    result = hydrate_fast_deterministic_comparison_evidence(
+        database_path=database,
+        feature_dataset=_dataset(record),
+        catalog=_catalog(),
+        hydration_inputs=(replace(_input(record), risk_environment=risk),),
+        entry_authority_binary_path=authority_binary,
+    )
+
+    row = result.rows[0]
+    assert row.entry_quote.state is PaperQuoteState.UNAVAILABLE
+    assert row.entry_quote.execution_price_quote is None
+    assert row.entry_quote.quoted_base_quantity is None
+    assert row.exit_quote.state is PaperQuoteState.EXECUTABLE
+
+
 def test_hydrator_rejects_family_specific_execution_economics_drift(
     tmp_path: Path,
 ) -> None:
