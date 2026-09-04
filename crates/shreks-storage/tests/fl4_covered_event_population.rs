@@ -6,8 +6,9 @@ use std::{
 };
 
 use shreks_core::{
-    FastEvent, FastEventId, FastEventKind, FastMarketKey, FuturePathCompleteness, ProviderId,
-    VenueId, DEFAULT_FUTURE_PATH_HORIZONS_MS, FUTURE_PATH_LABEL_VERSION,
+    FastEvent, FastEventId, FastEventKind, FastMarketKey, FuturePathCompleteness,
+    FuturePathCoverage, FuturePathDecision, ProviderId, VenueId,
+    DEFAULT_FUTURE_PATH_HORIZONS_MS, FUTURE_PATH_LABEL_VERSION,
 };
 use shreks_storage::{
     populate_fast_future_path_labels, FastCoveredFuturePathPopulationRequest,
@@ -260,6 +261,53 @@ fn covered_population_rejects_empty_window_before_writing() {
 
     let error = populate_fast_future_path_labels(&db, &request(historical_session, 1)).unwrap_err();
     assert!(error.to_string().contains("no canonical FastEvents"));
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn covered_population_rolls_back_the_entire_invocation_on_label_conflict() {
+    let root = unique_test_dir("rollback");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let (historical_session, _) = historical_coverage(&db);
+
+    seed_event(&db, "decision-a", 1, 1_000, 0.05);
+    seed_event(&db, "decision-b", 2, 1_250, 0.06);
+    seed_event(&db, "future-c", 3, 1_600, 0.07);
+
+    let decision_b = FuturePathDecision::new(
+        FastMarketKey::new(MINT, WSOL, VenueId::PumpFunBondingCurve).unwrap(),
+        FastEventId::new("decision-b", 0).unwrap(),
+        2,
+        1_250,
+        0.06,
+    )
+    .unwrap();
+    let older_coverage = FuturePathCoverage::new(1_600, true).unwrap();
+    let conflicting = db
+        .generate_future_path_labels_for_decision(&decision_b, older_coverage, &[250])
+        .unwrap();
+    assert_eq!(conflicting.len(), 1);
+    assert!(db
+        .record_future_path_label(&decision_b, older_coverage, &conflicting[0])
+        .unwrap());
+
+    let error =
+        populate_fast_future_path_labels(&db, &request(historical_session, 2)).unwrap_err();
+    assert!(error.to_string().contains("conflicting future-path label"));
+
+    assert!(
+        db.future_path_labels_for_decision("decision-a", 0, FUTURE_PATH_LABEL_VERSION)
+            .unwrap()
+            .is_empty(),
+        "first-decision inserts from the failed invocation must roll back"
+    );
+    let preserved = db
+        .future_path_labels_for_decision("decision-b", 0, FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    assert_eq!(preserved.len(), 1);
+    assert_eq!(preserved[0].coverage, older_coverage);
+    assert_eq!(preserved[0].label.horizon_ms, 250);
 
     cleanup_dir(&root);
 }
