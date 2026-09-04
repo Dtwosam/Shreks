@@ -54,6 +54,40 @@ _ENTRY_KINDS = frozenset(
 _MANAGER_KINDS = frozenset({"WALLET_COHORT", "LONGER_RUNNER"})
 
 
+def build_fast_deterministic_lifecycle_results(
+    policy: FastDeterministicLifecyclePolicy,
+    decisions: tuple[FastDeterministicLifecycleDecision, ...],
+) -> FastDeterministicLifecycleResults:
+    if type(policy) is not FastDeterministicLifecyclePolicy:
+        raise ValueError("policy must be exact FastDeterministicLifecyclePolicy")
+    if (
+        not isinstance(decisions, tuple)
+        or not decisions
+        or not all(type(value) is FastDeterministicLifecycleDecision for value in decisions)
+    ):
+        raise ValueError(
+            "decisions must be a non-empty tuple of exact FastDeterministicLifecycleDecision values"
+        )
+
+    draft = FastDeterministicLifecycleResults(
+        schema_name=FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME,
+        schema_version=FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
+        policy=policy,
+        decisions=decisions,
+        batch_fingerprint_sha256="0" * 64,
+    )
+    _validate_semantics(draft)
+    material = _results_material(draft)
+    fingerprint = hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
+    return FastDeterministicLifecycleResults(
+        schema_name=draft.schema_name,
+        schema_version=draft.schema_version,
+        policy=draft.policy,
+        decisions=draft.decisions,
+        batch_fingerprint_sha256=fingerprint,
+    )
+
+
 def decode_fast_deterministic_lifecycle_results(
     payload: str,
 ) -> FastDeterministicLifecycleResults:
@@ -146,6 +180,35 @@ def fast_deterministic_lifecycle_to_paper_assessment(
         action=action,
         reasons=reasons,
     )
+
+
+def _results_material(results: FastDeterministicLifecycleResults) -> dict[str, object]:
+    return {
+        "schema_name": results.schema_name,
+        "schema_version": results.schema_version,
+        "policy": {
+            "version": results.policy.version,
+            "entry_baseline_kind": results.policy.entry_baseline_kind,
+            "manager_baseline_kind": results.policy.manager_baseline_kind,
+            "entry_target_exposure_fraction": results.policy.entry_target_exposure_fraction,
+            "reduce_remaining_fraction": results.policy.reduce_remaining_fraction,
+        },
+        "decisions": [
+            {
+                "source_event_id": decision.source_event_id,
+                "market_key": decision.market_key,
+                "source_sequence": decision.source_sequence,
+                "as_of_unix_ms": decision.as_of_unix_ms,
+                "posture": decision.posture,
+                "component_kind": decision.component_kind,
+                "component_version": decision.component_version,
+                "action": decision.action,
+                "current_exposure_fraction": decision.current_exposure_fraction,
+                "target_exposure_fraction": decision.target_exposure_fraction,
+            }
+            for decision in results.decisions
+        ],
+    }
 
 
 def _decode_decision(value: Any) -> FastDeterministicLifecycleDecision:
