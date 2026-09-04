@@ -43,13 +43,16 @@ FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION = (
 @dataclass(frozen=True, slots=True)
 class FastDeterministicCandidatePaperAuthority:
     candidate_version: str
-    entry_authority: FastCampaignPaperEntryAuthority
+    entry_authority: FastCampaignPaperEntryAuthority | None
 
     def __post_init__(self) -> None:
         _require_non_empty_string("candidate_version", self.candidate_version)
-        if type(self.entry_authority) is not FastCampaignPaperEntryAuthority:
+        if (
+            self.entry_authority is not None
+            and type(self.entry_authority) is not FastCampaignPaperEntryAuthority
+        ):
             raise ValueError(
-                "entry_authority must be exact FastCampaignPaperEntryAuthority"
+                "entry_authority must be exact FastCampaignPaperEntryAuthority or None"
             )
 
 
@@ -173,6 +176,8 @@ class FastDeterministicComparisonEvidenceRow:
             raise ValueError("candidate authority versions must be unique")
         for authority in self.candidate_authorities:
             entry = authority.entry_authority
+            if entry is None:
+                continue
             if entry.mint != self.record.mint or entry.quote_mint != self.record.quote_mint:
                 raise ValueError(
                     "candidate entry authority market attribution does not match FL8.1 row"
@@ -243,7 +248,7 @@ def bind_fast_deterministic_comparison_evidence(
     expected_versions = tuple(
         manifest.candidate_version for manifest in catalog.candidates
     )
-    authority_maps: list[dict[str, FastCampaignPaperEntryAuthority]] = []
+    authority_maps: list[dict[str, FastCampaignPaperEntryAuthority | None]] = []
     for index, row in enumerate(rows):
         versions = tuple(
             value.candidate_version for value in row.candidate_authorities
@@ -318,7 +323,7 @@ def _campaign_row(
     source: FastDeterministicComparisonEvidenceRow,
     entry_kind: str,
     manager_kind: str,
-    entry_authority: FastCampaignPaperEntryAuthority,
+    entry_authority: FastCampaignPaperEntryAuthority | None,
 ) -> FastDeterministicCampaignRow:
     entry_evidence = {
         "IMPULSE_SCALP": source.impulse_scalp_evidence,

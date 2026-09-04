@@ -306,6 +306,48 @@ def test_binder_requires_quote_contemporaneous_with_decision() -> None:
 
 
 
+
+def test_binder_preserves_absent_buy_authority_for_truthful_fl3_skip() -> None:
+    row = _row()
+    first = row.candidate_authorities[0]
+    authorities = (
+        FastDeterministicCandidatePaperAuthority(
+            candidate_version=first.candidate_version,
+            entry_authority=None,
+        ),
+        *row.candidate_authorities[1:],
+    )
+    updated = FastDeterministicComparisonEvidenceRow(
+        record=row.record,
+        impulse_scalp_evidence=row.impulse_scalp_evidence,
+        micro_pullback_evidence=row.micro_pullback_evidence,
+        pre_graduation_evidence=row.pre_graduation_evidence,
+        graduation_flow_evidence=row.graduation_flow_evidence,
+        wallet_cohort_evidence=row.wallet_cohort_evidence,
+        longer_runner_evidence=row.longer_runner_evidence,
+        state_version=row.state_version,
+        evaluated_at_unix_ms=row.evaluated_at_unix_ms,
+        quote=row.quote,
+        market_regime=row.market_regime,
+        risk_environment=row.risk_environment,
+        candidate_authorities=authorities,
+        entry_quote=row.entry_quote,
+        exit_quote=row.exit_quote,
+    )
+
+    bound = bind_fast_deterministic_comparison_evidence(
+        catalog=_catalog(),
+        rows=(updated,),
+        paper_run_id_prefix="fl9-baseline",
+    )
+
+    assert bound.specs[0].rows[0].paper_evidence.entry_authority is None
+    assert all(
+        spec.rows[0].paper_evidence.entry_authority is not None
+        for spec in bound.specs[1:]
+    )
+
+
 def test_comparison_row_rejects_entry_authority_provenance_drift() -> None:
     row = _row()
     first = row.candidate_authorities[0]
