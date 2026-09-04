@@ -1,3 +1,8 @@
+from .champion_execution import (
+    FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION,
+    FastChampionEntryExecutionEvidence,
+    build_fast_champion_entry_execution_evidence,
+)
 from .entry_authority import (
     FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_NAME,
     FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_VERSION,
@@ -35,6 +40,9 @@ from .runner import evaluate_fast_deterministic_row_offline
 
 
 __all__ = (
+    "FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION",
+    "FastChampionEntryExecutionEvidence",
+    "build_fast_champion_entry_execution_evidence",
     "FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_NAME",
     "FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_VERSION",
     "FAST_DETERMINISTIC_ENTRY_AUTHORITY_RESULT_SCHEMA_NAME",
