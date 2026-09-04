@@ -128,7 +128,6 @@ pub fn fast_deterministic_lifecycle_to_wire(
 pub fn encode_fast_deterministic_lifecycle_results_json(
     results: &FastDeterministicLifecycleResultsWire,
 ) -> Result<String, FastDeterministicLifecycleWireError> {
-    validate_results_semantics(results)?;
     validate_sha256(
         "batch_fingerprint_sha256",
         &results.batch_fingerprint_sha256,
@@ -136,6 +135,7 @@ pub fn encode_fast_deterministic_lifecycle_results_json(
     if results_fingerprint_sha256(results)? != results.batch_fingerprint_sha256 {
         return Err(FastDeterministicLifecycleWireError::FingerprintMismatch);
     }
+    validate_results_semantics(results)?;
 
     let value = serde_json::to_value(results)
         .map_err(|error| FastDeterministicLifecycleWireError::Json(error.to_string()))?;
@@ -151,7 +151,6 @@ pub fn decode_fast_deterministic_lifecycle_results_json(
     }
     let results: FastDeterministicLifecycleResultsWire = serde_json::from_str(input)
         .map_err(|error| FastDeterministicLifecycleWireError::Json(error.to_string()))?;
-    validate_results_semantics(&results)?;
     validate_sha256(
         "batch_fingerprint_sha256",
         &results.batch_fingerprint_sha256,
@@ -159,6 +158,7 @@ pub fn decode_fast_deterministic_lifecycle_results_json(
     if results_fingerprint_sha256(&results)? != results.batch_fingerprint_sha256 {
         return Err(FastDeterministicLifecycleWireError::FingerprintMismatch);
     }
+    validate_results_semantics(&results)?;
     Ok(results)
 }
 
