@@ -106,8 +106,8 @@ fn production_uses_one_bounded_public_realtime_source_and_the_durable_writer() {
         "BoundedPumpRealtimeLogStreamConfig::solana_public",
         "refresh_pumpswap_realtime_targets_now",
         "run_pumpswap_realtime_target_publisher",
-        "forward_pump_realtime_signals",
-        "Observer::run_pump_realtime_writer",
+        "forward_bounded_pump_realtime_sessions",
+        "Observer::run_pump_realtime_session_writer",
         "PUMP_REALTIME_CHANNEL_CAPACITY",
     ] {
         assert!(
@@ -157,7 +157,7 @@ fn production_uses_one_bounded_public_realtime_source_and_the_durable_writer() {
 fn realtime_forwarder_writer_and_target_publisher_termination_are_fail_closed_and_supervised() {
     for required in [
         "run_observation_with_realtime",
-        "tokio::spawn(forward_pump_realtime_signals(stream, sender))",
+        "tokio::spawn(forward_bounded_pump_realtime_sessions(stream, sender))",
         "forwarder_result = &mut forwarder",
         "Pump realtime forwarder stopped unexpectedly",
         "target_publisher_result = &mut target_publisher",

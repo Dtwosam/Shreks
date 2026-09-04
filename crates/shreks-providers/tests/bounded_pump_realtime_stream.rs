@@ -14,6 +14,27 @@ use tokio::{
 };
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+fn lifecycle_notification(signature: &str, slot: u64) -> String {
+    json!({
+        "jsonrpc":"2.0",
+        "method":"logsNotification",
+        "params": {
+            "result": {
+                "context":{"slot":slot},
+                "value": {
+                    "signature": signature,
+                    "err": null,
+                    "logs": [
+                        format!("Program {PUMP_PROGRAM_ID} invoke [1]"),
+                        "Program log: Instruction: CreateV2"
+                    ]
+                }
+            },
+            "subscription": 24040
+        }
+    }).to_string()
+}
+
 fn irrelevant_notification(signature: &str) -> String {
     json!({
         "jsonrpc":"2.0",
@@ -35,6 +56,27 @@ fn irrelevant_notification(signature: &str) -> String {
 async fn read_json(socket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>) -> Value {
     let text = socket.next().await.unwrap().unwrap().into_text().unwrap();
     serde_json::from_str(&text).unwrap()
+}
+
+async fn accept_single_pump_subscription(
+    listener: &TcpListener,
+    subscription_id: u64,
+) -> tokio_tungstenite::WebSocketStream<tokio::net::TcpStream> {
+    let (tcp, _) = listener.accept().await.unwrap();
+    let mut socket = accept_async(tcp).await.unwrap();
+    let request = read_json(&mut socket).await;
+    assert_eq!(request["method"], "logsSubscribe");
+    assert_eq!(request["params"][0]["mentions"][0], PUMP_PROGRAM_ID);
+    let request_id = request["id"].as_u64().unwrap();
+    socket
+        .send(Message::Text(
+            json!({"jsonrpc":"2.0","id":request_id,"result":subscription_id})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
 }
 
 async fn unavailable_ws_endpoint() -> String {
@@ -266,4 +308,138 @@ async fn bounded_failover_all_provider_failure_returns_traced_error() {
         "unexpected failover trace: {}",
         error.message
     );
+}
+
+
+#[tokio::test]
+async fn session_sequence_changes_after_inner_websocket_reconnect() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let mut first = accept_single_pump_subscription(&listener, 701).await;
+        first
+            .send(Message::Text(
+                lifecycle_notification("coverage-first", 700).into(),
+            ))
+            .await
+            .unwrap();
+        first.close(None).await.unwrap();
+        drop(first);
+
+        let mut second = accept_single_pump_subscription(&listener, 702).await;
+        second
+            .send(Message::Text(
+                lifecycle_notification("coverage-second", 701).into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
+    let config = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        format!("ws://{address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(2);
+
+    let mut stream =
+        BoundedPumpRealtimeFailoverStream::new(vec![config], targets_receiver).unwrap();
+
+    let first = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_session_notification(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let second = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_session_notification(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(first.session_sequence, 1);
+    assert_eq!(first.notification.signature, "coverage-first");
+    assert_eq!(second.session_sequence, 2);
+    assert_eq!(second.notification.signature, "coverage-second");
+    assert_eq!(second.notification.provider, ProviderId::Chainstack);
+
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn session_sequence_changes_when_failover_switches_provider() {
+    let primary_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let primary_address = primary_listener.local_addr().unwrap();
+    let secondary_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let secondary_address = secondary_listener.local_addr().unwrap();
+
+    let primary_server = tokio::spawn(async move {
+        let mut socket = accept_single_pump_subscription(&primary_listener, 801).await;
+        socket
+            .send(Message::Text(
+                lifecycle_notification("coverage-primary", 800).into(),
+            ))
+            .await
+            .unwrap();
+        socket.close(None).await.unwrap();
+    });
+    let secondary_server = tokio::spawn(async move {
+        let mut socket = accept_single_pump_subscription(&secondary_listener, 901).await;
+        socket
+            .send(Message::Text(
+                lifecycle_notification("coverage-secondary", 900).into(),
+            ))
+            .await
+            .unwrap();
+    });
+
+    let primary = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Chainstack,
+        format!("ws://{primary_address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+    let secondary = BoundedPumpRealtimeLogStreamConfig::for_provider_endpoint(
+        ProviderId::Alchemy,
+        format!("ws://{secondary_address}"),
+    )
+    .unwrap()
+    .with_reconnect_bounds(Duration::from_millis(5), Duration::from_millis(5))
+    .with_max_connect_attempts(1);
+
+    let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
+    let mut stream =
+        BoundedPumpRealtimeFailoverStream::new(vec![primary, secondary], targets_receiver).unwrap();
+
+    let first = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_session_notification(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    primary_server.await.unwrap();
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(2),
+        stream.next_realtime_session_notification(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(first.session_sequence, 1);
+    assert_eq!(first.notification.provider, ProviderId::Chainstack);
+    assert_eq!(second.session_sequence, 2);
+    assert_eq!(second.notification.provider, ProviderId::Alchemy);
+    assert_eq!(second.notification.signature, "coverage-secondary");
+
+    secondary_server.await.unwrap();
 }

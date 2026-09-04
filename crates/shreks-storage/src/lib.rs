@@ -15,6 +15,7 @@ mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
 mod fast_population_parity;
+mod fast_realtime_coverage;
 mod future_path_labels;
 mod lifecycle;
 mod outcomes;
@@ -105,6 +106,7 @@ pub use fast_deterministic_row::{
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
+pub use fast_realtime_coverage::FastRealtimeCoverageSession;
 pub use fast_population_parity::{
     prove_fast_baseline_population_parity, FastBaselinePopulationParityError,
     FastBaselinePopulationParityProof, FAST_BASELINE_POPULATION_PARITY_VERSION,
@@ -234,6 +236,11 @@ const MIGRATIONS: &[Migration] = &[
         version: 17,
         name: "fast_paper_skip_records",
         sql: include_str!("../migrations/0017_fast_paper_skip_records.sql"),
+    },
+    Migration {
+        version: 18,
+        name: "fast_realtime_coverage_sessions",
+        sql: include_str!("../migrations/0018_fast_realtime_coverage_sessions.sql"),
     },
 ];
 

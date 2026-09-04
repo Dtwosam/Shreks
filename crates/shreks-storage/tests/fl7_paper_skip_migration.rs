@@ -29,7 +29,7 @@ fn migration_seventeen_creates_fast_paper_skip_audit_schema_once() {
     let db_path = root.join("shreks.db");
 
     let db = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 17);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 18);
     drop(db);
 
     let connection = Connection::open(&db_path).unwrap();
@@ -83,7 +83,7 @@ fn migration_seventeen_creates_fast_paper_skip_audit_schema_once() {
     drop(connection);
 
     let reopened = ShreksDb::open(&db_path).unwrap();
-    assert_eq!(reopened.diagnostics().unwrap().schema_version, 17);
+    assert_eq!(reopened.diagnostics().unwrap().schema_version, 18);
     drop(reopened);
 
     let connection = Connection::open(&db_path).unwrap();

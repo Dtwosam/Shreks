@@ -167,7 +167,7 @@ fn read_only_open_requires_existing_current_schema_and_cannot_write() {
 
     let db_path = seed(&root);
     let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
-    assert_eq!(db.diagnostics().unwrap().schema_version, 17);
+    assert_eq!(db.diagnostics().unwrap().schema_version, 18);
     assert!(db.record_pump_migration_signal("must-not-write", 1, 1).is_err());
     drop(db);
     cleanup_dir(&root);
