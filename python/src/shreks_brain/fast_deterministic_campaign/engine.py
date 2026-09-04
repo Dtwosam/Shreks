@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from shreks_brain.evaluation import TradingEvaluationPolicy
@@ -21,8 +22,10 @@ from shreks_brain.risk import RiskPolicy
 
 from .models import FastDeterministicCampaignRow
 from .paper_evidence import (
+    FastDeterministicCampaignPaperEvidence,
     materialize_fast_deterministic_campaign_paper_evidence,
 )
+from .risk_context import build_fast_deterministic_campaign_risk_context
 
 
 def run_fast_deterministic_chronological_campaign(
@@ -73,9 +76,14 @@ def run_fast_deterministic_chronological_campaign(
             posture=posture,
             evidence=strategy_evidence,
         )
+        raw_paper_evidence = _resolve_candidate_risk_context(
+            session,
+            decision.action,
+            row.paper_evidence,
+        )
         paper_evidence = materialize_fast_deterministic_campaign_paper_evidence(
             decision,
-            row.paper_evidence,
+            raw_paper_evidence,
         )
         session = apply_fast_deterministic_paper_session_step(
             session,
@@ -88,6 +96,34 @@ def run_fast_deterministic_chronological_campaign(
             "non-empty deterministic campaign must produce a final PAPER result"
         )
     return session
+
+
+def _resolve_candidate_risk_context(
+    session: FastDeterministicPaperSession,
+    action: str,
+    evidence: FastDeterministicCampaignPaperEvidence,
+) -> FastDeterministicCampaignPaperEvidence:
+    if action != "BUY" or evidence.risk_context is not None:
+        return evidence
+    environment = evidence.risk_environment
+    if environment is None:
+        return evidence
+
+    ledger = (
+        session.starting_ledger
+        if session.latest_result is None
+        else session.latest_result.final_ledger
+    )
+    context = build_fast_deterministic_campaign_risk_context(
+        ledger,
+        environment,
+        as_of_unix_ms=evidence.evaluated_at_unix_ms,
+    )
+    return replace(
+        evidence,
+        risk_context=context,
+        risk_environment=None,
+    )
 
 
 def _preflight_campaign(
