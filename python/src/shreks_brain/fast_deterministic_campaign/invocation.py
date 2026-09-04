@@ -91,6 +91,32 @@ class FastDeterministicCampaignSourceSnapshot:
         roles = tuple(value.role for value in self.components)
         if len(roles) != len(set(roles)):
             raise ValueError("source snapshot component roles must be unique")
+        declared_name = Path(self.declared_path).name
+        if self.label == "observer_database_path":
+            if roles not in (("database",), ("database", "wal")):
+                raise ValueError(
+                    "observer database source roles must be database[, wal]"
+                )
+            if self.components[0].file_name != declared_name:
+                raise ValueError(
+                    "observer database component name must match declared path"
+                )
+            if (
+                len(self.components) == 2
+                and self.components[1].file_name != f"{declared_name}-wal"
+            ):
+                raise ValueError(
+                    "observer WAL component name must match declared database path"
+                )
+        else:
+            if roles != ("file",):
+                raise ValueError(
+                    "non-database deterministic campaign source must contain one file role"
+                )
+            if self.components[0].file_name != declared_name:
+                raise ValueError(
+                    "source component name must match declared path"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,7 +148,7 @@ class FastDeterministicCampaignInvocationManifest:
             raise ValueError(
                 "deterministic campaign invocation must contain exactly six sources"
             )
-        _require_non_empty_string(
+        _require_leaf_name(
             "campaign_directory_name",
             self.campaign_directory_name,
         )
@@ -181,12 +207,10 @@ def run_fast_deterministic_campaign_invocation_file(
 
     before = _capture_sources(base, request)
     staging_path: Path | None = None
-    campaign_created = False
     try:
         campaign_manifest = run_fast_deterministic_campaign_request_file(
             source
         )
-        campaign_created = campaign_path.exists()
         if source.read_text(encoding="utf-8") != request_payload:
             raise ValueError(
                 "deterministic campaign request file changed during execution"
@@ -336,6 +360,10 @@ def read_fast_deterministic_campaign_invocation_seal(
     ):
         raise ValueError(
             "deterministic campaign invocation request fingerprint mismatch"
+        )
+    if Path(request.destination_path).name != manifest.campaign_directory_name:
+        raise ValueError(
+            "deterministic campaign invocation destination does not match request"
         )
     if sources_document["source_snapshot_fingerprint_sha256"] != (
         manifest.source_snapshot_fingerprint_sha256
@@ -597,6 +625,14 @@ def _sha256_bytes(value: bytes) -> str:
 def _require_non_empty_string(name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _require_leaf_name(name: str, value: object) -> None:
+    _require_non_empty_string(name, value)
+    assert isinstance(value, str)
+    path = Path(value)
+    if path.name != value or value in {".", ".."}:
+        raise ValueError(f"{name} must be a single path component")
 
 
 def _require_sha256(name: str, value: object) -> None:
