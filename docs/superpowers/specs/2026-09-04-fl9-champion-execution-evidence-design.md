@@ -98,6 +98,12 @@ Two independent chronology gates apply before inference.
 
 A model selection made after the trade cannot be used as decision-time evidence for that trade.
 
+### Selection/training consistency
+
+`artifact.max_training_decision_observed_at_unix_ms <= champion.selection.decided_at_unix_ms`.
+
+A champion cannot claim selection before the latest observation used by its runtime model.
+
 ### Runtime model training
 
 `artifact.max_training_decision_observed_at_unix_ms < record.decision_observed_at_unix_ms`.
@@ -194,10 +200,11 @@ Tests require:
 4. explicit cost/size/capacity/edge/margin propagation;
 5. champion/model/validation/test provenance;
 6. selection-after-decision rejection;
-7. training-through-decision rejection;
-8. cost-adjusted-only champion rejection;
-9. non-positive forecast exit rejection;
-10. source firewall.
+7. selection-before-training rejection;
+8. training-through-decision rejection;
+9. cost-adjusted-only champion rejection;
+10. non-positive forecast exit rejection;
+11. source firewall.
 
 ## Following slice
 
