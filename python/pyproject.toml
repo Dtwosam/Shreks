@@ -9,6 +9,9 @@ description = "Decision, research, and learning layer for Shreks"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.scripts]
+shreks-fast-deterministic-campaign = "shreks_brain.fast_deterministic_campaign.cli:main"
+
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
 learning = ["scikit-learn>=1.7,<2"]
