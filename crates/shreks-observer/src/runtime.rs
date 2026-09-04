@@ -266,6 +266,14 @@ impl Observer {
             validate_realtime_identity(notification)?;
             let observed_at_unix_ms = realtime_observed_at_unix_ms()?;
 
+            if current_process_session_sequence
+                .is_some_and(|current| envelope.session_sequence < current)
+            {
+                return Err(ObserverError::Storage(StorageError::InvalidData(
+                    "realtime coverage process session sequence moved backward".to_owned(),
+                )));
+            }
+
             if current_process_session_sequence == Some(envelope.session_sequence) {
                 let session_id = current_durable_session_id.ok_or_else(|| {
                     ObserverError::Storage(StorageError::InvalidData(
