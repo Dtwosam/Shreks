@@ -9,7 +9,6 @@ from shreks_brain.evaluation import (
     evaluate_trading_performance,
 )
 from shreks_brain.fast_campaign import (
-    FastCampaignDecisionResult,
     FastCampaignDecisionResults,
     fast_campaign_result_to_paper_assessment,
 )
