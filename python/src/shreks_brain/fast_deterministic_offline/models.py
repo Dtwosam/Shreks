@@ -67,8 +67,6 @@ class FastOfflineExecutionTrade:
             "exit_capacity_base",
         ):
             _require_positive_finite(name, getattr(self, name))
-        if self.exit_capacity_base < self.base_quantity:
-            raise ValueError("exit_capacity_base cannot be below base_quantity")
         _require_bps("required_edge_bps", self.required_edge_bps)
         _require_bps("risk_margin_bps", self.risk_margin_bps)
 
