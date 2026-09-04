@@ -2,6 +2,7 @@
 
 mod conflict_quarantine;
 mod execution_economics;
+mod fast_baseline_hydration;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
@@ -16,6 +17,10 @@ mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
 pub use execution_economics::{
     PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
+};
+pub use fast_baseline_hydration::{
+    hydrate_fast_baseline_snapshot, FastBaselineSnapshotHydration,
+    FAST_BASELINE_SNAPSHOT_HYDRATION_VERSION,
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
