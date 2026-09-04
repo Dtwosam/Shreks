@@ -287,6 +287,35 @@ def test_flat_impulse_request_is_exact_rust_v1_shape() -> None:
     assert document["record"]["decision_signature"] == "sig-row"
 
 
+def test_insufficient_exit_capacity_is_transported_to_rust_unchanged() -> None:
+    insufficient = FastOfflineEntryExecution(
+        cost_model=FastOfflineExecutionCostModel(
+            version=1,
+            entry=_leg(),
+            exit=_leg(),
+        ),
+        trade=FastOfflineExecutionTrade(
+            base_quantity=100.0,
+            executable_entry_price_quote=0.01,
+            forecast_exit_price_quote=0.012,
+            exit_capacity_base=25.0,
+            required_edge_bps=200,
+            risk_margin_bps=100,
+        ),
+    )
+    request = json.loads(
+        build_fast_deterministic_row_request(
+            record=_record(),
+            manifest=_manifest(),
+            posture=_flat(),
+            evidence=FastOfflineImpulseScalpEvidence(execution=insufficient),
+        )
+    )
+    trade = request["evidence"]["execution"]["trade"]
+    assert trade["base_quantity"] == 100.0
+    assert trade["exit_capacity_base"] == 25.0
+
+
 def test_reserve_variants_emit_only_rust_exporter_fields() -> None:
     pump = FastTrainingReserveContext(
         kind="pump_curve",
