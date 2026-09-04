@@ -1,3 +1,19 @@
+from .file_request import (
+    FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME,
+    FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION,
+    FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_NAME,
+    FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION,
+    FastFirstChampionArtifact,
+    FastFirstChampionArtifactManifest,
+    FastFirstChampionEvaluationEvidenceEntry,
+    FastFirstChampionFileRequest,
+    build_fast_first_champion_file_request,
+    decode_fast_first_champion_file_request,
+    encode_fast_first_champion_file_request,
+    read_fast_first_champion_artifact,
+    run_fast_first_champion_file_request,
+    write_fast_first_champion_file_request,
+)
 from .context_corpus import (
     FAST_FORECAST_CONTEXT_CORPUS_SCHEMA_NAME,
     FAST_FORECAST_CONTEXT_CORPUS_SCHEMA_VERSION,
@@ -15,6 +31,20 @@ from .builder import (
 )
 
 __all__ = (
+    "FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME",
+    "FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION",
+    "FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_NAME",
+    "FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION",
+    "FastFirstChampionArtifact",
+    "FastFirstChampionArtifactManifest",
+    "FastFirstChampionEvaluationEvidenceEntry",
+    "FastFirstChampionFileRequest",
+    "build_fast_first_champion_file_request",
+    "decode_fast_first_champion_file_request",
+    "encode_fast_first_champion_file_request",
+    "read_fast_first_champion_artifact",
+    "run_fast_first_champion_file_request",
+    "write_fast_first_champion_file_request",
     "FAST_FORECAST_CONTEXT_CORPUS_SCHEMA_NAME",
     "FAST_FORECAST_CONTEXT_CORPUS_SCHEMA_VERSION",
     "FastForecastEvaluationContextCorpus",
