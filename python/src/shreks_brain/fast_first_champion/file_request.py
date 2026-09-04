@@ -30,6 +30,8 @@ from shreks_brain.research.fast_training_bundle import (
 
 from .builder import build_fast_first_champion
 from .context_corpus import (
+    FastForecastEvaluationContextCorpus,
+    decode_fast_forecast_evaluation_context_corpus,
     read_fast_forecast_evaluation_context_corpus,
 )
 
@@ -44,6 +46,7 @@ FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME = (
 FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION = 1
 
 _REQUEST_FILE = "request.json"
+_CONTEXT_FILE = "contexts.json"
 _CHAMPION_FILE = "champion.json"
 _MANIFEST_FILE = "manifest.json"
 
@@ -306,6 +309,7 @@ class FastFirstChampionArtifact:
     path: Path
     manifest: FastFirstChampionArtifactManifest
     request: FastFirstChampionFileRequest
+    context_corpus: FastForecastEvaluationContextCorpus
     champion: FastForecastChampionArtifact
     evaluation_reports: tuple[FastForecastEvaluationReport, ...]
 
@@ -319,6 +323,10 @@ class FastFirstChampionArtifact:
         if type(self.request) is not FastFirstChampionFileRequest:
             raise ValueError(
                 "request must be exact FastFirstChampionFileRequest"
+            )
+        if type(self.context_corpus) is not FastForecastEvaluationContextCorpus:
+            raise ValueError(
+                "context_corpus must be exact FastForecastEvaluationContextCorpus"
             )
         if type(self.champion) is not FastForecastChampionArtifact:
             raise ValueError("champion must be exact FastForecastChampionArtifact")
@@ -553,8 +561,15 @@ def run_fast_first_champion_file_request(
         database_path=database_path,
         context_path=context_path,
     )
-    context_corpus = read_fast_forecast_evaluation_context_corpus(
-        context_path
+    context_payload = context_path.read_text(encoding="utf-8")
+    if hashlib.sha256(context_payload.encode("utf-8")).hexdigest() != (
+        before.context_corpus_file_sha256
+    ):
+        raise ValueError(
+            "first champion context source changed before decode"
+        )
+    context_corpus = decode_fast_forecast_evaluation_context_corpus(
+        context_payload
     )
     bundle = build_fast_training_bundle_from_runtime_sources(
         feature_jsonl_path=feature_path,
@@ -615,6 +630,10 @@ def run_fast_first_champion_file_request(
     try:
         (staging / _REQUEST_FILE).write_text(
             request_payload,
+            encoding="utf-8",
+        )
+        (staging / _CONTEXT_FILE).write_text(
+            context_payload,
             encoding="utf-8",
         )
         write_fast_forecast_champion(
@@ -796,6 +815,7 @@ def read_fast_first_champion_artifact(
 
     expected_entries = {
         _REQUEST_FILE,
+        _CONTEXT_FILE,
         _CHAMPION_FILE,
         _MANIFEST_FILE,
         *(value.file_name for value in manifest.evaluation_reports),
@@ -806,15 +826,28 @@ def read_fast_first_champion_artifact(
         )
 
     request_path = root / _REQUEST_FILE
+    context_path = root / _CONTEXT_FILE
     champion_path = root / _CHAMPION_FILE
     if _sha256_file(request_path) != manifest.request_file_sha256:
         raise ValueError("first champion request file hash mismatch")
+    if _sha256_file(context_path) != manifest.context_corpus_file_sha256:
+        raise ValueError("first champion context file hash mismatch")
     if _sha256_file(champion_path) != manifest.champion_file_sha256:
         raise ValueError("first champion file hash mismatch")
 
     request = decode_fast_first_champion_file_request(
         request_path.read_text(encoding="utf-8")
     )
+    context_corpus = read_fast_forecast_evaluation_context_corpus(
+        context_path
+    )
+    if (
+        context_corpus.context_fingerprint_sha256
+        != manifest.context_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion context fingerprint does not match manifest"
+        )
     if (
         request.request_fingerprint_sha256
         != manifest.request_fingerprint_sha256
@@ -906,6 +939,7 @@ def read_fast_first_champion_artifact(
         path=root,
         manifest=manifest,
         request=request,
+        context_corpus=context_corpus,
         champion=champion,
         evaluation_reports=tuple(reports),
     )
