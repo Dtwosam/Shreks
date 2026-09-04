@@ -5,6 +5,7 @@ mod execution_economics;
 mod fast_baseline_batch;
 mod fast_baseline_campaign;
 mod fast_baseline_hydration;
+mod fast_deterministic_lifecycle;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
@@ -33,6 +34,12 @@ pub use fast_baseline_campaign::{
 pub use fast_baseline_hydration::{
     hydrate_fast_baseline_snapshot, FastBaselineSnapshotHydration,
     FAST_BASELINE_SNAPSHOT_HYDRATION_VERSION,
+};
+pub use fast_deterministic_lifecycle::{
+    evaluate_fast_deterministic_lifecycle_batch, FastDeterministicLifecycleBatchAssessment,
+    FastDeterministicLifecycleDecision, FastDeterministicLifecycleError,
+    FastDeterministicLifecyclePolicy, FastDeterministicLifecyclePostureInput,
+    FastDeterministicLifecycleRequest, FAST_DETERMINISTIC_LIFECYCLE_VERSION,
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
