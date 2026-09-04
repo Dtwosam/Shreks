@@ -377,8 +377,9 @@ fn hydration_source_has_no_future_execution_or_runtime_authority() {
         "RiskContext",
         "TradeIntent",
         "RuntimeMode::Live",
-        "sign",
-        "submit",
+        "Signer",
+        "sign_transaction",
+        "submit_transaction",
         "registry",
         "promote",
     ] {
