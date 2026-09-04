@@ -1,3 +1,13 @@
+from .invocation import (
+    FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
+    FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+    FastDeterministicCampaignInvocationManifest,
+    FastDeterministicCampaignInvocationSeal,
+    FastDeterministicCampaignSourceComponent,
+    FastDeterministicCampaignSourceSnapshot,
+    read_fast_deterministic_campaign_invocation_seal,
+    run_fast_deterministic_campaign_invocation_file,
+)
 from .request import (
     FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
@@ -70,6 +80,14 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME",
+    "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION",
+    "FastDeterministicCampaignInvocationManifest",
+    "FastDeterministicCampaignInvocationSeal",
+    "FastDeterministicCampaignSourceComponent",
+    "FastDeterministicCampaignSourceSnapshot",
+    "read_fast_deterministic_campaign_invocation_seal",
+    "run_fast_deterministic_campaign_invocation_file",
     "FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME",
     "FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION",
     "FastDeterministicCampaignRequest",
