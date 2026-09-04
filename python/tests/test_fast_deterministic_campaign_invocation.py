@@ -197,6 +197,41 @@ def test_source_mutation_invalidates_run_and_removes_campaign(
     )
 
 
+def test_request_file_mutation_invalidates_run_and_removes_campaign(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    (
+        request_path,
+        _,
+        _,
+        campaign_manifest,
+        campaign,
+        _,
+        _,
+    ) = _prepare(monkeypatch, tmp_path)
+
+    def mutate_request(path):
+        campaign.mkdir(parents=True)
+        request_path.write_text(
+            _canonical({"request": "changed"}),
+            encoding="utf-8",
+        )
+        return campaign_manifest
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.invocation."
+        "run_fast_deterministic_campaign_request_file",
+        mutate_request,
+    )
+
+    with pytest.raises(ValueError, match="request file changed"):
+        run_fast_deterministic_campaign_invocation_file(request_path)
+
+    assert not campaign.exists()
+    assert not Path(f"{campaign}.invocation").exists()
+
+
 def test_existing_campaign_or_seal_refuses_to_overwrite(
     monkeypatch,
     tmp_path: Path,
