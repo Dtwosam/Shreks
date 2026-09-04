@@ -1,3 +1,11 @@
+from .evidence_bundle import (
+    FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME,
+    FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION,
+    FastDeterministicComparisonEvidenceBundle,
+    FastDeterministicComparisonEvidenceBundleManifest,
+    read_fast_deterministic_comparison_evidence_bundle,
+    write_fast_deterministic_comparison_evidence_bundle,
+)
 from .comparison import (
     FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION,
     FastDeterministicCandidatePaperAuthority,
@@ -25,6 +33,12 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME",
+    "FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION",
+    "FastDeterministicComparisonEvidenceBundle",
+    "FastDeterministicComparisonEvidenceBundleManifest",
+    "read_fast_deterministic_comparison_evidence_bundle",
+    "write_fast_deterministic_comparison_evidence_bundle",
     "FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION",
     "FastDeterministicCandidatePaperAuthority",
     "FastDeterministicComparisonEvidenceRow",
