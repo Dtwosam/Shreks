@@ -9,8 +9,8 @@ import shreks_brain.fast_context_hydration as hydration_module
 from fast_chronological_fixtures import (
     HORIZON_MS,
     chronological_bundle,
-    chronological_policy,
 )
+from fast_forecast_evaluation_fixtures import chronological_policy
 from fast_forecast_fixtures import WSOL
 from shreks_brain.fast_context_hydration import (
     FAST_FORECAST_CONTEXT_HYDRATION_ARTIFACT_SCHEMA_NAME,
