@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, error::Error, fmt};
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use shreks_core::{
@@ -18,6 +18,89 @@ pub const FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME: &str =
 pub const FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION: u16 = 1;
 pub const FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY: &str =
     "fast_deterministic_lifecycle";
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FastDeterministicEntryPolicy {
+    ImpulseScalp(ImpulseScalpPolicy),
+    MicroPullback(MicroPullbackPolicy),
+    PreGraduation(PreGraduationPolicy),
+    GraduationFlow(GraduationFlowPolicy),
+}
+
+impl FastDeterministicEntryPolicy {
+    pub fn impulse_scalp(&self) -> Option<&ImpulseScalpPolicy> {
+        match self {
+            Self::ImpulseScalp(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn micro_pullback(&self) -> Option<&MicroPullbackPolicy> {
+        match self {
+            Self::MicroPullback(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn pre_graduation(&self) -> Option<&PreGraduationPolicy> {
+        match self {
+            Self::PreGraduation(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn graduation_flow(&self) -> Option<&GraduationFlowPolicy> {
+        match self {
+            Self::GraduationFlow(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub const fn baseline_kind(&self) -> FastBaselineKind {
+        match self {
+            Self::ImpulseScalp(_) => FastBaselineKind::ImpulseScalp,
+            Self::MicroPullback(_) => FastBaselineKind::MicroPullback,
+            Self::PreGraduation(_) => FastBaselineKind::PreGraduation,
+            Self::GraduationFlow(_) => FastBaselineKind::GraduationFlow,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FastDeterministicManagerPolicy {
+    WalletCohort(WalletCohortPolicy),
+    LongerRunner(LongerRunnerPolicy),
+}
+
+impl FastDeterministicManagerPolicy {
+    pub fn wallet_cohort(&self) -> Option<&WalletCohortPolicy> {
+        match self {
+            Self::WalletCohort(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub fn longer_runner(&self) -> Option<&LongerRunnerPolicy> {
+        match self {
+            Self::LongerRunner(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    pub const fn baseline_kind(&self) -> FastBaselineKind {
+        match self {
+            Self::WalletCohort(_) => FastBaselineKind::WalletCohort,
+            Self::LongerRunner(_) => FastBaselineKind::LongerRunner,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FastDeterministicCandidateMaterialized {
+    pub lifecycle_policy: FastDeterministicLifecyclePolicy,
+    pub entry_policy: FastDeterministicEntryPolicy,
+    pub manager_policy: FastDeterministicManagerPolicy,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum FastDeterministicEntryPolicyRef<'a> {
@@ -98,6 +181,150 @@ impl fmt::Display for FastDeterministicCandidateManifestError {
 }
 
 impl Error for FastDeterministicCandidateManifestError {}
+
+pub fn materialize_fast_deterministic_candidate_manifest(
+    manifest: &FastDeterministicCandidateManifestWire,
+) -> Result<FastDeterministicCandidateMaterialized, FastDeterministicCandidateManifestError> {
+    validate_sha256(
+        "candidate_fingerprint_sha256",
+        &manifest.candidate_fingerprint_sha256,
+    )?;
+    if candidate_fingerprint_sha256(manifest)? != manifest.candidate_fingerprint_sha256 {
+        return Err(FastDeterministicCandidateManifestError::FingerprintMismatch);
+    }
+    validate_manifest_semantics(manifest)?;
+
+    let entry_kind = parse_kind(&manifest.lifecycle_policy.entry_baseline_kind)?;
+    let manager_kind = parse_kind(&manifest.lifecycle_policy.manager_baseline_kind)?;
+    let lifecycle_policy = FastDeterministicLifecyclePolicy {
+        version: manifest.lifecycle_policy.version,
+        entry_baseline_kind: entry_kind,
+        manager_baseline_kind: manager_kind,
+        entry_target_exposure_fraction: manifest.lifecycle_policy.entry_target_exposure_fraction,
+        reduce_remaining_fraction: manifest.lifecycle_policy.reduce_remaining_fraction,
+    };
+
+    let entry_policy = match entry_kind {
+        FastBaselineKind::ImpulseScalp => {
+            let value: ImpulseScalpPolicyWire = decode_parameters(&manifest.entry_policy)?;
+            FastDeterministicEntryPolicy::ImpulseScalp(ImpulseScalpPolicy {
+                version: value.version,
+                signal_window_ms: value.signal_window_ms,
+                context_window_ms: value.context_window_ms,
+                min_buy_count: value.min_buy_count,
+                min_unique_buy_actors: value.min_unique_buy_actors,
+                min_count_imbalance: value.min_count_imbalance,
+                min_quote_flow_imbalance: value.min_quote_flow_imbalance,
+                min_quote_flow_velocity_per_second: value.min_quote_flow_velocity_per_second,
+                min_quote_flow_acceleration_per_second2: value.min_quote_flow_acceleration_per_second2,
+                min_velocity_expansion_ratio: value.min_velocity_expansion_ratio,
+                min_recovery_from_local_low: value.min_recovery_from_local_low,
+                max_drawdown_from_local_high: value.max_drawdown_from_local_high,
+            })
+        }
+        FastBaselineKind::MicroPullback => {
+            let value: MicroPullbackPolicyWire = decode_parameters(&manifest.entry_policy)?;
+            FastDeterministicEntryPolicy::MicroPullback(MicroPullbackPolicy {
+                version: value.version,
+                reclaim_window_ms: value.reclaim_window_ms,
+                structure_window_ms: value.structure_window_ms,
+                min_impulse_move_fraction: value.min_impulse_move_fraction,
+                min_pullback_depth_fraction: value.min_pullback_depth_fraction,
+                max_pullback_depth_fraction: value.max_pullback_depth_fraction,
+                min_reclaim_fraction: value.min_reclaim_fraction,
+                min_reclaim_buy_count: value.min_reclaim_buy_count,
+                min_reclaim_unique_buy_actors: value.min_reclaim_unique_buy_actors,
+                min_reclaim_buy_arrival_rate_per_second: value.min_reclaim_buy_arrival_rate_per_second,
+                max_reclaim_sell_arrival_rate_per_second: value.max_reclaim_sell_arrival_rate_per_second,
+                min_reclaim_count_imbalance: value.min_reclaim_count_imbalance,
+                min_reclaim_quote_flow_imbalance: value.min_reclaim_quote_flow_imbalance,
+                min_reclaim_quote_flow_velocity_per_second: value.min_reclaim_quote_flow_velocity_per_second,
+                min_reclaim_quote_flow_acceleration_per_second2: value.min_reclaim_quote_flow_acceleration_per_second2,
+            })
+        }
+        FastBaselineKind::PreGraduation => {
+            let value: PreGraduationPolicyWire = decode_parameters(&manifest.entry_policy)?;
+            FastDeterministicEntryPolicy::PreGraduation(PreGraduationPolicy {
+                version: value.version,
+                signal_window_ms: value.signal_window_ms,
+                context_window_ms: value.context_window_ms,
+                graduation_target_real_base_reserve_raw: value.graduation_target_real_base_reserve_raw,
+                maximum_pre_graduation_real_base_reserve_raw: value.maximum_pre_graduation_real_base_reserve_raw,
+                min_buy_count: value.min_buy_count,
+                min_unique_buy_actors: value.min_unique_buy_actors,
+                min_buy_arrival_rate_per_second: value.min_buy_arrival_rate_per_second,
+                min_count_imbalance: value.min_count_imbalance,
+                min_quote_flow_imbalance: value.min_quote_flow_imbalance,
+                min_quote_flow_velocity_per_second: value.min_quote_flow_velocity_per_second,
+                min_quote_flow_acceleration_per_second2: value.min_quote_flow_acceleration_per_second2,
+                min_velocity_expansion_ratio: value.min_velocity_expansion_ratio,
+                min_buy_participation_of_remaining: value.min_buy_participation_of_remaining,
+            })
+        }
+        FastBaselineKind::GraduationFlow => {
+            let value: GraduationFlowPolicyWire = decode_parameters(&manifest.entry_policy)?;
+            FastDeterministicEntryPolicy::GraduationFlow(GraduationFlowPolicy {
+                version: value.version,
+                flow_window_ms: value.flow_window_ms,
+                max_graduation_age_ms: value.max_graduation_age_ms,
+                min_pre_buy_count: value.min_pre_buy_count,
+                min_pre_quote_flow_velocity_per_second: value.min_pre_quote_flow_velocity_per_second,
+                min_post_buy_count: value.min_post_buy_count,
+                min_post_unique_buy_actors: value.min_post_unique_buy_actors,
+                min_post_buy_arrival_rate_per_second: value.min_post_buy_arrival_rate_per_second,
+                max_post_sell_arrival_rate_per_second: value.max_post_sell_arrival_rate_per_second,
+                min_post_count_imbalance: value.min_post_count_imbalance,
+                min_post_quote_flow_imbalance: value.min_post_quote_flow_imbalance,
+                min_post_quote_flow_velocity_per_second: value.min_post_quote_flow_velocity_per_second,
+                min_post_quote_flow_acceleration_per_second2: value.min_post_quote_flow_acceleration_per_second2,
+                min_post_to_pre_velocity_ratio: value.min_post_to_pre_velocity_ratio,
+            })
+        }
+        FastBaselineKind::WalletCohort | FastBaselineKind::LongerRunner => {
+            return invalid("entry policy materialization received manager baseline kind")
+        }
+    };
+
+    let manager_policy = match manager_kind {
+        FastBaselineKind::WalletCohort => {
+            let value: WalletCohortPolicyWire = decode_parameters(&manifest.manager_policy)?;
+            FastDeterministicManagerPolicy::WalletCohort(WalletCohortPolicy {
+                version: value.version,
+                min_support_wallet_count_for_ride: value.min_support_wallet_count_for_ride,
+                min_confidence_weighted_support_for_ride: value.min_confidence_weighted_support_for_ride,
+                min_independent_support_wallet_count_for_ride: value.min_independent_support_wallet_count_for_ride,
+                min_hold_horizon_wallet_weight_for_ride: value.min_hold_horizon_wallet_weight_for_ride,
+                reduce_after_median_hold_ratio: value.reduce_after_median_hold_ratio,
+                min_confidence_weighted_exit_for_reduce: value.min_confidence_weighted_exit_for_reduce,
+                min_exit_pressure_ratio_for_reduce: value.min_exit_pressure_ratio_for_reduce,
+                min_confidence_weighted_exit_for_sell: value.min_confidence_weighted_exit_for_sell,
+                min_exit_pressure_ratio_for_sell: value.min_exit_pressure_ratio_for_sell,
+                min_independent_exit_wallet_count_for_sell: value.min_independent_exit_wallet_count_for_sell,
+            })
+        }
+        FastBaselineKind::LongerRunner => {
+            let value: LongerRunnerPolicyWire = decode_parameters(&manifest.manager_policy)?;
+            FastDeterministicManagerPolicy::LongerRunner(LongerRunnerPolicy {
+                version: value.version,
+                downside_risk_weight: value.downside_risk_weight,
+                min_risk_adjusted_continuation_bps_for_hold: value.min_risk_adjusted_continuation_bps_for_hold,
+                max_risk_adjusted_continuation_bps_for_sell: value.max_risk_adjusted_continuation_bps_for_sell,
+            })
+        }
+        FastBaselineKind::ImpulseScalp
+        | FastBaselineKind::MicroPullback
+        | FastBaselineKind::PreGraduation
+        | FastBaselineKind::GraduationFlow => {
+            return invalid("manager policy materialization received entry baseline kind")
+        }
+    };
+
+    Ok(FastDeterministicCandidateMaterialized {
+        lifecycle_policy,
+        entry_policy,
+        manager_policy,
+    })
+}
 
 pub fn build_fast_deterministic_candidate_manifest(
     candidate_version: &str,
@@ -253,6 +480,116 @@ fn validate_manifest_semantics(
     validate_component_policy(&manifest.entry_policy)?;
     validate_component_policy(&manifest.manager_policy)?;
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImpulseScalpPolicyWire {
+    version: u16,
+    signal_window_ms: u64,
+    context_window_ms: u64,
+    min_buy_count: u64,
+    min_unique_buy_actors: u64,
+    min_count_imbalance: f64,
+    min_quote_flow_imbalance: f64,
+    min_quote_flow_velocity_per_second: f64,
+    min_quote_flow_acceleration_per_second2: f64,
+    min_velocity_expansion_ratio: f64,
+    min_recovery_from_local_low: f64,
+    max_drawdown_from_local_high: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MicroPullbackPolicyWire {
+    version: u16,
+    reclaim_window_ms: u64,
+    structure_window_ms: u64,
+    min_impulse_move_fraction: f64,
+    min_pullback_depth_fraction: f64,
+    max_pullback_depth_fraction: f64,
+    min_reclaim_fraction: f64,
+    min_reclaim_buy_count: u64,
+    min_reclaim_unique_buy_actors: u64,
+    min_reclaim_buy_arrival_rate_per_second: f64,
+    max_reclaim_sell_arrival_rate_per_second: f64,
+    min_reclaim_count_imbalance: f64,
+    min_reclaim_quote_flow_imbalance: f64,
+    min_reclaim_quote_flow_velocity_per_second: f64,
+    min_reclaim_quote_flow_acceleration_per_second2: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreGraduationPolicyWire {
+    version: u16,
+    signal_window_ms: u64,
+    context_window_ms: u64,
+    graduation_target_real_base_reserve_raw: u64,
+    maximum_pre_graduation_real_base_reserve_raw: u64,
+    min_buy_count: u64,
+    min_unique_buy_actors: u64,
+    min_buy_arrival_rate_per_second: f64,
+    min_count_imbalance: f64,
+    min_quote_flow_imbalance: f64,
+    min_quote_flow_velocity_per_second: f64,
+    min_quote_flow_acceleration_per_second2: f64,
+    min_velocity_expansion_ratio: f64,
+    min_buy_participation_of_remaining: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GraduationFlowPolicyWire {
+    version: u16,
+    flow_window_ms: u64,
+    max_graduation_age_ms: u64,
+    min_pre_buy_count: u64,
+    min_pre_quote_flow_velocity_per_second: f64,
+    min_post_buy_count: u64,
+    min_post_unique_buy_actors: u64,
+    min_post_buy_arrival_rate_per_second: f64,
+    max_post_sell_arrival_rate_per_second: f64,
+    min_post_count_imbalance: f64,
+    min_post_quote_flow_imbalance: f64,
+    min_post_quote_flow_velocity_per_second: f64,
+    min_post_quote_flow_acceleration_per_second2: f64,
+    min_post_to_pre_velocity_ratio: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WalletCohortPolicyWire {
+    version: u16,
+    min_support_wallet_count_for_ride: u64,
+    min_confidence_weighted_support_for_ride: f64,
+    min_independent_support_wallet_count_for_ride: u64,
+    min_hold_horizon_wallet_weight_for_ride: f64,
+    reduce_after_median_hold_ratio: f64,
+    min_confidence_weighted_exit_for_reduce: f64,
+    min_exit_pressure_ratio_for_reduce: f64,
+    min_confidence_weighted_exit_for_sell: f64,
+    min_exit_pressure_ratio_for_sell: f64,
+    min_independent_exit_wallet_count_for_sell: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LongerRunnerPolicyWire {
+    version: u16,
+    downside_risk_weight: f64,
+    min_risk_adjusted_continuation_bps_for_hold: f64,
+    max_risk_adjusted_continuation_bps_for_sell: f64,
+}
+
+fn decode_parameters<T: DeserializeOwned>(
+    policy: &FastDeterministicComponentPolicyWire,
+) -> Result<T, FastDeterministicCandidateManifestError> {
+    serde_json::from_value(policy.parameters.clone()).map_err(|error| {
+        FastDeterministicCandidateManifestError::Invalid(format!(
+            "component policy parameter decode failed: {error}"
+        ))
+    })
 }
 
 fn entry_policy_wire(
