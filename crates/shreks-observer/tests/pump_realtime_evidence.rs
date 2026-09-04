@@ -474,3 +474,41 @@ async fn session_writer_process_restart_never_resumes_previous_coverage_row() {
 
     cleanup_dir(&root);
 }
+
+
+#[tokio::test]
+async fn session_writer_rejects_process_session_sequence_regression() {
+    let root = unique_test_dir("coverage-sequence-regression");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(2);
+
+    sender
+        .send(BoundedPumpRealtimeSessionNotification {
+            session_sequence: 2,
+            notification: coverage_notification("sequence-new", 500),
+        })
+        .await
+        .unwrap();
+    sender
+        .send(BoundedPumpRealtimeSessionNotification {
+            session_sequence: 1,
+            notification: coverage_notification("sequence-old", 501),
+        })
+        .await
+        .unwrap();
+    drop(sender);
+
+    let error = Observer::run_pump_realtime_session_writer(writer_db, receiver)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("session sequence moved backward"));
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let sessions = db.fast_realtime_coverage_sessions().unwrap();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].process_session_sequence, 2);
+    assert_eq!(sessions[0].last_notification_signature, "sequence-new");
+
+    cleanup_dir(&root);
+}
