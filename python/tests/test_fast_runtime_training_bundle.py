@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from shreks_brain.research.counterfactual_parquet import (
     build_counterfactual_dataset,
     read_counterfactual_parquet,
@@ -207,14 +209,14 @@ def test_component_builder_rejects_tampered_feature_or_future_path_fingerprint(
 
     from dataclasses import replace
 
-    with __import__("pytest").raises(ValueError, match="feature.*fingerprint"):
+    with pytest.raises(ValueError, match="feature.*fingerprint"):
         build_fast_training_bundle_from_components(
             features=replace(features, logical_fingerprint_sha256="0" * 64),
             future_path_labels=future_path,
             counterfactual_outcome_sets=outcome_sets,
         )
 
-    with __import__("pytest").raises(ValueError, match="future.*fingerprint"):
+    with pytest.raises(ValueError, match="future.*fingerprint"):
         build_fast_training_bundle_from_components(
             features=features,
             future_path_labels=replace(
