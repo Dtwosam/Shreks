@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import math
 
 from shreks_brain.evaluation import (
@@ -8,14 +9,19 @@ from shreks_brain.evaluation import (
     evaluate_trading_performance,
 )
 from shreks_brain.fast_campaign import (
-    FastCampaignDecisionResult,
     FastCampaignDecisionResults,
     fast_campaign_result_to_paper_assessment,
+)
+from shreks_brain.fast_deterministic_lifecycle import (
+    FastDeterministicCandidateManifest,
+    FastDeterministicLifecycleResults,
+    fast_deterministic_lifecycle_to_paper_assessment,
 )
 from shreks_brain.fast_paper import (
     FAST_PAPER_BUY_VERSION,
     FAST_PAPER_POSITION_ACTION_VERSION,
     FastPaperAction,
+    FastPaperActionAssessment,
     FastPaperBuyApproval,
     FastPaperBuyOutcome,
     FastPaperBuyQuote,
@@ -61,6 +67,18 @@ _REL_TOL = 1e-12
 _ABS_TOL = 1e-9
 
 
+@dataclass(frozen=True, slots=True)
+class _FastCampaignPaperDecision:
+    source_event_id: str
+    market_key: str
+    source_sequence: int
+    as_of_unix_ms: int
+    action: str
+    current_exposure_fraction: float
+    target_exposure_fraction: float
+    assessment: FastPaperActionAssessment
+
+
 def run_fast_campaign_paper_candidate(
     *,
     identity: FastCampaignPaperCandidateIdentity,
@@ -78,6 +96,127 @@ def run_fast_campaign_paper_candidate(
         )
     if type(decisions) is not FastCampaignDecisionResults:
         raise ValueError("decisions must be exact FastCampaignDecisionResults")
+
+    common_decisions = tuple(
+        _FastCampaignPaperDecision(
+            source_event_id=decision.source_event_id,
+            market_key=decision.market_key,
+            source_sequence=decision.source_sequence,
+            as_of_unix_ms=decision.as_of_unix_ms,
+            action=decision.action,
+            current_exposure_fraction=decision.current_exposure_fraction,
+            target_exposure_fraction=decision.target_exposure_fraction,
+            assessment=fast_campaign_result_to_paper_assessment(
+                decision,
+                assessment_version=identity.assessment_version,
+                strategy_family=identity.strategy_family,
+                strategy_version=identity.strategy_version,
+            ),
+        )
+        for decision in decisions.decisions
+    )
+    return _run_fast_campaign_paper_decision_sequence(
+        identity=identity,
+        decisions=common_decisions,
+        evidence=evidence,
+        starting_ledger=starting_ledger,
+        fill_policy=fill_policy,
+        risk_policy=risk_policy,
+        position_policy=position_policy,
+        evaluation_policy=evaluation_policy,
+    )
+
+
+def run_fast_deterministic_lifecycle_paper_candidate(
+    *,
+    manifest: FastDeterministicCandidateManifest,
+    paper_run_id: str,
+    assessment_version: str,
+    decisions: FastDeterministicLifecycleResults,
+    evidence: tuple[FastCampaignPaperDecisionEvidence, ...],
+    starting_ledger: PaperLedger,
+    fill_policy: PaperFillPolicy,
+    risk_policy: RiskPolicy,
+    position_policy: FastPaperPositionActionPolicy,
+    evaluation_policy: TradingEvaluationPolicy,
+) -> FastCampaignPaperRunResult:
+    if type(manifest) is not FastDeterministicCandidateManifest:
+        raise ValueError(
+            "manifest must be exact FastDeterministicCandidateManifest"
+        )
+    if type(decisions) is not FastDeterministicLifecycleResults:
+        raise ValueError(
+            "decisions must be exact FastDeterministicLifecycleResults"
+        )
+    if decisions.policy != manifest.lifecycle_policy:
+        raise ValueError(
+            "deterministic lifecycle decision policy does not match candidate manifest"
+        )
+
+    identity = FastCampaignPaperCandidateIdentity(
+        version=FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
+        paper_run_id=paper_run_id,
+        candidate_version=manifest.candidate_version,
+        candidate_fingerprint_sha256=manifest.candidate_fingerprint_sha256,
+        strategy_family=manifest.strategy_family,
+        strategy_version=manifest.strategy_version,
+        assessment_version=assessment_version,
+    )
+    common_decisions = tuple(
+        _FastCampaignPaperDecision(
+            source_event_id=decision.source_event_id,
+            market_key=decision.market_key,
+            source_sequence=decision.source_sequence,
+            as_of_unix_ms=decision.as_of_unix_ms,
+            action=decision.action,
+            current_exposure_fraction=(
+                0.0
+                if decision.current_exposure_fraction is None
+                else decision.current_exposure_fraction
+            ),
+            target_exposure_fraction=decision.target_exposure_fraction,
+            assessment=fast_deterministic_lifecycle_to_paper_assessment(
+                decision,
+                assessment_version=identity.assessment_version,
+                strategy_family=identity.strategy_family,
+                strategy_version=identity.strategy_version,
+            ),
+        )
+        for decision in decisions.decisions
+    )
+    return _run_fast_campaign_paper_decision_sequence(
+        identity=identity,
+        decisions=common_decisions,
+        evidence=evidence,
+        starting_ledger=starting_ledger,
+        fill_policy=fill_policy,
+        risk_policy=risk_policy,
+        position_policy=position_policy,
+        evaluation_policy=evaluation_policy,
+    )
+
+
+def _run_fast_campaign_paper_decision_sequence(
+    *,
+    identity: FastCampaignPaperCandidateIdentity,
+    decisions: tuple[_FastCampaignPaperDecision, ...],
+    evidence: tuple[FastCampaignPaperDecisionEvidence, ...],
+    starting_ledger: PaperLedger,
+    fill_policy: PaperFillPolicy,
+    risk_policy: RiskPolicy,
+    position_policy: FastPaperPositionActionPolicy,
+    evaluation_policy: TradingEvaluationPolicy,
+) -> FastCampaignPaperRunResult:
+    if type(identity) is not FastCampaignPaperCandidateIdentity:
+        raise ValueError(
+            "identity must be exact FastCampaignPaperCandidateIdentity"
+        )
+    if not isinstance(decisions, tuple) or not all(
+        type(value) is _FastCampaignPaperDecision for value in decisions
+    ):
+        raise ValueError(
+            "decisions must be a tuple of exact shared campaign PAPER decision values"
+        )
     if not isinstance(evidence, tuple) or not all(
         type(value) is FastCampaignPaperDecisionEvidence for value in evidence
     ):
@@ -114,14 +253,14 @@ def run_fast_campaign_paper_candidate(
         raise ValueError(
             "campaign PAPER executor requires a starting ledger with no OPEN positions"
         )
-    if len(decisions.decisions) != len(evidence):
+    if len(decisions) != len(evidence):
         raise ValueError(
             "campaign decision results and execution evidence lengths must match"
         )
-    if not decisions.decisions:
+    if not decisions:
         raise ValueError("campaign decision results cannot be empty")
 
-    _validate_population_alignment(decisions.decisions, evidence)
+    _validate_population_alignment(decisions, evidence)
 
     loop_state = create_fast_paper_loop_state()
     ledger = starting_ledger
@@ -135,17 +274,12 @@ def run_fast_campaign_paper_candidate(
     market_exposures: dict[str, float] = {}
     decision_targets = {
         decision.source_event_id: decision.target_exposure_fraction
-        for decision in decisions.decisions
+        for decision in decisions
     }
 
-    for decision, point in zip(decisions.decisions, evidence):
+    for decision, point in zip(decisions, evidence):
         _validate_decision_shape(decision)
-        assessment = fast_campaign_result_to_paper_assessment(
-            decision,
-            assessment_version=identity.assessment_version,
-            strategy_family=identity.strategy_family,
-            strategy_version=identity.strategy_version,
-        )
+        assessment = decision.assessment
         event_result = run_fast_paper_event(
             loop_state,
             FastPaperMaterialUpdate(
@@ -359,7 +493,7 @@ def run_fast_campaign_paper_candidate(
 
 
 def _validate_population_alignment(
-    decisions: tuple[FastCampaignDecisionResult, ...],
+    decisions: tuple[_FastCampaignPaperDecision, ...],
     evidence: tuple[FastCampaignPaperDecisionEvidence, ...],
 ) -> None:
     seen: set[str] = set()
@@ -398,7 +532,7 @@ def _validate_population_alignment(
         )
 
 
-def _validate_decision_shape(decision: FastCampaignDecisionResult) -> None:
+def _validate_decision_shape(decision: _FastCampaignPaperDecision) -> None:
     current = decision.current_exposure_fraction
     target = decision.target_exposure_fraction
     _require_exposure("current_exposure_fraction", current)
@@ -426,7 +560,7 @@ def _validate_decision_shape(decision: FastCampaignDecisionResult) -> None:
 
 
 def _validate_posture(
-    decision: FastCampaignDecisionResult,
+    decision: _FastCampaignPaperDecision,
     *,
     tracked_position_id: str | None,
     tracked_exposure: float | None,
@@ -450,7 +584,7 @@ def _validate_posture(
 
 
 def _validate_evidence_for_action(
-    decision: FastCampaignDecisionResult,
+    decision: _FastCampaignPaperDecision,
     point: FastCampaignPaperDecisionEvidence,
 ) -> None:
     if decision.action == "SKIP":
@@ -494,7 +628,7 @@ def _validate_evidence_for_action(
 
 
 def _position_exit_quantity(
-    decision: FastCampaignDecisionResult,
+    decision: _FastCampaignPaperDecision,
     position: PaperPosition,
     tracked_exposure: float,
 ) -> float | None:
