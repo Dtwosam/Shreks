@@ -182,7 +182,7 @@ def _risk_policy() -> RiskPolicy:
         version="campaign-driver-risk-v1",
         required_decision_policy_version="assessment-v1",
         required_feature_schema_version="state-v1",
-        target_position_notional_usd=100.0,
+        target_position_notional_usd=500.0,
         max_notional_per_position_usd=500.0,
         max_capital_fraction_per_position=1.0,
         max_simultaneous_positions=5,
