@@ -3,6 +3,7 @@ from .evidence_bundle import (
     FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION,
     FastDeterministicComparisonEvidenceBundle,
     FastDeterministicComparisonEvidenceBundleManifest,
+    FastDeterministicComparisonEvidenceProvenance,
     read_fast_deterministic_comparison_evidence_bundle,
     write_fast_deterministic_comparison_evidence_bundle,
 )
@@ -37,6 +38,7 @@ __all__ = (
     "FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION",
     "FastDeterministicComparisonEvidenceBundle",
     "FastDeterministicComparisonEvidenceBundleManifest",
+    "FastDeterministicComparisonEvidenceProvenance",
     "read_fast_deterministic_comparison_evidence_bundle",
     "write_fast_deterministic_comparison_evidence_bundle",
     "FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION",
