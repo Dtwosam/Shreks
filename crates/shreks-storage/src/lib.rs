@@ -10,6 +10,7 @@ mod fast_deterministic_comparison_catalog;
 mod fast_deterministic_lifecycle;
 mod fast_deterministic_lifecycle_wire;
 mod fast_deterministic_row;
+mod fast_entry_authority;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
@@ -75,6 +76,18 @@ pub use fast_deterministic_lifecycle_wire::{
     FastDeterministicLifecycleResultsWire, FastDeterministicLifecycleWireError,
     FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME,
     FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
+};
+pub use fast_entry_authority::{
+    decode_fast_deterministic_entry_authority_request_json,
+    derive_fast_deterministic_entry_authority,
+    encode_fast_deterministic_entry_authority_result_json,
+    FastDeterministicEntryAuthorityError,
+    FastDeterministicEntryAuthorityRequestWire,
+    FastDeterministicEntryAuthorityResultWire,
+    FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_NAME,
+    FAST_DETERMINISTIC_ENTRY_AUTHORITY_REQUEST_SCHEMA_VERSION,
+    FAST_DETERMINISTIC_ENTRY_AUTHORITY_RESULT_SCHEMA_NAME,
+    FAST_DETERMINISTIC_ENTRY_AUTHORITY_RESULT_SCHEMA_VERSION,
 };
 pub use fast_deterministic_row::{
     decode_fast_deterministic_row_request_json, encode_fast_deterministic_row_result_json,
