@@ -6,6 +6,7 @@ mod fast_baseline_batch;
 mod fast_baseline_campaign;
 mod fast_baseline_hydration;
 mod fast_deterministic_lifecycle;
+mod fast_deterministic_lifecycle_wire;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
@@ -40,6 +41,14 @@ pub use fast_deterministic_lifecycle::{
     FastDeterministicLifecycleDecision, FastDeterministicLifecycleError,
     FastDeterministicLifecyclePolicy, FastDeterministicLifecyclePostureInput,
     FastDeterministicLifecycleRequest, FAST_DETERMINISTIC_LIFECYCLE_VERSION,
+};
+pub use fast_deterministic_lifecycle_wire::{
+    decode_fast_deterministic_lifecycle_results_json,
+    encode_fast_deterministic_lifecycle_results_json, fast_deterministic_lifecycle_to_wire,
+    FastDeterministicLifecycleDecisionWire, FastDeterministicLifecyclePolicyWire,
+    FastDeterministicLifecycleResultsWire, FastDeterministicLifecycleWireError,
+    FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME,
+    FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
