@@ -1,3 +1,10 @@
+from .policy_codec import (
+    FAST_POLICY_SUPERIORITY_POLICY_SCHEMA_NAME,
+    FAST_POLICY_SUPERIORITY_POLICY_SCHEMA_VERSION,
+    decode_fast_policy_superiority_policy,
+    encode_fast_policy_superiority_policy,
+    fast_policy_superiority_policy_fingerprint_sha256,
+)
 from .codec import (
     FAST_POLICY_RUN_EVIDENCE_BATCH_SCHEMA_NAME,
     FAST_POLICY_RUN_EVIDENCE_BATCH_SCHEMA_VERSION,
@@ -25,6 +32,11 @@ from .models import (
 
 
 __all__ = (
+    "FAST_POLICY_SUPERIORITY_POLICY_SCHEMA_NAME",
+    "FAST_POLICY_SUPERIORITY_POLICY_SCHEMA_VERSION",
+    "encode_fast_policy_superiority_policy",
+    "decode_fast_policy_superiority_policy",
+    "fast_policy_superiority_policy_fingerprint_sha256",
     "FAST_POLICY_RUN_EVIDENCE_BATCH_SCHEMA_NAME",
     "FAST_POLICY_RUN_EVIDENCE_BATCH_SCHEMA_VERSION",
     "encode_fast_policy_run_evidence_batch",
