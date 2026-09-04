@@ -65,8 +65,10 @@ def _install_component_fakes(
 ):
     feature_bytes = (proof_source / "features.jsonl").read_bytes()
     feature_sha = _sha(feature_bytes)
-    feature_logical = "1" * 64
+    bundle = _bundle_for_source(feature_sha)
+    feature_logical = bundle.features.logical_fingerprint_sha256
     proof_manifest = SimpleNamespace(
+        release_source_sha="1eba5696ed1dc5921c55b5f32e4c0d559cb24d83",
         artifact_fingerprint_sha256="2" * 64,
         feature_jsonl_sha256=feature_sha,
         feature_logical_fingerprint_sha256=feature_logical,
@@ -90,7 +92,6 @@ def _install_component_fakes(
         _read_workspace,
     )
 
-    bundle = _bundle_for_source(feature_sha)
     monkeypatch.setattr(
         preparation_module,
         "build_fast_training_bundle_from_runtime_sources",
