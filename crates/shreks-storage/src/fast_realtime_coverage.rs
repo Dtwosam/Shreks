@@ -100,11 +100,6 @@ impl ShreksDb {
                 "realtime coverage notification time moved backward".to_owned(),
             ));
         }
-        if slot < existing.last_notification_slot {
-            return Err(StorageError::InvalidData(
-                "realtime coverage notification slot moved backward".to_owned(),
-            ));
-        }
         if existing.notification_count == u64::MAX {
             return Err(StorageError::InvalidData(
                 "realtime coverage notification count overflowed".to_owned(),
@@ -254,7 +249,6 @@ fn validate_decoded_session(raw: RawSession) -> Result<FastRealtimeCoverageSessi
     )?;
     if session.last_notification_observed_at_unix_ms
         < session.first_notification_observed_at_unix_ms
-        || session.last_notification_slot < session.first_notification_slot
         || session.notification_count == 0
     {
         return Err(StorageError::InvalidData(
