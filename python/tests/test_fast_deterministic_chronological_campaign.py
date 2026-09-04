@@ -343,6 +343,13 @@ with Path({str(posture_log)!r}).open("a", encoding="utf-8") as handle:
 manifest = request["manifest"]
 record = request["record"]
 policy = manifest["lifecycle_policy"]
+policy_wire = {
+    "version": policy["version"],
+    "entry_baseline_kind": policy["entry_baseline_kind"],
+    "manager_baseline_kind": policy["manager_baseline_kind"],
+    "entry_target_exposure_fraction": policy["entry_target_exposure_fraction"],
+    "reduce_remaining_fraction": policy["reduce_remaining_fraction"],
+}
 if posture == "FLAT":
     action = "BUY"
     current = None
@@ -371,7 +378,7 @@ result = {{
     "schema_version": 1,
     "candidate_version": manifest["candidate_version"],
     "candidate_fingerprint_sha256": manifest["candidate_fingerprint_sha256"],
-    "lifecycle_policy": policy,
+    "lifecycle_policy": policy_wire,
     "decision": decision,
     "result_fingerprint_sha256": "",
 }}
