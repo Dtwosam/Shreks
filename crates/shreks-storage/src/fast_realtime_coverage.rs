@@ -81,6 +81,20 @@ impl ShreksDb {
             observed_at_unix_ms,
             signature,
         )?;
+        let latest_session_id: Option<i64> = self.connection.query_row(
+            "SELECT MAX(session_id) FROM fast_realtime_coverage_sessions",
+            [],
+            |row| row.get(0),
+        )?;
+        let latest_session_id = latest_session_id
+            .map(|value| i64_to_u64(value, "latest coverage session id"))
+            .transpose()?;
+        if latest_session_id != Some(session_id) {
+            return Err(StorageError::InvalidData(
+                "historical realtime coverage sessions are immutable".to_owned(),
+            ));
+        }
+
         let existing = self
             .fast_realtime_coverage_session(session_id)?
             .ok_or_else(|| {
