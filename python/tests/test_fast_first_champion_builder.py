@@ -15,7 +15,7 @@ from fast_chronological_fixtures import (
     chronological_bundle,
     forecast_request,
 )
-from shreks_brain.fast_champion import (
+from shreks_brain.fast_first_champion import (
     FAST_FIRST_CHAMPION_BUILDER_VERSION,
     FastFirstChampionBuildResult,
     build_fast_first_champion,
@@ -175,8 +175,8 @@ def test_first_champion_builder_has_no_heavy_dependency_or_trading_authority() -
         Path(__file__).resolve().parents[1]
         / "src"
         / "shreks_brain"
-        / "fast_champion"
-        / "first_builder.py"
+        / "fast_first_champion"
+        / "builder.py"
     ).read_text(encoding="utf-8")
 
     for forbidden in (
