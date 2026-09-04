@@ -904,23 +904,27 @@ def _candidate_authority_from_wire(
         raw,
         FastDeterministicCandidatePaperAuthority,
     )
-    entry_raw = _require_dict(raw["entry_authority"], "entry authority")
-    _require_dataclass_keys(
-        "entry authority",
-        entry_raw,
-        FastCampaignPaperEntryAuthority,
-    )
-    try:
-        entry = FastCampaignPaperEntryAuthority(**entry_raw)
-        return FastDeterministicCandidatePaperAuthority(
-            candidate_version=_require_string(
-                raw["candidate_version"],
-                "candidate_version",
-            ),
-            entry_authority=entry,
+    entry_value = raw["entry_authority"]
+    if entry_value is None:
+        entry = None
+    else:
+        entry_raw = _require_dict(entry_value, "entry authority")
+        _require_dataclass_keys(
+            "entry authority",
+            entry_raw,
+            FastCampaignPaperEntryAuthority,
         )
-    except TypeError as exc:
-        raise ValueError("candidate PAPER authority is invalid") from exc
+        try:
+            entry = FastCampaignPaperEntryAuthority(**entry_raw)
+        except TypeError as exc:
+            raise ValueError("candidate PAPER authority is invalid") from exc
+    return FastDeterministicCandidatePaperAuthority(
+        candidate_version=_require_string(
+            raw["candidate_version"],
+            "candidate_version",
+        ),
+        entry_authority=entry,
+    )
 
 
 def _optional_dataclass_from_wire(
