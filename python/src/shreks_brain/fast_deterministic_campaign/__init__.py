@@ -1,3 +1,7 @@
+from .learned import (
+    FastLearnedCampaignRow,
+    run_fast_learned_chronological_campaign,
+)
 from .invocation import (
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
@@ -75,11 +79,14 @@ from .risk_context import (
 )
 from .paper_evidence import (
     FastDeterministicCampaignPaperEvidence,
+    materialize_fast_campaign_paper_evidence,
     materialize_fast_deterministic_campaign_paper_evidence,
 )
 
 
 __all__ = (
+    "FastLearnedCampaignRow",
+    "run_fast_learned_chronological_campaign",
     "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME",
     "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION",
     "FastDeterministicCampaignInvocationManifest",
@@ -134,6 +141,7 @@ __all__ = (
     "FastDeterministicCandidateMatrixResult",
     "FastDeterministicCampaignPaperEvidence",
     "FastDeterministicCampaignRow",
+    "materialize_fast_campaign_paper_evidence",
     "materialize_fast_deterministic_campaign_paper_evidence",
     "run_fast_deterministic_candidate_matrix",
     "run_fast_deterministic_chronological_campaign",
