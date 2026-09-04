@@ -7,7 +7,10 @@ import math
 from pathlib import Path
 
 from shreks_brain.evaluation import TradingEvaluationPolicy
-from shreks_brain.fast_champion import read_fast_forecast_champion
+from shreks_brain.fast_champion import (
+    FastForecastChampionArtifact,
+    read_fast_forecast_champion,
+)
 from shreks_brain.fast_campaign import (
     FastCampaignActionConstraints,
     FastCampaignContinuousActionPolicy,
@@ -21,6 +24,7 @@ from shreks_brain.fast_campaign_offline import (
     evaluate_fast_campaign_decision_batch_offline,
 )
 from shreks_brain.fast_campaign_paper import (
+    FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
     FastCampaignPaperCandidateIdentity,
     FastCampaignPaperRunResult,
     run_fast_campaign_paper_candidate,
@@ -120,7 +124,7 @@ def build_fast_learned_campaign_identity(
         assessment_version=assessment_version,
     )
     return FastCampaignPaperCandidateIdentity(
-        version="fl9-campaign-paper-v1",
+        version=FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
         paper_run_id=paper_run_id,
         candidate_version=candidate_version,
         candidate_fingerprint_sha256=fingerprint,
@@ -268,7 +272,7 @@ def _preflight(
     risk_policy: RiskPolicy,
     position_policy: FastPaperPositionActionPolicy,
     evaluation_policy: TradingEvaluationPolicy,
-) -> tuple[Path, Path, object]:
+) -> tuple[Path, Path, FastForecastChampionArtifact]:
     binary = _source_file(
         decision_binary_path,
         "decision_binary_path",
@@ -407,7 +411,7 @@ def _preflight(
 
 def _require_champion_alignment(
     *,
-    champion_artifact: object,
+    champion_artifact: FastForecastChampionArtifact,
     results: FastCampaignDecisionResults,
 ) -> None:
     if (
