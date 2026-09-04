@@ -36,7 +36,10 @@ from .comparison import (
 from .evidence_bundle import (
     FastDeterministicComparisonEvidenceProvenance,
 )
-from .observer_probe import load_fast_observer_directional_probe
+from .observer_probe import (
+    FastObserverDirectionalProbeEvidence,
+    load_fast_observer_directional_probe,
+)
 from .risk_context import FastDeterministicCampaignRiskEnvironment
 
 
@@ -248,6 +251,12 @@ def hydrate_fast_deterministic_comparison_evidence(
         )
 
         execution = _shared_entry_execution(source, index=index)
+        _validate_execution_probe_alignment(
+            source,
+            execution,
+            probe,
+            index=index,
+        )
         _validate_execution_provenance(source, execution, index=index)
 
         entry_authority = (
@@ -347,6 +356,47 @@ def _shared_entry_execution(
             f"comparison hydration entry families must share exact execution economics at row {index}"
         )
     return first
+
+
+def _validate_execution_probe_alignment(
+    source: FastDeterministicComparisonHydrationInput,
+    execution: FastOfflineEntryExecution | None,
+    probe: FastObserverDirectionalProbeEvidence,
+    *,
+    index: int,
+) -> None:
+    if execution is None:
+        return
+    if probe.intended_base_quantity is None:
+        raise ValueError(
+            f"comparison hydration execution exists without executable ENTRY probe at row {index}"
+        )
+    if probe.exit_capacity_base is None:
+        raise ValueError(
+            f"comparison hydration execution exists without executable EXIT capacity probe at row {index}"
+        )
+    if not math.isclose(
+        execution.trade.base_quantity,
+        probe.intended_base_quantity,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            f"comparison hydration execution base quantity does not match observer probe size at row {index}"
+        )
+    if not math.isclose(
+        execution.trade.exit_capacity_base,
+        probe.exit_capacity_base,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            f"comparison hydration execution exit capacity does not match observer probe at row {index}"
+        )
+    if source.exit_capacity_source_version != probe.exit_quote_source_version:
+        raise ValueError(
+            f"comparison hydration exit capacity provenance does not match observer EXIT probe at row {index}"
+        )
 
 
 def _validate_execution_provenance(
