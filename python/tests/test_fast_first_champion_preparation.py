@@ -122,6 +122,7 @@ def _install_component_fakes(
         wal_sha = _sha(wal_path.read_bytes()) if wal_path.is_file() else None
         manifest = SimpleNamespace(
             validation_policy=validation_policy,
+            validation_policy_fingerprint_sha256="a" * 64,
             horizon_ms=horizon_ms,
             training_bundle_fingerprint_sha256=(
                 bundle.manifest.bundle_fingerprint_sha256
@@ -196,6 +197,11 @@ def _install_component_fakes(
             champion=SimpleNamespace(
                 champion_version=request.champion_version,
                 champion_fingerprint_sha256="8" * 64,
+                selection=SimpleNamespace(
+                    decision_reference=request.decision_reference,
+                    decided_at_unix_ms=request.decided_at_unix_ms,
+                    reason=request.reason,
+                ),
             ),
             context_corpus=SimpleNamespace(
                 context_fingerprint_sha256="6" * 64
