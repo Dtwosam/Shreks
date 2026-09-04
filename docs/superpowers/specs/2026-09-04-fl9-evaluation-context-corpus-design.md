@@ -92,12 +92,13 @@ artifact.
 
 ## Float encoding
 
-Optional liquidity/cost values are encoded as either:
+Optional liquidity/cost values preserve the exact numeric scalar type already admitted by FL8.4:
 
-- JSON `null`; or
-- an exact tagged object `{"$float":"<float.hex()>"}`.
+- JSON `null`;
+- JSON integer when the supplied context contains an integer scalar; or
+- an exact tagged object `{"$float":"<float.hex()>"}` for a Python float.
 
-Raw JSON floats are rejected.
+Raw JSON floats are rejected. Integer preservation matters because the sealed FL8.4 fingerprint canonicalizer distinguishes integer and float scalar types.
 
 Non-finite values are rejected both at JSON parsing and tagged-float decode.
 
