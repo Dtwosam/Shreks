@@ -64,10 +64,12 @@ class FastDeterministicComparisonEvidenceRow:
     longer_runner_evidence: FastOfflineLongerRunnerEvidence
     state_version: str
     evaluated_at_unix_ms: int
-    quote: FastCampaignPaperQuoteEvidence
+    quote: FastCampaignPaperQuoteEvidence | None
     market_regime: MarketRegime
     risk_environment: FastDeterministicCampaignRiskEnvironment
     candidate_authorities: tuple[FastDeterministicCandidatePaperAuthority, ...]
+    entry_quote: FastCampaignPaperQuoteEvidence | None = None
+    exit_quote: FastCampaignPaperQuoteEvidence | None = None
 
     def __post_init__(self) -> None:
         exact = (
@@ -78,7 +80,6 @@ class FastDeterministicComparisonEvidenceRow:
             ("graduation_flow_evidence", FastOfflineGraduationFlowEvidence),
             ("wallet_cohort_evidence", FastOfflineWalletCohortEvidence),
             ("longer_runner_evidence", FastOfflineLongerRunnerEvidence),
-            ("quote", FastCampaignPaperQuoteEvidence),
             ("market_regime", MarketRegime),
             (
                 "risk_environment",
@@ -97,19 +98,48 @@ class FastDeterministicComparisonEvidenceRow:
             raise ValueError(
                 "comparison evidence evaluation cannot precede FL8.1 decision"
             )
-        if (
-            self.quote.mint != self.record.mint
-            or self.quote.quote_mint != self.record.quote_mint
-        ):
-            raise ValueError("comparison quote attribution does not match FL8.1 row")
-        if not (
-            self.record.decision_observed_at_unix_ms
-            <= self.quote.observed_at_unix_ms
-            <= self.evaluated_at_unix_ms
+        for name in ("quote", "entry_quote", "exit_quote"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not FastCampaignPaperQuoteEvidence:
+                raise ValueError(
+                    f"{name} must be exact FastCampaignPaperQuoteEvidence or None"
+                )
+        has_legacy_quote = self.quote is not None
+        has_directional_quote = (
+            self.entry_quote is not None or self.exit_quote is not None
+        )
+        if has_legacy_quote and has_directional_quote:
+            raise ValueError(
+                "comparison evidence legacy quote and directional quotes are mutually exclusive"
+            )
+        if not has_legacy_quote and not has_directional_quote:
+            raise ValueError("comparison evidence requires explicit PAPER quote evidence")
+        if has_directional_quote and (
+            self.entry_quote is None or self.exit_quote is None
         ):
             raise ValueError(
-                "comparison quote must be contemporaneous with decision/evaluation"
+                "comparison directional quote mode requires both entry and exit quotes"
             )
+
+        quotes = (
+            (self.quote,)
+            if self.quote is not None
+            else (self.entry_quote, self.exit_quote)
+        )
+        for value in quotes:
+            assert value is not None
+            if value.mint != self.record.mint or value.quote_mint != self.record.quote_mint:
+                raise ValueError(
+                    "comparison quote attribution does not match FL8.1 row"
+                )
+            if not (
+                self.record.decision_observed_at_unix_ms
+                <= value.observed_at_unix_ms
+                <= self.evaluated_at_unix_ms
+            ):
+                raise ValueError(
+                    "comparison quote must be contemporaneous with decision/evaluation"
+                )
         if not (
             self.record.decision_observed_at_unix_ms
             <= self.risk_environment.market_observed_at_unix_ms
@@ -319,6 +349,8 @@ def _campaign_row(
             entry_authority=entry_authority,
             market_regime=source.market_regime,
             risk_environment=source.risk_environment,
+            entry_quote=source.entry_quote,
+            exit_quote=source.exit_quote,
         ),
     )
 

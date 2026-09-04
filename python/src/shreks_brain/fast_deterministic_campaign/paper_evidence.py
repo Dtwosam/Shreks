@@ -26,6 +26,8 @@ class FastDeterministicCampaignPaperEvidence:
     entry_authority: FastCampaignPaperEntryAuthority | None
     market_regime: MarketRegime | None
     risk_environment: FastDeterministicCampaignRiskEnvironment | None = None
+    entry_quote: FastCampaignPaperQuoteEvidence | None = None
+    exit_quote: FastCampaignPaperQuoteEvidence | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty_string("source_event_id", self.source_event_id)
@@ -34,9 +36,17 @@ class FastDeterministicCampaignPaperEvidence:
             "evaluated_at_unix_ms",
             self.evaluated_at_unix_ms,
         )
-        if self.quote is not None and type(self.quote) is not FastCampaignPaperQuoteEvidence:
+        for name in ("quote", "entry_quote", "exit_quote"):
+            value = getattr(self, name)
+            if value is not None and type(value) is not FastCampaignPaperQuoteEvidence:
+                raise ValueError(
+                    f"{name} must be exact FastCampaignPaperQuoteEvidence or None"
+                )
+        if self.quote is not None and (
+            self.entry_quote is not None or self.exit_quote is not None
+        ):
             raise ValueError(
-                "quote must be exact FastCampaignPaperQuoteEvidence or None"
+                "legacy quote and directional entry/exit quotes are mutually exclusive"
             )
         if self.risk_context is not None and type(self.risk_context) is not RiskContext:
             raise ValueError(
@@ -96,7 +106,7 @@ def materialize_fast_deterministic_campaign_paper_evidence(
     if decision.action == "SKIP":
         return _point(evidence)
 
-    quote = evidence.quote
+    quote = _quote_for_action(evidence, decision.action)
     if quote is None:
         raise ValueError(
             f"{decision.action} requires explicit campaign quote evidence"
@@ -126,6 +136,19 @@ def materialize_fast_deterministic_campaign_paper_evidence(
     raise ValueError(
         f"unsupported deterministic campaign action '{decision.action}'"
     )
+
+
+def _quote_for_action(
+    evidence: FastDeterministicCampaignPaperEvidence,
+    action: str,
+) -> FastCampaignPaperQuoteEvidence | None:
+    if evidence.quote is not None:
+        return evidence.quote
+    if action == "BUY":
+        return evidence.entry_quote
+    if action in {"HOLD", "REDUCE", "SELL"}:
+        return evidence.exit_quote
+    return None
 
 
 def _point(

@@ -53,7 +53,7 @@ from .risk_context import FastDeterministicCampaignRiskEnvironment
 FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME = (
     "shreks.fast_deterministic_comparison_evidence_bundle"
 )
-FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION = 1
+FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION = 2
 
 _FEATURE_FILE = "fast_training_features.parquet"
 _EVIDENCE_FILE = "comparison_evidence.jsonl"
@@ -80,7 +80,8 @@ _SIDECAR_KEYS = frozenset(
         "provenance",
         "state_version",
         "evaluated_at_unix_ms",
-        "quote",
+        "entry_quote",
+        "exit_quote",
         "market_regime",
         "risk_environment",
         "candidate_authorities",
@@ -108,7 +109,8 @@ _IDENTITY_KEYS = frozenset(
 @dataclass(frozen=True, slots=True)
 class FastDeterministicComparisonEvidenceProvenance:
     source_event_id: str
-    quote_source_version: str
+    entry_quote_source_version: str
+    exit_quote_source_version: str
     entry_forecast_source_version: str | None
     entry_forecast_horizon_ms: int | None
     execution_cost_source_version: str | None
@@ -123,7 +125,8 @@ class FastDeterministicComparisonEvidenceProvenance:
     def __post_init__(self) -> None:
         for name in (
             "source_event_id",
-            "quote_source_version",
+            "entry_quote_source_version",
+            "exit_quote_source_version",
             "graduation_context_source_version",
             "regime_source_version",
             "risk_environment_source_version",
@@ -217,6 +220,7 @@ class FastDeterministicComparisonEvidenceBundle:
                 "rows must match manifest row_count and contain exact comparison rows"
             )
         _validate_population(self.features, self.rows)
+        _validate_directional_quote_population(self.rows)
         _validate_provenance_population(self.rows, self.provenance)
         if (
             self.features.logical_fingerprint_sha256
@@ -250,6 +254,7 @@ def write_fast_deterministic_comparison_evidence_bundle(
             "rows must be a non-empty tuple of exact comparison evidence rows"
         )
     _validate_population(feature_dataset, rows)
+    _validate_directional_quote_population(rows)
     _validate_provenance_population(rows, provenance)
     _validate_catalog_authorities(catalog, rows)
 
@@ -400,6 +405,20 @@ def _validate_population(
             )
 
 
+def _validate_directional_quote_population(
+    rows: tuple[FastDeterministicComparisonEvidenceRow, ...],
+) -> None:
+    for index, row in enumerate(rows):
+        if row.quote is not None:
+            raise ValueError(
+                f"comparison evidence bundle v2 forbids legacy quote at row {index}"
+            )
+        if row.entry_quote is None or row.exit_quote is None:
+            raise ValueError(
+                f"comparison evidence bundle v2 requires entry and exit quotes at row {index}"
+            )
+
+
 def _validate_provenance_population(
     rows: tuple[FastDeterministicComparisonEvidenceRow, ...],
     provenance: tuple[FastDeterministicComparisonEvidenceProvenance, ...],
@@ -516,7 +535,8 @@ def _row_to_sidecar(
         "provenance": _jsonable(provenance),
         "state_version": row.state_version,
         "evaluated_at_unix_ms": row.evaluated_at_unix_ms,
-        "quote": _jsonable(row.quote),
+        "entry_quote": _jsonable(row.entry_quote),
+        "exit_quote": _jsonable(row.exit_quote),
         "market_regime": row.market_regime.value,
         "risk_environment": _jsonable(row.risk_environment),
         "candidate_authorities": [
@@ -554,7 +574,8 @@ def _sidecar_to_row(
         raise ValueError("comparison evidence sidecar record identity mismatch")
 
     provenance = _provenance_from_wire(document["provenance"])
-    quote = _quote_from_wire(document["quote"])
+    entry_quote = _quote_from_wire(document["entry_quote"])
+    exit_quote = _quote_from_wire(document["exit_quote"])
     risk_environment = _risk_environment_from_wire(
         document["risk_environment"]
     )
@@ -598,10 +619,12 @@ def _sidecar_to_row(
             document["evaluated_at_unix_ms"],
             "evaluated_at_unix_ms",
         ),
-        quote=quote,
+        quote=None,
         market_regime=regime,
         risk_environment=risk_environment,
         candidate_authorities=authorities,
+        entry_quote=entry_quote,
+        exit_quote=exit_quote,
     )
     _validate_provenance_population((row,), (provenance,))
     return row, provenance

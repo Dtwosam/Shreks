@@ -75,7 +75,7 @@ Manager:
 It also carries shared:
 - state version;
 - evaluation clock;
-- contemporaneous PAPER quote;
+- contemporaneous directional PAPER ENTRY and EXIT quotes;
 - MarketRegime;
 - dynamic risk environment.
 
@@ -122,7 +122,9 @@ It requires shared:
 - source identity;
 - state version;
 - evaluation clock;
-- quote;
+- legacy quote when compatibility mode is used;
+- ENTRY quote;
+- EXIT quote;
 - market regime;
 - dynamic risk environment.
 
@@ -151,7 +153,7 @@ Tests prove:
 
 1. exact eight-candidate expansion;
 2. exact entry/manager evidence-family selection;
-3. shared quote/record/risk environment;
+3. shared directional ENTRY+EXIT quote/record/risk environment;
 4. exact catalog authority coverage;
 5. stale/non-contemporaneous quote rejection;
 6. wrapper delegates only to the sealed matrix;

@@ -237,7 +237,15 @@ def _require_shared_paper_population(
         )
     if left.quote != right.quote:
         raise ValueError(
-            f"deterministic matrix quote population mismatch at row {index}"
+            f"deterministic matrix legacy-quote population mismatch at row {index}"
+        )
+    if left.entry_quote != right.entry_quote:
+        raise ValueError(
+            f"deterministic matrix entry-quote population mismatch at row {index}"
+        )
+    if left.exit_quote != right.exit_quote:
+        raise ValueError(
+            f"deterministic matrix exit-quote population mismatch at row {index}"
         )
     if left.market_regime != right.market_regime:
         raise ValueError(
