@@ -123,6 +123,7 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
     reopened = read_fast_first_champion_artifact(destination)
 
     assert reopened.manifest == artifact.manifest
+    assert reopened.context_corpus == artifact.context_corpus
     assert reopened.champion == artifact.champion
     assert reopened.evaluation_reports == artifact.evaluation_reports
     assert artifact.manifest.schema_name == FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME
@@ -155,6 +156,7 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
 
     assert {entry.name for entry in destination.iterdir()} == {
         "request.json",
+        "contexts.json",
         "champion.json",
         "manifest.json",
         *{
