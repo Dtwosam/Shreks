@@ -103,26 +103,26 @@ def build_fast_policy_run_evidence(
 
     population_fingerprint = _sha256_canonical(population_material)
     journal_fingerprint = _sha256_canonical(journal_material)
-    draft_material = {
-        "schema_name": FAST_POLICY_PROOF_SCHEMA_NAME,
-        "schema_version": FAST_POLICY_PROOF_SCHEMA_VERSION,
-        "paper_run_id": paper_run_id,
-        "candidate_version": trading_evaluation.candidate_version,
-        "candidate_fingerprint_sha256": candidate_fingerprint_sha256,
-        "strategy_version": strategy_version,
-        "evaluation_fingerprint_sha256": (
+    draft_material = _run_evidence_material(
+        schema_name=FAST_POLICY_PROOF_SCHEMA_NAME,
+        schema_version=FAST_POLICY_PROOF_SCHEMA_VERSION,
+        paper_run_id=paper_run_id,
+        candidate_version=trading_evaluation.candidate_version,
+        candidate_fingerprint_sha256=candidate_fingerprint_sha256,
+        strategy_version=strategy_version,
+        evaluation_fingerprint_sha256=(
             trading_evaluation.report.evaluation_fingerprint_sha256
         ),
-        "event_population_fingerprint_sha256": population_fingerprint,
-        "action_journal_fingerprint_sha256": journal_fingerprint,
-        "material_update_count": len(material_records),
-        "decision_count": decision_count,
-        "distinct_market_count": len(
+        event_population_fingerprint_sha256=population_fingerprint,
+        action_journal_fingerprint_sha256=journal_fingerprint,
+        material_update_count=len(material_records),
+        decision_count=decision_count,
+        distinct_market_count=len(
             {record.market_key for record in material_records}
         ),
-        "observed_from_unix_ms": observed_from,
-        "observed_through_unix_ms": observed_through,
-    }
+        observed_from_unix_ms=observed_from,
+        observed_through_unix_ms=observed_through,
+    )
     fingerprint = _sha256_canonical(draft_material)
     return FastPolicyRunEvidence(
         schema_name=FAST_POLICY_PROOF_SCHEMA_NAME,
@@ -142,6 +142,41 @@ def build_fast_policy_run_evidence(
         observed_from_unix_ms=observed_from,
         observed_through_unix_ms=observed_through,
         run_evidence_fingerprint_sha256=fingerprint,
+    )
+
+
+def fast_policy_run_evidence_fingerprint_sha256(
+    evidence: FastPolicyRunEvidence,
+) -> str:
+    if type(evidence) is not FastPolicyRunEvidence:
+        raise ValueError(
+            "evidence must be an exact FastPolicyRunEvidence"
+        )
+    return _sha256_canonical(
+        _run_evidence_material(
+            schema_name=evidence.schema_name,
+            schema_version=evidence.schema_version,
+            paper_run_id=evidence.paper_run_id,
+            candidate_version=evidence.candidate_version,
+            candidate_fingerprint_sha256=(
+                evidence.candidate_fingerprint_sha256
+            ),
+            strategy_version=evidence.strategy_version,
+            evaluation_fingerprint_sha256=(
+                evidence.trading_evaluation.report.evaluation_fingerprint_sha256
+            ),
+            event_population_fingerprint_sha256=(
+                evidence.event_population_fingerprint_sha256
+            ),
+            action_journal_fingerprint_sha256=(
+                evidence.action_journal_fingerprint_sha256
+            ),
+            material_update_count=evidence.material_update_count,
+            decision_count=evidence.decision_count,
+            distinct_market_count=evidence.distinct_market_count,
+            observed_from_unix_ms=evidence.observed_from_unix_ms,
+            observed_through_unix_ms=evidence.observed_through_unix_ms,
+        )
     )
 
 
@@ -547,6 +582,45 @@ def _optional_maximum_gate(
             else FastPolicyProofGateStatus.FAIL
         )
     return _status_gate(code, status, observed, threshold, "metric must not exceed maximum")
+
+
+def _run_evidence_material(
+    *,
+    schema_name: str,
+    schema_version: int,
+    paper_run_id: str,
+    candidate_version: str,
+    candidate_fingerprint_sha256: str,
+    strategy_version: str,
+    evaluation_fingerprint_sha256: str,
+    event_population_fingerprint_sha256: str,
+    action_journal_fingerprint_sha256: str,
+    material_update_count: int,
+    decision_count: int,
+    distinct_market_count: int,
+    observed_from_unix_ms: int,
+    observed_through_unix_ms: int,
+) -> dict[str, object]:
+    return {
+        "schema_name": schema_name,
+        "schema_version": schema_version,
+        "paper_run_id": paper_run_id,
+        "candidate_version": candidate_version,
+        "candidate_fingerprint_sha256": candidate_fingerprint_sha256,
+        "strategy_version": strategy_version,
+        "evaluation_fingerprint_sha256": evaluation_fingerprint_sha256,
+        "event_population_fingerprint_sha256": (
+            event_population_fingerprint_sha256
+        ),
+        "action_journal_fingerprint_sha256": (
+            action_journal_fingerprint_sha256
+        ),
+        "material_update_count": material_update_count,
+        "decision_count": decision_count,
+        "distinct_market_count": distinct_market_count,
+        "observed_from_unix_ms": observed_from_unix_ms,
+        "observed_through_unix_ms": observed_through_unix_ms,
+    }
 
 
 def _sha256_canonical(value: object) -> str:
