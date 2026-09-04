@@ -8,6 +8,7 @@ mod fast_baseline_hydration;
 mod fast_deterministic_candidate_manifest;
 mod fast_deterministic_lifecycle;
 mod fast_deterministic_lifecycle_wire;
+mod fast_deterministic_row;
 mod fast_lane;
 mod fast_lane_metadata;
 mod future_path_generation;
@@ -41,9 +42,11 @@ pub use fast_deterministic_candidate_manifest::{
     build_fast_deterministic_candidate_manifest,
     decode_fast_deterministic_candidate_manifest_json,
     encode_fast_deterministic_candidate_manifest_json,
+    materialize_fast_deterministic_candidate_manifest,
     FastDeterministicCandidateManifestError, FastDeterministicCandidateManifestWire,
-    FastDeterministicComponentPolicyWire, FastDeterministicEntryPolicyRef,
-    FastDeterministicManagerPolicyRef,
+    FastDeterministicCandidateMaterialized, FastDeterministicComponentPolicyWire,
+    FastDeterministicEntryPolicy, FastDeterministicEntryPolicyRef,
+    FastDeterministicManagerPolicy, FastDeterministicManagerPolicyRef,
     FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME,
     FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION,
     FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY,
@@ -61,6 +64,20 @@ pub use fast_deterministic_lifecycle_wire::{
     FastDeterministicLifecycleResultsWire, FastDeterministicLifecycleWireError,
     FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME,
     FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
+};
+pub use fast_deterministic_row::{
+    decode_fast_deterministic_row_request_json, encode_fast_deterministic_row_result_json,
+    evaluate_fast_deterministic_row_request, FastDeterministicRowError,
+    FastDeterministicRowEvidenceWire, FastDeterministicRowPostureWire,
+    FastDeterministicRowRequestWire, FastDeterministicRowResultWire,
+    FastEntryExecutionWire, FastExecutionCostModelWire, FastExecutionLegCostWire,
+    FastExecutionTradeWire, FastLongerRunnerContinuationWire,
+    FastLongerRunnerProtectiveWire, FastMarketSnapshotWire,
+    FastWalletCohortEvidenceWire, FastWalletCohortSideSummaryWire,
+    FAST_DETERMINISTIC_ROW_REQUEST_SCHEMA_NAME,
+    FAST_DETERMINISTIC_ROW_REQUEST_SCHEMA_VERSION,
+    FAST_DETERMINISTIC_ROW_RESULT_SCHEMA_NAME,
+    FAST_DETERMINISTIC_ROW_RESULT_SCHEMA_VERSION,
 };
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
