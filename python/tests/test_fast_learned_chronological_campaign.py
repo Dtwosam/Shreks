@@ -23,6 +23,7 @@ from shreks_brain.fast_campaign_paper import (
 from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicCampaignPaperEvidence,
     FastLearnedCampaignRow,
+    fast_learned_campaign_candidate_fingerprint_sha256,
     run_fast_learned_chronological_campaign,
 )
 from shreks_brain.fast_paper import (
@@ -78,12 +79,46 @@ def _raw(record) -> FastDeterministicCampaignPaperEvidence:
     )
 
 
-def _identity() -> FastCampaignPaperCandidateIdentity:
+def _champion_stub(
+    *,
+    selected_at: int = 0,
+    max_training_at: int = 0,
+):
+    return SimpleNamespace(
+        champion_version="champion-v1",
+        champion_fingerprint_sha256="b" * 64,
+        feature_schema_version=1,
+        selection=SimpleNamespace(decided_at_unix_ms=selected_at),
+        members=(
+            SimpleNamespace(
+                forecast_artifact=SimpleNamespace(
+                    max_training_decision_observed_at_unix_ms=max_training_at
+                )
+            ),
+        ),
+    )
+
+
+def _identity(
+    *,
+    fingerprint: str | None = None,
+) -> FastCampaignPaperCandidateIdentity:
+    resolved = fingerprint or (
+        fast_learned_campaign_candidate_fingerprint_sha256(
+            candidate_version="learned-continuous-v1",
+            champion_version="champion-v1",
+            champion_fingerprint_sha256="b" * 64,
+            policy=_policy(),
+            strategy_family="fl9-continuous-action",
+            strategy_version="fl9-continuous-v1",
+            assessment_version="assessment-v1",
+        )
+    )
     return FastCampaignPaperCandidateIdentity(
         version=FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
         paper_run_id="learned-paper-run",
         candidate_version="learned-continuous-v1",
-        candidate_fingerprint_sha256="a" * 64,
+        candidate_fingerprint_sha256=resolved,
         strategy_family="fl9-continuous-action",
         strategy_version="fl9-continuous-v1",
         assessment_version="assessment-v1",
@@ -181,6 +216,11 @@ def test_learned_campaign_feeds_actual_filled_paper_posture_into_next_rust_prefi
     rows = (
         FastLearnedCampaignRow(r1, _constraints(), _constraints(), _raw(r1)),
         FastLearnedCampaignRow(r2, _constraints(), _constraints(), _raw(r2)),
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "read_fast_forecast_champion",
+        lambda path: _champion_stub(),
     )
     prefixes = []
 
@@ -303,6 +343,11 @@ def test_learned_campaign_rejects_rust_history_drift_before_second_paper_apply(
         FastLearnedCampaignRow(r1, _constraints(), _constraints(), _raw(r1)),
         FastLearnedCampaignRow(r2, _constraints(), _constraints(), _raw(r2)),
     )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "read_fast_forecast_champion",
+        lambda path: _champion_stub(),
+    )
     count = {"value": 0}
 
     def fake_prefix(**kwargs):
@@ -380,6 +425,144 @@ def test_learned_campaign_rejects_rust_history_drift_before_second_paper_apply(
         )
 
     assert len(paper_calls) == 1
+
+
+def test_learned_campaign_rejects_unbound_candidate_fingerprint_before_rust(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "learned-decision"
+    champion = tmp_path / "champion.json"
+    binary.write_text("binary", encoding="utf-8")
+    champion.write_text("champion", encoding="utf-8")
+    record = feature_record(0, 1.0, signature="identity-tamper")
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "read_fast_forecast_champion",
+        lambda path: _champion_stub(),
+    )
+    called = {"rust": False}
+
+    def fake_prefix(**kwargs):
+        called["rust"] = True
+        raise AssertionError("Rust must not run for unbound identity")
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "evaluate_fast_campaign_decision_batch_offline",
+        fake_prefix,
+    )
+
+    with pytest.raises(ValueError, match="fingerprint|champion|policy"):
+        run_fast_learned_chronological_campaign(
+            decision_binary_path=binary,
+            champion_path=champion,
+            identity=_identity(fingerprint="a" * 64),
+            policy=_policy(),
+            rows=(
+                FastLearnedCampaignRow(
+                    record,
+                    _constraints(),
+                    _constraints(),
+                    _raw(record),
+                ),
+            ),
+            starting_ledger=create_paper_ledger(10_000.0, 0),
+            fill_policy=PaperFillPolicy(
+                version="fill-v1",
+                assumed_latency_ms=0,
+                max_quote_lag_ms=5_000,
+                swap_fee_bps=0,
+                network_fee_usd=0.0,
+                allow_partial_fills=False,
+                min_partial_fill_fraction=1.0,
+            ),
+            risk_policy=_risk_policy(),
+            position_policy=FastPaperPositionActionPolicy(
+                version="position-v1",
+                max_slippage_bps=500,
+            ),
+            evaluation_policy=TradingEvaluationPolicy(
+                version="evaluation-v1",
+                starting_equity_usd=10_000.0,
+                calibration_bucket_count=10,
+            ),
+        )
+
+    assert called["rust"] is False
+
+
+def test_learned_campaign_rejects_preselection_row_before_rust(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "learned-decision"
+    champion = tmp_path / "champion.json"
+    binary.write_text("binary", encoding="utf-8")
+    champion.write_text("champion", encoding="utf-8")
+    record = feature_record(
+        0,
+        1.0,
+        signature="preselection",
+        observed_at_unix_ms=1_000,
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "read_fast_forecast_champion",
+        lambda path: _champion_stub(
+            selected_at=1_001,
+            max_training_at=999,
+        ),
+    )
+    called = {"rust": False}
+
+    def fake_prefix(**kwargs):
+        called["rust"] = True
+        raise AssertionError("Rust must not run for pre-selection evidence")
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.learned."
+        "evaluate_fast_campaign_decision_batch_offline",
+        fake_prefix,
+    )
+
+    with pytest.raises(ValueError, match="selection|training|eligibility"):
+        run_fast_learned_chronological_campaign(
+            decision_binary_path=binary,
+            champion_path=champion,
+            identity=_identity(),
+            policy=_policy(),
+            rows=(
+                FastLearnedCampaignRow(
+                    record,
+                    _constraints(),
+                    _constraints(),
+                    _raw(record),
+                ),
+            ),
+            starting_ledger=create_paper_ledger(10_000.0, 0),
+            fill_policy=PaperFillPolicy(
+                version="fill-v1",
+                assumed_latency_ms=0,
+                max_quote_lag_ms=5_000,
+                swap_fee_bps=0,
+                network_fee_usd=0.0,
+                allow_partial_fills=False,
+                min_partial_fill_fraction=1.0,
+            ),
+            risk_policy=_risk_policy(),
+            position_policy=FastPaperPositionActionPolicy(
+                version="position-v1",
+                max_slippage_bps=500,
+            ),
+            evaluation_policy=TradingEvaluationPolicy(
+                version="evaluation-v1",
+                starting_equity_usd=10_000.0,
+                calibration_bucket_count=10,
+            ),
+        )
+
+    assert called["rust"] is False
 
 
 def test_learned_campaign_source_has_no_provider_superiority_or_live_authority() -> None:
