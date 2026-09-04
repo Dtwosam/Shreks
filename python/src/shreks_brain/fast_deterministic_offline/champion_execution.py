@@ -124,6 +124,13 @@ def build_fast_champion_entry_execution_evidence(
         ) from exc
 
     artifact = member.forecast_artifact
+    if (
+        champion.selection.decided_at_unix_ms
+        < artifact.max_training_decision_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "champion selection cannot predate runtime artifact training chronology"
+        )
     if artifact.target is not FastForecastTarget.ENDPOINT_RETURN_BPS:
         raise ValueError(
             "champion execution evidence requires raw endpoint return"
