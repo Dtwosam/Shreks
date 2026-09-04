@@ -1,3 +1,11 @@
+from .learned import (
+    FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME,
+    FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION,
+    FastLearnedCampaignRow,
+    build_fast_learned_campaign_identity,
+    fast_learned_campaign_candidate_fingerprint_sha256,
+    run_fast_learned_chronological_campaign,
+)
 from .invocation import (
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
@@ -75,11 +83,18 @@ from .risk_context import (
 )
 from .paper_evidence import (
     FastDeterministicCampaignPaperEvidence,
+    materialize_fast_campaign_paper_evidence,
     materialize_fast_deterministic_campaign_paper_evidence,
 )
 
 
 __all__ = (
+    "FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME",
+    "FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION",
+    "FastLearnedCampaignRow",
+    "build_fast_learned_campaign_identity",
+    "fast_learned_campaign_candidate_fingerprint_sha256",
+    "run_fast_learned_chronological_campaign",
     "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME",
     "FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION",
     "FastDeterministicCampaignInvocationManifest",
@@ -134,6 +149,7 @@ __all__ = (
     "FastDeterministicCandidateMatrixResult",
     "FastDeterministicCampaignPaperEvidence",
     "FastDeterministicCampaignRow",
+    "materialize_fast_campaign_paper_evidence",
     "materialize_fast_deterministic_campaign_paper_evidence",
     "run_fast_deterministic_candidate_matrix",
     "run_fast_deterministic_chronological_campaign",
