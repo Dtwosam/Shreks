@@ -49,9 +49,7 @@ mkdir -p \
   "$STAGING/wheelhouse" \
   "$WHEEL_OUT"
 
-cargo build --release \
-  --bin shreks-observe \
-  --bin shreks-paper-evidence \
+cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
   --bin export_fast_training_features \
   --bin shreks-fast-entry-authority \
   --bin shreks-fast-campaign-decision
