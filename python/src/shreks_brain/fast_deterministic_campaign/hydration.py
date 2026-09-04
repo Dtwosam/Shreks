@@ -422,8 +422,7 @@ def _validate_execution_provenance(
             raise ValueError(
                 f"comparison hydration execution provenance exists without execution at row {index}"
             )
-        return
-    if any(value is None for value in values):
+    elif any(value is None for value in values):
         raise ValueError(
             f"comparison hydration execution provenance is incomplete at row {index}"
         )
@@ -439,14 +438,13 @@ def _validate_execution_provenance(
             raise ValueError(
                 f"comparison hydration continuation provenance exists without evidence at row {index}"
             )
-    else:
-        if (
-            source.continuation_forecast_source_version
-            != continuation.forecast_source_version
-        ):
-            raise ValueError(
-                f"comparison hydration continuation provenance mismatch at row {index}"
-            )
+    elif (
+        source.continuation_forecast_source_version
+        != continuation.forecast_source_version
+    ):
+        raise ValueError(
+            f"comparison hydration continuation provenance mismatch at row {index}"
+        )
 
 
 def _campaign_quote(
