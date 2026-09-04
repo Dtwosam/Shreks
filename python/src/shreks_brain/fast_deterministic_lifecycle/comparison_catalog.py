@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 
@@ -108,6 +108,36 @@ class FastDeterministicComparisonCatalog:
             raise ValueError(
                 "comparison catalog must contain the exact four-by-two family product"
             )
+
+
+def encode_fast_deterministic_comparison_catalog(
+    catalog: FastDeterministicComparisonCatalog,
+) -> str:
+    if type(catalog) is not FastDeterministicComparisonCatalog:
+        raise ValueError(
+            "catalog must be exact FastDeterministicComparisonCatalog"
+        )
+    material = {
+        "schema_name": catalog.schema_name,
+        "schema_version": catalog.schema_version,
+        "catalog_version": catalog.catalog_version,
+        "candidates": [asdict(value) for value in catalog.candidates],
+    }
+    expected = hashlib.sha256(
+        _canonical(material).encode("utf-8")
+    ).hexdigest()
+    if catalog.catalog_fingerprint_sha256 != expected:
+        raise ValueError(
+            "deterministic comparison catalog fingerprint mismatch"
+        )
+    return _canonical(
+        {
+            **material,
+            "catalog_fingerprint_sha256": (
+                catalog.catalog_fingerprint_sha256
+            ),
+        }
+    )
 
 
 def decode_fast_deterministic_comparison_catalog(
