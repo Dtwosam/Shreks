@@ -8,6 +8,7 @@ use std::{
 use shreks_core::ProviderId;
 use shreks_observer::Observer;
 use shreks_providers::{
+    bounded_pump_realtime_failover::BoundedPumpRealtimeSessionNotification,
     pump::{PumpCreationSignal, PumpLifecycleSignal},
     pump_realtime::PumpRealtimeNotification,
     pump_swap_trade::PumpSwapTradeEvidence,
@@ -364,6 +365,112 @@ async fn realtime_writer_persists_migration_in_the_same_durable_boundary() {
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].signature, "MigrationSignature111");
     assert_eq!(pending[0].slot, 88);
+
+    cleanup_dir(&root);
+}
+
+
+fn coverage_notification(signature: &str, slot: u64) -> PumpRealtimeNotification {
+    PumpRealtimeNotification {
+        provider: ProviderId::SolanaPublic,
+        signature: signature.to_owned(),
+        slot,
+        lifecycle: None,
+        trades: Vec::new(),
+        pump_swap_trades: Vec::new(),
+    }
+}
+
+#[tokio::test]
+async fn session_writer_opens_and_extends_exact_realtime_coverage_rows() {
+    let root = unique_test_dir("coverage-session-writer");
+    let db_path = root.join("shreks.db");
+    let writer_db = ShreksDb::open(&db_path).unwrap();
+    let (sender, receiver) = mpsc::channel(4);
+
+    sender
+        .send(BoundedPumpRealtimeSessionNotification {
+            session_sequence: 1,
+            notification: coverage_notification("coverage-a", 100),
+        })
+        .await
+        .unwrap();
+    sender
+        .send(BoundedPumpRealtimeSessionNotification {
+            session_sequence: 1,
+            notification: coverage_notification("coverage-b", 101),
+        })
+        .await
+        .unwrap();
+    sender
+        .send(BoundedPumpRealtimeSessionNotification {
+            session_sequence: 2,
+            notification: coverage_notification("coverage-c", 200),
+        })
+        .await
+        .unwrap();
+    drop(sender);
+
+    assert_eq!(
+        Observer::run_pump_realtime_session_writer(writer_db, receiver)
+            .await
+            .unwrap(),
+        0
+    );
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let sessions = db.fast_realtime_coverage_sessions().unwrap();
+    assert_eq!(sessions.len(), 2);
+
+    assert_eq!(sessions[0].provider, ProviderId::SolanaPublic);
+    assert_eq!(sessions[0].process_session_sequence, 1);
+    assert_eq!(sessions[0].first_notification_slot, 100);
+    assert_eq!(sessions[0].last_notification_slot, 101);
+    assert_eq!(sessions[0].first_notification_signature, "coverage-a");
+    assert_eq!(sessions[0].last_notification_signature, "coverage-b");
+    assert_eq!(sessions[0].notification_count, 2);
+    assert!(
+        sessions[0].last_notification_observed_at_unix_ms
+            >= sessions[0].first_notification_observed_at_unix_ms
+    );
+
+    assert_eq!(sessions[1].process_session_sequence, 2);
+    assert_eq!(sessions[1].first_notification_slot, 200);
+    assert_eq!(sessions[1].last_notification_slot, 200);
+    assert_eq!(sessions[1].notification_count, 1);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn session_writer_process_restart_never_resumes_previous_coverage_row() {
+    let root = unique_test_dir("coverage-restart");
+    let db_path = root.join("shreks.db");
+
+    for (signature, slot) in [("restart-a", 300_u64), ("restart-b", 400_u64)] {
+        let writer_db = ShreksDb::open(&db_path).unwrap();
+        let (sender, receiver) = mpsc::channel(1);
+        sender
+            .send(BoundedPumpRealtimeSessionNotification {
+                session_sequence: 1,
+                notification: coverage_notification(signature, slot),
+            })
+            .await
+            .unwrap();
+        drop(sender);
+        Observer::run_pump_realtime_session_writer(writer_db, receiver)
+            .await
+            .unwrap();
+    }
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let sessions = db.fast_realtime_coverage_sessions().unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].process_session_sequence, 1);
+    assert_eq!(sessions[1].process_session_sequence, 1);
+    assert_ne!(sessions[0].session_id, sessions[1].session_id);
+    assert_eq!(sessions[0].last_notification_signature, "restart-a");
+    assert_eq!(sessions[1].last_notification_signature, "restart-b");
 
     cleanup_dir(&root);
 }
