@@ -12,12 +12,19 @@ from .counterfactual_parquet import (
     COUNTERFACTUAL_DATASET_SCHEMA_NAME,
     COUNTERFACTUAL_DATASET_SCHEMA_VERSION,
     CounterfactualDatasetManifest,
+    build_counterfactual_dataset,
     read_counterfactual_parquet,
+)
+from .counterfactual_source import load_entry_counterfactual_from_sqlite
+from .counterfactuals import (
+    CounterfactualOutcomeSet,
+    label_entry_counterfactuals,
 )
 from .fast_training_features import (
     FAST_TRAINING_FEATURE_SCHEMA_NAME,
     FAST_TRAINING_FEATURE_SCHEMA_VERSION,
     FastTrainingFeatureDataset,
+    feature_logical_fingerprint_sha256,
     read_fast_training_feature_jsonl,
     read_fast_training_feature_parquet,
     write_fast_training_feature_parquet,
@@ -26,6 +33,7 @@ from .fast_training_targets import (
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_NAME,
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_VERSION,
     FuturePathTrainingLabelDataset,
+    future_path_logical_fingerprint_sha256,
     load_future_path_training_labels_from_sqlite,
     read_future_path_training_parquet,
     write_future_path_training_parquet,
@@ -140,6 +148,135 @@ class FastTrainingBundle:
     future_path_labels: FuturePathTrainingLabelDataset
     counterfactual_rows: tuple[dict[str, object], ...]
     counterfactual_manifest: CounterfactualDatasetManifest
+
+
+def build_fast_training_bundle_from_components(
+    *,
+    features: FastTrainingFeatureDataset,
+    future_path_labels: FuturePathTrainingLabelDataset,
+    counterfactual_outcome_sets: tuple[CounterfactualOutcomeSet, ...],
+) -> FastTrainingBundle:
+    """Assemble the sealed FL8.1 logical bundle without choosing a storage format."""
+    if type(features) is not FastTrainingFeatureDataset:
+        raise ValueError("features must be an exact FastTrainingFeatureDataset")
+    if type(future_path_labels) is not FuturePathTrainingLabelDataset:
+        raise ValueError(
+            "future_path_labels must be an exact FuturePathTrainingLabelDataset"
+        )
+    if (
+        not isinstance(counterfactual_outcome_sets, tuple)
+        or not counterfactual_outcome_sets
+        or not all(
+            type(value) is CounterfactualOutcomeSet
+            for value in counterfactual_outcome_sets
+        )
+    ):
+        raise ValueError(
+            "counterfactual_outcome_sets must be a non-empty tuple of exact CounterfactualOutcomeSet values"
+        )
+
+    actual_feature_fingerprint = feature_logical_fingerprint_sha256(
+        features.records
+    )
+    if actual_feature_fingerprint != features.logical_fingerprint_sha256:
+        raise ValueError("feature logical fingerprint does not match records")
+    _sha256("feature source JSONL fingerprint", features.source_sha256)
+
+    actual_future_path_fingerprint = future_path_logical_fingerprint_sha256(
+        future_path_labels.labels
+    )
+    if (
+        actual_future_path_fingerprint
+        != future_path_labels.logical_fingerprint_sha256
+    ):
+        raise ValueError(
+            "future-path logical fingerprint does not match labels"
+        )
+
+    counterfactual_rows, counterfactual_manifest = (
+        build_counterfactual_dataset(counterfactual_outcome_sets)
+    )
+    _validate_bundle_joins(
+        features,
+        future_path_labels,
+        counterfactual_rows,
+        counterfactual_manifest,
+        future_path_label_version=future_path_labels.label_version,
+    )
+    manifest = _build_manifest(
+        features,
+        future_path_labels,
+        counterfactual_manifest,
+        future_path_label_version=future_path_labels.label_version,
+    )
+    return FastTrainingBundle(
+        manifest=manifest,
+        features=features,
+        future_path_labels=future_path_labels,
+        counterfactual_rows=counterfactual_rows,
+        counterfactual_manifest=counterfactual_manifest,
+    )
+
+
+def build_fast_training_bundle_from_runtime_sources(
+    *,
+    feature_jsonl_path: str | Path,
+    sqlite_path: str | Path,
+    future_path_label_version: int,
+    counterfactual_base_quantity: float,
+) -> FastTrainingBundle:
+    """Build the exact logical FL8.1 bundle from production-shaped read-only sources."""
+    _positive_int("future_path_label_version", future_path_label_version)
+    if (
+        isinstance(counterfactual_base_quantity, bool)
+        or not isinstance(counterfactual_base_quantity, (int, float))
+        or not math.isfinite(float(counterfactual_base_quantity))
+        or counterfactual_base_quantity <= 0
+    ):
+        raise ValueError(
+            "counterfactual_base_quantity must be positive and finite"
+        )
+
+    features = read_fast_training_feature_jsonl(feature_jsonl_path)
+    future_path = load_future_path_training_labels_from_sqlite(
+        sqlite_path,
+        future_path_label_version=future_path_label_version,
+    )
+
+    outcome_sets: list[CounterfactualOutcomeSet] = []
+    for label in future_path.labels:
+        loaded = load_entry_counterfactual_from_sqlite(
+            sqlite_path,
+            decision_signature=label.decision_signature,
+            decision_ordinal=label.decision_ordinal,
+            horizon_ms=label.horizon_ms,
+            label_version=label.label_version,
+            base_quantity=float(counterfactual_base_quantity),
+        )
+        provenance = loaded.provenance
+        if (
+            provenance.decision_signature != label.decision_signature
+            or provenance.decision_ordinal != label.decision_ordinal
+            or provenance.decision_sequence != label.decision_sequence
+            or provenance.decision_observed_at_unix_ms
+            != label.decision_observed_at_unix_ms
+            or provenance.mint != label.decision_mint
+            or provenance.quote_mint != label.decision_quote_mint
+            or provenance.venue != label.decision_venue
+            or provenance.horizon_ms != label.horizon_ms
+            or provenance.future_path_label_version != label.label_version
+            or provenance.completeness != label.completeness
+        ):
+            raise ValueError(
+                "runtime counterfactual provenance does not match FL4 training label"
+            )
+        outcome_sets.append(label_entry_counterfactuals(loaded.context))
+
+    return build_fast_training_bundle_from_components(
+        features=features,
+        future_path_labels=future_path,
+        counterfactual_outcome_sets=tuple(outcome_sets),
+    )
 
 
 def write_fast_training_bundle(
