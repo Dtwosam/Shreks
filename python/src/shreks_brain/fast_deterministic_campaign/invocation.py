@@ -428,12 +428,27 @@ def _component(
     role: str,
     path: Path,
 ) -> FastDeterministicCampaignSourceComponent:
-    payload = path.read_bytes()
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    after = path.stat()
+    if (
+        before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise ValueError(
+            "deterministic campaign source changed while fingerprinting"
+        )
     return FastDeterministicCampaignSourceComponent(
         role=role,
         file_name=path.name,
-        size_bytes=len(payload),
-        sha256=_sha256_bytes(payload),
+        size_bytes=after.st_size,
+        sha256=digest.hexdigest(),
     )
 
 
