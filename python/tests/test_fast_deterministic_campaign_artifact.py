@@ -136,6 +136,27 @@ def _fake_pipeline(monkeypatch, *, fail_matrix: bool = False):
             or run_payload
         ),
     )
+    fake_bundle = SimpleNamespace(manifest=bundle_manifest)
+    fake_runs = tuple(
+        SimpleNamespace(
+            candidate_version=value.candidate_version,
+            candidate_fingerprint_sha256=value.candidate_fingerprint_sha256,
+            event_population_fingerprint_sha256=(
+                matrix.event_population_fingerprint_sha256
+            ),
+        )
+        for value in catalog.candidates
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.artifact."
+        "read_fast_deterministic_comparison_evidence_bundle",
+        lambda path: fake_bundle,
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.artifact."
+        "decode_fast_policy_run_evidence_batch",
+        lambda payload: fake_runs,
+    )
     return calls, bundle_manifest, matrix, run_payload
 
 
