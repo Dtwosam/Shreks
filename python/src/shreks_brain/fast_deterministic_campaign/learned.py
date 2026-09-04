@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import hashlib
+import json
 import math
 from pathlib import Path
 
 from shreks_brain.evaluation import TradingEvaluationPolicy
+from shreks_brain.fast_champion import read_fast_forecast_champion
 from shreks_brain.fast_campaign import (
     FastCampaignActionConstraints,
     FastCampaignContinuousActionPolicy,
@@ -43,8 +46,88 @@ from .paper_evidence import (
 from .risk_context import build_fast_deterministic_campaign_risk_context
 
 
+FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME = (
+    "shreks.fast_learned_campaign_candidate"
+)
+FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION = 1
 _REL_TOL = 1e-12
 _ABS_TOL = 1e-9
+
+
+def fast_learned_campaign_candidate_fingerprint_sha256(
+    *,
+    candidate_version: str,
+    champion_version: str,
+    champion_fingerprint_sha256: str,
+    policy: FastCampaignContinuousActionPolicy,
+    strategy_family: str,
+    strategy_version: str,
+    assessment_version: str,
+) -> str:
+    for name, value in (
+        ("candidate_version", candidate_version),
+        ("champion_version", champion_version),
+        ("strategy_family", strategy_family),
+        ("strategy_version", strategy_version),
+        ("assessment_version", assessment_version),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{name} must be a non-empty string")
+    _require_sha256(
+        "champion_fingerprint_sha256",
+        champion_fingerprint_sha256,
+    )
+    if type(policy) is not FastCampaignContinuousActionPolicy:
+        raise ValueError(
+            "policy must be exact FastCampaignContinuousActionPolicy"
+        )
+    material = {
+        "schema_name": FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME,
+        "schema_version": FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION,
+        "candidate_version": candidate_version,
+        "champion_version": champion_version,
+        "champion_fingerprint_sha256": champion_fingerprint_sha256,
+        "strategy_family": strategy_family,
+        "strategy_version": strategy_version,
+        "assessment_version": assessment_version,
+        "policy": _policy_fingerprint_material(policy),
+    }
+    return hashlib.sha256(
+        _canonical_fingerprint_json(material).encode("utf-8")
+    ).hexdigest()
+
+
+def build_fast_learned_campaign_identity(
+    *,
+    champion_path: str | Path,
+    policy: FastCampaignContinuousActionPolicy,
+    paper_run_id: str,
+    candidate_version: str,
+    strategy_family: str,
+    strategy_version: str,
+    assessment_version: str,
+) -> FastCampaignPaperCandidateIdentity:
+    champion = read_fast_forecast_champion(
+        _source_file(champion_path, "champion_path")
+    )
+    fingerprint = fast_learned_campaign_candidate_fingerprint_sha256(
+        candidate_version=candidate_version,
+        champion_version=champion.champion_version,
+        champion_fingerprint_sha256=champion.champion_fingerprint_sha256,
+        policy=policy,
+        strategy_family=strategy_family,
+        strategy_version=strategy_version,
+        assessment_version=assessment_version,
+    )
+    return FastCampaignPaperCandidateIdentity(
+        version="fl9-campaign-paper-v1",
+        paper_run_id=paper_run_id,
+        candidate_version=candidate_version,
+        candidate_fingerprint_sha256=fingerprint,
+        strategy_family=strategy_family,
+        strategy_version=strategy_version,
+        assessment_version=assessment_version,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +170,7 @@ def run_fast_learned_chronological_campaign(
     position_policy: FastPaperPositionActionPolicy,
     evaluation_policy: TradingEvaluationPolicy,
 ) -> FastCampaignPaperRunResult:
-    binary, champion = _preflight(
+    binary, champion, champion_artifact = _preflight(
         decision_binary_path=decision_binary_path,
         champion_path=champion_path,
         identity=identity,
@@ -128,6 +211,10 @@ def run_fast_learned_chronological_campaign(
             binary_path=binary,
             champion_path=champion,
             batch=batch,
+        )
+        _require_champion_alignment(
+            champion_artifact=champion_artifact,
+            results=results,
         )
 
         _require_stable_prefix(
@@ -181,12 +268,13 @@ def _preflight(
     risk_policy: RiskPolicy,
     position_policy: FastPaperPositionActionPolicy,
     evaluation_policy: TradingEvaluationPolicy,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, object]:
     binary = _source_file(
         decision_binary_path,
         "decision_binary_path",
     )
     champion = _source_file(champion_path, "champion_path")
+    champion_artifact = read_fast_forecast_champion(champion)
     if type(identity) is not FastCampaignPaperCandidateIdentity:
         raise ValueError(
             "identity must be exact FastCampaignPaperCandidateIdentity"
@@ -234,6 +322,33 @@ def _preflight(
             "rows must be a non-empty tuple of exact FastLearnedCampaignRow values"
         )
 
+    expected_candidate_fingerprint = (
+        fast_learned_campaign_candidate_fingerprint_sha256(
+            candidate_version=identity.candidate_version,
+            champion_version=champion_artifact.champion_version,
+            champion_fingerprint_sha256=(
+                champion_artifact.champion_fingerprint_sha256
+            ),
+            policy=policy,
+            strategy_family=identity.strategy_family,
+            strategy_version=identity.strategy_version,
+            assessment_version=identity.assessment_version,
+        )
+    )
+    if (
+        identity.candidate_fingerprint_sha256
+        != expected_candidate_fingerprint
+    ):
+        raise ValueError(
+            "learned campaign candidate fingerprint does not bind the exact "
+            "champion and action policy"
+        )
+
+    max_training_at = max(
+        member.forecast_artifact.max_training_decision_observed_at_unix_ms
+        for member in champion_artifact.members
+    )
+
     seen: set[str] = set()
     previous_sequence: int | None = None
     latest_at_by_market: dict[str, int] = {}
@@ -242,6 +357,21 @@ def _preflight(
         source_event_id = (
             f"{record.decision_signature}:{record.decision_ordinal}"
         )
+        if (
+            record.schema_version
+            != champion_artifact.feature_schema_version
+        ):
+            raise ValueError(
+                f"learned campaign feature schema mismatch at row {index}"
+            )
+        if (
+            champion_artifact.selection.decided_at_unix_ms
+            > record.decision_observed_at_unix_ms
+            or max_training_at >= record.decision_observed_at_unix_ms
+        ):
+            raise ValueError(
+                f"learned campaign row {index} precedes champion selection/training eligibility"
+            )
         if row.paper_evidence.source_event_id != source_event_id:
             raise ValueError(
                 f"learned campaign PAPER source identity mismatch at row {index}"
@@ -272,7 +402,32 @@ def _preflight(
         latest_at_by_market[market_key] = (
             record.decision_observed_at_unix_ms
         )
-    return binary, champion
+    return binary, champion, champion_artifact
+
+
+def _require_champion_alignment(
+    *,
+    champion_artifact: object,
+    results: FastCampaignDecisionResults,
+) -> None:
+    if (
+        results.champion_version
+        != getattr(champion_artifact, "champion_version", None)
+    ):
+        raise ValueError(
+            "learned campaign Rust result champion version mismatch"
+        )
+    if (
+        results.champion_fingerprint_sha256
+        != getattr(
+            champion_artifact,
+            "champion_fingerprint_sha256",
+            None,
+        )
+    ):
+        raise ValueError(
+            "learned campaign Rust result champion fingerprint mismatch"
+        )
 
 
 def _require_stable_prefix(
@@ -504,6 +659,64 @@ def _resolve_candidate_risk_context(
 
 def _market_key(record: FastTrainingFeatureRecord) -> str:
     return f"{record.venue}:{record.mint}:{record.quote_mint}"
+
+
+def _policy_fingerprint_material(
+    policy: FastCampaignContinuousActionPolicy,
+) -> dict[str, object]:
+    return {
+        "version": policy.version,
+        "horizons_ms": list(policy.horizons_ms),
+        "entry_exposure_candidates": [
+            {"float_hex": value.hex()}
+            for value in policy.entry_exposure_candidates
+        ],
+        "reduce_target_exposure_candidates": [
+            {"float_hex": value.hex()}
+            for value in policy.reduce_target_exposure_candidates
+        ],
+        "adverse_excursion_weight": {
+            "float_hex": policy.adverse_excursion_weight.hex()
+        },
+        "reversal_penalty_bps": {
+            "float_hex": policy.reversal_penalty_bps.hex()
+        },
+        "route_unavailability_penalty_bps": {
+            "float_hex": policy.route_unavailability_penalty_bps.hex()
+        },
+        "horizon_disagreement_weight": {
+            "float_hex": policy.horizon_disagreement_weight.hex()
+        },
+        "minimum_buy_value_bps": {
+            "float_hex": policy.minimum_buy_value_bps.hex()
+        },
+        "minimum_hold_value_bps": {
+            "float_hex": policy.minimum_hold_value_bps.hex()
+        },
+        "missing_forecast_open_action": (
+            policy.missing_forecast_open_action
+        ),
+    }
+
+
+def _canonical_fingerprint_json(value: object) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def _require_sha256(name: str, value: object) -> None:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be lowercase SHA-256 hex")
 
 
 def _source_file(value: str | Path, name: str) -> Path:
