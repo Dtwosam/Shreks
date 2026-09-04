@@ -5,6 +5,7 @@ from .comparison_catalog import (
     FAST_DETERMINISTIC_COMPARISON_CATALOG_VERSION,
     FastDeterministicComparisonCatalog,
     decode_fast_deterministic_comparison_catalog,
+    encode_fast_deterministic_comparison_catalog,
 )
 from .codec import (
     build_fast_deterministic_lifecycle_results,
@@ -30,6 +31,7 @@ __all__ = [
     "FAST_DETERMINISTIC_COMPARISON_CATALOG_VERSION",
     "FastDeterministicComparisonCatalog",
     "decode_fast_deterministic_comparison_catalog",
+    "encode_fast_deterministic_comparison_catalog",
     "FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_NAME",
     "FAST_DETERMINISTIC_CANDIDATE_MANIFEST_SCHEMA_VERSION",
     "FAST_DETERMINISTIC_CANDIDATE_STRATEGY_FAMILY",
