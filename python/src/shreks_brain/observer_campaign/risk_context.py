@@ -4,7 +4,11 @@ from decimal import Decimal, InvalidOperation
 import math
 
 from shreks_brain.observer_market.models import ObservedMarketWindow
-from shreks_brain.paper import PaperPositionState, PaperQuote, PaperQuoteState
+from shreks_brain.paper import (
+    PaperQuote,
+    PaperQuoteState,
+    derive_paper_risk_accounting_facts,
+)
 from shreks_brain.paper_loop import PaperLoopState
 from shreks_brain.risk import RiskContext
 
@@ -41,21 +45,10 @@ def build_observer_risk_context(
         raise ObserverPaperRiskContextError("day start cannot be in the future")
 
     ledger = state.ledger
-    open_positions = tuple(
-        position
-        for position in ledger.positions
-        if position.state is PaperPositionState.OPEN
+    accounting = derive_paper_risk_accounting_facts(
+        ledger,
+        day_started_at_unix_ms=environment.day_started_at_unix_ms,
     )
-    aggregate_open_risk = sum(
-        position.open_cost_basis_usd for position in open_positions
-    )
-    daily_realized = sum(
-        item.realized_pnl_delta_usd
-        for item in ledger.entries
-        if item.booked_at_unix_ms >= environment.day_started_at_unix_ms
-    )
-    rolling_drawdown = _rolling_drawdown_pct(ledger)
-    consecutive_losses, last_loss_at = _loss_streak(ledger.positions)
 
     current = window.current
     market_age = window.as_of_unix_ms - current.observed_at_unix_ms
@@ -82,12 +75,12 @@ def build_observer_risk_context(
     return RiskContext(
         as_of_unix_ms=window.as_of_unix_ms,
         trading_capital_usd=environment.trading_capital_usd,
-        open_position_count=len(open_positions),
-        aggregate_open_risk_usd=aggregate_open_risk,
-        daily_realized_pnl_usd=daily_realized,
-        rolling_drawdown_pct=rolling_drawdown,
-        consecutive_losses=consecutive_losses,
-        last_loss_at_unix_ms=last_loss_at,
+        open_position_count=accounting.open_position_count,
+        aggregate_open_risk_usd=accounting.aggregate_open_risk_usd,
+        daily_realized_pnl_usd=accounting.daily_realized_pnl_usd,
+        rolling_drawdown_pct=accounting.rolling_drawdown_pct,
+        consecutive_losses=accounting.consecutive_losses,
+        last_loss_at_unix_ms=accounting.last_loss_at_unix_ms,
         liquidity_usd=current.liquidity_usd,
         expected_price_impact_pct=expected_price_impact,
         price_impact_notional_usd=price_impact_notional,
@@ -136,61 +129,6 @@ def _validate_entry_quote_pair(
         )
     return evidence, paper_quote
 
-
-def _rolling_drawdown_pct(ledger) -> float | None:
-    open_positions = tuple(
-        position
-        for position in ledger.positions
-        if position.state is PaperPositionState.OPEN
-    )
-    if any(position.unrealized_pnl_usd is None for position in open_positions):
-        return None
-
-    equity = ledger.starting_cash_usd
-    points = [equity]
-    for item in ledger.entries:
-        equity += item.realized_pnl_delta_usd
-        points.append(equity)
-    current_unrealized = sum(
-        position.unrealized_pnl_usd or 0.0 for position in open_positions
-    )
-    points.append(equity + current_unrealized)
-
-    peak = points[0]
-    maximum = 0.0
-    for value in points:
-        if value > peak:
-            peak = value
-        if peak <= 0:
-            return None
-        drawdown = (peak - value) / peak * 100.0
-        maximum = max(maximum, drawdown)
-    if not math.isfinite(maximum):
-        return None
-    return maximum
-
-
-def _loss_streak(positions) -> tuple[int, int | None]:
-    closed = sorted(
-        (
-            position
-            for position in positions
-            if position.state is PaperPositionState.CLOSED
-        ),
-        key=lambda position: (
-            position.closed_at_unix_ms if position.closed_at_unix_ms is not None else -1,
-            position.position_id,
-        ),
-    )
-    streak = 0
-    last_loss_at: int | None = None
-    for position in reversed(closed):
-        if position.realized_pnl_usd >= 0:
-            break
-        if last_loss_at is None:
-            last_loss_at = position.closed_at_unix_ms
-        streak += 1
-    return streak, last_loss_at
 
 
 def _optional_decimal_float(value: str | None, name: str) -> float | None:
