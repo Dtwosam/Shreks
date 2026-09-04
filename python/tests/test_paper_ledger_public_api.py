@@ -14,8 +14,10 @@ from shreks_brain.paper import (
     PaperPositionState,
     PaperQuote,
     PaperQuoteState,
+    PaperRiskAccountingFacts,
     apply_paper_execution,
     create_paper_ledger,
+    derive_paper_risk_accounting_facts,
     execute_paper_intent,
     mark_paper_position,
 )
@@ -48,6 +50,10 @@ _C3_EXPORTS = {
     "apply_paper_execution",
     "create_paper_ledger",
     "mark_paper_position",
+}
+_FL9_PAPER_RISK_EXPORTS = {
+    "PaperRiskAccountingFacts",
+    "derive_paper_risk_accounting_facts",
 }
 
 
@@ -98,15 +104,17 @@ def _canonical_execution():
     return intent, execution
 
 
-def test_paper_package_retains_c1_and_adds_exact_c3_surface():
+def test_paper_package_retains_prior_surface_and_adds_exact_fl9_risk_facts():
     exports = set(paper.__all__)
-    assert exports == _C1_EXPORTS | _C3_EXPORTS
-    assert len(paper.__all__) == len(exports) == 22
+    assert exports == _C1_EXPORTS | _C3_EXPORTS | _FL9_PAPER_RISK_EXPORTS
+    assert len(paper.__all__) == len(exports) == 24
 
     assert callable(execute_paper_intent)
     assert callable(apply_paper_execution)
     assert callable(create_paper_ledger)
     assert callable(mark_paper_position)
+    assert callable(derive_paper_risk_accounting_facts)
+    assert hasattr(PaperRiskAccountingFacts, "__dataclass_fields__")
 
 
 def test_public_api_can_book_and_mark_real_c1_execution():
