@@ -5,9 +5,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from shreks_brain.fast_campaign_paper import FastCampaignPaperQuoteEvidence
+from shreks_brain.fast_campaign_paper import (
+    FastCampaignPaperEntryAuthority,
+    FastCampaignPaperQuoteEvidence,
+)
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_COMPARISON_EVIDENCE_BINDER_VERSION,
+    FastDeterministicCampaignRiskEnvironment,
     FastDeterministicCandidatePaperAuthority,
     FastDeterministicComparisonEvidenceRow,
     FastDeterministicComparisonEvidenceSpec,
@@ -28,6 +32,7 @@ from shreks_brain.fast_deterministic_offline import (
     FastOfflineWalletCohortEvidence,
 )
 from shreks_brain.paper import PaperQuoteState
+from shreks_brain.regime import MarketRegime
 from shreks_brain.research.fast_training_features import (
     DEFAULT_FAST_WINDOWS_MS,
     FastTrainingFeatureRecord,
@@ -119,6 +124,33 @@ def _quote() -> FastCampaignPaperQuoteEvidence:
     )
 
 
+def _risk_environment() -> FastDeterministicCampaignRiskEnvironment:
+    return FastDeterministicCampaignRiskEnvironment(
+        trading_capital_usd=20_000.0,
+        day_started_at_unix_ms=T0,
+        liquidity_usd=100_000.0,
+        expected_price_impact_pct=0.1,
+        price_impact_notional_usd=500.0,
+        market_observed_at_unix_ms=T0 + 100,
+        data_healthy=True,
+        execution_healthy=True,
+        kill_switch_active=False,
+        active_intent_keys=frozenset(),
+    )
+
+
+def _entry_authority() -> FastCampaignPaperEntryAuthority:
+    return FastCampaignPaperEntryAuthority(
+        mint="mint-binder",
+        quote_mint="quote-binder",
+        intended_base_quantity=10.0,
+        decision_executable_entry_price_quote=10.0,
+        maximum_acceptable_entry_price_quote=10.5,
+        expected_entry_variable_cost_bps=200,
+        expected_entry_fixed_cost_quote=0.10,
+    )
+
+
 def _catalog():
     return decode_fast_deterministic_comparison_catalog(
         CATALOG_FIXTURE.read_text(encoding="utf-8")
@@ -141,8 +173,7 @@ def _row() -> FastDeterministicComparisonEvidenceRow:
     authorities = tuple(
         FastDeterministicCandidatePaperAuthority(
             candidate_version=manifest.candidate_version,
-            risk_context=None,
-            entry_authority=None,
+            entry_authority=_entry_authority(),
         )
         for manifest in _catalog().candidates
     )
@@ -168,7 +199,8 @@ def _row() -> FastDeterministicComparisonEvidenceRow:
         state_version="state-v1",
         evaluated_at_unix_ms=T0 + 150,
         quote=_quote(),
-        market_regime=None,
+        market_regime=MarketRegime.NORMAL,
+        risk_environment=_risk_environment(),
         candidate_authorities=authorities,
     )
 
@@ -205,6 +237,9 @@ def test_binder_expands_catalog_to_eight_same_population_specs() -> None:
         )
         quotes.add(row.paper_evidence.quote)
         records.add(row.record)
+        assert row.paper_evidence.risk_context is None
+        assert row.paper_evidence.risk_environment == _risk_environment()
+        assert row.paper_evidence.entry_authority == _entry_authority()
 
     assert len(quotes) == 1
     assert len(records) == 1
@@ -225,6 +260,7 @@ def test_binder_requires_exact_catalog_candidate_authority_coverage() -> None:
         evaluated_at_unix_ms=row.evaluated_at_unix_ms,
         quote=row.quote,
         market_regime=row.market_regime,
+        risk_environment=row.risk_environment,
         candidate_authorities=row.candidate_authorities[:-1],
     )
 
@@ -264,6 +300,7 @@ def test_binder_requires_quote_contemporaneous_with_decision() -> None:
             evaluated_at_unix_ms=row.evaluated_at_unix_ms,
             quote=stale_quote,
             market_regime=row.market_regime,
+            risk_environment=row.risk_environment,
             candidate_authorities=row.candidate_authorities,
         )
 
