@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -68,6 +69,29 @@ def test_context_corpus_is_canonical_authenticated_and_order_independent() -> No
     assert encode_fast_forecast_evaluation_context_corpus(
         decode_fast_forecast_evaluation_context_corpus(payload)
     ) == payload
+
+
+def test_context_corpus_preserves_integer_numeric_scalar_fingerprint() -> None:
+    contexts = _contexts()
+    first = replace(
+        contexts[0],
+        executable_exit_capacity_quote=5,
+        expected_round_trip_cost_bps=0,
+    )
+    corpus = build_fast_forecast_evaluation_context_corpus(
+        (first, *contexts[1:])
+    )
+
+    payload = encode_fast_forecast_evaluation_context_corpus(corpus)
+    document = json.loads(payload)
+    assert document["contexts"][0]["executable_exit_capacity_quote"] == 5
+    assert document["contexts"][0]["expected_round_trip_cost_bps"] == 0
+
+    decoded = decode_fast_forecast_evaluation_context_corpus(payload)
+    assert decoded == corpus
+    assert decoded.context_fingerprint_sha256 == (
+        corpus.context_fingerprint_sha256
+    )
 
 
 def test_context_corpus_file_round_trip_refuses_overwrite(tmp_path: Path) -> None:
