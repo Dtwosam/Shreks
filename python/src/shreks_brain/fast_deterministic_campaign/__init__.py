@@ -1,3 +1,13 @@
+from .learned_request import (
+    FAST_LEARNED_COMPARISON_REQUEST_SCHEMA_NAME,
+    FAST_LEARNED_COMPARISON_REQUEST_SCHEMA_VERSION,
+    FastLearnedComparisonRequest,
+    FastLearnedComparisonRowInput,
+    build_fast_learned_comparison_request,
+    decode_fast_learned_comparison_request,
+    encode_fast_learned_comparison_request,
+    run_fast_learned_comparison_request_file,
+)
 from .proof_artifact import (
     FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_NAME,
     FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_VERSION,
@@ -97,6 +107,14 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_LEARNED_COMPARISON_REQUEST_SCHEMA_NAME",
+    "FAST_LEARNED_COMPARISON_REQUEST_SCHEMA_VERSION",
+    "FastLearnedComparisonRequest",
+    "FastLearnedComparisonRowInput",
+    "build_fast_learned_comparison_request",
+    "decode_fast_learned_comparison_request",
+    "encode_fast_learned_comparison_request",
+    "run_fast_learned_comparison_request_file",
     "FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_NAME",
     "FAST_POLICY_COMPARISON_ARTIFACT_SCHEMA_VERSION",
     "FastPolicyComparisonArtifact",
