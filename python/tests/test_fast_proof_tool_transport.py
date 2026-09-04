@@ -8,6 +8,7 @@ import zipfile
 
 import pytest
 
+import shreks_brain.fast_proof_tools as fast_proof_tools_module
 from shreks_brain.fast_proof_tools import (
     FAST_PROOF_TOOL_NAMES,
     FAST_PROOF_TOOLS_SCHEMA_NAME,
@@ -15,6 +16,7 @@ from shreks_brain.fast_proof_tools import (
     build_fast_proof_tools_manifest,
     decode_fast_proof_tools_manifest,
     encode_fast_proof_tools_manifest,
+    materialize_fast_proof_tools,
     materialize_fast_proof_tools_from_directory,
     stage_fast_proof_tools_package,
     verify_fast_proof_tools_package,
@@ -180,6 +182,54 @@ def test_materialization_is_private_idempotent_and_refuses_drift(
             expected_source_sha="d" * 40,
             expected_platform="x86_64-unknown-linux-gnu",
         )
+
+
+
+def test_installed_materialization_tolerates_only_generated_python_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = _tools(tmp_path / "native")
+    package = tmp_path / "package"
+    stage_fast_proof_tools_package(
+        source_sha="f" * 40,
+        platform="aarch64-unknown-linux-gnu",
+        tools=tools,
+        destination=package,
+    )
+    cache = package / "__pycache__"
+    cache.mkdir()
+    (cache / "__init__.cpython-312.pyc").write_bytes(b"interpreter-cache")
+
+    with pytest.raises(ValueError, match="regular files only"):
+        verify_fast_proof_tools_package(
+            package,
+            expected_source_sha="f" * 40,
+            expected_platform="aarch64-unknown-linux-gnu",
+        )
+
+    monkeypatch.setattr(
+        fast_proof_tools_module,
+        "files",
+        lambda package_name: package,
+    )
+
+    root = tmp_path / "materialized"
+    toolset = materialize_fast_proof_tools(
+        root,
+        expected_source_sha="f" * 40,
+        expected_platform="aarch64-unknown-linux-gnu",
+    )
+    assert tuple(path.name for path in toolset.paths) == FAST_PROOF_TOOL_NAMES
+
+    (cache / "unexpected.cpython-312.pyc").write_bytes(b"unexpected")
+    with pytest.raises(ValueError, match="cache|package|member|regular"):
+        materialize_fast_proof_tools(
+            root,
+            expected_source_sha="f" * 40,
+            expected_platform="aarch64-unknown-linux-gnu",
+        )
+
 
 
 def test_wheel_verifier_requires_exact_embedded_package(tmp_path: Path) -> None:

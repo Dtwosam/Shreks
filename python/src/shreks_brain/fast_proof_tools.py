@@ -300,6 +300,21 @@ def verify_fast_proof_tools_package(
     expected_source_sha: str,
     expected_platform: str,
 ) -> FastProofToolsManifest:
+    return _verify_fast_proof_tools_package(
+        package,
+        expected_source_sha=expected_source_sha,
+        expected_platform=expected_platform,
+        allow_python_cache=False,
+    )
+
+
+def _verify_fast_proof_tools_package(
+    package: str | Path,
+    *,
+    expected_source_sha: str,
+    expected_platform: str,
+    allow_python_cache: bool,
+) -> FastProofToolsManifest:
     root = Path(package)
     if root.is_symlink() or not root.is_dir():
         raise ValueError(
@@ -312,6 +327,9 @@ def verify_fast_proof_tools_package(
     }
     actual_names: set[str] = set()
     for path in root.iterdir():
+        if allow_python_cache and path.name == "__pycache__":
+            _verify_generated_python_cache(path)
+            continue
         if path.is_symlink() or not path.is_file():
             raise ValueError(
                 "fast proof tools package may contain regular files only"
@@ -338,6 +356,25 @@ def verify_fast_proof_tools_package(
         },
     )
     return manifest
+
+
+def _verify_generated_python_cache(path: Path) -> None:
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(
+            "fast proof tools Python cache must be a real directory"
+        )
+    for child in path.iterdir():
+        if child.is_symlink() or not child.is_file():
+            raise ValueError(
+                "fast proof tools Python cache may contain regular files only"
+            )
+        if not (
+            child.name.startswith("__init__.")
+            and child.name.endswith(".pyc")
+        ):
+            raise ValueError(
+                "fast proof tools Python cache member is unexpected"
+            )
 
 
 def verify_fast_proof_tools_wheel(
@@ -421,11 +458,12 @@ def materialize_fast_proof_tools(
             "sealed fast proof tools are unavailable in this installation"
         ) from exc
     with as_file(resource) as package:
-        return materialize_fast_proof_tools_from_directory(
+        return _materialize_fast_proof_tools_from_directory(
             package,
             destination_root,
             expected_source_sha=expected_source_sha,
             expected_platform=expected_platform,
+            allow_python_cache=True,
         )
 
 
@@ -436,10 +474,28 @@ def materialize_fast_proof_tools_from_directory(
     expected_source_sha: str,
     expected_platform: str,
 ) -> FastProofToolSet:
-    manifest = verify_fast_proof_tools_package(
+    return _materialize_fast_proof_tools_from_directory(
+        package,
+        destination_root,
+        expected_source_sha=expected_source_sha,
+        expected_platform=expected_platform,
+        allow_python_cache=False,
+    )
+
+
+def _materialize_fast_proof_tools_from_directory(
+    package: str | Path,
+    destination_root: str | Path,
+    *,
+    expected_source_sha: str,
+    expected_platform: str,
+    allow_python_cache: bool,
+) -> FastProofToolSet:
+    manifest = _verify_fast_proof_tools_package(
         package,
         expected_source_sha=expected_source_sha,
         expected_platform=expected_platform,
+        allow_python_cache=allow_python_cache,
     )
     root = Path(destination_root)
     if root.is_symlink():
