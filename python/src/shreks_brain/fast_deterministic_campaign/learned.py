@@ -40,6 +40,7 @@ from shreks_brain.paper import (
     PaperLedgerUpdateState,
     PaperPositionState,
 )
+from shreks_brain.fast_learning import FastForecastTarget
 from shreks_brain.research.fast_training_features import FastTrainingFeatureRecord
 from shreks_brain.risk import RiskPolicy
 
@@ -54,6 +55,13 @@ FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_NAME = (
     "shreks.fast_learned_campaign_candidate"
 )
 FAST_LEARNED_CAMPAIGN_CANDIDATE_SCHEMA_VERSION = 1
+_ACTIVE_FORECAST_TARGETS = (
+    FastForecastTarget.ENDPOINT_COST_ADJUSTED_RETURN_BPS,
+    FastForecastTarget.ENDPOINT_RETURN_BPS,
+    FastForecastTarget.MAE_BPS,
+    FastForecastTarget.REVERSAL_OCCURRED,
+    FastForecastTarget.ROUTE_UNAVAILABILITY_OBSERVED,
+)
 _REL_TOL = 1e-12
 _ABS_TOL = 1e-9
 
@@ -348,9 +356,21 @@ def _preflight(
             "champion and action policy"
         )
 
+    active_members = []
+    for horizon_ms in policy.horizons_ms:
+        for target in _ACTIVE_FORECAST_TARGETS:
+            try:
+                active_members.append(
+                    champion_artifact.member_for(target, horizon_ms)
+                )
+            except KeyError as exc:
+                raise ValueError(
+                    "learned campaign champion is missing an active "
+                    f"{target.value}@{horizon_ms}ms member"
+                ) from exc
     max_training_at = max(
         member.forecast_artifact.max_training_decision_observed_at_unix_ms
-        for member in champion_artifact.members
+        for member in active_members
     )
 
     seen: set[str] = set()
@@ -672,30 +692,30 @@ def _policy_fingerprint_material(
         "version": policy.version,
         "horizons_ms": list(policy.horizons_ms),
         "entry_exposure_candidates": [
-            {"float_hex": value.hex()}
+            {"float_hex": float(value).hex()}
             for value in policy.entry_exposure_candidates
         ],
         "reduce_target_exposure_candidates": [
-            {"float_hex": value.hex()}
+            {"float_hex": float(value).hex()}
             for value in policy.reduce_target_exposure_candidates
         ],
         "adverse_excursion_weight": {
-            "float_hex": policy.adverse_excursion_weight.hex()
+            "float_hex": float(policy.adverse_excursion_weight).hex()
         },
         "reversal_penalty_bps": {
-            "float_hex": policy.reversal_penalty_bps.hex()
+            "float_hex": float(policy.reversal_penalty_bps).hex()
         },
         "route_unavailability_penalty_bps": {
-            "float_hex": policy.route_unavailability_penalty_bps.hex()
+            "float_hex": float(policy.route_unavailability_penalty_bps).hex()
         },
         "horizon_disagreement_weight": {
-            "float_hex": policy.horizon_disagreement_weight.hex()
+            "float_hex": float(policy.horizon_disagreement_weight).hex()
         },
         "minimum_buy_value_bps": {
-            "float_hex": policy.minimum_buy_value_bps.hex()
+            "float_hex": float(policy.minimum_buy_value_bps).hex()
         },
         "minimum_hold_value_bps": {
-            "float_hex": policy.minimum_hold_value_bps.hex()
+            "float_hex": float(policy.minimum_hold_value_bps).hex()
         },
         "missing_forecast_open_action": (
             policy.missing_forecast_open_action
