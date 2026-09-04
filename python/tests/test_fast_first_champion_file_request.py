@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,6 +16,9 @@ from fast_forecast_evaluation_fixtures import (
     evaluation_policy,
 )
 from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
+from shreks_brain.research.fast_training_bundle import (
+    bundle_logical_fingerprint_sha256,
+)
 from shreks_brain.fast_first_champion import (
     FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME,
     FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION,
@@ -39,6 +44,31 @@ def _context_corpus(tmp_path: Path) -> Path:
     path = tmp_path / "contexts.json"
     write_fast_forecast_evaluation_context_corpus(corpus, path)
     return path
+
+
+def _runtime_bundle_for(features: Path):
+    bundle = chronological_bundle()
+    source_sha = hashlib.sha256(features.read_bytes()).hexdigest()
+    feature_dataset = replace(
+        bundle.features,
+        source_sha256=source_sha,
+    )
+    provisional = replace(
+        bundle.manifest,
+        feature_source_jsonl_sha256=source_sha,
+        bundle_fingerprint_sha256="0" * 64,
+    )
+    manifest = replace(
+        provisional,
+        bundle_fingerprint_sha256=bundle_logical_fingerprint_sha256(
+            provisional
+        ),
+    )
+    return replace(
+        bundle,
+        features=feature_dataset,
+        manifest=manifest,
+    )
 
 
 def _request(tmp_path: Path):
@@ -106,7 +136,7 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
     request, request_path, features, database, contexts, destination = _request(
         tmp_path
     )
-    bundle = chronological_bundle()
+    bundle = _runtime_bundle_for(features)
     calls = []
 
     def _runtime_bundle(**kwargs):
@@ -171,7 +201,7 @@ def test_file_request_rejects_source_mutation_and_leaves_no_partial_artifact(
     tmp_path: Path,
 ) -> None:
     _, request_path, features, _, _, destination = _request(tmp_path)
-    bundle = chronological_bundle()
+    bundle = _runtime_bundle_for(features)
 
     def _runtime_bundle(**_kwargs):
         features.write_bytes(features.read_bytes() + b"mutation")
@@ -195,7 +225,7 @@ def test_file_request_authenticates_sqlite_wal_and_request_bytes(
     _, request_path, _, database, _, destination = _request(tmp_path)
     wal = Path(str(database) + "-wal")
     wal.write_bytes(b"wal-before")
-    bundle = chronological_bundle()
+    bundle = _runtime_bundle_for(tmp_path / "features.jsonl")
 
     def _runtime_bundle(**_kwargs):
         wal.write_bytes(b"wal-after")
@@ -241,7 +271,7 @@ def test_first_champion_artifact_reader_rejects_report_tampering(
     monkeypatch.setattr(
         file_request_module,
         "build_fast_training_bundle_from_runtime_sources",
-        lambda **_kwargs: chronological_bundle(),
+        lambda **_kwargs: _runtime_bundle_for(tmp_path / "features.jsonl"),
     )
     artifact = run_fast_first_champion_file_request(request_path)
     report = next(
