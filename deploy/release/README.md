@@ -85,6 +85,23 @@ shreks_brain/_sealed_deploy_control/release_manager.py
 
 The wheel itself is a manifest-hashed release payload. During release construction, `build_release.sh` opens the completed wheel and verifies those two members are byte-for-byte identical to the exact sealed checkout before the wheel enters the release bundle. This transports the one-time root control-plane repair without changing the top-level manifest schema or making old verified releases unverifiable.
 
+### Sealed offline Fast Lane proof tools
+
+Verified releases also transport the native offline executables required by the FL9 evidence path inside the same manifest-hashed wheel rather than expanding the historical G2 top-level payload allowlist:
+
+```text
+shreks_brain/_sealed_fast_tools/manifest.json
+shreks_brain/_sealed_fast_tools/export_fast_training_features.bin
+shreks_brain/_sealed_fast_tools/shreks-fast-campaign-decision.bin
+shreks_brain/_sealed_fast_tools/shreks-fast-entry-authority.bin
+```
+
+The nested manifest binds the exact release source SHA, native platform, tool names, byte sizes, and SHA-256 fingerprints. Release construction verifies the completed wheel against the native binaries built from that same checkout before the wheel is admitted to the ordinary G2 bundle.
+
+These payloads are **offline proof tools, not runtime services**. Deployment does not execute them, does not add systemd units for them, and does not grant the deploy account access to `/var/lib/shreks`. A later PAPER-only proof workflow running under the existing `shreks` service identity may materialize authenticated copies into private runtime storage. Existing modified copies fail closed rather than being silently overwritten.
+
+This transport adds no provider credential, wallet/signing authority, promotion authority, transaction submission, or LIVE enablement.
+
 ## Deploy a release
 
 Run the manual `Deploy verified Shreks release` workflow with the existing release tag. The workflow validates the tag, checks out the verifier at that release, downloads the three assets, verifies them before host contact, uses strict pinned host-key checking, copies the assets to `/var/tmp`, and invokes only:

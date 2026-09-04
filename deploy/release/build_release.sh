@@ -8,6 +8,7 @@ WHEEL_OUT="dist/release-wheel"
 PYTHON_BUILD_ROOT="${RELEASE_OUT}-python-source"
 STAGING="$RELEASE_OUT/staging"
 CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"
+FAST_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_tools"
 
 if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_SHA must be exactly 40 lowercase hex characters" >&2
@@ -48,18 +49,45 @@ mkdir -p \
   "$STAGING/wheelhouse" \
   "$WHEEL_OUT"
 
-cargo build --release --bin shreks-observe --bin shreks-paper-evidence
+cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
+  --bin export_fast_training_features \
+  --bin shreks-fast-entry-authority \
+  --bin shreks-fast-campaign-decision
 
 # Keep the top-level release bundle compatible with the already-installed G2
-# verifier. The sealed deployment-control scripts ride inside the already-
-# allowlisted, manifest-hashed Shreks wheel for the one-time control-plane
-# bootstrap after this release is staged.
+# verifier. Sealed deployment-control scripts and the offline FL9 proof tools
+# ride inside the already-allowlisted, manifest-hashed Shreks wheel.
 cp -a python "$PYTHON_BUILD_ROOT"
 mkdir -p "$CONTROL_PACKAGE"
 printf '%s\n' '"""Sealed deployment-control payload; not a runtime API."""' \
   > "$CONTROL_PACKAGE/__init__.py"
 cp deploy/release/release_manager.py "$CONTROL_PACKAGE/release_manager.py"
 cp deploy/release/release_bundle.py "$CONTROL_PACKAGE/release_bundle.py"
+
+PYTHONPATH=python/src python - "$SOURCE_SHA" "$PLATFORM" "$FAST_TOOLS_PACKAGE" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_proof_tools import stage_fast_proof_tools_package
+
+source_sha, platform, destination = sys.argv[1:]
+stage_fast_proof_tools_package(
+    source_sha=source_sha,
+    platform=platform,
+    tools={
+        "export_fast_training_features": Path(
+            "target/release/export_fast_training_features"
+        ),
+        "shreks-fast-campaign-decision": Path(
+            "target/release/shreks-fast-campaign-decision"
+        ),
+        "shreks-fast-entry-authority": Path(
+            "target/release/shreks-fast-entry-authority"
+        ),
+    },
+    destination=Path(destination),
+)
+PY
 
 python -m pip wheel "$PYTHON_BUILD_ROOT" --no-deps -w "$WHEEL_OUT"
 
@@ -88,9 +116,38 @@ with zipfile.ZipFile(wheel) as archive:
         try:
             actual = archive.read(member)
         except KeyError as exc:
-            raise SystemExit(f"sealed deployment-control wheel member missing: {member}") from exc
+            raise SystemExit(
+                f"sealed deployment-control wheel member missing: {member}"
+            ) from exc
         if actual != payload:
-            raise SystemExit(f"sealed deployment-control wheel member mismatch: {member}")
+            raise SystemExit(
+                f"sealed deployment-control wheel member mismatch: {member}"
+            )
+PY
+
+PYTHONPATH=python/src python - "${WHEELS[0]}" "$SOURCE_SHA" "$PLATFORM" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_proof_tools import verify_fast_proof_tools_wheel
+
+wheel, source_sha, platform = sys.argv[1:]
+verify_fast_proof_tools_wheel(
+    Path(wheel),
+    expected_source_sha=source_sha,
+    expected_platform=platform,
+    expected_tools={
+        "export_fast_training_features": Path(
+            "target/release/export_fast_training_features"
+        ),
+        "shreks-fast-campaign-decision": Path(
+            "target/release/shreks-fast-campaign-decision"
+        ),
+        "shreks-fast-entry-authority": Path(
+            "target/release/shreks-fast-entry-authority"
+        ),
+    },
+)
 PY
 
 cp target/release/shreks-observe "$STAGING/target/release/shreks-observe"
