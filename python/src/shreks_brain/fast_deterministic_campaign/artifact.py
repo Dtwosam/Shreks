@@ -261,6 +261,12 @@ def write_fast_deterministic_campaign_artifact(
             encoding="utf-8",
         )
 
+        verified = read_fast_deterministic_campaign_artifact(staging_path)
+        if verified.manifest != manifest:
+            raise ValueError(
+                "staged deterministic campaign artifact manifest did not round-trip"
+            )
+
         staging_path.rename(destination_path)
         return manifest
     except Exception:
