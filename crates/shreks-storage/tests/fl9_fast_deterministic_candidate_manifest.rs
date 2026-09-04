@@ -59,6 +59,17 @@ fn longer() -> LongerRunnerPolicy {
     }
 }
 
+fn kind_str(kind: FastBaselineKind) -> &'static str {
+    match kind {
+        FastBaselineKind::ImpulseScalp => "IMPULSE_SCALP",
+        FastBaselineKind::MicroPullback => "MICRO_PULLBACK",
+        FastBaselineKind::PreGraduation => "PRE_GRADUATION",
+        FastBaselineKind::GraduationFlow => "GRADUATION_FLOW",
+        FastBaselineKind::WalletCohort => "WALLET_COHORT",
+        FastBaselineKind::LongerRunner => "LONGER_RUNNER",
+    }
+}
+
 fn build(
     impulse: &ImpulseScalpPolicy,
     longer: &LongerRunnerPolicy,
@@ -289,7 +300,7 @@ fn builder_exposes_all_six_fl6_policy_families_without_market_evidence() {
             FastDeterministicManagerPolicyRef::LongerRunner(&longer()),
         )
         .unwrap();
-        assert_eq!(manifest.entry_policy.kind, kind.as_str());
+        assert_eq!(manifest.entry_policy.kind, kind_str(kind));
     }
 
     let manifest = build_fast_deterministic_candidate_manifest(
