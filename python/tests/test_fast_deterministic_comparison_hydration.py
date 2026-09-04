@@ -271,7 +271,7 @@ def _input(record: FastTrainingFeatureRecord) -> FastDeterministicComparisonHydr
         entry_forecast_source_version="ridge-return-v3",
         entry_forecast_horizon_ms=30_000,
         execution_cost_source_version="fl3-cost-policy-v1",
-        exit_capacity_source_version="jupiter-exit-probe-v2",
+        exit_capacity_source_version="observer:jupiter:probe-v2:exit",
         wallet_source_version=None,
         graduation_context_source_version="fl8.1-current-snapshot-v1",
         continuation_forecast_source_version=None,
