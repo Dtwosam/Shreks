@@ -1,3 +1,11 @@
+from .artifact import (
+    FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_NAME,
+    FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_VERSION,
+    FastDeterministicCampaignArtifact,
+    FastDeterministicCampaignArtifactManifest,
+    read_fast_deterministic_campaign_artifact,
+    write_fast_deterministic_campaign_artifact,
+)
 from .observer_probe import (
     FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION,
     FastObserverDirectionalProbeEvidence,
@@ -53,6 +61,12 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_NAME",
+    "FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_VERSION",
+    "FastDeterministicCampaignArtifact",
+    "FastDeterministicCampaignArtifactManifest",
+    "read_fast_deterministic_campaign_artifact",
+    "write_fast_deterministic_campaign_artifact",
     "FAST_DETERMINISTIC_COMPARISON_INPUT_ASSEMBLY_VERSION",
     "FastDeterministicComparisonExecutionPolicy",
     "FastDeterministicComparisonInputAssemblyResult",
