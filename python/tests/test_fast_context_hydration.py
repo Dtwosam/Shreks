@@ -143,7 +143,7 @@ class _FakeCampaignStore:
         return RegimeMarketWindow(
             as_of_unix_ms=as_of_unix_ms,
             source_observed_at_unix_ms=as_of_unix_ms - 1,
-            window_started_at_unix_ms=max(0, as_of_unix_ms - 1_000),
+            window_started_at_unix_ms=max(0, as_of_unix_ms - 1_001),
             candidate_count=1,
             executable_candidate_count=1,
             median_liquidity_usd=100.0,
