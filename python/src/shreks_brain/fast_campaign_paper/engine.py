@@ -95,12 +95,8 @@ def run_fast_campaign_paper_candidate(
         raise ValueError(
             "identity must be exact FastCampaignPaperCandidateIdentity"
         )
-    if not isinstance(decisions, tuple) or not all(
-        type(value) is _FastCampaignPaperDecision for value in decisions
-    ):
-        raise ValueError(
-            "decisions must be a tuple of exact shared campaign PAPER decision values"
-        )
+    if type(decisions) is not FastCampaignDecisionResults:
+        raise ValueError("decisions must be exact FastCampaignDecisionResults")
 
     common_decisions = tuple(
         _FastCampaignPaperDecision(
@@ -118,7 +114,7 @@ def run_fast_campaign_paper_candidate(
                 strategy_version=identity.strategy_version,
             ),
         )
-        for decision in decisions
+        for decision in decisions.decisions
     )
     return _run_fast_campaign_paper_decision_sequence(
         identity=identity,
@@ -187,7 +183,7 @@ def run_fast_deterministic_lifecycle_paper_candidate(
                 strategy_version=identity.strategy_version,
             ),
         )
-        for decision in decisions
+        for decision in decisions.decisions
     )
     return _run_fast_campaign_paper_decision_sequence(
         identity=identity,
@@ -216,8 +212,12 @@ def _run_fast_campaign_paper_decision_sequence(
         raise ValueError(
             "identity must be exact FastCampaignPaperCandidateIdentity"
         )
-    if type(decisions) is not FastCampaignDecisionResults:
-        raise ValueError("decisions must be exact FastCampaignDecisionResults")
+    if not isinstance(decisions, tuple) or not all(
+        type(value) is _FastCampaignPaperDecision for value in decisions
+    ):
+        raise ValueError(
+            "decisions must be a tuple of exact shared campaign PAPER decision values"
+        )
     if not isinstance(evidence, tuple) or not all(
         type(value) is FastCampaignPaperDecisionEvidence for value in evidence
     ):
