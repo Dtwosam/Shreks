@@ -592,7 +592,7 @@ fn lifecycle_from_event(value: &TokenLifecycleEvent) -> FastTrainingLifecycleEve
     }
 }
 
-fn validate_record(value: &FastTrainingFeatureRecord) -> Result<(), StorageError> {
+pub(crate) fn validate_record(value: &FastTrainingFeatureRecord) -> Result<(), StorageError> {
     if value.schema_name != FAST_TRAINING_FEATURE_SCHEMA_NAME
         || value.schema_version != FAST_TRAINING_FEATURE_SCHEMA_VERSION
         || value.decision_signature.trim().is_empty()
@@ -676,7 +676,7 @@ fn validate_record(value: &FastTrainingFeatureRecord) -> Result<(), StorageError
     Ok(())
 }
 
-fn parse_training_venue(value: &str) -> Result<VenueId, StorageError> {
+pub(crate) fn parse_training_venue(value: &str) -> Result<VenueId, StorageError> {
     match value {
         "pump_fun_bonding_curve" => Ok(VenueId::PumpFunBondingCurve),
         "pump_swap" => Ok(VenueId::PumpSwap),
