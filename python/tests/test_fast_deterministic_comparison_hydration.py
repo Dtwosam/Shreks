@@ -599,6 +599,44 @@ def test_assembler_builds_identical_fl6_execution_from_probe_and_champion(
     assert hydrated.rows[0].impulse_scalp_evidence.execution == proof.execution
 
 
+def test_assembler_rejects_drifted_champion_execution_proof(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-assembly-drift.db"
+    _create_observer_db(database)
+
+    def drifted_builder(**kwargs):
+        proof = _fake_champion_execution(**kwargs)
+        drifted_trade = replace(
+            proof.execution.trade,
+            base_quantity=proof.execution.trade.base_quantity - 1.0,
+        )
+        return replace(
+            proof,
+            execution=replace(
+                proof.execution,
+                trade=drifted_trade,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.input_assembly."
+        "build_fast_observer_champion_entry_execution",
+        drifted_builder,
+    )
+
+    with pytest.raises(ValueError, match="quantity|probe|execution"):
+        assemble_fast_deterministic_comparison_hydration_inputs(
+            database_path=database,
+            feature_dataset=_dataset(record),
+            champion_path=tmp_path / "sealed-champion.json",
+            execution_policy=_assembly_policy(),
+            contexts=(_assembly_context(record),),
+        )
+
+
 def test_assembler_unavailable_entry_emits_no_execution_or_execution_provenance(
     tmp_path: Path,
 ) -> None:
