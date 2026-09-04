@@ -38,11 +38,12 @@ use shreks_observer::{
 };
 use shreks_providers::{
     bounded_pump_realtime::BoundedPumpRealtimeLogStreamConfig,
-    bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
+    bounded_pump_realtime_failover::{
+        forward_bounded_pump_realtime_sessions, BoundedPumpRealtimeFailoverStream,
+    },
     config::ProviderConfig,
     dexscreener::DexScreenerProvider,
     meteora::MeteoraProvider,
-    pump_realtime::forward_pump_realtime_signals,
     solana_rpc::StandardSolanaRpcProvider,
     DiscoveryProvider, ProviderError,
 };
@@ -139,8 +140,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
             pumpswap_max_tracked_pools,
             target_sender,
         ));
-        let forwarder = tokio::spawn(forward_pump_realtime_signals(stream, sender));
-        let writer = tokio::spawn(Observer::run_pump_realtime_writer(writer_db, receiver));
+        let forwarder = tokio::spawn(forward_bounded_pump_realtime_sessions(stream, sender));
+        let writer = tokio::spawn(Observer::run_pump_realtime_session_writer(
+            writer_db,
+            receiver,
+        ));
         let normalizer = tokio::spawn(run_fast_event_normalizer(normalizer_db));
 
         Some((target_publisher, forwarder, writer, normalizer))
