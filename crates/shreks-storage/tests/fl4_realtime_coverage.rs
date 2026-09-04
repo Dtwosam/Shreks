@@ -109,6 +109,18 @@ fn new_process_session_sequence_creates_a_distinct_durable_session() {
     assert_ne!(first.session_id, second.session_id);
     assert_eq!(db.fast_realtime_coverage_sessions().unwrap().len(), 2);
 
+    let historical = db
+        .extend_fast_realtime_coverage_session(
+            first.session_id,
+            ProviderId::SolanaPublic,
+            1,
+            2_100,
+            201,
+            "late-old-session",
+        )
+        .unwrap_err();
+    assert!(historical.to_string().contains("historical realtime coverage"));
+
     cleanup_dir(&root);
 }
 
