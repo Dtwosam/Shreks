@@ -10,10 +10,14 @@ import pytest
 
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION,
+    FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION,
     FastDeterministicCampaignRiskEnvironment,
     FastDeterministicComparisonHydrationInput,
     FastDeterministicComparisonHydrationResult,
+    FastObserverDirectionalProbeEvidence,
+    build_fast_observer_champion_entry_execution,
     hydrate_fast_deterministic_comparison_evidence,
+    load_fast_observer_directional_probe,
     read_fast_deterministic_comparison_evidence_bundle,
     write_fast_deterministic_comparison_evidence_bundle,
 )
@@ -419,6 +423,228 @@ def _fake_authority_binary(path: Path) -> None:
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | 0o111)
+
+
+def test_observer_probe_derives_exact_entry_size_and_exit_capacity(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-probe.db"
+    _create_observer_db(database)
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+
+    assert type(probe) is FastObserverDirectionalProbeEvidence
+    assert probe.version == FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION
+    assert probe.source_event_id == "hydrate-sig:0"
+    assert probe.token_decimals == 6
+    assert probe.entry_quote.state is PaperQuoteState.EXECUTABLE
+    assert probe.entry_quote.execution_price_quote == pytest.approx(10.0)
+    assert probe.exit_quote.state is PaperQuoteState.EXECUTABLE
+    assert probe.exit_quote.execution_price_quote == pytest.approx(9.9)
+    assert probe.intended_base_quantity == pytest.approx(10.0)
+    assert probe.exit_capacity_base == pytest.approx(10.0)
+    assert probe.entry_quote_source_version == "observer:jupiter:probe-v2:entry"
+    assert probe.exit_quote_source_version == "observer:jupiter:probe-v2:exit"
+
+
+def test_observer_probe_supplies_champion_size_and_capacity_without_caller_values(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-probe-build.db"
+    _create_observer_db(database)
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+    captured = {}
+    sentinel = object()
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        fake_builder,
+    )
+
+    result = build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    )
+
+    assert result is sentinel
+    assert captured["base_quantity"] == pytest.approx(10.0)
+    assert captured["exit_capacity_base"] == pytest.approx(10.0)
+    assert (
+        captured["exit_capacity_source_version"]
+        == probe.exit_quote_source_version
+    )
+    assert "base_quantity" not in {
+        "probe",
+        "champion_path",
+        "record",
+        "horizon_ms",
+        "cost_model",
+        "required_edge_bps",
+        "risk_margin_bps",
+        "execution_policy_source_version",
+    }
+
+
+@pytest.mark.parametrize("purpose", ("entry", "exit"))
+def test_unavailable_direction_produces_no_champion_execution_evidence(
+    purpose: str,
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / f"observer-unavailable-{purpose}.db"
+    _create_observer_db(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET output_amount = '0',
+               minimum_output_amount = '0',
+               route_available = 0,
+               price_impact_pct = NULL,
+               route_labels_json = '[]'
+           WHERE purpose = ?""",
+        (purpose,),
+    )
+    connection.commit()
+    connection.close()
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=_exit_identity(),
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+
+    called = False
+
+    def should_not_run(**kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("champion inference must not run without both routes")
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        should_not_run,
+    )
+
+    assert build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "missing-champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    ) is None
+    assert called is False
+
+
+def test_observer_probe_preserves_positive_but_undersized_exit_capacity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-undersized-exit.db"
+    _create_observer_db(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET input_amount = '5000000',
+               output_amount = '49500000',
+               minimum_output_amount = '49000000'
+           WHERE purpose = 'exit'"""
+    )
+    connection.commit()
+    connection.close()
+    smaller_exit = replace(_exit_identity(), input_amount=5_000_000)
+
+    probe = load_fast_observer_directional_probe(
+        database_path=database,
+        record=record,
+        observer_candidate_id=7,
+        evaluated_at_unix_ms=T0 + 100,
+        entry_quote_identity=_entry_identity(),
+        exit_quote_identity=smaller_exit,
+        quote_asset=ObserverPaperQuoteAsset(
+            mint=QUOTE,
+            decimals=6,
+            usd_per_token=1.0,
+        ),
+    )
+    assert probe.intended_base_quantity == pytest.approx(10.0)
+    assert probe.exit_capacity_base == pytest.approx(5.0)
+
+    captured = {}
+    sentinel = object()
+
+    def fake_builder(**kwargs):
+        captured.update(kwargs)
+        return sentinel
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.observer_probe."
+        "build_fast_champion_entry_execution_evidence",
+        fake_builder,
+    )
+    assert build_fast_observer_champion_entry_execution(
+        probe=probe,
+        champion_path=tmp_path / "champion.json",
+        record=record,
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+        execution_policy_source_version="fl3-economic-policy-v1",
+    ) is sentinel
+    assert captured["base_quantity"] == pytest.approx(10.0)
+    assert captured["exit_capacity_base"] == pytest.approx(5.0)
 
 
 def test_hydrates_real_directional_observer_quotes_and_fl3_authority(
