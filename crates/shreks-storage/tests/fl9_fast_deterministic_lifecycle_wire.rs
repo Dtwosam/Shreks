@@ -1,3 +1,5 @@
+use sha2::{Digest, Sha256};
+
 use shreks_storage::{
     decode_fast_deterministic_lifecycle_results_json,
     encode_fast_deterministic_lifecycle_results_json,
@@ -10,6 +12,19 @@ use shreks_storage::{
 const GOLDEN: &str = include_str!(
     "../../../python/tests/fixtures/fast_deterministic_lifecycle_results_v1.json"
 );
+
+fn seal_for_semantic_validation(
+    mut results: FastDeterministicLifecycleResultsWire,
+) -> FastDeterministicLifecycleResultsWire {
+    let mut value = serde_json::to_value(&results).unwrap();
+    value
+        .as_object_mut()
+        .unwrap()
+        .remove("batch_fingerprint_sha256");
+    let payload = serde_json::to_vec(&value).unwrap();
+    results.batch_fingerprint_sha256 = format!("{:x}", Sha256::digest(payload));
+    results
+}
 
 #[test]
 fn shared_golden_lifecycle_wire_round_trips_exactly() {
@@ -64,7 +79,7 @@ fn lifecycle_wire_enforces_posture_action_and_explicit_target_semantics() {
         reduce_remaining_fraction: 0.5,
     };
 
-    let flat_reduce = FastDeterministicLifecycleResultsWire {
+    let flat_reduce = seal_for_semantic_validation(FastDeterministicLifecycleResultsWire {
         schema_name: FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME.to_owned(),
         schema_version: FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
         policy: policy.clone(),
@@ -81,13 +96,13 @@ fn lifecycle_wire_enforces_posture_action_and_explicit_target_semantics() {
             target_exposure_fraction: 0.4,
         }],
         batch_fingerprint_sha256: "0".repeat(64),
-    };
+    });
     let error = encode_fast_deterministic_lifecycle_results_json(&flat_reduce)
         .unwrap_err()
         .to_string();
     assert!(error.contains("action") || error.contains("FLAT"), "{error}");
 
-    let open_wrong_target = FastDeterministicLifecycleResultsWire {
+    let open_wrong_target = seal_for_semantic_validation(FastDeterministicLifecycleResultsWire {
         schema_name: FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_NAME.to_owned(),
         schema_version: FAST_DETERMINISTIC_LIFECYCLE_RESULTS_SCHEMA_VERSION,
         policy,
@@ -104,7 +119,7 @@ fn lifecycle_wire_enforces_posture_action_and_explicit_target_semantics() {
             target_exposure_fraction: 0.3,
         }],
         batch_fingerprint_sha256: "0".repeat(64),
-    };
+    });
     let error = encode_fast_deterministic_lifecycle_results_json(&open_wrong_target)
         .unwrap_err()
         .to_string();
