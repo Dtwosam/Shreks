@@ -135,18 +135,26 @@ class CounterfactualDatasetManifest:
         )
 
 
+def build_counterfactual_dataset(
+    outcome_sets: tuple[CounterfactualOutcomeSet, ...],
+) -> tuple[tuple[dict[str, object], ...], CounterfactualDatasetManifest]:
+    """Build canonical FL5 logical rows and manifest without a storage dependency."""
+    rows = _build_counterfactual_rows(outcome_sets)
+    digest = _logical_dataset_fingerprint_sha256(rows)
+    return rows, _manifest_for_rows(rows, digest)
+
+
 def write_counterfactual_parquet(
     outcome_sets: tuple[CounterfactualOutcomeSet, ...],
     path: str | Path,
 ) -> CounterfactualDatasetManifest:
-    rows = _build_counterfactual_rows(outcome_sets)
+    rows, manifest = build_counterfactual_dataset(outcome_sets)
 
     destination = Path(path)
     if destination.suffix != ".parquet":
         raise ValueError("counterfactual dataset path must end with .parquet")
 
-    digest = _logical_dataset_fingerprint_sha256(rows)
-    manifest = _manifest_for_rows(rows, digest)
+    digest = manifest.dataset_fingerprint_sha256
 
     try:
         import pyarrow as pa
