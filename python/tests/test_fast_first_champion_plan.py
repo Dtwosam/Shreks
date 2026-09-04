@@ -144,7 +144,7 @@ def test_plan_preserves_sealed_leakage_quarantine() -> None:
 def test_plan_rejects_insufficient_mature_preselection_population() -> None:
     with pytest.raises(ValueError, match="eligible|partition|evidence"):
         _plan(
-            selection_at_unix_ms=2_300,
+            selection_at_unix_ms=1_750,
             minimum_raw_rows_per_partition=2,
         )
 
