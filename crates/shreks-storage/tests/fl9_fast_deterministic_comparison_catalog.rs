@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, process::Command};
 
 use shreks_storage::{
     build_fast_deterministic_comparison_catalog,
@@ -8,6 +8,10 @@ use shreks_storage::{
     FAST_DETERMINISTIC_COMPARISON_CATALOG_SCHEMA_VERSION,
     FAST_DETERMINISTIC_COMPARISON_CATALOG_VERSION,
 };
+
+const GOLDEN: &str = include_str!(
+    "../../../python/tests/fixtures/fast_deterministic_comparison_catalog_v1.json"
+);
 
 const EXPECTED: [&str; 8] = [
     "fl9-baseline-graduation-flow-longer-runner-v1",
@@ -75,7 +79,24 @@ fn comparison_catalog_json_round_trip_and_repeat_are_deterministic() {
     let encoded = encode_fast_deterministic_comparison_catalog_json(&first).unwrap();
     let decoded = decode_fast_deterministic_comparison_catalog_json(&encoded).unwrap();
     assert_eq!(decoded, first);
-    assert_eq!(first.catalog_fingerprint_sha256.len(), 64);
+    assert_eq!(
+        first.catalog_fingerprint_sha256,
+        "64507c55998ba517f7d77e74323c8a84823c696f706d83b66782521c7436979c"
+    );
+    assert_eq!(encoded, GOLDEN);
+}
+
+#[test]
+fn catalog_binary_stdout_matches_shared_golden_exactly() {
+    let output = Command::new(env!(
+        "CARGO_BIN_EXE_shreks-fast-deterministic-catalog"
+    ))
+    .output()
+    .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(String::from_utf8(output.stdout).unwrap(), GOLDEN);
 }
 
 #[test]
