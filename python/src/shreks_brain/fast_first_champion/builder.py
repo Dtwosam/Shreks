@@ -127,6 +127,37 @@ class FastFirstChampionBuildResult:
                 "first champion evidence populations are not in canonical required order"
             )
 
+        if len(self.champion.members) != len(_REQUIRED_MEMBERS):
+            raise ValueError(
+                "champion member population does not match required FL9 forecasts"
+            )
+        for artifact, run, report in zip(
+            self.runtime_artifacts,
+            self.validation_runs,
+            self.evaluation_reports,
+            strict=True,
+        ):
+            member = self.champion.member_for(
+                artifact.target,
+                artifact.horizon_ms,
+            )
+            if member.forecast_artifact != artifact:
+                raise ValueError(
+                    "champion member artifact does not match build result"
+                )
+            if member.validation_run_fingerprint_sha256 != (
+                run.validation_run_fingerprint_sha256
+            ):
+                raise ValueError(
+                    "champion member validation evidence does not match build result"
+                )
+            if member.test_evaluation_report_fingerprint_sha256 != (
+                report.evaluation_report_fingerprint_sha256
+            ):
+                raise ValueError(
+                    "champion member TEST evidence does not match build result"
+                )
+
 
 def build_fast_first_champion(
     *,
