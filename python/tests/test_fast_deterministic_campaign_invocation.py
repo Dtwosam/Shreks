@@ -10,6 +10,7 @@ import pytest
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+    FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_JSONL_SCHEMA_VERSION,
     FastDeterministicCampaignInvocationManifest,
     FastDeterministicCampaignInvocationSeal,
     FastDeterministicCampaignSourceComponent,
@@ -325,3 +326,88 @@ def test_invocation_source_has_no_network_superiority_promotion_or_live_authorit
         "__import__(",
     ):
         assert forbidden not in source
+
+
+
+def test_jsonl_v2_invocation_seal_uses_versioned_feature_source(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_dir = tmp_path / "request-jsonl"
+    request_dir.mkdir()
+    request_path = request_dir / "campaign_request.json"
+    request_payload = _canonical({"request": "canonical-jsonl-v2"})
+    request_path.write_text(request_payload, encoding="utf-8")
+
+    paths = {
+        "observer_database_path": "evidence/observer.db",
+        "feature_jsonl_path": "evidence/features.jsonl",
+        "comparison_catalog_path": "evidence/catalog.json",
+        "champion_path": "models/champion.json",
+        "entry_authority_binary_path": "bin/entry-authority",
+        "candidate_binary_path": "bin/candidate-row",
+        "destination_path": "output/campaign-jsonl",
+    }
+    for name, relative in paths.items():
+        if name == "destination_path":
+            continue
+        path = request_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"{name}-bytes".encode("utf-8"))
+
+    request = SimpleNamespace(
+        schema_version=2,
+        request_fingerprint_sha256="a" * 64,
+        **paths,
+    )
+    campaign_manifest = SimpleNamespace(
+        artifact_fingerprint_sha256="b" * 64,
+    )
+    campaign = (request_dir / paths["destination_path"]).resolve()
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.invocation."
+        "decode_fast_deterministic_campaign_request",
+        lambda _payload: request,
+    )
+
+    def fake_run(_path):
+        campaign.mkdir(parents=True)
+        (campaign / "placeholder").write_text("campaign", encoding="utf-8")
+        return campaign_manifest
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.invocation."
+        "run_fast_deterministic_campaign_request_file",
+        fake_run,
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.invocation."
+        "read_fast_deterministic_campaign_artifact",
+        lambda _path: SimpleNamespace(manifest=campaign_manifest),
+    )
+
+    seal = run_fast_deterministic_campaign_invocation_file(request_path)
+
+    assert seal.manifest.schema_version == (
+        FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_JSONL_SCHEMA_VERSION
+    )
+    labels = tuple(value.label for value in seal.sources)
+    assert labels == (
+        "candidate_binary_path",
+        "champion_path",
+        "comparison_catalog_path",
+        "entry_authority_binary_path",
+        "feature_jsonl_path",
+        "observer_database_path",
+    )
+    feature_source = next(
+        value for value in seal.sources if value.label == "feature_jsonl_path"
+    )
+    feature_path = (request_dir / paths["feature_jsonl_path"]).resolve()
+    assert feature_source.components[0].sha256 == _sha256_bytes(
+        feature_path.read_bytes()
+    )
+    assert read_fast_deterministic_campaign_invocation_seal(
+        seal.path
+    ).manifest == seal.manifest

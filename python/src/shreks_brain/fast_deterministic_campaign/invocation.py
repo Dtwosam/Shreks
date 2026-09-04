@@ -18,10 +18,12 @@ FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME = (
     "shreks.fast_deterministic_campaign_invocation"
 )
 FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION = 1
+FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_JSONL_SCHEMA_VERSION = 2
 _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_NAME = (
     "shreks.fast_deterministic_campaign_sources"
 )
 _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_VERSION = 1
+_FAST_DETERMINISTIC_CAMPAIGN_SOURCES_JSONL_SCHEMA_VERSION = 2
 
 _REQUEST_FILE = "request.json"
 _SOURCES_FILE = "sources.json"
@@ -35,6 +37,15 @@ _SOURCE_LABELS = (
     "feature_parquet_path",
     "observer_database_path",
 )
+_SOURCE_LABELS_V2 = (
+    "candidate_binary_path",
+    "champion_path",
+    "comparison_catalog_path",
+    "entry_authority_binary_path",
+    "feature_jsonl_path",
+    "observer_database_path",
+)
+_SUPPORTED_SOURCE_LABELS = frozenset((*_SOURCE_LABELS, *_SOURCE_LABELS_V2))
 _MANIFEST_KEYS = frozenset(
     {
         "schema_name",
@@ -76,7 +87,7 @@ class FastDeterministicCampaignSourceSnapshot:
     components: tuple[FastDeterministicCampaignSourceComponent, ...]
 
     def __post_init__(self) -> None:
-        if self.label not in _SOURCE_LABELS:
+        if self.label not in _SUPPORTED_SOURCE_LABELS:
             raise ValueError("source snapshot label is unsupported")
         _require_non_empty_string("declared_path", self.declared_path)
         if not isinstance(self.components, tuple) or not self.components:
@@ -134,7 +145,10 @@ class FastDeterministicCampaignInvocationManifest:
     def __post_init__(self) -> None:
         if self.schema_name != FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME:
             raise ValueError("unsupported deterministic campaign invocation schema_name")
-        if self.schema_version != FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION:
+        if self.schema_version not in {
+            FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+            FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_JSONL_SCHEMA_VERSION,
+        }:
             raise ValueError("unsupported deterministic campaign invocation schema_version")
         for name in (
             "request_fingerprint_sha256",
@@ -144,7 +158,7 @@ class FastDeterministicCampaignInvocationManifest:
             "invocation_fingerprint_sha256",
         ):
             _require_sha256(name, getattr(self, name))
-        if self.source_count != len(_SOURCE_LABELS):
+        if self.source_count != 6:
             raise ValueError(
                 "deterministic campaign invocation must contain exactly six sources"
             )
@@ -172,7 +186,7 @@ class FastDeterministicCampaignInvocationSeal:
             raise ValueError("request_payload must be non-empty text")
         if (
             not isinstance(self.sources, tuple)
-            or len(self.sources) != len(_SOURCE_LABELS)
+            or len(self.sources) != 6
             or not all(
                 type(value) is FastDeterministicCampaignSourceSnapshot
                 for value in self.sources
@@ -193,6 +207,7 @@ def run_fast_deterministic_campaign_invocation_file(
         )
     request_payload = source.read_text(encoding="utf-8")
     request = decode_fast_deterministic_campaign_request(request_payload)
+    invocation_schema_version = _invocation_schema_version_for_request(request)
     base = source.parent
     campaign_path = _resolve_path(base, request.destination_path)
     seal_path = Path(f"{campaign_path}.invocation")
@@ -230,7 +245,10 @@ def run_fast_deterministic_campaign_invocation_file(
                 "deterministic campaign artifact fingerprint changed after execution"
             )
 
-        sources_document = _sources_document(before)
+        sources_document = _sources_document(
+            before,
+            schema_version=invocation_schema_version,
+        )
         sources_payload = _canonical(sources_document)
         source_snapshot_fingerprint = sources_document[
             "source_snapshot_fingerprint_sha256"
@@ -240,7 +258,7 @@ def run_fast_deterministic_campaign_invocation_file(
         )
         manifest_material = {
             "schema_name": FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
-            "schema_version": FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+            "schema_version": invocation_schema_version,
             "request_fingerprint_sha256": (
                 request.request_fingerprint_sha256
             ),
@@ -321,7 +339,7 @@ def read_fast_deterministic_campaign_invocation_seal(
         sources_payload,
         label="deterministic campaign source snapshot",
     )
-    sources = _decode_sources_document(sources_document)
+    sources = _decode_sources_document(sources_document, request=request)
 
     manifest_payload = (root / _MANIFEST_FILE).read_text(encoding="utf-8")
     manifest_document = _load_canonical_object(
@@ -340,6 +358,11 @@ def read_fast_deterministic_campaign_invocation_seal(
         raise ValueError(
             "deterministic campaign invocation manifest is invalid"
         ) from exc
+
+    if manifest.schema_version != _invocation_schema_version_for_request(request):
+        raise ValueError(
+            "deterministic campaign invocation schema version does not match request"
+        )
 
     fingerprint_material = dict(manifest_document)
     claimed = fingerprint_material.pop(
@@ -398,7 +421,7 @@ def _capture_sources(
     request: object,
 ) -> tuple[FastDeterministicCampaignSourceSnapshot, ...]:
     values = []
-    for label in _SOURCE_LABELS:
+    for label in _source_labels_for_request(request):
         declared = getattr(request, label)
         _require_non_empty_string(label, declared)
         path = _resolve_path(base, declared)
@@ -422,6 +445,28 @@ def _capture_sources(
             )
         )
     return tuple(values)
+
+
+def _invocation_schema_version_for_request(request: object) -> int:
+    version = getattr(request, "schema_version", 1)
+    if version == 1:
+        return FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION
+    if version == 2:
+        return FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_JSONL_SCHEMA_VERSION
+    raise ValueError(
+        "unsupported deterministic campaign request schema version for invocation"
+    )
+
+
+def _source_labels_for_request(request: object) -> tuple[str, ...]:
+    version = getattr(request, "schema_version", 1)
+    if version == 1:
+        return _SOURCE_LABELS
+    if version == 2:
+        return _SOURCE_LABELS_V2
+    raise ValueError(
+        "unsupported deterministic campaign request schema version for sources"
+    )
 
 
 def _component(
@@ -454,10 +499,19 @@ def _component(
 
 def _sources_document(
     sources: tuple[FastDeterministicCampaignSourceSnapshot, ...],
+    *,
+    schema_version: int,
 ) -> dict[str, object]:
+    if schema_version not in {
+        _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_VERSION,
+        _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_JSONL_SCHEMA_VERSION,
+    }:
+        raise ValueError(
+            "unsupported deterministic campaign source snapshot schema version"
+        )
     body = {
         "schema_name": _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_NAME,
-        "schema_version": _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_VERSION,
+        "schema_version": schema_version,
         "sources": [_source_document(value) for value in sources],
     }
     return {
@@ -468,6 +522,8 @@ def _sources_document(
 
 def _decode_sources_document(
     document: dict[str, object],
+    *,
+    request: object,
 ) -> tuple[FastDeterministicCampaignSourceSnapshot, ...]:
     expected = frozenset(
         {
@@ -485,7 +541,8 @@ def _decode_sources_document(
         raise ValueError(
             "unsupported deterministic campaign source snapshot schema_name"
         )
-    if document["schema_version"] != _FAST_DETERMINISTIC_CAMPAIGN_SOURCES_SCHEMA_VERSION:
+    expected_schema_version = _invocation_schema_version_for_request(request)
+    if document["schema_version"] != expected_schema_version:
         raise ValueError(
             "unsupported deterministic campaign source snapshot schema_version"
         )
@@ -495,7 +552,7 @@ def _decode_sources_document(
             "deterministic campaign source snapshot sources must be an array"
         )
     values = tuple(_decode_source(value) for value in raw_sources)
-    if tuple(value.label for value in values) != _SOURCE_LABELS:
+    if tuple(value.label for value in values) != _source_labels_for_request(request):
         raise ValueError(
             "deterministic campaign source snapshot source order is invalid"
         )

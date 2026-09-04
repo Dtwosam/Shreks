@@ -11,11 +11,14 @@ from shreks_brain.evaluation import TradingEvaluationPolicy
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
+    FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION,
     FastDeterministicCampaignRiskEnvironment,
     FastDeterministicComparisonExecutionPolicy,
     FastDeterministicComparisonPointInTimeContext,
     FastDeterministicCampaignRequest,
+    FastDeterministicCampaignJsonlRequest,
     build_fast_deterministic_campaign_request,
+    build_fast_deterministic_campaign_jsonl_request,
     decode_fast_deterministic_campaign_request,
     encode_fast_deterministic_campaign_request,
     run_fast_deterministic_campaign_request_file,
@@ -419,3 +422,149 @@ def test_request_module_has_no_network_superiority_promotion_or_live_authority()
         "__import__(",
     ):
         assert forbidden not in source
+
+
+
+def _jsonl_request() -> FastDeterministicCampaignJsonlRequest:
+    return build_fast_deterministic_campaign_jsonl_request(
+        observer_database_path="evidence/observer.db",
+        feature_jsonl_path="evidence/fast_training_features.jsonl",
+        comparison_catalog_path="evidence/comparison_catalog.json",
+        champion_path="models/champion.json",
+        entry_authority_binary_path="bin/shreks-fast-entry-authority",
+        candidate_binary_path="bin/shreks-fast-deterministic-row",
+        destination_path="output/fl9-campaign-jsonl",
+        execution_policy=_execution_policy(),
+        contexts=(_context(),),
+        paper_run_id_prefix="fl9-real-jsonl",
+        assessment_version="assessment-v1",
+        starting_cash_usd=20_000.0,
+        starting_ledger_as_of_unix_ms=T0 - 20_000,
+        fill_policy=_fill_policy(),
+        risk_policy=_risk_policy(),
+        position_policy=FastPaperPositionActionPolicy(
+            version="position-v1",
+            max_slippage_bps=500,
+        ),
+        evaluation_policy=TradingEvaluationPolicy(
+            version="evaluation-v1",
+            starting_equity_usd=20_000.0,
+            calibration_bucket_count=10,
+        ),
+    )
+
+
+def test_jsonl_request_v2_codec_is_canonical_and_v1_round_trip_stays_exact() -> None:
+    v1 = _request()
+    v1_payload = encode_fast_deterministic_campaign_request(v1)
+    assert decode_fast_deterministic_campaign_request(v1_payload) == v1
+    assert encode_fast_deterministic_campaign_request(
+        decode_fast_deterministic_campaign_request(v1_payload)
+    ) == v1_payload
+
+    request = _jsonl_request()
+    payload = encode_fast_deterministic_campaign_request(request)
+
+    assert request.schema_name == FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME
+    assert request.schema_version == (
+        FAST_DETERMINISTIC_CAMPAIGN_JSONL_REQUEST_SCHEMA_VERSION
+    )
+    assert "feature_jsonl_path" in json.loads(payload)["request"]
+    assert "feature_parquet_path" not in json.loads(payload)["request"]
+    assert decode_fast_deterministic_campaign_request(payload) == request
+    assert encode_fast_deterministic_campaign_request(
+        decode_fast_deterministic_campaign_request(payload)
+    ) == payload
+
+
+def test_jsonl_request_v2_requires_jsonl_source_path() -> None:
+    request = _jsonl_request()
+    with pytest.raises(ValueError, match="jsonl"):
+        build_fast_deterministic_campaign_jsonl_request(
+            observer_database_path=request.observer_database_path,
+            feature_jsonl_path="features.parquet",
+            comparison_catalog_path=request.comparison_catalog_path,
+            champion_path=request.champion_path,
+            entry_authority_binary_path=request.entry_authority_binary_path,
+            candidate_binary_path=request.candidate_binary_path,
+            destination_path=request.destination_path,
+            execution_policy=request.execution_policy,
+            contexts=request.contexts,
+            paper_run_id_prefix=request.paper_run_id_prefix,
+            assessment_version=request.assessment_version,
+            starting_cash_usd=request.starting_cash_usd,
+            starting_ledger_as_of_unix_ms=request.starting_ledger_as_of_unix_ms,
+            fill_policy=request.fill_policy,
+            risk_policy=request.risk_policy,
+            position_policy=request.position_policy,
+            evaluation_policy=request.evaluation_policy,
+        )
+
+
+def test_jsonl_file_runner_uses_canonical_jsonl_reader_not_parquet(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    request_dir = tmp_path / "request"
+    request_dir.mkdir()
+    request = _jsonl_request()
+    request_path = request_dir / "campaign_request.json"
+    request_path.write_text(
+        encode_fast_deterministic_campaign_request(request),
+        encoding="utf-8",
+    )
+
+    for relative in (
+        request.observer_database_path,
+        request.feature_jsonl_path,
+        request.comparison_catalog_path,
+        request.champion_path,
+        request.entry_authority_binary_path,
+        request.candidate_binary_path,
+    ):
+        path = request_dir / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("placeholder", encoding="utf-8")
+
+    features = SimpleNamespace(
+        records=(SimpleNamespace(decision_observed_at_unix_ms=T0),)
+    )
+    catalog = object()
+    captured = {}
+    sentinel = SimpleNamespace(artifact_fingerprint_sha256="a" * 64)
+
+    def fake_read_jsonl(path):
+        captured["feature_read_path"] = Path(path)
+        return features
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.request."
+        "read_fast_training_feature_jsonl",
+        fake_read_jsonl,
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.request."
+        "read_fast_training_feature_parquet",
+        lambda _path: (_ for _ in ()).throw(
+            AssertionError("JSONL v2 must not invoke Parquet reader")
+        ),
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.request."
+        "decode_fast_deterministic_comparison_catalog",
+        lambda payload: catalog,
+    )
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.request."
+        "write_fast_deterministic_campaign_artifact",
+        lambda **kwargs: captured.update(kwargs) or sentinel,
+    )
+
+    result = run_fast_deterministic_campaign_request_file(request_path)
+
+    assert result is sentinel
+    assert captured["feature_read_path"] == (
+        request_dir / request.feature_jsonl_path
+    ).resolve()
+    assert captured["feature_dataset"] is features
+    assert captured["catalog"] is catalog
