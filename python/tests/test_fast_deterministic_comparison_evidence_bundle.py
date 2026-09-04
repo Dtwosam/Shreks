@@ -14,6 +14,7 @@ from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicCampaignRiskEnvironment,
     FastDeterministicCandidatePaperAuthority,
     FastDeterministicComparisonEvidenceBundle,
+    FastDeterministicComparisonEvidenceProvenance,
     FastDeterministicComparisonEvidenceRow,
     read_fast_deterministic_comparison_evidence_bundle,
     write_fast_deterministic_comparison_evidence_bundle,
@@ -168,6 +169,25 @@ def _risk_environment() -> FastDeterministicCampaignRiskEnvironment:
     )
 
 
+def _provenance(
+    record: FastTrainingFeatureRecord,
+) -> FastDeterministicComparisonEvidenceProvenance:
+    return FastDeterministicComparisonEvidenceProvenance(
+        source_event_id=f"{record.decision_signature}:{record.decision_ordinal}",
+        quote_source_version="jupiter-probe-v2",
+        entry_forecast_source_version=None,
+        entry_forecast_horizon_ms=None,
+        execution_cost_source_version=None,
+        exit_capacity_source_version=None,
+        wallet_source_version=None,
+        graduation_context_source_version="fl8.1-hydration-v1",
+        continuation_forecast_source_version=None,
+        regime_source_version="regime-v1",
+        risk_environment_source_version="risk-environment-v1",
+        entry_authority_source_version="entry-authority-v1",
+    )
+
+
 def _row(record: FastTrainingFeatureRecord) -> FastDeterministicComparisonEvidenceRow:
     snapshot = FastOfflineMarketSnapshot(
         mint=record.mint,
@@ -227,6 +247,7 @@ def test_bundle_round_trip_is_self_contained_immutable_and_fingerprinted(
         feature_dataset=dataset,
         catalog=catalog,
         rows=(_row(record),),
+        provenance=(_provenance(record),),
         destination=destination,
     )
 
@@ -250,12 +271,14 @@ def test_bundle_round_trip_is_self_contained_immutable_and_fingerprinted(
     assert loaded.manifest == manifest
     assert loaded.features == dataset
     assert loaded.rows == (_row(record),)
+    assert loaded.provenance == (_provenance(record),)
 
     with pytest.raises(FileExistsError, match="immutable"):
         write_fast_deterministic_comparison_evidence_bundle(
             feature_dataset=dataset,
             catalog=catalog,
             rows=(_row(record),),
+            provenance=(_provenance(record),),
             destination=destination,
         )
 
@@ -274,7 +297,35 @@ def test_bundle_rejects_feature_population_drift(tmp_path: Path) -> None:
             feature_dataset=_dataset(record),
             catalog=_catalog(),
             rows=(_row(changed),),
+            provenance=(_provenance(changed),),
             destination=tmp_path / "drift",
+        )
+
+
+def test_bundle_rejects_provenance_population_drift(tmp_path: Path) -> None:
+    record = _record()
+    bad = FastDeterministicComparisonEvidenceProvenance(
+        source_event_id="wrong:0",
+        quote_source_version="jupiter-probe-v2",
+        entry_forecast_source_version=None,
+        entry_forecast_horizon_ms=None,
+        execution_cost_source_version=None,
+        exit_capacity_source_version=None,
+        wallet_source_version=None,
+        graduation_context_source_version="fl8.1-hydration-v1",
+        continuation_forecast_source_version=None,
+        regime_source_version="regime-v1",
+        risk_environment_source_version="risk-environment-v1",
+        entry_authority_source_version="entry-authority-v1",
+    )
+
+    with pytest.raises(ValueError, match="provenance|population|source"):
+        write_fast_deterministic_comparison_evidence_bundle(
+            feature_dataset=_dataset(record),
+            catalog=_catalog(),
+            rows=(_row(record),),
+            provenance=(bad,),
+            destination=tmp_path / "bad-provenance",
         )
 
 
@@ -285,6 +336,7 @@ def test_bundle_detects_sidecar_tampering(tmp_path: Path) -> None:
         feature_dataset=_dataset(record),
         catalog=_catalog(),
         rows=(_row(record),),
+        provenance=(_provenance(record),),
         destination=destination,
     )
     evidence_path = destination / "comparison_evidence.jsonl"
@@ -302,6 +354,7 @@ def test_bundle_manifest_detects_feature_file_tampering(tmp_path: Path) -> None:
         feature_dataset=_dataset(record),
         catalog=_catalog(),
         rows=(_row(record),),
+        provenance=(_provenance(record),),
         destination=destination,
     )
     feature_path = destination / "fast_training_features.parquet"
