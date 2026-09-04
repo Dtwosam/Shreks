@@ -148,7 +148,17 @@ Every FL8.1 row must also satisfy:
 
 - feature schema version equals the champion feature schema version;
 - champion selection time is not later than the decision time;
-- the maximum training decision time across champion members is strictly earlier than the decision time.
+- the maximum training decision time across the exact active members used by the policy is strictly earlier than the decision time.
+
+The active member set mirrors Rust exactly for every configured horizon:
+
+- endpoint cost-adjusted return;
+- endpoint return;
+- MAE;
+- reversal occurrence;
+- route-unavailability occurrence.
+
+Unrelated champion horizons/targets do not unnecessarily discard otherwise valid unseen evaluation rows.
 
 This prevents pre-selection/training leakage from entering learned PAPER proof.
 
