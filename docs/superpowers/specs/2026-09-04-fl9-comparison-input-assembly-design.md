@@ -100,6 +100,10 @@ No separate market snapshot may be supplied for FL6.4 pre-graduation context.
 
 When champion execution evidence exists, assembly verifies:
 
+- prediction decision identity equals the FL8.1 row;
+- execution entry price equals the FL8.1 decision executable price;
+- execution base quantity equals the canonical ENTRY probe quantity;
+- execution exit capacity equals the canonical EXIT probe capacity;
 - execution-policy source version equals the assembly policy version;
 - prediction horizon equals policy horizon;
 - execution cost model equals policy cost model;
