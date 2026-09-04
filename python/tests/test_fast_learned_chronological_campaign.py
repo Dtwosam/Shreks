@@ -20,6 +20,7 @@ from shreks_brain.fast_campaign_paper import (
     FAST_CAMPAIGN_PAPER_EXECUTOR_VERSION,
     FastCampaignPaperCandidateIdentity,
 )
+from shreks_brain.fast_learning import FastForecastTarget
 from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicCampaignPaperEvidence,
     FastLearnedCampaignRow,
@@ -84,18 +85,37 @@ def _champion_stub(
     selected_at: int = 0,
     max_training_at: int = 0,
 ):
+    targets = (
+        FastForecastTarget.ENDPOINT_COST_ADJUSTED_RETURN_BPS,
+        FastForecastTarget.ENDPOINT_RETURN_BPS,
+        FastForecastTarget.MAE_BPS,
+        FastForecastTarget.REVERSAL_OCCURRED,
+        FastForecastTarget.ROUTE_UNAVAILABILITY_OBSERVED,
+    )
+    members = tuple(
+        SimpleNamespace(
+            forecast_artifact=SimpleNamespace(
+                target=target,
+                horizon_ms=1_000,
+                max_training_decision_observed_at_unix_ms=max_training_at,
+            )
+        )
+        for target in targets
+    )
+    by_key = {
+        (
+            member.forecast_artifact.target,
+            member.forecast_artifact.horizon_ms,
+        ): member
+        for member in members
+    }
     return SimpleNamespace(
         champion_version="champion-v1",
         champion_fingerprint_sha256="b" * 64,
         feature_schema_version=1,
         selection=SimpleNamespace(decided_at_unix_ms=selected_at),
-        members=(
-            SimpleNamespace(
-                forecast_artifact=SimpleNamespace(
-                    max_training_decision_observed_at_unix_ms=max_training_at
-                )
-            ),
-        ),
+        members=members,
+        member_for=lambda target, horizon_ms: by_key[(target, horizon_ms)],
     )
 
 
