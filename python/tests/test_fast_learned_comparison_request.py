@@ -489,3 +489,59 @@ def test_learned_comparison_request_source_has_no_provider_promotion_or_live_aut
         "submit_transaction",
     ):
         assert forbidden not in source
+
+
+def test_request_rejects_decision_binary_change_during_run_before_proof(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import shreks_brain.fast_deterministic_campaign.learned_request as module
+
+    request_path, champion, binary = _write_request_file(tmp_path)
+    _patch_baseline(
+        monkeypatch,
+        module,
+        tmp_path,
+        champion,
+        (_bundle_row(),),
+    )
+
+    monkeypatch.setattr(module, "create_paper_ledger", lambda *_args: object())
+    monkeypatch.setattr(
+        module,
+        "FastDeterministicCampaignPaperEvidence",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        module,
+        "FastLearnedCampaignRow",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setattr(
+        module,
+        "build_fast_learned_campaign_identity",
+        lambda **_kwargs: object(),
+    )
+
+    def _run(**_kwargs):
+        binary.write_text("changed-during-run", encoding="utf-8")
+        return SimpleNamespace(
+            run_evidence=SimpleNamespace(
+                event_population_fingerprint_sha256="e" * 64
+            )
+        )
+
+    wrote_proof = False
+
+    def _write(**_kwargs):
+        nonlocal wrote_proof
+        wrote_proof = True
+        raise AssertionError("proof must not publish after source drift")
+
+    monkeypatch.setattr(module, "run_fast_learned_chronological_campaign", _run)
+    monkeypatch.setattr(module, "write_fast_policy_comparison_artifact", _write)
+
+    with pytest.raises(ValueError, match="binary|fingerprint|SHA"):
+        run_fast_learned_comparison_request_file(request_path)
+
+    assert not wrote_proof
