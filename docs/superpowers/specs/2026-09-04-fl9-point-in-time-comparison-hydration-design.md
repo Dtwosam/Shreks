@@ -164,6 +164,8 @@ The resulting authority is attached to every catalog candidate because every ent
 
 If FL3 returns no BUY authority because the maximum acceptable entry is already below the decision price, all candidates receive `None`.
 
+If shared execution evidence has exit capacity below intended base quantity, the authority adapter also returns `None`, matching FL6's sealed `InsufficientExitCapacity` SKIP semantics instead of aborting hydration.
+
 Any later deterministic BUY without authority still fails closed in PAPER execution.
 
 ## Provenance
