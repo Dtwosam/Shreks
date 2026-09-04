@@ -20,7 +20,8 @@ use crate::{
     FastDeterministicLifecyclePolicyWire, FastDeterministicLifecyclePostureInput,
     FastDeterministicLifecycleRequest, FastDeterministicLifecycleDecisionWire,
     FastDeterministicManagerPolicy, FastDeterministicLifecycleWireError,
-    FastTrainingLifecycleEvent, FastTrainingReserveContext, FastTrainingWindowSummary,
+    FastTrainingFeatureRecord, FastTrainingLifecycleEvent, FastTrainingReserveContext,
+    FastTrainingWindowSummary,
     StorageError,
 };
 use crate::{
@@ -304,9 +305,7 @@ pub fn evaluate_fast_deterministic_row_request(
     }
 
     let candidate = materialize_fast_deterministic_candidate_manifest(&request.manifest)?;
-    let record_json = serde_json::to_string(&request.record)
-        .map_err(|error| FastDeterministicRowError::Json(error.to_string()))?;
-    let record = decode_fast_training_feature_record_json(&record_json)?;
+    let record = decode_record(&request.record)?;
     let hydration = hydrate_fast_baseline_snapshot(&record)?;
     let expected_kind = match request.posture {
         FastDeterministicRowPostureWire::Flat => candidate.lifecycle_policy.entry_baseline_kind,
@@ -538,6 +537,14 @@ pub fn encode_fast_deterministic_row_result_json(
     }
     serde_json::to_string(result)
         .map_err(|error| FastDeterministicRowError::Json(error.to_string()))
+}
+
+fn decode_record(
+    value: &Value,
+) -> Result<FastTrainingFeatureRecord, FastDeterministicRowError> {
+    let record_json = serde_json::to_string(value)
+        .map_err(|error| FastDeterministicRowError::Json(error.to_string()))?;
+    decode_fast_training_feature_record_json(&record_json).map_err(Into::into)
 }
 
 fn build_impulse_execution(
