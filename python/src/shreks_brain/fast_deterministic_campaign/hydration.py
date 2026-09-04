@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
-import math
 import os
 from pathlib import Path
 
-from shreks_brain.fast_campaign_paper import FastCampaignPaperQuoteEvidence
 from shreks_brain.fast_deterministic_lifecycle import (
     FastDeterministicComparisonCatalog,
 )
@@ -21,13 +18,10 @@ from shreks_brain.fast_deterministic_offline import (
     derive_fast_deterministic_entry_authority_offline,
 )
 from shreks_brain.observer_campaign import (
-    ObserverCampaignStore,
     ObserverPaperQuoteAsset,
-    ObserverPaperQuoteEvidence,
     ObserverPaperQuoteIdentity,
     ObserverPaperQuotePurpose,
 )
-from shreks_brain.paper import PaperQuoteState
 from shreks_brain.regime import MarketRegime
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureDataset,
@@ -41,6 +35,7 @@ from .comparison import (
 from .evidence_bundle import (
     FastDeterministicComparisonEvidenceProvenance,
 )
+from .observer_probe import load_fast_observer_directional_probe
 from .risk_context import FastDeterministicCampaignRiskEnvironment
 
 
@@ -216,7 +211,6 @@ def hydrate_fast_deterministic_comparison_evidence(
             "hydration inputs must exactly match the FL8.1 feature population"
         )
 
-    store = ObserverCampaignStore(database_path)
     rows: list[FastDeterministicComparisonEvidenceRow] = []
     provenance: list[FastDeterministicComparisonEvidenceProvenance] = []
 
@@ -234,53 +228,22 @@ def hydrate_fast_deterministic_comparison_evidence(
             raise ValueError(
                 f"comparison hydration evaluation precedes FL8.1 decision at row {index}"
             )
-        _validate_market_attribution(record, source)
-
-        token_decimals = store.latest_token_decimals(
-            source.observer_candidate_id,
-            record.mint,
-            source.evaluated_at_unix_ms,
-        )
-        if token_decimals is None:
-            raise ValueError(
-                f"comparison hydration token decimals unavailable at row {index}"
-            )
-        entry_raw = store.latest_paper_quote(
-            source.entry_quote_identity,
-            source.evaluated_at_unix_ms,
-        )
-        exit_raw = store.latest_paper_quote(
-            source.exit_quote_identity,
-            source.evaluated_at_unix_ms,
-        )
-        if entry_raw is None or exit_raw is None:
-            raise ValueError(
-                f"comparison hydration requires persisted ENTRY and EXIT quotes at row {index}"
-            )
-
-        entry_quote = _campaign_quote(
-            record,
-            entry_raw,
-            token_decimals=token_decimals,
+        probe = load_fast_observer_directional_probe(
+            database_path=database_path,
+            record=record,
+            observer_candidate_id=source.observer_candidate_id,
+            evaluated_at_unix_ms=source.evaluated_at_unix_ms,
+            entry_quote_identity=source.entry_quote_identity,
+            exit_quote_identity=source.exit_quote_identity,
             quote_asset=source.quote_asset,
         )
-        exit_quote = _campaign_quote(
-            record,
-            exit_raw,
-            token_decimals=token_decimals,
-            quote_asset=source.quote_asset,
-        )
-        _validate_quote_chronology(
-            record,
-            source,
-            entry_quote,
-            exit_quote,
-            index=index,
-        )
-        _validate_risk_quote_consistency(
+        entry_quote = probe.entry_quote
+        exit_quote = probe.exit_quote
+        _validate_risk_probe_consistency(
             source.risk_environment,
-            entry_raw,
-            quote_asset=source.quote_asset,
+            probe_entry_route_available=probe.entry_evidence.route_available,
+            probe_entry_price_impact_pct=probe.entry_price_impact_pct,
+            probe_entry_input_notional_usd=probe.entry_input_notional_usd,
         )
 
         execution = _shared_entry_execution(source, index=index)
@@ -322,8 +285,8 @@ def hydrate_fast_deterministic_comparison_evidence(
         )
         proof = FastDeterministicComparisonEvidenceProvenance(
             source_event_id=expected_source_event_id,
-            entry_quote_source_version=_quote_source_version(entry_raw),
-            exit_quote_source_version=_quote_source_version(exit_raw),
+            entry_quote_source_version=probe.entry_quote_source_version,
+            exit_quote_source_version=probe.exit_quote_source_version,
             entry_forecast_source_version=(
                 source.entry_forecast_source_version
             ),
