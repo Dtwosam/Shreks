@@ -174,6 +174,7 @@ pub struct BoundedPumpRealtimeLogStream {
     reconnect_attempt: u32,
     next_request_id: u64,
     awaiting_heartbeat_response: bool,
+    connection_generation: u64,
 }
 
 impl BoundedPumpRealtimeLogStream {
@@ -191,7 +192,16 @@ impl BoundedPumpRealtimeLogStream {
             reconnect_attempt: 0,
             next_request_id: 1,
             awaiting_heartbeat_response: false,
+            connection_generation: 0,
         })
+    }
+
+    pub(crate) fn provider(&self) -> ProviderId {
+        self.config.provider
+    }
+
+    pub(crate) fn connection_generation(&self) -> u64 {
+        self.connection_generation
     }
 
     pub async fn next_realtime_notification(
@@ -287,12 +297,22 @@ impl BoundedPumpRealtimeLogStream {
         while self.socket.is_none() {
             match self.connect_once().await {
                 Ok((socket, pool_subscriptions, pending_notifications, next_request_id)) => {
+                    let connection_generation = self
+                        .connection_generation
+                        .checked_add(1)
+                        .ok_or_else(|| {
+                            invalid_response(
+                                self.config.provider,
+                                "bounded realtime connection generation overflow",
+                            )
+                        })?;
                     self.socket = Some(socket);
                     self.pool_subscriptions = pool_subscriptions;
                     self.pending_notifications.extend(pending_notifications);
                     self.reconnect_attempt = 0;
                     self.next_request_id = next_request_id;
                     self.awaiting_heartbeat_response = false;
+                    self.connection_generation = connection_generation;
                 }
                 Err(error) if error.is_retryable() => {
                     self.reconnect_attempt = self.reconnect_attempt.saturating_add(1);
