@@ -1,5 +1,6 @@
 mod action_policy;
 mod baseline;
+mod baseline_replay;
 mod capacity;
 mod campaign;
 mod economics;
@@ -23,6 +24,11 @@ pub use baseline::{
     assess_impulse_scalp, FastLaneAction, ImpulseScalpAssessment, ImpulseScalpError,
     ImpulseScalpExecutionInput, ImpulseScalpPolicy, ImpulseScalpReason,
     IMPULSE_SCALP_BASELINE_VERSION,
+};
+pub use baseline_replay::{
+    replay_fast_baseline, FastBaselineKind, FastBaselineNotApplicable, FastBaselinePosture,
+    FastBaselineReplayAssessment, FastBaselineReplayError, FastBaselineReplayInput,
+    FAST_BASELINE_REPLAY_VERSION,
 };
 pub use capacity::{
     maximum_exit_capacity, project_exit, ExitCapacity, ExitCapacityError, ExitProjection,
