@@ -136,8 +136,8 @@ class FastDeterministicCampaignInvocationSeal:
     sources: tuple[FastDeterministicCampaignSourceSnapshot, ...]
 
     def __post_init__(self) -> None:
-        if type(self.path) is not Path:
-            raise ValueError("path must be exact Path")
+        if not isinstance(self.path, Path):
+            raise ValueError("path must be Path-like")
         if type(self.manifest) is not FastDeterministicCampaignInvocationManifest:
             raise ValueError(
                 "manifest must be exact FastDeterministicCampaignInvocationManifest"
