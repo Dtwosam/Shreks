@@ -167,11 +167,12 @@ Return/print a machine-readable report containing at least:
 
 No wall-clock selection or outcome-derived field is added to the population identity.
 
-## CLI
+## Host command
 
-Add a Rust binary:
+Reuse the already-shipped observe-only binary rather than widening the sealed release payload
+allowlist:
 
-`shreks-fast-populate-future-path-labels`
+`shreks-observe populate-future-path-labels`
 
 Arguments:
 
@@ -181,7 +182,13 @@ Arguments:
 - `--through-observed-at-unix-ms`
 - `--maximum-decisions`
 
-The command writes only FL4 derived evidence into the supplied database.
+The subcommand dispatches before normal observer runtime configuration is loaded, so it does not
+require provider credentials or PAPER runtime configuration. It writes only FL4 derived evidence
+into the supplied database.
+
+A separate top-level binary is deliberately not added. The release bundle has a sealed native
+binary allowlist and three separately sealed offline proof-tool identities; this evidence operation
+does not justify widening either surface.
 
 ## Authority boundary
 
