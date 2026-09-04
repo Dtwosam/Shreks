@@ -90,29 +90,46 @@ def materialize_fast_deterministic_campaign_paper_evidence(
         raise ValueError(
             "decision must be exact FastDeterministicLifecycleDecision"
         )
+    return materialize_fast_campaign_paper_evidence(
+        source_event_id=decision.source_event_id,
+        action=decision.action,
+        as_of_unix_ms=decision.as_of_unix_ms,
+        evidence=evidence,
+    )
+
+
+def materialize_fast_campaign_paper_evidence(
+    *,
+    source_event_id: str,
+    action: str,
+    as_of_unix_ms: int,
+    evidence: FastDeterministicCampaignPaperEvidence,
+) -> FastCampaignPaperDecisionEvidence:
+    _require_non_empty_string("source_event_id", source_event_id)
+    _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
     if type(evidence) is not FastDeterministicCampaignPaperEvidence:
         raise ValueError(
             "evidence must be exact FastDeterministicCampaignPaperEvidence"
         )
-    if evidence.source_event_id != decision.source_event_id:
+    if evidence.source_event_id != source_event_id:
         raise ValueError(
-            "campaign PAPER evidence source identity does not match deterministic decision"
+            "campaign PAPER evidence source identity does not match decision"
         )
-    if evidence.evaluated_at_unix_ms < decision.as_of_unix_ms:
+    if evidence.evaluated_at_unix_ms < as_of_unix_ms:
         raise ValueError(
-            "campaign PAPER evidence evaluated clock cannot precede deterministic decision"
+            "campaign PAPER evidence evaluated clock cannot precede decision"
         )
 
-    if decision.action == "SKIP":
+    if action == "SKIP":
         return _point(evidence)
 
-    quote = _quote_for_action(evidence, decision.action)
+    quote = _quote_for_action(evidence, action)
     if quote is None:
         raise ValueError(
-            f"{decision.action} requires explicit campaign quote evidence"
+            f"{action} requires explicit campaign quote evidence"
         )
 
-    if decision.action == "BUY":
+    if action == "BUY":
         if evidence.risk_context is None:
             raise ValueError("BUY requires explicit RiskContext evidence")
         if evidence.entry_authority is None:
@@ -127,15 +144,13 @@ def materialize_fast_deterministic_campaign_paper_evidence(
             market_regime=evidence.market_regime,
         )
 
-    if decision.action in {"HOLD", "REDUCE", "SELL"}:
+    if action in {"HOLD", "REDUCE", "SELL"}:
         return _point(
             evidence,
             quote=quote,
         )
 
-    raise ValueError(
-        f"unsupported deterministic campaign action '{decision.action}'"
-    )
+    raise ValueError(f"unsupported campaign action '{action}'")
 
 
 def _quote_for_action(
