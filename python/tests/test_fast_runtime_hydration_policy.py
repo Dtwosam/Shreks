@@ -12,6 +12,7 @@ from shreks_brain.fast_context_hydration import (
     fast_forecast_context_hydration_policy_fingerprint_sha256,
 )
 from shreks_brain.observer_campaign.runtime_manifest import (
+    build_observer_paper_campaign_runtime_manifest,
     encode_observer_paper_campaign_runtime_manifest,
 )
 from test_observer_campaign_runtime_manifest import _manifest
@@ -197,7 +198,17 @@ def test_cli_writes_policy_and_reports_fingerprints(
 
 
 def test_bridge_tracks_runtime_global_halt_exactly() -> None:
-    manifest = replace(_manifest(), global_risk_halt=True)
+    source = _manifest()
+    manifest = build_observer_paper_campaign_runtime_manifest(
+        paper_run_id=source.paper_run_id,
+        candidate=source.candidate,
+        initial_state=source.initial_state,
+        policy_bundle=source.policy_bundle,
+        risk_environment=source.risk_environment,
+        selection_policy=source.selection_policy,
+        recent_performance=source.recent_performance,
+        global_risk_halt=True,
+    )
     policy = bridge.build_fast_forecast_context_hydration_policy_from_runtime_manifest(
         manifest,
         version="fl9-runtime-context-v1",
