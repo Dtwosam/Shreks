@@ -10,6 +10,13 @@ from .hydration import (
     FastDeterministicComparisonHydrationResult,
     hydrate_fast_deterministic_comparison_evidence,
 )
+from .input_assembly import (
+    FAST_DETERMINISTIC_COMPARISON_INPUT_ASSEMBLY_VERSION,
+    FastDeterministicComparisonExecutionPolicy,
+    FastDeterministicComparisonInputAssemblyResult,
+    FastDeterministicComparisonPointInTimeContext,
+    assemble_fast_deterministic_comparison_hydration_inputs,
+)
 from .evidence_bundle import (
     FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME,
     FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION,
@@ -46,6 +53,11 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_COMPARISON_INPUT_ASSEMBLY_VERSION",
+    "FastDeterministicComparisonExecutionPolicy",
+    "FastDeterministicComparisonInputAssemblyResult",
+    "FastDeterministicComparisonPointInTimeContext",
+    "assemble_fast_deterministic_comparison_hydration_inputs",
     "FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION",
     "FastObserverDirectionalProbeEvidence",
     "build_fast_observer_champion_entry_execution",

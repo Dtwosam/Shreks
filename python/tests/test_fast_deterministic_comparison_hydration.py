@@ -10,11 +10,16 @@ import pytest
 
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION,
+    FAST_DETERMINISTIC_COMPARISON_INPUT_ASSEMBLY_VERSION,
     FAST_OBSERVER_DIRECTIONAL_PROBE_EVIDENCE_VERSION,
     FastDeterministicCampaignRiskEnvironment,
     FastDeterministicComparisonHydrationInput,
     FastDeterministicComparisonHydrationResult,
+    FastDeterministicComparisonExecutionPolicy,
+    FastDeterministicComparisonInputAssemblyResult,
+    FastDeterministicComparisonPointInTimeContext,
     FastObserverDirectionalProbeEvidence,
+    assemble_fast_deterministic_comparison_hydration_inputs,
     build_fast_observer_champion_entry_execution,
     hydrate_fast_deterministic_comparison_evidence,
     load_fast_observer_directional_probe,
@@ -25,6 +30,8 @@ from shreks_brain.fast_deterministic_lifecycle import (
     decode_fast_deterministic_comparison_catalog,
 )
 from shreks_brain.fast_deterministic_offline import (
+    FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION,
+    FastChampionEntryExecutionEvidence,
     FastOfflineEntryExecution,
     FastOfflineExecutionCostModel,
     FastOfflineExecutionLegCost,
@@ -38,6 +45,7 @@ from shreks_brain.fast_deterministic_offline import (
     FastOfflinePreGraduationEvidence,
     FastOfflineWalletCohortEvidence,
 )
+from shreks_brain.fast_learning import FastForecastPrediction, FastForecastTarget
 from shreks_brain.observer_campaign import (
     ObserverPaperQuoteAsset,
     ObserverPaperQuoteIdentity,
@@ -423,6 +431,296 @@ def _fake_authority_binary(path: Path) -> None:
         encoding="utf-8",
     )
     path.chmod(path.stat().st_mode | 0o111)
+
+
+def _assembly_policy() -> FastDeterministicComparisonExecutionPolicy:
+    return FastDeterministicComparisonExecutionPolicy(
+        version="fl9-entry-execution-policy-v1",
+        horizon_ms=30_000,
+        cost_model=_execution().cost_model,
+        required_edge_bps=200,
+        risk_margin_bps=100,
+    )
+
+
+def _assembly_context(
+    record: FastTrainingFeatureRecord,
+    *,
+    risk_environment: FastDeterministicCampaignRiskEnvironment | None = None,
+) -> FastDeterministicComparisonPointInTimeContext:
+    source = _input(record)
+    return FastDeterministicComparisonPointInTimeContext(
+        observer_candidate_id=source.observer_candidate_id,
+        state_version=source.state_version,
+        evaluated_at_unix_ms=source.evaluated_at_unix_ms,
+        entry_quote_identity=source.entry_quote_identity,
+        exit_quote_identity=source.exit_quote_identity,
+        quote_asset=source.quote_asset,
+        graduation_boost_context=source.graduation_flow_evidence.boost_context,
+        wallet_cohort_evidence=source.wallet_cohort_evidence,
+        longer_runner_evidence=source.longer_runner_evidence,
+        market_regime=source.market_regime,
+        risk_environment=(
+            source.risk_environment
+            if risk_environment is None
+            else risk_environment
+        ),
+        wallet_source_version=source.wallet_source_version,
+        graduation_context_source_version=(
+            source.graduation_context_source_version
+        ),
+        continuation_forecast_source_version=(
+            source.continuation_forecast_source_version
+        ),
+        regime_source_version=source.regime_source_version,
+        risk_environment_source_version=(
+            source.risk_environment_source_version
+        ),
+    )
+
+
+def _fake_champion_execution(
+    *,
+    probe,
+    record,
+    cost_model,
+    required_edge_bps,
+    risk_margin_bps,
+    execution_policy_source_version,
+    **kwargs,
+) -> FastChampionEntryExecutionEvidence:
+    assert probe.intended_base_quantity is not None
+    assert probe.exit_capacity_base is not None
+    execution = FastOfflineEntryExecution(
+        cost_model=cost_model,
+        trade=FastOfflineExecutionTrade(
+            base_quantity=probe.intended_base_quantity,
+            executable_entry_price_quote=(
+                record.decision_executable_entry_price_quote
+            ),
+            forecast_exit_price_quote=12.0,
+            exit_capacity_base=probe.exit_capacity_base,
+            required_edge_bps=required_edge_bps,
+            risk_margin_bps=risk_margin_bps,
+        ),
+    )
+    return FastChampionEntryExecutionEvidence(
+        version=FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION,
+        champion_version="sealed-champion-v1",
+        champion_fingerprint_sha256="1" * 64,
+        member_key="endpoint_return_bps@30000ms",
+        validation_run_fingerprint_sha256="2" * 64,
+        test_evaluation_report_fingerprint_sha256="3" * 64,
+        prediction=FastForecastPrediction(
+            model_version="endpoint-model-v1",
+            target=FastForecastTarget.ENDPOINT_RETURN_BPS,
+            horizon_ms=30_000,
+            decision_identity=record.decision_identity,
+            predicted_value=2_000.0,
+        ),
+        execution=execution,
+        forecast_source_version=(
+            "fl8-champion:sealed-champion-v1:"
+            + "1" * 64
+            + ":endpoint_return_bps@30000ms:endpoint-model-v1:"
+            + "4" * 64
+        ),
+        execution_policy_source_version=execution_policy_source_version,
+        exit_capacity_source_version=probe.exit_quote_source_version,
+    )
+
+
+def test_assembler_builds_identical_fl6_execution_from_probe_and_champion(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-assembly.db"
+    authority_binary = tmp_path / "authority"
+    _create_observer_db(database)
+    _fake_authority_binary(authority_binary)
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.input_assembly."
+        "build_fast_observer_champion_entry_execution",
+        _fake_champion_execution,
+    )
+
+    result = assemble_fast_deterministic_comparison_hydration_inputs(
+        database_path=database,
+        feature_dataset=_dataset(record),
+        champion_path=tmp_path / "sealed-champion.json",
+        execution_policy=_assembly_policy(),
+        contexts=(_assembly_context(record),),
+    )
+
+    assert type(result) is FastDeterministicComparisonInputAssemblyResult
+    assert result.version == FAST_DETERMINISTIC_COMPARISON_INPUT_ASSEMBLY_VERSION
+    assert len(result.probes) == len(result.champion_execution_evidence) == 1
+    assert len(result.hydration_inputs) == 1
+    proof = result.champion_execution_evidence[0]
+    assert proof is not None
+
+    assembled = result.hydration_inputs[0]
+    executions = (
+        assembled.impulse_scalp_evidence.execution,
+        assembled.micro_pullback_evidence.execution,
+        assembled.pre_graduation_evidence.execution,
+        assembled.graduation_flow_evidence.execution,
+    )
+    assert executions == (proof.execution,) * 4
+    assert assembled.entry_forecast_source_version == proof.forecast_source_version
+    assert assembled.entry_forecast_horizon_ms == 30_000
+    assert (
+        assembled.execution_cost_source_version
+        == _assembly_policy().version
+    )
+    assert (
+        assembled.exit_capacity_source_version
+        == result.probes[0].exit_quote_source_version
+    )
+    assert (
+        assembled.graduation_flow_evidence.pre_snapshot.mint
+        == record.mint
+    )
+    assert (
+        assembled.graduation_flow_evidence.pre_snapshot.windows
+        == record.windows
+    )
+
+    hydrated = hydrate_fast_deterministic_comparison_evidence(
+        database_path=database,
+        feature_dataset=_dataset(record),
+        catalog=_catalog(),
+        hydration_inputs=result.hydration_inputs,
+        entry_authority_binary_path=authority_binary,
+    )
+    assert len(hydrated.rows) == 1
+    assert hydrated.rows[0].impulse_scalp_evidence.execution == proof.execution
+
+
+def test_assembler_rejects_drifted_champion_execution_proof(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-assembly-drift.db"
+    _create_observer_db(database)
+
+    def drifted_builder(**kwargs):
+        proof = _fake_champion_execution(**kwargs)
+        drifted_trade = replace(
+            proof.execution.trade,
+            base_quantity=proof.execution.trade.base_quantity - 1.0,
+        )
+        return replace(
+            proof,
+            execution=replace(
+                proof.execution,
+                trade=drifted_trade,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "shreks_brain.fast_deterministic_campaign.input_assembly."
+        "build_fast_observer_champion_entry_execution",
+        drifted_builder,
+    )
+
+    with pytest.raises(ValueError, match="quantity|probe|execution"):
+        assemble_fast_deterministic_comparison_hydration_inputs(
+            database_path=database,
+            feature_dataset=_dataset(record),
+            champion_path=tmp_path / "sealed-champion.json",
+            execution_policy=_assembly_policy(),
+            contexts=(_assembly_context(record),),
+        )
+
+
+def test_assembler_unavailable_entry_emits_no_execution_or_execution_provenance(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer-assembly-unavailable.db"
+    _create_observer_db(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE paper_quote_snapshots
+           SET output_amount = '0',
+               minimum_output_amount = '0',
+               route_available = 0,
+               price_impact_pct = NULL,
+               route_labels_json = '[]'
+           WHERE purpose = 'entry'"""
+    )
+    connection.commit()
+    connection.close()
+
+    risk = replace(
+        _risk(),
+        expected_price_impact_pct=None,
+        price_impact_notional_usd=None,
+    )
+    result = assemble_fast_deterministic_comparison_hydration_inputs(
+        database_path=database,
+        feature_dataset=_dataset(record),
+        champion_path=tmp_path / "does-not-need-to-exist.json",
+        execution_policy=_assembly_policy(),
+        contexts=(
+            _assembly_context(record, risk_environment=risk),
+        ),
+    )
+
+    assert result.champion_execution_evidence == (None,)
+    assembled = result.hydration_inputs[0]
+    assert assembled.impulse_scalp_evidence.execution is None
+    assert assembled.micro_pullback_evidence.execution is None
+    assert assembled.pre_graduation_evidence.execution is None
+    assert assembled.graduation_flow_evidence.execution is None
+    assert assembled.entry_forecast_source_version is None
+    assert assembled.entry_forecast_horizon_ms is None
+    assert assembled.execution_cost_source_version is None
+    assert assembled.exit_capacity_source_version is None
+
+
+def test_assembler_requires_exact_context_population(tmp_path: Path) -> None:
+    record = _record()
+    database = tmp_path / "observer-assembly-population.db"
+    _create_observer_db(database)
+
+    with pytest.raises(ValueError, match="context|population|match"):
+        assemble_fast_deterministic_comparison_hydration_inputs(
+            database_path=database,
+            feature_dataset=_dataset(record),
+            champion_path=tmp_path / "champion.json",
+            execution_policy=_assembly_policy(),
+            contexts=(),
+        )
+
+
+def test_input_assembly_source_has_no_write_superiority_or_live_authority() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "shreks_brain"
+        / "fast_deterministic_campaign"
+        / "input_assembly.py"
+    ).read_text(encoding="utf-8")
+
+    for forbidden in (
+        "sqlite3",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        "requests.",
+        "httpx",
+        "RuntimeMode.LIVE",
+        "sign_transaction",
+        "submit_transaction",
+        "evaluate_fast_policy_superiority",
+        "promotion",
+    ):
+        assert forbidden not in source
 
 
 def test_observer_probe_derives_exact_entry_size_and_exit_capacity(
