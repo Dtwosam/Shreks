@@ -10,7 +10,10 @@ import pytest
 from shreks_brain.fast_deterministic_campaign import (
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+    FastDeterministicCampaignInvocationManifest,
     FastDeterministicCampaignInvocationSeal,
+    FastDeterministicCampaignSourceComponent,
+    FastDeterministicCampaignSourceSnapshot,
     read_fast_deterministic_campaign_invocation_seal,
     run_fast_deterministic_campaign_invocation_file,
 )
@@ -270,6 +273,35 @@ def test_invocation_reader_rejects_manifest_tampering(
         read_fast_deterministic_campaign_invocation_seal(seal.path)
 
     assert campaign.exists()
+
+
+def test_invocation_models_reject_path_traversal_and_wrong_source_roles() -> None:
+    with pytest.raises(ValueError, match="path component"):
+        FastDeterministicCampaignInvocationManifest(
+            schema_name=FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_NAME,
+            schema_version=FAST_DETERMINISTIC_CAMPAIGN_INVOCATION_SCHEMA_VERSION,
+            request_fingerprint_sha256="a" * 64,
+            request_file_sha256="b" * 64,
+            source_count=6,
+            source_snapshot_fingerprint_sha256="c" * 64,
+            campaign_artifact_fingerprint_sha256="d" * 64,
+            campaign_directory_name="../campaign",
+            invocation_fingerprint_sha256="e" * 64,
+        )
+
+    with pytest.raises(ValueError, match="non-database|file role"):
+        FastDeterministicCampaignSourceSnapshot(
+            label="champion_path",
+            declared_path="models/champion.json",
+            components=(
+                FastDeterministicCampaignSourceComponent(
+                    role="database",
+                    file_name="champion.json",
+                    size_bytes=10,
+                    sha256="f" * 64,
+                ),
+            ),
+        )
 
 
 def test_invocation_source_has_no_network_superiority_promotion_or_live_authority() -> None:
