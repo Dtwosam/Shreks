@@ -80,7 +80,7 @@ pub fn hydrate_fast_baseline_snapshot(
     })
 }
 
-fn hydrate_window(value: &FastTrainingWindowSummary) -> FastWindowSummary {
+pub(crate) fn hydrate_window(value: &FastTrainingWindowSummary) -> FastWindowSummary {
     FastWindowSummary {
         window_ms: value.window_ms,
         buy_count: value.buy_count,
@@ -113,7 +113,7 @@ fn hydrate_window(value: &FastTrainingWindowSummary) -> FastWindowSummary {
     }
 }
 
-fn hydrate_reserve_context(
+pub(crate) fn hydrate_reserve_context(
     value: &FastTrainingReserveContext,
     venue: VenueId,
 ) -> Result<FastReserveContext, StorageError> {
@@ -158,7 +158,7 @@ fn hydrate_reserve_context(
     }
 }
 
-fn hydrate_lifecycle_event(
+pub(crate) fn hydrate_lifecycle_event(
     value: &FastTrainingLifecycleEvent,
     market: &FastMarketKey,
     decision_at_unix_ms: i64,
@@ -236,7 +236,7 @@ fn hydrate_lifecycle_event(
     })
 }
 
-fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
+pub(crate) fn parse_provider(value: &str) -> Result<ProviderId, StorageError> {
     match value {
         "dexscreener" => Ok(ProviderId::DexScreener),
         "helius" => Ok(ProviderId::Helius),
