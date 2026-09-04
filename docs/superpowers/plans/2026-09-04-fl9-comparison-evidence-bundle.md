@@ -9,9 +9,10 @@
 4. Add canonical deterministic/PAPER evidence JSONL sidecar.
 5. Authenticate physical file hashes, logical evidence hash, and bundle manifest fingerprint.
 6. Require exact positional FL8.1 population and exact catalog candidate-authority coverage.
-7. Strictly decode sidecar rows back through existing comparison-row validation.
-8. Prove tamper detection and absence of future-label/execution/LIVE authority.
-9. Run canonical four-gate CI and guarded merge.
-10. Next: point-in-time evidence hydrator producing non-fixture bundles from approved sources.
+7. Bind explicit provenance for quote, forecast/horizon, costs, exit capacity, wallet, graduation, continuation, regime, risk environment, and entry authority; reject evidence/provenance contradictions.
+8. Strictly decode sidecar rows back through existing comparison-row validation.
+9. Prove tamper detection and absence of future-label/execution/LIVE authority.
+10. Run canonical four-gate CI and guarded merge.
+11. Next: point-in-time evidence hydrator producing non-fixture bundles from approved sources.
 
 FL9 superiority stays EVIDENCE PENDING until real chronological PAPER/shadow evidence beats the deterministic comparison set.
