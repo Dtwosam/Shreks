@@ -1,3 +1,9 @@
+from .hydration import (
+    FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION,
+    FastDeterministicComparisonHydrationInput,
+    FastDeterministicComparisonHydrationResult,
+    hydrate_fast_deterministic_comparison_evidence,
+)
 from .evidence_bundle import (
     FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME,
     FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION,
@@ -34,6 +40,10 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_COMPARISON_HYDRATION_VERSION",
+    "FastDeterministicComparisonHydrationInput",
+    "FastDeterministicComparisonHydrationResult",
+    "hydrate_fast_deterministic_comparison_evidence",
     "FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_NAME",
     "FAST_DETERMINISTIC_COMPARISON_BUNDLE_SCHEMA_VERSION",
     "FastDeterministicComparisonEvidenceBundle",
