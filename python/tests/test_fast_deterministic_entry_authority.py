@@ -168,6 +168,41 @@ def test_offline_entry_authority_is_authenticated_and_exact(tmp_path: Path) -> N
     assert authority.expected_entry_fixed_cost_quote == pytest.approx(0.06)
 
 
+
+def test_offline_entry_authority_returns_none_when_fl3_boundary_is_below_decision(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "authority-below"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import hashlib, json, sys\n"
+        "from pathlib import Path\n"
+        "request = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))\n"
+        "material = {\n"
+        " 'schema_name': 'shreks.fast_deterministic_entry_authority_result',\n"
+        " 'schema_version': 1,\n"
+        " 'mint': request['mint'],\n"
+        " 'quote_mint': request['quote_mint'],\n"
+        " 'intended_base_quantity': 10.0,\n"
+        " 'decision_executable_entry_price_quote': 10.0,\n"
+        " 'maximum_acceptable_entry_price_quote': 9.5,\n"
+        " 'expected_entry_variable_cost_bps': 110,\n"
+        " 'expected_entry_fixed_cost_quote': 0.06,\n"
+        "}\n"
+        "canonical = json.dumps(material, sort_keys=True, separators=(',', ':'), ensure_ascii=False, allow_nan=False)\n"
+        "material['result_fingerprint_sha256'] = hashlib.sha256(canonical.encode()).hexdigest()\n"
+        "print(json.dumps(material, separators=(',', ':'), ensure_ascii=False, allow_nan=False), end='')\n",
+        encoding="utf-8",
+    )
+    binary.chmod(binary.stat().st_mode | 0o111)
+
+    assert derive_fast_deterministic_entry_authority_offline(
+        binary_path=binary,
+        record=_record(),
+        execution=_execution(),
+    ) is None
+
+
 def test_offline_entry_authority_rejects_decision_price_drift_before_launch(
     tmp_path: Path,
 ) -> None:
