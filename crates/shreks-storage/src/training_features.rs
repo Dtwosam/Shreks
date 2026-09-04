@@ -5,7 +5,7 @@ use std::{
     path::Path,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shreks_core::{
     FastEvent, FastEventKind, FastMarketKey, FastMarketSnapshot, FastMarketState,
@@ -26,7 +26,7 @@ pub struct FastTrainingFeatureExportManifest {
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FastTrainingReserveContext {
     PumpCurve {
@@ -46,7 +46,8 @@ pub enum FastTrainingReserveContext {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FastTrainingLifecycleEvent {
     pub kind: String,
     pub provider: String,
@@ -61,7 +62,8 @@ pub struct FastTrainingLifecycleEvent {
     pub occurred_at_unix_ms: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FastTrainingWindowSummary {
     pub window_ms: u64,
     pub buy_count: u64,
@@ -91,6 +93,34 @@ pub struct FastTrainingWindowSummary {
     pub last_price_quote: Option<f64>,
     pub drawdown_from_local_high: f64,
     pub recovery_from_local_low: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FastTrainingFeatureRecordWire {
+    schema_name: String,
+    schema_version: u16,
+    decision_signature: String,
+    decision_ordinal: u32,
+    decision_sequence: u64,
+    mint: String,
+    quote_mint: String,
+    venue: String,
+    decision_observed_at_unix_ms: i64,
+    decision_provider: String,
+    decision_source_observed_at_unix_ms: i64,
+    decision_occurred_at_unix_ms: i64,
+    decision_slot: u64,
+    decision_event_kind: String,
+    decision_actor: Option<String>,
+    decision_executable_entry_price_quote: f64,
+    decision_entry_total_quote: Option<f64>,
+    snapshot_as_of_unix_ms: i64,
+    snapshot_last_sequence: Option<u64>,
+    snapshot_last_price_quote: Option<f64>,
+    last_reserve_context: Option<FastTrainingReserveContext>,
+    last_lifecycle_event: Option<FastTrainingLifecycleEvent>,
+    windows: Vec<FastTrainingWindowSummary>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -129,6 +159,52 @@ struct DecisionRow {
     observed_at_unix_ms: i64,
     entry_price_quote: f64,
     entry_total_quote: Option<f64>,
+}
+
+pub fn decode_fast_training_feature_record_json(
+    input: &str,
+) -> Result<FastTrainingFeatureRecord, StorageError> {
+    if input.is_empty() {
+        return Err(StorageError::InvalidData(
+            "training feature JSON payload must be non-empty".to_owned(),
+        ));
+    }
+    let wire: FastTrainingFeatureRecordWire = serde_json::from_str(input).map_err(|error| {
+        StorageError::InvalidData(format!("training feature JSON decode failed: {error}"))
+    })?;
+    if wire.schema_name != FAST_TRAINING_FEATURE_SCHEMA_NAME {
+        return Err(StorageError::InvalidData(format!(
+            "training feature schema_name must equal {}",
+            FAST_TRAINING_FEATURE_SCHEMA_NAME
+        )));
+    }
+    let record = FastTrainingFeatureRecord {
+        schema_name: FAST_TRAINING_FEATURE_SCHEMA_NAME,
+        schema_version: wire.schema_version,
+        decision_signature: wire.decision_signature,
+        decision_ordinal: wire.decision_ordinal,
+        decision_sequence: wire.decision_sequence,
+        mint: wire.mint,
+        quote_mint: wire.quote_mint,
+        venue: wire.venue,
+        decision_observed_at_unix_ms: wire.decision_observed_at_unix_ms,
+        decision_provider: wire.decision_provider,
+        decision_source_observed_at_unix_ms: wire.decision_source_observed_at_unix_ms,
+        decision_occurred_at_unix_ms: wire.decision_occurred_at_unix_ms,
+        decision_slot: wire.decision_slot,
+        decision_event_kind: wire.decision_event_kind,
+        decision_actor: wire.decision_actor,
+        decision_executable_entry_price_quote: wire.decision_executable_entry_price_quote,
+        decision_entry_total_quote: wire.decision_entry_total_quote,
+        snapshot_as_of_unix_ms: wire.snapshot_as_of_unix_ms,
+        snapshot_last_sequence: wire.snapshot_last_sequence,
+        snapshot_last_price_quote: wire.snapshot_last_price_quote,
+        last_reserve_context: wire.last_reserve_context,
+        last_lifecycle_event: wire.last_lifecycle_event,
+        windows: wire.windows,
+    };
+    validate_record(&record)?;
+    Ok(record)
 }
 
 impl ShreksDb {
