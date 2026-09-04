@@ -150,7 +150,7 @@ fn coverage_extension_rejects_identity_or_clock_regression() {
         .unwrap_err();
     assert!(time.to_string().contains("time moved backward"));
 
-    let slot = db
+    let out_of_order_slot = db
         .extend_fast_realtime_coverage_session(
             first.session_id,
             ProviderId::SolanaPublic,
@@ -159,8 +159,9 @@ fn coverage_extension_rejects_identity_or_clock_regression() {
             99,
             "sig-b",
         )
-        .unwrap_err();
-    assert!(slot.to_string().contains("slot moved backward"));
+        .unwrap();
+    assert_eq!(out_of_order_slot.last_notification_slot, 99);
+    assert_eq!(out_of_order_slot.notification_count, 2);
 
     cleanup_dir(&root);
 }
