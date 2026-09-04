@@ -215,7 +215,7 @@ fn lifecycle_policy(manager: FastBaselineKind) -> FastDeterministicLifecyclePoli
 
 #[test]
 fn valid_explicit_entry_and_manager_policy_evaluates() {
-    let record = record("sig-a", 1, 1_000);
+    let record = record("sig-a", 42, 1_100);
     let impulse = impulse_policy();
 
     let batch = evaluate_fast_deterministic_lifecycle_batch(
@@ -239,7 +239,7 @@ fn valid_explicit_entry_and_manager_policy_evaluates() {
 
 #[test]
 fn invalid_entry_or_manager_family_fails_closed() {
-    let record = record("sig-a", 1, 1_000);
+    let record = record("sig-a", 42, 1_100);
     let impulse = impulse_policy();
     let mut policy = lifecycle_policy(FastBaselineKind::LongerRunner);
     policy.entry_baseline_kind = FastBaselineKind::WalletCohort;
@@ -282,9 +282,9 @@ fn invalid_entry_or_manager_family_fails_closed() {
 
 #[test]
 fn flat_buy_maps_to_explicit_entry_target() {
-    let record = record("sig-buy", 1, 1_000);
+    let record = record("sig-buy", 42, 1_100);
     let impulse = impulse_policy();
-    let execution = impulse_execution(1_000);
+    let execution = impulse_execution(1_100);
 
     let batch = evaluate_fast_deterministic_lifecycle_batch(
         &lifecycle_policy(FastBaselineKind::LongerRunner),
@@ -309,7 +309,7 @@ fn flat_buy_maps_to_explicit_entry_target() {
 
 #[test]
 fn flat_skip_maps_to_zero_target() {
-    let record = record("sig-skip", 1, 1_000);
+    let record = record("sig-skip", 42, 1_100);
     let impulse = impulse_policy();
 
     let batch = evaluate_fast_deterministic_lifecycle_batch(
@@ -332,7 +332,7 @@ fn flat_skip_maps_to_zero_target() {
 
 #[test]
 fn open_hold_preserves_authoritative_current_exposure() {
-    let record = record("sig-hold", 1, 1_000);
+    let record = record("sig-hold", 42, 1_100);
     let wallet = wallet_policy();
     let position = WalletCohortPositionInput {
         market: market(),
@@ -364,7 +364,7 @@ fn open_hold_preserves_authoritative_current_exposure() {
 
 #[test]
 fn open_reduce_applies_explicit_remaining_fraction() {
-    let record = record("sig-reduce", 1, 1_000);
+    let record = record("sig-reduce", 42, 1_100);
     let runner = runner_policy();
     let protective = LongerRunnerProtectiveState {
         market: market(),
@@ -398,7 +398,7 @@ fn open_reduce_applies_explicit_remaining_fraction() {
 
 #[test]
 fn open_sell_targets_zero() {
-    let record = record("sig-sell", 1, 1_000);
+    let record = record("sig-sell", 42, 1_100);
     let runner = runner_policy();
     let protective = LongerRunnerProtectiveState {
         market: market(),
@@ -430,7 +430,7 @@ fn open_sell_targets_zero() {
 
 #[test]
 fn wrong_component_family_for_posture_fails_closed() {
-    let record = record("sig-wrong", 1, 1_000);
+    let record = record("sig-wrong", 42, 1_100);
     let wallet = wallet_policy();
     let position = WalletCohortPositionInput {
         market: market(),
@@ -460,10 +460,10 @@ fn wrong_component_family_for_posture_fails_closed() {
 
 #[test]
 fn duplicate_and_per_market_order_regressions_fail_closed() {
-    let first = record("same", 1, 1_000);
-    let duplicate = record("same", 2, 1_100);
-    let regressed_sequence = record("seq", 0, 1_100);
-    let regressed_time = record("time", 2, 900);
+    let first = record("same", 42, 1_100);
+    let duplicate = record("same", 43, 1_200);
+    let regressed_sequence = record("seq", 41, 1_200);
+    let regressed_time = record("time", 43, 1_000);
     let impulse = impulse_policy();
     let policy = lifecycle_policy(FastBaselineKind::LongerRunner);
 
@@ -504,7 +504,7 @@ fn duplicate_and_per_market_order_regressions_fail_closed() {
 
 #[test]
 fn identical_lifecycle_batch_is_deterministic() {
-    let first = record("sig-a", 1, 1_000);
+    let first = record("sig-a", 42, 1_100);
     let second = record("sig-b", 2, 1_100);
     let impulse = impulse_policy();
     let policy = lifecycle_policy(FastBaselineKind::LongerRunner);
