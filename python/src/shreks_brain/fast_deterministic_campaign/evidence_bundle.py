@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 import hashlib
 import json
@@ -77,6 +77,7 @@ _MANIFEST_KEYS = frozenset(
 _SIDECAR_KEYS = frozenset(
     {
         "record_identity",
+        "provenance",
         "state_version",
         "evaluated_at_unix_ms",
         "quote",
@@ -102,6 +103,56 @@ _IDENTITY_KEYS = frozenset(
         "decision_observed_at_unix_ms",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class FastDeterministicComparisonEvidenceProvenance:
+    source_event_id: str
+    quote_source_version: str
+    entry_forecast_source_version: str | None
+    entry_forecast_horizon_ms: int | None
+    execution_cost_source_version: str | None
+    exit_capacity_source_version: str | None
+    wallet_source_version: str | None
+    graduation_context_source_version: str
+    continuation_forecast_source_version: str | None
+    regime_source_version: str
+    risk_environment_source_version: str
+    entry_authority_source_version: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "source_event_id",
+            "quote_source_version",
+            "graduation_context_source_version",
+            "regime_source_version",
+            "risk_environment_source_version",
+            "entry_authority_source_version",
+        ):
+            _require_string(getattr(self, name), name)
+        for name in (
+            "entry_forecast_source_version",
+            "execution_cost_source_version",
+            "exit_capacity_source_version",
+            "wallet_source_version",
+            "continuation_forecast_source_version",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _require_string(value, name)
+        if (self.entry_forecast_source_version is None) != (
+            self.entry_forecast_horizon_ms is None
+        ):
+            raise ValueError(
+                "entry forecast source version and horizon must be both present or absent"
+            )
+        if self.entry_forecast_horizon_ms is not None:
+            if (
+                isinstance(self.entry_forecast_horizon_ms, bool)
+                or not isinstance(self.entry_forecast_horizon_ms, int)
+                or self.entry_forecast_horizon_ms <= 0
+            ):
+                raise ValueError("entry_forecast_horizon_ms must be positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -145,6 +196,7 @@ class FastDeterministicComparisonEvidenceBundle:
     manifest: FastDeterministicComparisonEvidenceBundleManifest
     features: FastTrainingFeatureDataset
     rows: tuple[FastDeterministicComparisonEvidenceRow, ...]
+    provenance: tuple[FastDeterministicComparisonEvidenceProvenance, ...]
 
     def __post_init__(self) -> None:
         if type(self.manifest) is not FastDeterministicComparisonEvidenceBundleManifest:
@@ -165,6 +217,7 @@ class FastDeterministicComparisonEvidenceBundle:
                 "rows must match manifest row_count and contain exact comparison rows"
             )
         _validate_population(self.features, self.rows)
+        _validate_provenance_population(self.rows, self.provenance)
         if (
             self.features.logical_fingerprint_sha256
             != self.manifest.feature_logical_fingerprint_sha256
@@ -179,6 +232,7 @@ def write_fast_deterministic_comparison_evidence_bundle(
     feature_dataset: FastTrainingFeatureDataset,
     catalog: FastDeterministicComparisonCatalog,
     rows: tuple[FastDeterministicComparisonEvidenceRow, ...],
+    provenance: tuple[FastDeterministicComparisonEvidenceProvenance, ...],
     destination: str | Path,
 ) -> FastDeterministicComparisonEvidenceBundleManifest:
     if type(feature_dataset) is not FastTrainingFeatureDataset:
@@ -196,6 +250,7 @@ def write_fast_deterministic_comparison_evidence_bundle(
             "rows must be a non-empty tuple of exact comparison evidence rows"
         )
     _validate_population(feature_dataset, rows)
+    _validate_provenance_population(rows, provenance)
     _validate_catalog_authorities(catalog, rows)
 
     destination_path = Path(destination)
@@ -211,7 +266,10 @@ def write_fast_deterministic_comparison_evidence_bundle(
 
     write_fast_training_feature_parquet(feature_dataset, feature_path)
 
-    evidence_documents = tuple(_row_to_sidecar(row) for row in rows)
+    evidence_documents = tuple(
+        _row_to_sidecar(row, provenance_row)
+        for row, provenance_row in zip(rows, provenance, strict=True)
+    )
     evidence_bytes = b"".join(
         (_canonical(document) + "\n").encode("utf-8")
         for document in evidence_documents
@@ -312,14 +370,17 @@ def read_fast_deterministic_comparison_evidence_bundle(
     ):
         raise ValueError("comparison evidence logical fingerprint mismatch")
 
-    rows = tuple(
+    decoded = tuple(
         _sidecar_to_row(record, document)
         for record, document in zip(features.records, evidence_documents, strict=True)
     )
+    rows = tuple(item[0] for item in decoded)
+    provenance = tuple(item[1] for item in decoded)
     bundle = FastDeterministicComparisonEvidenceBundle(
         manifest=manifest,
         features=features,
         rows=rows,
+        provenance=provenance,
     )
     return bundle
 
@@ -337,6 +398,87 @@ def _validate_population(
             raise ValueError(
                 f"comparison evidence feature/row population mismatch at row {index}"
             )
+
+
+def _validate_provenance_population(
+    rows: tuple[FastDeterministicComparisonEvidenceRow, ...],
+    provenance: tuple[FastDeterministicComparisonEvidenceProvenance, ...],
+) -> None:
+    if (
+        not isinstance(provenance, tuple)
+        or len(provenance) != len(rows)
+        or not all(
+            type(value) is FastDeterministicComparisonEvidenceProvenance
+            for value in provenance
+        )
+    ):
+        raise ValueError(
+            "comparison evidence provenance must match the exact row population"
+        )
+    for index, (row, source) in enumerate(zip(rows, provenance, strict=True)):
+        expected_source_event_id = (
+            f"{row.record.decision_signature}:{row.record.decision_ordinal}"
+        )
+        if source.source_event_id != expected_source_event_id:
+            raise ValueError(
+                f"comparison evidence provenance source mismatch at row {index}"
+            )
+
+        entry_executions = (
+            row.impulse_scalp_evidence.execution,
+            row.micro_pullback_evidence.execution,
+            row.pre_graduation_evidence.execution,
+            row.graduation_flow_evidence.execution,
+        )
+        has_entry_execution = any(value is not None for value in entry_executions)
+        if has_entry_execution:
+            if (
+                source.entry_forecast_source_version is None
+                or source.entry_forecast_horizon_ms is None
+                or source.execution_cost_source_version is None
+                or source.exit_capacity_source_version is None
+            ):
+                raise ValueError(
+                    f"comparison evidence execution provenance incomplete at row {index}"
+                )
+        elif any(
+            value is not None
+            for value in (
+                source.entry_forecast_source_version,
+                source.entry_forecast_horizon_ms,
+                source.execution_cost_source_version,
+                source.exit_capacity_source_version,
+            )
+        ):
+            raise ValueError(
+                f"comparison evidence execution provenance present without execution at row {index}"
+            )
+
+        if (
+            row.wallet_cohort_evidence.evidence is None
+        ) != (source.wallet_source_version is None):
+            raise ValueError(
+                f"comparison evidence wallet provenance mismatch at row {index}"
+            )
+
+        continuation = row.longer_runner_evidence.continuation
+        if continuation is None:
+            if source.continuation_forecast_source_version is not None:
+                raise ValueError(
+                    f"comparison evidence continuation provenance present without continuation at row {index}"
+                )
+        else:
+            if source.continuation_forecast_source_version is None:
+                raise ValueError(
+                    f"comparison evidence continuation provenance missing at row {index}"
+                )
+            if (
+                source.continuation_forecast_source_version
+                != continuation.forecast_source_version
+            ):
+                raise ValueError(
+                    f"comparison evidence continuation forecast provenance mismatch at row {index}"
+                )
 
 
 def _validate_catalog_authorities(
@@ -358,6 +500,7 @@ def _validate_catalog_authorities(
 
 def _row_to_sidecar(
     row: FastDeterministicComparisonEvidenceRow,
+    provenance: FastDeterministicComparisonEvidenceProvenance,
 ) -> dict[str, object]:
     record = row.record
     return {
@@ -370,6 +513,7 @@ def _row_to_sidecar(
             "venue": record.venue,
             "decision_observed_at_unix_ms": record.decision_observed_at_unix_ms,
         },
+        "provenance": _jsonable(provenance),
         "state_version": row.state_version,
         "evaluated_at_unix_ms": row.evaluated_at_unix_ms,
         "quote": _jsonable(row.quote),
@@ -390,7 +534,10 @@ def _row_to_sidecar(
 def _sidecar_to_row(
     record: FastTrainingFeatureRecord,
     document: dict[str, Any],
-) -> FastDeterministicComparisonEvidenceRow:
+) -> tuple[
+    FastDeterministicComparisonEvidenceRow,
+    FastDeterministicComparisonEvidenceProvenance,
+]:
     _require_exact_keys("comparison evidence sidecar row", document, _SIDECAR_KEYS)
     identity = _require_dict(document["record_identity"], "record_identity")
     _require_exact_keys("record_identity", identity, _IDENTITY_KEYS)
@@ -406,6 +553,7 @@ def _sidecar_to_row(
     if identity != expected_identity:
         raise ValueError("comparison evidence sidecar record identity mismatch")
 
+    provenance = _provenance_from_wire(document["provenance"])
     quote = _quote_from_wire(document["quote"])
     risk_environment = _risk_environment_from_wire(
         document["risk_environment"]
@@ -422,7 +570,7 @@ def _sidecar_to_row(
     except (TypeError, ValueError) as exc:
         raise ValueError("comparison evidence market_regime is invalid") from exc
 
-    return FastDeterministicComparisonEvidenceRow(
+    row = FastDeterministicComparisonEvidenceRow(
         record=record,
         impulse_scalp_evidence=_entry_evidence_from_wire(
             document["impulse_scalp_evidence"],
@@ -455,6 +603,23 @@ def _sidecar_to_row(
         risk_environment=risk_environment,
         candidate_authorities=authorities,
     )
+    _validate_provenance_population((row,), (provenance,))
+    return row, provenance
+
+
+def _provenance_from_wire(
+    value: object,
+) -> FastDeterministicComparisonEvidenceProvenance:
+    raw = _require_dict(value, "comparison evidence provenance")
+    _require_dataclass_keys(
+        "comparison evidence provenance",
+        raw,
+        FastDeterministicComparisonEvidenceProvenance,
+    )
+    try:
+        return FastDeterministicComparisonEvidenceProvenance(**raw)
+    except TypeError as exc:
+        raise ValueError("comparison evidence provenance is invalid") from exc
 
 
 TEntryEvidence = TypeVar(
