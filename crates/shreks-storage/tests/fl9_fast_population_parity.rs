@@ -3,7 +3,7 @@ use shreks_core::{
     FastBaselineReplayAssessment, FastCampaignActionConstraintsWire,
     FastCampaignContinuousActionPolicyWire, FastCampaignDecisionBatchWire,
     FastCampaignDecisionPositionWire, FastCampaignDecisionRequestWire,
-    FastMarketKey, FastReduceExecutionCost, VenueId,
+    FastMarketKey, VenueId,
     FAST_CAMPAIGN_DECISION_REQUEST_SCHEMA_NAME, FAST_CAMPAIGN_DECISION_SCHEMA_VERSION,
     IMPULSE_SCALP_BASELINE_VERSION,
 };
