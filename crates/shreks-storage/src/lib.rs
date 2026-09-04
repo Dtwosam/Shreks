@@ -80,7 +80,8 @@ pub use reserve_context::{
     pump_reserve_context_from_source, pump_swap_reserve_context_from_source,
 };
 pub use training_features::{
-    FastTrainingFeatureExportManifest, FastTrainingFeatureRecord, FastTrainingLifecycleEvent,
+    decode_fast_training_feature_record_json, FastTrainingFeatureExportManifest,
+    FastTrainingFeatureRecord, FastTrainingLifecycleEvent,
     FastTrainingReserveContext, FastTrainingWindowSummary, FAST_TRAINING_FEATURE_SCHEMA_NAME,
     FAST_TRAINING_FEATURE_SCHEMA_VERSION,
 };
