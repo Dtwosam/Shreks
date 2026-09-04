@@ -505,7 +505,7 @@ fn duplicate_and_per_market_order_regressions_fail_closed() {
 #[test]
 fn identical_lifecycle_batch_is_deterministic() {
     let first = record("sig-a", 42, 1_100);
-    let second = record("sig-b", 2, 1_100);
+    let second = record("sig-b", 43, 1_200);
     let impulse = impulse_policy();
     let policy = lifecycle_policy(FastBaselineKind::LongerRunner);
     let requests = [
