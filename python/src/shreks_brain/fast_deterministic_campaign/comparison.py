@@ -141,6 +141,19 @@ class FastDeterministicComparisonEvidenceRow:
             raise ValueError("candidate authority versions must be lexical")
         if len(versions) != len(set(versions)):
             raise ValueError("candidate authority versions must be unique")
+        for authority in self.candidate_authorities:
+            entry = authority.entry_authority
+            if entry.mint != self.record.mint or entry.quote_mint != self.record.quote_mint:
+                raise ValueError(
+                    "candidate entry authority market attribution does not match FL8.1 row"
+                )
+            if (
+                entry.decision_executable_entry_price_quote
+                != self.record.decision_executable_entry_price_quote
+            ):
+                raise ValueError(
+                    "candidate entry authority decision price provenance mismatch"
+                )
 
 
 @dataclass(frozen=True, slots=True)
