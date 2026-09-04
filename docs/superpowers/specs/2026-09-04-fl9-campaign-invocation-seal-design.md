@@ -47,11 +47,11 @@ The `-shm` sidecar is intentionally excluded because it is volatile lock/index s
 
 ## Pre/post immutability gate
 
-The source snapshot is captured before campaign execution.
+The source snapshot and exact request-file bytes are captured before campaign execution.
 
-After the #194 request runner returns, the exact same six-source snapshot is captured again.
+After the #194 request runner returns, the request file must be byte-identical and the exact same six-source snapshot is captured again.
 
-Any difference is a hard failure.
+Any request or source difference is a hard failure.
 
 Because the campaign destination was required to be absent before invocation, a post-run source mismatch causes the newly-created unsealed campaign directory to be removed.
 
