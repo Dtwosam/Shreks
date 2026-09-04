@@ -77,9 +77,19 @@ def decode_fast_deterministic_lifecycle_results(
         raise ValueError("decisions must be a non-empty list")
 
     _require_exact_keys("deterministic lifecycle policy", policy_value, _POLICY_KEYS)
+    for value in decisions_value:
+        if not isinstance(value, dict):
+            raise ValueError("deterministic lifecycle decision must be an object")
+        _require_exact_keys("deterministic lifecycle decision", value, _DECISION_KEYS)
+
+    material = dict(document)
+    claimed = material.pop("batch_fingerprint_sha256")
+    expected = hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
+    if claimed != expected:
+        raise ValueError("deterministic lifecycle fingerprint mismatch")
+
     policy = FastDeterministicLifecyclePolicy(**policy_value)
     decisions = tuple(_decode_decision(value) for value in decisions_value)
-
     result = FastDeterministicLifecycleResults(
         schema_name=document["schema_name"],
         schema_version=document["schema_version"],
@@ -88,12 +98,6 @@ def decode_fast_deterministic_lifecycle_results(
         batch_fingerprint_sha256=document["batch_fingerprint_sha256"],
     )
     _validate_semantics(result)
-
-    material = dict(document)
-    claimed = material.pop("batch_fingerprint_sha256")
-    expected = hashlib.sha256(_canonical(material).encode("utf-8")).hexdigest()
-    if claimed != expected:
-        raise ValueError("deterministic lifecycle fingerprint mismatch")
     return result
 
 
