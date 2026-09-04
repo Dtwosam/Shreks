@@ -1,3 +1,12 @@
+from .request import (
+    FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME,
+    FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION,
+    FastDeterministicCampaignRequest,
+    build_fast_deterministic_campaign_request,
+    decode_fast_deterministic_campaign_request,
+    encode_fast_deterministic_campaign_request,
+    run_fast_deterministic_campaign_request_file,
+)
 from .artifact import (
     FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_NAME,
     FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_VERSION,
@@ -61,6 +70,13 @@ from .paper_evidence import (
 
 
 __all__ = (
+    "FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_NAME",
+    "FAST_DETERMINISTIC_CAMPAIGN_REQUEST_SCHEMA_VERSION",
+    "FastDeterministicCampaignRequest",
+    "build_fast_deterministic_campaign_request",
+    "decode_fast_deterministic_campaign_request",
+    "encode_fast_deterministic_campaign_request",
+    "run_fast_deterministic_campaign_request_file",
     "FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_NAME",
     "FAST_DETERMINISTIC_CAMPAIGN_ARTIFACT_SCHEMA_VERSION",
     "FastDeterministicCampaignArtifact",
