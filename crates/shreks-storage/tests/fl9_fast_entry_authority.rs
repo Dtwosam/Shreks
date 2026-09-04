@@ -1,3 +1,5 @@
+use std::{fs, process::Command, time::{SystemTime, UNIX_EPOCH}};
+
 use shreks_storage::{
     decode_fast_deterministic_entry_authority_request_json,
     derive_fast_deterministic_entry_authority,
@@ -102,4 +104,34 @@ fn request_decoder_is_strict_and_decision_price_drift_fails_closed() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("unknown") || error.to_string().contains("field"));
+}
+
+
+#[test]
+fn offline_binary_runs_the_same_authoritative_fl3_derivation() {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "shreks-fast-entry-authority-{nanos}.json"
+    ));
+    fs::write(&path, serde_json::to_string(&request()).unwrap()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_shreks-fast-entry-authority"))
+        .arg(&path)
+        .output()
+        .unwrap();
+    fs::remove_file(&path).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: shreks_storage::FastDeterministicEntryAuthorityResultWire =
+        serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result.mint, "mint-authority");
+    assert!((result.maximum_acceptable_entry_price_quote - 11.401592194597294).abs() < 1e-12);
+    assert_eq!(result.expected_entry_variable_cost_bps, 110);
 }
