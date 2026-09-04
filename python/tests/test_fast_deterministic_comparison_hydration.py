@@ -521,6 +521,57 @@ def test_hydrator_preserves_unavailable_entry_route_without_inventing_price(
     assert row.exit_quote.state is PaperQuoteState.EXECUTABLE
 
 
+def test_hydrator_preserves_insufficient_exit_capacity_as_no_buy_authority(
+    tmp_path: Path,
+) -> None:
+    record = _record()
+    database = tmp_path / "observer.db"
+    authority_binary = tmp_path / "authority"
+    _create_observer_db(database)
+    _fake_authority_binary(authority_binary)
+
+    source = _input(record)
+    execution = source.impulse_scalp_evidence.execution
+    assert execution is not None
+    insufficient = replace(
+        execution,
+        trade=replace(
+            execution.trade,
+            exit_capacity_base=execution.trade.base_quantity - 1.0,
+        ),
+    )
+    hydrated_input = replace(
+        source,
+        impulse_scalp_evidence=FastOfflineImpulseScalpEvidence(
+            execution=insufficient
+        ),
+        micro_pullback_evidence=FastOfflineMicroPullbackEvidence(
+            execution=insufficient
+        ),
+        pre_graduation_evidence=FastOfflinePreGraduationEvidence(
+            execution=insufficient
+        ),
+        graduation_flow_evidence=FastOfflineGraduationFlowEvidence(
+            pre_snapshot=source.graduation_flow_evidence.pre_snapshot,
+            boost_context=source.graduation_flow_evidence.boost_context,
+            execution=insufficient,
+        ),
+    )
+
+    result = hydrate_fast_deterministic_comparison_evidence(
+        database_path=database,
+        feature_dataset=_dataset(record),
+        catalog=_catalog(),
+        hydration_inputs=(hydrated_input,),
+        entry_authority_binary_path=authority_binary,
+    )
+
+    assert all(
+        item.entry_authority is None
+        for item in result.rows[0].candidate_authorities
+    )
+
+
 def test_hydrator_rejects_family_specific_execution_economics_drift(
     tmp_path: Path,
 ) -> None:

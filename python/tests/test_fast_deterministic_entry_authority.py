@@ -237,6 +237,39 @@ def test_offline_entry_authority_rejects_decision_price_drift_before_launch(
     assert not marker.exists()
 
 
+def test_offline_entry_authority_returns_none_for_insufficient_exit_capacity_without_launch(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "marker-capacity"
+    marker = tmp_path / "launched-capacity"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        f"from pathlib import Path; Path({str(marker)!r}).write_text('yes')\n",
+        encoding="utf-8",
+    )
+    binary.chmod(binary.stat().st_mode | 0o111)
+
+    execution = _execution()
+    insufficient = FastOfflineEntryExecution(
+        cost_model=execution.cost_model,
+        trade=FastOfflineExecutionTrade(
+            base_quantity=execution.trade.base_quantity,
+            executable_entry_price_quote=execution.trade.executable_entry_price_quote,
+            forecast_exit_price_quote=execution.trade.forecast_exit_price_quote,
+            exit_capacity_base=execution.trade.base_quantity - 1.0,
+            required_edge_bps=execution.trade.required_edge_bps,
+            risk_margin_bps=execution.trade.risk_margin_bps,
+        ),
+    )
+
+    assert derive_fast_deterministic_entry_authority_offline(
+        binary_path=binary,
+        record=_record(),
+        execution=insufficient,
+    ) is None
+    assert not marker.exists()
+
+
 def test_authority_adapter_source_has_no_network_db_or_live_authority() -> None:
     source = (
         Path(__file__).resolve().parents[1]

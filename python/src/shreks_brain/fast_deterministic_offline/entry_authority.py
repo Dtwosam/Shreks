@@ -58,6 +58,8 @@ def derive_fast_deterministic_entry_authority_offline(
         raise ValueError(
             "execution decision price provenance does not match FL8.1 record"
         )
+    if execution.trade.exit_capacity_base < execution.trade.base_quantity:
+        return None
 
     binary = Path(binary_path)
     if not str(binary).strip() or not binary.is_file():
