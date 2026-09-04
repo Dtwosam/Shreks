@@ -931,6 +931,31 @@ def test_hydrator_rejects_population_and_risk_quote_provenance_drift(
         )
 
 
+def test_observer_probe_source_has_no_write_network_or_live_authority() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "shreks_brain"
+        / "fast_deterministic_campaign"
+        / "observer_probe.py"
+    ).read_text(encoding="utf-8")
+
+    for forbidden in (
+        "sqlite3",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        "requests.",
+        "httpx",
+        "RuntimeMode.LIVE",
+        "sign_transaction",
+        "submit_transaction",
+        "evaluate_fast_policy_superiority",
+        "promotion",
+    ):
+        assert forbidden not in source
+
+
 def test_hydrator_source_has_no_future_label_write_or_live_authority() -> None:
     source = (
         Path(__file__).resolve().parents[1]
