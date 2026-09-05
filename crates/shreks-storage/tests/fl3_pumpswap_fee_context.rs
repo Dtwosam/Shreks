@@ -79,7 +79,7 @@ fn event(source: &PumpSwapTradeEvidenceWrite, sequence: u64, observed_at_unix_ms
         },
         Some("wallet-fee-context".to_owned()),
         source.slot,
-        observed_at_unix_ms.saturating_sub(50),
+        source.timestamp_unix_seconds * 1_000,
         observed_at_unix_ms,
         500.0,
         source.quote_amount_raw as f64 / 1_000_000_000.0,
