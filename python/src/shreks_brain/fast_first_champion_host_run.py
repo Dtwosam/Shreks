@@ -605,6 +605,20 @@ def run_fast_first_champion_host_request(
         request.hydration_policy_path,
         label="hydration policy",
     )
+    training_economics_overlay_path = _resolve_source_directory(
+        base,
+        request.training_economics_overlay_path,
+    )
+    economics_before = _capture_training_economics(
+        training_economics_overlay_path
+    )
+    if (
+        economics_before.manifest_fingerprint_sha256
+        != request.expected_training_economics_overlay_manifest_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion host training economics overlay fingerprint mismatch"
+        )
     destination = _resolve_destination(
         base,
         request.destination_path,
