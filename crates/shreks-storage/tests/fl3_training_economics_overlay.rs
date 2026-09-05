@@ -901,6 +901,62 @@ fn pumpswap_projection_limits_are_explicit_unavailable_statuses() {
 }
 
 #[test]
+fn pumpswap_zero_quote_exit_projection_is_unavailable_before_fee_classification() {
+    let root = unique_test_dir("swap-zero-quote-exit");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-zero-quote-decision",
+        23,
+        true,
+        1,
+        6_500,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-zero-quote-endpoint",
+        24,
+        false,
+        2,
+        6_700,
+        9_500_000_000,
+        1,
+        1,
+        1,
+        Some(0),
+    );
+
+    record_swap_path(
+        &db,
+        &decision,
+        1,
+        6_500,
+        Some(&endpoint),
+        Some(6_700),
+        500,
+    );
+
+    let row = &overlay_rows(&db, "2", 1_000)[0];
+    assert_eq!(
+        row.status,
+        FastTrainingEconomicsStatus::ExitProjectionUnavailable
+    );
+    assert!(row.entry_projection.is_some());
+    assert!(row.exit_projection.is_none());
+    assert!(row.entry_fee.is_none());
+    assert!(row.exit_fee.is_none());
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
 fn pumpswap_fee_missing_stale_and_rate_unknown_map_without_fallback() {
     let root = unique_test_dir("swap-entry-fee-missing");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
