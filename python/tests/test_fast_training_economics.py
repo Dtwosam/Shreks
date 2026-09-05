@@ -114,7 +114,7 @@ def _available_row() -> FastTrainingEconomicsOverlayRow:
             quote_output=120.0,
             average_price_quote=60.0,
         ),
-        entry_fee=_fee("decision-fee", 9, 990, 50),
+        entry_fee=_fee("decision-fee", 9, 1_000, 50),
         exit_fee=_fee("endpoint-fee", 11, 1_200, 40),
     )
 
