@@ -326,6 +326,11 @@ impl ShreksDb {
                     )));
                 }
             };
+            if exit_projection.quote_output_raw == 0 {
+                row.status = FastTrainingEconomicsStatus::ExitProjectionUnavailable;
+                rows.push(row);
+                continue;
+            }
             row.exit_projection = Some(FastTrainingEconomicsExitProjection {
                 base_quantity_raw: exit_projection.base_quantity_raw,
                 quote_output_raw: exit_projection.quote_output_raw,
