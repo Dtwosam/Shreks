@@ -229,13 +229,11 @@ impl ShreksDb {
                 )
             })?;
 
-            let replay_cache_requires_reload = match replay_cache.as_ref() {
-                Some((mint, quote_mint, _)) => {
-                    mint != &stored.decision.market.mint
-                        || quote_mint != &stored.decision.market.quote_mint
-                }
-                None => true,
-            };
+            let replay_cache_requires_reload = replay_cache_requires_reload(
+                &replay_cache,
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+            );
             if replay_cache_requires_reload {
                 let replay = self.fast_events_for_market_with_reserve_context(
                     &stored.decision.market.mint,
@@ -853,6 +851,19 @@ fn base_overlay_row(
         exit_projection: None,
         entry_fee: None,
         exit_fee: None,
+    }
+}
+
+fn replay_cache_requires_reload(
+    replay_cache: &Option<(String, String, Vec<StoredFastEvent>)>,
+    mint: &str,
+    quote_mint: &str,
+) -> bool {
+    match replay_cache.as_ref() {
+        Some((cached_mint, cached_quote_mint, _)) => {
+            cached_mint != mint || cached_quote_mint != quote_mint
+        }
+        None => true,
     }
 }
 
@@ -1591,7 +1602,17 @@ fn write_new_synced_file(path: &PathBuf, bytes: &[u8]) -> Result<(), StorageErro
 
 #[cfg(test)]
 mod tests {
-    use super::python_float_hex;
+    use super::{python_float_hex, replay_cache_requires_reload};
+
+    #[test]
+    fn replay_cache_reuses_only_exact_market_identity() {
+        let cache = Some(("mint-a".to_owned(), "quote-a".to_owned(), Vec::new()));
+
+        assert!(!replay_cache_requires_reload(&cache, "mint-a", "quote-a"));
+        assert!(replay_cache_requires_reload(&cache, "mint-b", "quote-a"));
+        assert!(replay_cache_requires_reload(&cache, "mint-a", "quote-b"));
+        assert!(replay_cache_requires_reload(&None, "mint-a", "quote-a"));
+    }
 
     #[test]
     fn python_float_hex_matches_python_normal_and_zero_shapes() {
