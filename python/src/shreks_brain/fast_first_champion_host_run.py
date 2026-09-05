@@ -486,6 +486,9 @@ def decode_fast_first_champion_host_request(
         raise ValueError(
             "first champion host request fields are incompatible"
         )
+    training_execution_cost_policy = _decode_training_execution_cost_policy(
+        raw["training_execution_cost_policy"]
+    )
     request = FastFirstChampionHostRequest(
         schema_name=document["schema_name"],
         schema_version=document["schema_version"],
