@@ -1217,3 +1217,57 @@ fn conflict_quarantined_pumpswap_source_aborts_overlay() {
     drop(db);
     cleanup_dir(&root);
 }
+
+
+#[test]
+fn nonrepresentable_quantity_fails_closed_before_missing_virtual_reserve_status() {
+    let root = unique_test_dir("swap-invalid-quantity-before-reserve");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-invalid-quantity-decision",
+        58,
+        true,
+        1,
+        14_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        None,
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-invalid-quantity-endpoint",
+        60,
+        false,
+        2,
+        14_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 14_000, Some(&endpoint), Some(14_200), 500);
+
+    let features = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    let error = db
+        .fast_training_economics_overlay_rows(
+            &features,
+            FUTURE_PATH_LABEL_VERSION,
+            "0.0000001",
+            1_000,
+        )
+        .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("cannot be represented exactly in raw base units"));
+
+    drop(db);
+    cleanup_dir(&root);
+}
