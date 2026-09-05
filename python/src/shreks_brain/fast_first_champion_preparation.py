@@ -649,6 +649,15 @@ def _validate_first_champion_chain(
         )
     manifest = first_champion.manifest
     if (
+        manifest.training_economics_overlay_manifest_fingerprint_sha256
+        != request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        or manifest.training_execution_cost_policy_fingerprint_sha256
+        != request.training_execution_cost_policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion economics fingerprint mismatch"
+        )
+    if (
         manifest.request_fingerprint_sha256
         != request.request_fingerprint_sha256
     ):
@@ -768,6 +777,10 @@ def _validate_reopened_chain(
         != manifest.first_champion_artifact_fingerprint_sha256
         or champion_manifest.champion_fingerprint_sha256
         != manifest.champion_fingerprint_sha256
+        or champion_manifest.training_economics_overlay_manifest_fingerprint_sha256
+        != manifest.training_economics_overlay_manifest_fingerprint_sha256
+        or champion_manifest.training_execution_cost_policy_fingerprint_sha256
+        != manifest.training_execution_cost_policy_fingerprint_sha256
         or champion_manifest.training_bundle_fingerprint_sha256
         != manifest.training_bundle_fingerprint_sha256
         or champion_manifest.context_fingerprint_sha256
