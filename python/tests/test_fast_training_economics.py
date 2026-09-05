@@ -93,7 +93,7 @@ def _available_row() -> FastTrainingEconomicsOverlayRow:
         future_path_label_version=1,
         counterfactual_base_quantity="2",
         endpoint_signature="endpoint",
-        endpoint_ordinal=4,
+        endpoint_ordinal=2,
         endpoint_sequence=11,
         endpoint_observed_at_unix_ms=1_200,
         status=FastTrainingEconomicsStatus.AVAILABLE,
