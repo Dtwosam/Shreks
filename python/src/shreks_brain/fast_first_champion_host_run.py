@@ -812,6 +812,12 @@ def run_fast_first_champion_host_request(
             "feature_source_jsonl_sha256": (
                 plan.feature_source_jsonl_sha256
             ),
+            "training_economics_overlay_manifest_fingerprint_sha256": (
+                economics_before.manifest_fingerprint_sha256
+            ),
+            "training_execution_cost_policy_fingerprint_sha256": (
+                request.training_execution_cost_policy_fingerprint_sha256
+            ),
             "plan_fingerprint_sha256": plan.plan_fingerprint_sha256,
             "plan_file_sha256": _sha256_file_stable(plan_path),
             "training_bundle_fingerprint_sha256": (
