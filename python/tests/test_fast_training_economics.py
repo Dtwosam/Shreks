@@ -292,6 +292,7 @@ def test_unavailable_overlay_keeps_entry_and_exit_unknown() -> None:
     row = _available_row()
     unavailable = replace(
         row,
+        venue="pump_fun_bonding_curve",
         status=FastTrainingEconomicsStatus.UNSUPPORTED_VENUE,
         requested_base_quantity_raw=None,
         entry_reserve=None,
