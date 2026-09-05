@@ -21,6 +21,7 @@ mod future_path_labels;
 mod lifecycle;
 mod outcomes;
 mod pump_swap_fast_lane;
+mod pumpswap_effective_fee;
 mod reserve_context;
 mod safety_evidence;
 mod training_features;
@@ -124,6 +125,7 @@ pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
 };
+pub use pumpswap_effective_fee::PumpSwapEffectiveFeeEvidence;
 pub use pump_swap_fast_lane::{
     pump_swap_event_ordinal, PumpSwapMarket, PumpSwapTradeEvidenceWrite,
 };
