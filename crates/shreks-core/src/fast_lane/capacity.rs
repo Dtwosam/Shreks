@@ -3,6 +3,15 @@ use std::{error::Error, fmt};
 use super::FastReserveContext;
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EntryProjection {
+    pub base_quantity_raw: u64,
+    pub quote_input_raw: u64,
+    pub base_quantity: f64,
+    pub quote_input: f64,
+    pub average_price_quote: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ExitProjection {
     pub base_quantity_raw: u64,
     pub quote_output_raw: u64,
@@ -19,6 +28,49 @@ pub struct ExitCapacity {
     pub boundary_quote_output: f64,
     pub boundary_average_price_quote: f64,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryProjectionError {
+    ZeroBaseQuantity,
+    MissingPumpSwapVirtualQuoteReserve,
+    NonPositiveBaseReserve,
+    NonPositiveEffectiveQuoteReserve,
+    PhysicalBaseReserveExhausted,
+    BaseReserveExhausted,
+    ArithmeticOverflow,
+    InvalidReserveScale,
+}
+
+impl fmt::Display for EntryProjectionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroBaseQuantity => formatter.write_str("entry base quantity must be positive"),
+            Self::MissingPumpSwapVirtualQuoteReserve => formatter.write_str(
+                "PumpSwap entry projection requires authoritative virtual quote reserve evidence",
+            ),
+            Self::NonPositiveBaseReserve => {
+                formatter.write_str("entry projection base reserve must be positive")
+            }
+            Self::NonPositiveEffectiveQuoteReserve => formatter.write_str(
+                "entry projection effective quote reserve must be positive",
+            ),
+            Self::PhysicalBaseReserveExhausted => formatter.write_str(
+                "projected entry exceeds the physical base reserve",
+            ),
+            Self::BaseReserveExhausted => formatter.write_str(
+                "projected entry reaches or exceeds the effective base reserve",
+            ),
+            Self::ArithmeticOverflow => {
+                formatter.write_str("entry projection integer arithmetic overflowed")
+            }
+            Self::InvalidReserveScale => formatter.write_str(
+                "entry projection reserve decimals produced an invalid numeric scale",
+            ),
+        }
+    }
+}
+
+impl Error for EntryProjectionError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExitCapacityError {
@@ -70,10 +122,62 @@ impl Error for ExitCapacityError {}
 #[derive(Debug, Clone, Copy)]
 struct ReserveView {
     base_reserve_raw: u64,
+    physical_base_reserve_raw: u64,
     effective_quote_reserve_raw: u64,
     physical_quote_reserve_raw: u64,
     base_decimals: u8,
     quote_decimals: u8,
+}
+
+pub fn project_entry(
+    reserves: &FastReserveContext,
+    base_quantity_raw: u64,
+) -> Result<EntryProjection, EntryProjectionError> {
+    if base_quantity_raw == 0 {
+        return Err(EntryProjectionError::ZeroBaseQuantity);
+    }
+    let view = entry_reserve_view(reserves)?;
+    if base_quantity_raw > view.physical_base_reserve_raw {
+        return Err(EntryProjectionError::PhysicalBaseReserveExhausted);
+    }
+    if base_quantity_raw >= view.base_reserve_raw {
+        return Err(EntryProjectionError::BaseReserveExhausted);
+    }
+
+    let numerator = u128::from(view.effective_quote_reserve_raw)
+        .checked_mul(u128::from(base_quantity_raw))
+        .ok_or(EntryProjectionError::ArithmeticOverflow)?;
+    let denominator = u128::from(view.base_reserve_raw)
+        .checked_sub(u128::from(base_quantity_raw))
+        .ok_or(EntryProjectionError::ArithmeticOverflow)?;
+    let quote_input_raw = ceil_div(numerator, denominator)
+        .map_err(|_| EntryProjectionError::ArithmeticOverflow)?;
+    let quote_input_raw = u64::try_from(quote_input_raw)
+        .map_err(|_| EntryProjectionError::ArithmeticOverflow)?;
+
+    let (base_scale, quote_scale) =
+        decimal_scales(view.base_decimals, view.quote_decimals)
+            .map_err(|_| EntryProjectionError::InvalidReserveScale)?;
+    let base_quantity = base_quantity_raw as f64 / base_scale;
+    let quote_input = quote_input_raw as f64 / quote_scale;
+    let average_price_quote = quote_input / base_quantity;
+    if !base_quantity.is_finite()
+        || base_quantity <= 0.0
+        || !quote_input.is_finite()
+        || quote_input <= 0.0
+        || !average_price_quote.is_finite()
+        || average_price_quote <= 0.0
+    {
+        return Err(EntryProjectionError::InvalidReserveScale);
+    }
+
+    Ok(EntryProjection {
+        base_quantity_raw,
+        quote_input_raw,
+        base_quantity,
+        quote_input,
+        average_price_quote,
+    })
 }
 
 pub fn project_exit(
@@ -178,6 +282,7 @@ fn reserve_view(reserves: &FastReserveContext) -> Result<ReserveView, ExitCapaci
             ..
         } => ReserveView {
             base_reserve_raw: *virtual_base_reserve_raw,
+            physical_base_reserve_raw: *real_base_reserve_raw,
             effective_quote_reserve_raw: *virtual_quote_reserve_raw,
             physical_quote_reserve_raw: *real_quote_reserve_raw,
             base_decimals: *base_decimals,
@@ -202,6 +307,7 @@ fn reserve_view(reserves: &FastReserveContext) -> Result<ReserveView, ExitCapaci
                 .map_err(|_| ExitCapacityError::ArithmeticOverflow)?;
             ReserveView {
                 base_reserve_raw: *pool_base_reserve_raw,
+                physical_base_reserve_raw: *pool_base_reserve_raw,
                 effective_quote_reserve_raw,
                 physical_quote_reserve_raw: *pool_quote_reserve_raw,
                 base_decimals: *base_decimals,
@@ -215,6 +321,62 @@ fn reserve_view(reserves: &FastReserveContext) -> Result<ReserveView, ExitCapaci
     }
     if view.effective_quote_reserve_raw == 0 {
         return Err(ExitCapacityError::NonPositiveEffectiveQuoteReserve);
+    }
+    Ok(view)
+}
+
+fn entry_reserve_view(
+    reserves: &FastReserveContext,
+) -> Result<ReserveView, EntryProjectionError> {
+    let view = match reserves {
+        FastReserveContext::PumpCurve {
+            virtual_base_reserve_raw,
+            virtual_quote_reserve_raw,
+            real_base_reserve_raw,
+            real_quote_reserve_raw,
+            base_decimals,
+            quote_decimals,
+        } => ReserveView {
+            base_reserve_raw: *virtual_base_reserve_raw,
+            physical_base_reserve_raw: *real_base_reserve_raw,
+            effective_quote_reserve_raw: *virtual_quote_reserve_raw,
+            physical_quote_reserve_raw: *real_quote_reserve_raw,
+            base_decimals: *base_decimals,
+            quote_decimals: *quote_decimals,
+        },
+        FastReserveContext::PumpSwapPool {
+            pool_base_reserve_raw,
+            pool_quote_reserve_raw,
+            virtual_quote_reserve_raw,
+            base_decimals,
+            quote_decimals,
+        } => {
+            let virtual_quote_reserve_raw = virtual_quote_reserve_raw
+                .ok_or(EntryProjectionError::MissingPumpSwapVirtualQuoteReserve)?;
+            let effective_quote_reserve_raw = i128::from(*pool_quote_reserve_raw)
+                .checked_add(virtual_quote_reserve_raw)
+                .ok_or(EntryProjectionError::ArithmeticOverflow)?;
+            if effective_quote_reserve_raw <= 0 {
+                return Err(EntryProjectionError::NonPositiveEffectiveQuoteReserve);
+            }
+            let effective_quote_reserve_raw = u64::try_from(effective_quote_reserve_raw)
+                .map_err(|_| EntryProjectionError::ArithmeticOverflow)?;
+            ReserveView {
+                base_reserve_raw: *pool_base_reserve_raw,
+                physical_base_reserve_raw: *pool_base_reserve_raw,
+                effective_quote_reserve_raw,
+                physical_quote_reserve_raw: *pool_quote_reserve_raw,
+                base_decimals: *base_decimals,
+                quote_decimals: *quote_decimals,
+            }
+        }
+    };
+
+    if view.base_reserve_raw == 0 {
+        return Err(EntryProjectionError::NonPositiveBaseReserve);
+    }
+    if view.effective_quote_reserve_raw == 0 {
+        return Err(EntryProjectionError::NonPositiveEffectiveQuoteReserve);
     }
     Ok(view)
 }
