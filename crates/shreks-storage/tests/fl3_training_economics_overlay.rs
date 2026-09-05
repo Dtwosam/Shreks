@@ -957,6 +957,118 @@ fn pumpswap_zero_quote_exit_projection_is_unavailable_before_fee_classification(
 }
 
 #[test]
+fn pumpswap_positive_non_integral_fee_ratio_is_available_exact_rational_evidence() {
+    let root = unique_test_dir("swap-exact-rational-fee");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-rational-buy",
+        25,
+        true,
+        1,
+        7_000,
+        10_000_000_000,
+        5_000_000_000,
+        3,
+        4,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-rational-sell",
+        26,
+        false,
+        2,
+        7_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+
+    record_swap_path(
+        &db,
+        &decision,
+        1,
+        7_000,
+        Some(&endpoint),
+        Some(7_200),
+        500,
+    );
+
+    let row = &overlay_rows(&db, "2", 1_000)[0];
+    assert_eq!(row.status, FastTrainingEconomicsStatus::Available);
+
+    let entry_fee = row.entry_fee.as_ref().unwrap();
+    assert_eq!(entry_fee.market_quote_amount_raw, 3);
+    assert_eq!(entry_fee.user_quote_amount_raw, 4);
+    assert_eq!(entry_fee.signed_user_cost_quote_raw, 1);
+    assert_eq!(entry_fee.effective_fee_bps, None);
+
+    let exit_fee = row.exit_fee.as_ref().unwrap();
+    assert_eq!(exit_fee.effective_fee_bps, Some(50));
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_negative_fee_delta_remains_rate_unknown() {
+    let root = unique_test_dir("swap-negative-fee");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-rebate-buy",
+        27,
+        true,
+        1,
+        7_500,
+        10_000_000_000,
+        5_000_000_000,
+        100,
+        99,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-rebate-sell",
+        28,
+        false,
+        2,
+        7_700,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+
+    record_swap_path(
+        &db,
+        &decision,
+        1,
+        7_500,
+        Some(&endpoint),
+        Some(7_700),
+        500,
+    );
+
+    let row = &overlay_rows(&db, "2", 1_000)[0];
+    assert_eq!(
+        row.status,
+        FastTrainingEconomicsStatus::EntryFeeRateUnknown
+    );
+    assert!(row.entry_fee.is_none());
+    assert!(row.exit_fee.is_none());
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
 fn pumpswap_fee_missing_stale_and_rate_unknown_map_without_fallback() {
     let root = unique_test_dir("swap-entry-fee-missing");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
