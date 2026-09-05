@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from decimal import Decimal
 import hashlib
 import json
 import math
@@ -20,6 +21,12 @@ from .counterfactual_source import load_entry_counterfactual_from_sqlite
 from .counterfactuals import (
     CounterfactualOutcomeSet,
     label_entry_counterfactuals,
+)
+from .fast_training_economics import (
+    FastTrainingEconomicsOverlayRow,
+    FastTrainingExecutionCostPolicy,
+    build_entry_counterfactual_context_from_training_economics,
+    read_fast_training_economics_overlay,
 )
 from .fast_training_features import (
     FAST_TRAINING_FEATURE_SCHEMA_NAME,
@@ -225,8 +232,10 @@ def build_fast_training_bundle_from_runtime_sources(
     sqlite_path: str | Path,
     future_path_label_version: int,
     counterfactual_base_quantity: float,
+    training_economics_overlay_path: str | Path,
+    training_execution_cost_policy: FastTrainingExecutionCostPolicy,
 ) -> FastTrainingBundle:
-    """Build the exact logical FL8.1 bundle from production-shaped read-only sources."""
+    """Build the exact logical FL8.1 bundle from authenticated read-only sources."""
     _positive_int("future_path_label_version", future_path_label_version)
     if (
         isinstance(counterfactual_base_quantity, bool)
@@ -237,15 +246,84 @@ def build_fast_training_bundle_from_runtime_sources(
         raise ValueError(
             "counterfactual_base_quantity must be positive and finite"
         )
+    if type(training_execution_cost_policy) is not FastTrainingExecutionCostPolicy:
+        raise ValueError(
+            "training_execution_cost_policy must be an exact FastTrainingExecutionCostPolicy"
+        )
 
     features = read_fast_training_feature_jsonl(feature_jsonl_path)
     future_path = load_future_path_training_labels_from_sqlite(
         sqlite_path,
         future_path_label_version=future_path_label_version,
     )
+    overlay = read_fast_training_economics_overlay(
+        training_economics_overlay_path
+    )
+
+    if (
+        overlay.manifest.feature_source_jsonl_sha256
+        != features.source_sha256
+    ):
+        raise ValueError(
+            "training economics overlay feature-source fingerprint does not match runtime features"
+        )
+    if (
+        overlay.manifest.future_path_logical_fingerprint_sha256
+        != future_path.logical_fingerprint_sha256
+    ):
+        raise ValueError(
+            "training economics overlay FL4 logical fingerprint does not match runtime labels"
+        )
+    if (
+        overlay.manifest.future_path_label_version
+        != future_path_label_version
+    ):
+        raise ValueError(
+            "training economics overlay label version does not match runtime request"
+        )
+    if Decimal(overlay.manifest.counterfactual_base_quantity) != Decimal(
+        str(counterfactual_base_quantity)
+    ):
+        raise ValueError(
+            "training economics overlay counterfactual quantity does not match runtime request"
+        )
+
+    labels_by_key = {
+        (
+            label.decision_signature,
+            label.decision_ordinal,
+            label.horizon_ms,
+            label.label_version,
+        ): label
+        for label in future_path.labels
+    }
+    if len(labels_by_key) != len(future_path.labels):
+        raise ValueError(
+            "runtime FL4 component contains duplicate decision/horizon identities"
+        )
+    overlay_by_key = {
+        (
+            row.decision_signature,
+            row.decision_ordinal,
+            row.horizon_ms,
+            row.future_path_label_version,
+        ): row
+        for row in overlay.rows
+    }
+    if len(overlay_by_key) != len(overlay.rows):
+        raise ValueError(
+            "training economics overlay contains duplicate decision/horizon identities"
+        )
+    if set(overlay_by_key) != set(labels_by_key):
+        raise ValueError(
+            "training economics overlay population does not match FL4 exactly"
+        )
 
     outcome_sets: list[CounterfactualOutcomeSet] = []
-    for label in future_path.labels:
+    for key, label in labels_by_key.items():
+        row = overlay_by_key[key]
+        _validate_runtime_training_economics_row(row, label)
+
         loaded = load_entry_counterfactual_from_sqlite(
             sqlite_path,
             decision_signature=label.decision_signature,
@@ -267,17 +345,57 @@ def build_fast_training_bundle_from_runtime_sources(
             or provenance.horizon_ms != label.horizon_ms
             or provenance.future_path_label_version != label.label_version
             or provenance.completeness != label.completeness
+            or provenance.endpoint_signature != label.endpoint_signature
+            or provenance.endpoint_ordinal != label.endpoint_ordinal
+            or provenance.endpoint_observed_at_unix_ms
+            != label.endpoint_observed_at_unix_ms
         ):
             raise ValueError(
                 "runtime counterfactual provenance does not match FL4 training label"
             )
-        outcome_sets.append(label_entry_counterfactuals(loaded.context))
+
+        context = build_entry_counterfactual_context_from_training_economics(
+            row,
+            policy=training_execution_cost_policy,
+            overlay_manifest_fingerprint_sha256=(
+                overlay.manifest.manifest_fingerprint_sha256
+            ),
+            base_quantity=float(counterfactual_base_quantity),
+            horizon_complete=label.completeness == "complete",
+        )
+        outcome_sets.append(label_entry_counterfactuals(context))
 
     return build_fast_training_bundle_from_components(
         features=features,
         future_path_labels=future_path,
         counterfactual_outcome_sets=tuple(outcome_sets),
     )
+
+
+def _validate_runtime_training_economics_row(
+    row: FastTrainingEconomicsOverlayRow,
+    label,
+) -> None:
+    if (
+        row.decision_signature != label.decision_signature
+        or row.decision_ordinal != label.decision_ordinal
+        or row.decision_sequence != label.decision_sequence
+        or row.decision_observed_at_unix_ms
+        != label.decision_observed_at_unix_ms
+        or row.mint != label.decision_mint
+        or row.quote_mint != label.decision_quote_mint
+        or row.venue != label.decision_venue
+        or row.horizon_ms != label.horizon_ms
+        or row.future_path_label_version != label.label_version
+        or row.endpoint_signature != label.endpoint_signature
+        or row.endpoint_ordinal != label.endpoint_ordinal
+        or row.endpoint_observed_at_unix_ms
+        != label.endpoint_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "training economics overlay row provenance does not match FL4 label"
+        )
+
 
 
 def write_fast_training_bundle(

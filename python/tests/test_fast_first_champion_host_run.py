@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,11 +27,34 @@ from shreks_brain.fast_first_champion_host_run import (
 from shreks_brain.research.fast_training_bundle import (
     bundle_logical_fingerprint_sha256,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 
 
 RELEASE_SHA = "21a4fcf77eb66e6589088f5951a60f66ba5fa76f"
 POLICY_FP = "4" * 64
 SELECTION_AT = 4_000
+
+
+
+
+
+def _training_economics_policy() -> FastTrainingExecutionCostPolicy:
+    return FastTrainingExecutionCostPolicy(
+        version="host-training-cost-v1",
+        additional_entry_slippage_bps=10,
+        additional_exit_slippage_bps=20,
+        entry_latency_bps=5,
+        exit_latency_bps=5,
+        entry_network_fee_quote=0.0,
+        exit_network_fee_quote=0.0,
+        entry_priority_fee_quote=0.0,
+        exit_priority_fee_quote=0.0,
+        entry_expected_failure_cost_quote=0.0,
+        exit_expected_failure_cost_quote=0.0,
+    )
 
 
 def _sha(raw: bytes) -> str:
@@ -59,6 +83,14 @@ def _request(tmp_path: Path):
         proof_workspace_path="proof-source",
         observer_database_path="shreks.db",
         hydration_policy_path="hydration-policy.json",
+        training_economics_overlay_path="training-economics",
+        expected_training_economics_overlay_manifest_fingerprint_sha256="b" * 64,
+        training_execution_cost_policy=_training_economics_policy(),
+        training_execution_cost_policy_fingerprint_sha256=(
+            fast_training_execution_cost_policy_fingerprint_sha256(
+                _training_economics_policy()
+            )
+        ),
         destination_path="host-run",
         expected_release_source_sha=RELEASE_SHA,
         expected_hydration_policy_fingerprint_sha256=POLICY_FP,
@@ -112,6 +144,16 @@ def _install_fakes(monkeypatch, tmp_path: Path):
 
     hydration = tmp_path / "hydration-policy.json"
     hydration.write_text("sealed-hydration-policy\n", encoding="utf-8")
+    economics_overlay = tmp_path / "training-economics"
+    economics_overlay.mkdir()
+    (economics_overlay / "rows.jsonl").write_text(
+        '{"sealed":"rows"}\n',
+        encoding="utf-8",
+    )
+    (economics_overlay / "manifest.json").write_text(
+        '{"manifest_fingerprint_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\n',
+        encoding="utf-8",
+    )
     hydration_policy = object()
     monkeypatch.setattr(
         host_module,
@@ -139,6 +181,15 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         request = SimpleNamespace(
             validation_policy=plan.validation_policy,
             evaluation_policy=kwargs["evaluation_policy"],
+            expected_training_economics_overlay_manifest_fingerprint_sha256=(
+                "b" * 64
+            ),
+            training_execution_cost_policy=_training_economics_policy(),
+            training_execution_cost_policy_fingerprint_sha256=(
+                fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             horizon_ms=plan.horizon_ms,
             decided_at_unix_ms=plan.selection_at_unix_ms,
             minimum_test_scored_observations=(
@@ -159,6 +210,14 @@ def _install_fakes(monkeypatch, tmp_path: Path):
             manifest=SimpleNamespace(
                 proof_workspace_release_source_sha=RELEASE_SHA,
                 proof_workspace_artifact_fingerprint_sha256="2" * 64,
+                training_economics_overlay_manifest_fingerprint_sha256=(
+                    "b" * 64
+                ),
+                training_execution_cost_policy_fingerprint_sha256=(
+                    fast_training_execution_cost_policy_fingerprint_sha256(
+                        _training_economics_policy()
+                    )
+                ),
                 training_bundle_fingerprint_sha256=(
                     bundle.manifest.bundle_fingerprint_sha256
                 ),
@@ -223,10 +282,38 @@ def test_host_request_codec_is_canonical_and_authenticated(
     assert request.schema_name == FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_NAME
     assert request.schema_version == FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION
     assert request.selection_clock == FAST_FIRST_CHAMPION_HOST_SELECTION_CLOCK
+    assert request.training_economics_overlay_path == "training-economics"
+    assert request.expected_training_economics_overlay_manifest_fingerprint_sha256 == "b" * 64
+    assert request.training_execution_cost_policy == _training_economics_policy()
+    assert request.training_execution_cost_policy_fingerprint_sha256 == (
+        fast_training_execution_cost_policy_fingerprint_sha256(
+            _training_economics_policy()
+        )
+    )
     assert '"$float"' in payload
     decoded = decode_fast_first_champion_host_request(payload)
     assert decoded == request
     assert encode_fast_first_champion_host_request(decoded) == payload
+
+    legacy = json.loads(payload)
+    legacy["schema_version"] = 1
+    for key in (
+        "training_economics_overlay_path",
+        "expected_training_economics_overlay_manifest_fingerprint_sha256",
+        "training_execution_cost_policy",
+        "training_execution_cost_policy_fingerprint_sha256",
+    ):
+        legacy["request"].pop(key)
+    with pytest.raises(ValueError, match="schema|fields"):
+        decode_fast_first_champion_host_request(
+            json.dumps(
+                legacy,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
 
 def test_host_run_captures_clock_plans_and_cross_links_preparation(

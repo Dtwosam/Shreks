@@ -26,7 +26,7 @@ pub struct FastTrainingFeatureExportManifest {
     pub sha256: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FastTrainingReserveContext {
     PumpCurve {
@@ -45,6 +45,157 @@ pub enum FastTrainingReserveContext {
         quote_decimals: u8,
     },
 }
+
+impl<'de> Deserialize<'de> for FastTrainingReserveContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Error as _;
+
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let serde_json::Value::Object(mut object) = value else {
+            return Err(D::Error::custom(
+                "training reserve context must be a JSON object",
+            ));
+        };
+
+        let kind = take_string(&mut object, "kind").map_err(D::Error::custom)?;
+        let reserve = match kind.as_str() {
+            "pump_curve" => Self::PumpCurve {
+                virtual_base_reserve_raw: take_u64(
+                    &mut object,
+                    "virtual_base_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                virtual_quote_reserve_raw: take_u64(
+                    &mut object,
+                    "virtual_quote_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                real_base_reserve_raw: take_u64(
+                    &mut object,
+                    "real_base_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                real_quote_reserve_raw: take_u64(
+                    &mut object,
+                    "real_quote_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                base_decimals: take_u8(&mut object, "base_decimals")
+                    .map_err(D::Error::custom)?,
+                quote_decimals: take_u8(&mut object, "quote_decimals")
+                    .map_err(D::Error::custom)?,
+            },
+            "pump_swap_pool" => Self::PumpSwapPool {
+                pool_base_reserve_raw: take_u64(
+                    &mut object,
+                    "pool_base_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                pool_quote_reserve_raw: take_u64(
+                    &mut object,
+                    "pool_quote_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                virtual_quote_reserve_raw: take_optional_i128(
+                    &mut object,
+                    "virtual_quote_reserve_raw",
+                )
+                .map_err(D::Error::custom)?,
+                base_decimals: take_u8(&mut object, "base_decimals")
+                    .map_err(D::Error::custom)?,
+                quote_decimals: take_u8(&mut object, "quote_decimals")
+                    .map_err(D::Error::custom)?,
+            },
+            other => {
+                return Err(D::Error::custom(format!(
+                    "unknown training reserve context kind '{other}'"
+                )));
+            }
+        };
+
+        if !object.is_empty() {
+            let names = object.keys().cloned().collect::<Vec<_>>().join(", ");
+            return Err(D::Error::custom(format!(
+                "training reserve context contains unknown fields: {names}"
+            )));
+        }
+        Ok(reserve)
+    }
+}
+
+fn take_value(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<serde_json::Value, String> {
+    object
+        .remove(field)
+        .ok_or_else(|| format!("training reserve context is missing field '{field}'"))
+}
+
+fn take_string(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<String, String> {
+    match take_value(object, field)? {
+        serde_json::Value::String(value) if !value.is_empty() => Ok(value),
+        _ => Err(format!(
+            "training reserve context field '{field}' must be non-empty text"
+        )),
+    }
+}
+
+fn take_u64(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<u64, String> {
+    match take_value(object, field)? {
+        serde_json::Value::Number(value) => value.as_u64().ok_or_else(|| {
+            format!(
+                "training reserve context field '{field}' must be a non-negative u64 integer"
+            )
+        }),
+        _ => Err(format!(
+            "training reserve context field '{field}' must be a non-negative u64 integer"
+        )),
+    }
+}
+
+fn take_u8(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<u8, String> {
+    let value = take_u64(object, field)?;
+    u8::try_from(value).map_err(|_| {
+        format!("training reserve context field '{field}' must fit u8")
+    })
+}
+
+fn take_optional_i128(
+    object: &mut serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Result<Option<i128>, String> {
+    match take_value(object, field)? {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(value) => {
+            if let Some(signed) = value.as_i64() {
+                return Ok(Some(i128::from(signed)));
+            }
+            if let Some(unsigned) = value.as_u64() {
+                return Ok(Some(i128::from(unsigned)));
+            }
+            Err(format!(
+                "training reserve context field '{field}' must be an integer representable by JSON"
+            ))
+        }
+        _ => Err(format!(
+            "training reserve context field '{field}' must be an integer or null"
+        )),
+    }
+}
+
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

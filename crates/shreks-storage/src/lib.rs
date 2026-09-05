@@ -24,6 +24,7 @@ mod pump_swap_fast_lane;
 mod pumpswap_effective_fee;
 mod reserve_context;
 mod safety_evidence;
+mod training_economics_overlay;
 mod training_features;
 mod wallet;
 pub use conflict_quarantine::EvidenceWriteOutcome;
@@ -134,6 +135,15 @@ pub use pump_swap_fast_lane::{
 };
 pub use reserve_context::{
     pump_reserve_context_from_source, pump_swap_reserve_context_from_source,
+};
+pub use training_economics_overlay::{
+    decimal_quantity_to_raw, encode_fast_training_economics_overlay_manifest_json,
+    python_float_hex, FastTrainingEconomicsEntryProjection,
+    FastTrainingEconomicsExitProjection, FastTrainingEconomicsFeeProvenance,
+    FastTrainingEconomicsOverlayManifest, FastTrainingEconomicsOverlayRow,
+    FastTrainingEconomicsReserveProvenance, FastTrainingEconomicsStatus,
+    FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME,
+    FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
 };
 pub use training_features::{
     decode_fast_training_feature_record_json, FastTrainingFeatureExportManifest,

@@ -19,6 +19,10 @@ from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
 from shreks_brain.research.fast_training_bundle import (
     bundle_logical_fingerprint_sha256,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 from shreks_brain.fast_first_champion import (
     FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME,
     FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION,
@@ -34,6 +38,25 @@ from shreks_brain.fast_first_champion import (
     write_fast_forecast_evaluation_context_corpus,
     build_fast_forecast_evaluation_context_corpus,
 )
+
+
+
+
+
+def _training_economics_policy() -> FastTrainingExecutionCostPolicy:
+    return FastTrainingExecutionCostPolicy(
+        version="first-champion-training-cost-v1",
+        additional_entry_slippage_bps=10,
+        additional_exit_slippage_bps=20,
+        entry_latency_bps=5,
+        exit_latency_bps=5,
+        entry_network_fee_quote=0.0,
+        exit_network_fee_quote=0.0,
+        entry_priority_fee_quote=0.0,
+        exit_priority_fee_quote=0.0,
+        entry_expected_failure_cost_quote=0.0,
+        exit_expected_failure_cost_quote=0.0,
+    )
 
 
 def _context_corpus(tmp_path: Path) -> Path:
@@ -77,12 +100,30 @@ def _request(tmp_path: Path):
     features.write_text('{"sealed":"feature-source"}\n', encoding="utf-8")
     database.write_bytes(b"sealed-sqlite-source")
     contexts = _context_corpus(tmp_path)
+    economics_overlay = tmp_path / "training-economics"
+    economics_overlay.mkdir()
+    (economics_overlay / "rows.jsonl").write_text(
+        '{"sealed":"rows"}\n',
+        encoding="utf-8",
+    )
+    (economics_overlay / "manifest.json").write_text(
+        '{"manifest_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n',
+        encoding="utf-8",
+    )
     destination = tmp_path / "first-champion-artifact"
 
     request = build_fast_first_champion_file_request(
         feature_jsonl_path=features.name,
         observer_database_path=database.name,
         context_corpus_path=contexts.name,
+        training_economics_overlay_path="training-economics",
+        expected_training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
+        training_execution_cost_policy=_training_economics_policy(),
+        training_execution_cost_policy_fingerprint_sha256=(
+            fast_training_execution_cost_policy_fingerprint_sha256(
+                _training_economics_policy()
+            )
+        ),
         destination_path=destination.name,
         future_path_label_version=1,
         counterfactual_base_quantity=2.0,
@@ -122,8 +163,44 @@ def test_file_request_is_canonical_self_authenticating_and_round_trips(
         decode_fast_first_champion_file_request(payload)
     ) == payload
 
+    legacy = json.loads(payload)
+    legacy["schema_version"] = 1
+    for key in (
+        "training_economics_overlay_path",
+        "expected_training_economics_overlay_manifest_fingerprint_sha256",
+        "training_execution_cost_policy",
+        "training_execution_cost_policy_fingerprint_sha256",
+    ):
+        legacy["request"].pop(key)
+    with pytest.raises(ValueError, match="schema_version|schema"):
+        decode_fast_first_champion_file_request(
+            json.dumps(legacy, sort_keys=True, separators=(",", ":")) + "\n"
+        )
+
     document = json.loads(payload)
     assert document["request"]["evaluation_policy"]["partition"] == "TEST"
+    assert document["request"]["training_economics_overlay_path"] == "training-economics"
+    assert document["request"][
+        "expected_training_economics_overlay_manifest_fingerprint_sha256"
+    ] == "a" * 64
+    assert document["request"][
+        "training_execution_cost_policy_fingerprint_sha256"
+    ] == fast_training_execution_cost_policy_fingerprint_sha256(
+        _training_economics_policy()
+    )
+    assert set(document["request"]["training_execution_cost_policy"]) == {
+        "version",
+        "additional_entry_slippage_bps",
+        "additional_exit_slippage_bps",
+        "entry_latency_bps",
+        "exit_latency_bps",
+        "entry_network_fee_quote",
+        "exit_network_fee_quote",
+        "entry_priority_fee_quote",
+        "exit_priority_fee_quote",
+        "entry_expected_failure_cost_quote",
+        "exit_expected_failure_cost_quote",
+    }
     assert document["request_fingerprint_sha256"] == (
         request.request_fingerprint_sha256
     )
@@ -181,6 +258,10 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
             "sqlite_path": database.resolve(),
             "future_path_label_version": 1,
             "counterfactual_base_quantity": 2.0,
+            "training_economics_overlay_path": (
+                tmp_path / "training-economics"
+            ).resolve(),
+            "training_execution_cost_policy": _training_economics_policy(),
         }
     ]
 

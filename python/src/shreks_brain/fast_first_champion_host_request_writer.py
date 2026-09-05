@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -22,6 +23,10 @@ from shreks_brain.fast_first_champion_host_run import (
     encode_fast_first_champion_host_request,
 )
 from shreks_brain.fast_proof_workspace import read_fast_proof_workspace
+from shreks_brain.research.fast_training_economics import (
+    decode_fast_training_execution_cost_policy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 
 
 FAST_FIRST_CHAMPION_HOST_REQUEST_WRITER_VERSION = 1
@@ -57,6 +62,8 @@ def write_fast_first_champion_host_request_from_sources(
     proof_workspace_path: str | Path,
     observer_database_path: str | Path,
     hydration_policy_path: str | Path,
+    training_economics_overlay_path: str | Path,
+    training_execution_cost_policy_path: str | Path,
     request_destination: str | Path,
     host_run_destination: str | Path,
     future_path_label_version: int,
@@ -84,6 +91,27 @@ def write_fast_first_champion_host_request_from_sources(
     if policy_path.is_symlink() or not policy_path.is_file():
         raise ValueError(
             "hydration policy path must be an existing regular file"
+        )
+    economics_overlay_path = Path(
+        training_economics_overlay_path
+    ).expanduser().resolve()
+    if economics_overlay_path.is_symlink() or not economics_overlay_path.is_dir():
+        raise ValueError(
+            "training economics overlay path must be an existing real directory"
+        )
+    if {child.name for child in economics_overlay_path.iterdir()} != {
+        "rows.jsonl",
+        "manifest.json",
+    }:
+        raise ValueError(
+            "training economics overlay must contain exactly rows.jsonl and manifest.json"
+        )
+    training_cost_path = Path(
+        training_execution_cost_policy_path
+    ).expanduser().resolve()
+    if training_cost_path.is_symlink() or not training_cost_path.is_file():
+        raise ValueError(
+            "training execution cost policy path must be an existing regular file"
         )
 
     request_path = Path(request_destination).expanduser().resolve()
@@ -117,7 +145,10 @@ def write_fast_first_champion_host_request_from_sources(
         )
 
     proof_workspace = read_fast_proof_workspace(proof_path)
-    policy_payload = _read_text_stable(policy_path)
+    policy_payload = _read_text_stable(
+        policy_path,
+        label="hydration policy",
+    )
     hydration_policy = (
         decode_fast_forecast_context_hydration_policy(
             policy_payload
@@ -128,11 +159,42 @@ def write_fast_first_champion_host_request_from_sources(
             hydration_policy
         )
     )
+    training_cost_payload = _read_text_stable(
+        training_cost_path,
+        label="training execution cost policy",
+    )
+    training_cost_policy = decode_fast_training_execution_cost_policy(
+        training_cost_payload
+    )
+    training_cost_fingerprint = (
+        fast_training_execution_cost_policy_fingerprint_sha256(
+            training_cost_policy
+        )
+    )
+    economics_manifest_fingerprint = (
+        _read_training_economics_overlay_manifest_fingerprint(
+            economics_overlay_path
+        )
+    )
+    economics_manifest_sha256 = _sha256_file_stable(
+        economics_overlay_path / "manifest.json"
+    )
+    economics_rows_sha256 = _sha256_file_stable(
+        economics_overlay_path / "rows.jsonl"
+    )
 
     request = build_fast_first_champion_host_request(
         proof_workspace_path=str(proof_path),
         observer_database_path=str(database_path),
         hydration_policy_path=str(policy_path),
+        training_economics_overlay_path=str(economics_overlay_path),
+        expected_training_economics_overlay_manifest_fingerprint_sha256=(
+            economics_manifest_fingerprint
+        ),
+        training_execution_cost_policy=training_cost_policy,
+        training_execution_cost_policy_fingerprint_sha256=(
+            training_cost_fingerprint
+        ),
         destination_path=str(host_destination),
         expected_release_source_sha=(
             proof_workspace.manifest.release_source_sha
@@ -173,9 +235,36 @@ def write_fast_first_champion_host_request_from_sources(
             os.fsync(handle.fileno())
         staging.chmod(0o600)
 
-        if _read_text_stable(policy_path) != policy_payload:
+        if _read_text_stable(
+            policy_path,
+            label="hydration policy",
+        ) != policy_payload:
             raise ValueError(
                 "hydration policy source changed during request creation"
+            )
+        if _read_text_stable(
+            training_cost_path,
+            label="training execution cost policy",
+        ) != training_cost_payload:
+            raise ValueError(
+                "training execution cost policy source changed during request creation"
+            )
+        if (
+            _read_training_economics_overlay_manifest_fingerprint(
+                economics_overlay_path
+            )
+            != economics_manifest_fingerprint
+            or _sha256_file_stable(
+                economics_overlay_path / "manifest.json"
+            )
+            != economics_manifest_sha256
+            or _sha256_file_stable(
+                economics_overlay_path / "rows.jsonl"
+            )
+            != economics_rows_sha256
+        ):
+            raise ValueError(
+                "training economics overlay source changed during request creation"
             )
         proof_after = read_fast_proof_workspace(proof_path)
         if proof_after.manifest != proof_workspace.manifest:
@@ -231,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proof-workspace", required=True)
     parser.add_argument("--observer-database", required=True)
     parser.add_argument("--hydration-policy", required=True)
+    parser.add_argument("--training-economics-overlay", required=True)
+    parser.add_argument("--training-execution-cost-policy", required=True)
     parser.add_argument("--request-destination", required=True)
     parser.add_argument("--host-run-destination", required=True)
     parser.add_argument(
@@ -306,6 +397,10 @@ def main(argv: list[str] | None = None) -> int:
         proof_workspace_path=args.proof_workspace,
         observer_database_path=args.observer_database,
         hydration_policy_path=args.hydration_policy,
+        training_economics_overlay_path=args.training_economics_overlay,
+        training_execution_cost_policy_path=(
+            args.training_execution_cost_policy
+        ),
         request_destination=args.request_destination,
         host_run_destination=args.host_run_destination,
         future_path_label_version=args.future_path_label_version,
@@ -363,10 +458,10 @@ def _resolve_output_path(
     return path.resolve()
 
 
-def _read_text_stable(path: Path) -> str:
+def _read_text_stable(path: Path, *, label: str = "hydration policy") -> str:
     if path.is_symlink() or not path.is_file():
         raise ValueError(
-            "hydration policy source must remain a regular file"
+            f"{label} source must remain a regular file"
         )
     before = path.stat()
     payload = path.read_text(encoding="utf-8")
@@ -378,9 +473,58 @@ def _read_text_stable(path: Path) -> str:
         or before.st_mtime_ns != after.st_mtime_ns
     ):
         raise ValueError(
-            "hydration policy source changed while reading"
+            f"{label} source changed while reading"
         )
     return payload
+
+
+def _read_training_economics_overlay_manifest_fingerprint(
+    path: Path,
+) -> str:
+    manifest_path = path / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError(
+            "training economics overlay manifest must be a regular file"
+        )
+    try:
+        document = json.loads(
+            manifest_path.read_text(encoding="utf-8")
+        )
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "training economics overlay manifest is malformed JSON"
+        ) from exc
+    if not isinstance(document, dict):
+        raise ValueError(
+            "training economics overlay manifest must be an object"
+        )
+    fingerprint = document.get("manifest_fingerprint_sha256")
+    _require_sha256(
+        "training_economics_overlay_manifest_fingerprint_sha256",
+        fingerprint,
+    )
+    return fingerprint
+
+
+def _sha256_file_stable(path: Path) -> str:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(
+            f"source must be an existing regular file: {path}"
+        )
+    before = path.stat()
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    after = path.stat()
+    if (
+        before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_size != after.st_size
+        or before.st_mtime_ns != after.st_mtime_ns
+    ):
+        raise ValueError("source changed while fingerprinting")
+    return digest.hexdigest()
 
 
 def _require_source_sha(value: object) -> None:

@@ -24,6 +24,10 @@ from shreks_brain.fast_first_champion import (
 from shreks_brain.research.fast_training_bundle import (
     bundle_logical_fingerprint_sha256,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 from shreks_brain.fast_first_champion_preparation import (
     FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_NAME,
     FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_VERSION,
@@ -31,6 +35,25 @@ from shreks_brain.fast_first_champion_preparation import (
     prepare_fast_first_champion_evidence,
     read_fast_first_champion_preparation,
 )
+
+
+
+
+
+def _training_economics_policy() -> FastTrainingExecutionCostPolicy:
+    return FastTrainingExecutionCostPolicy(
+        version="preparation-training-cost-v1",
+        additional_entry_slippage_bps=10,
+        additional_exit_slippage_bps=20,
+        entry_latency_bps=5,
+        exit_latency_bps=5,
+        entry_network_fee_quote=0.0,
+        exit_network_fee_quote=0.0,
+        entry_priority_fee_quote=0.0,
+        exit_priority_fee_quote=0.0,
+        entry_expected_failure_cost_quote=0.0,
+        exit_expected_failure_cost_quote=0.0,
+    )
 
 
 def _sha(raw: bytes) -> str:
@@ -124,6 +147,12 @@ def _install_component_fakes(
             validation_policy=validation_policy,
             validation_policy_fingerprint_sha256="a" * 64,
             horizon_ms=horizon_ms,
+            training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
+            training_execution_cost_policy_fingerprint_sha256=(
+                fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             training_bundle_fingerprint_sha256=(
                 bundle.manifest.bundle_fingerprint_sha256
             ),
@@ -186,6 +215,12 @@ def _install_component_fakes(
                 hydration.manifest.contexts_file_sha256
             ),
             context_fingerprint_sha256="6" * 64,
+            training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
+            training_execution_cost_policy_fingerprint_sha256=(
+                fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             training_bundle_fingerprint_sha256=bundle_fingerprint,
             champion_fingerprint_sha256="8" * 64,
             artifact_fingerprint_sha256="9" * 64,
@@ -244,10 +279,22 @@ def _prepare(monkeypatch, tmp_path: Path, **fake_overrides):
         wal=wal,
         **fake_overrides,
     )
+    economics_overlay = tmp_path / "training-economics"
+    economics_overlay.mkdir()
+    (economics_overlay / "rows.jsonl").write_text(
+        '{"sealed":"rows"}\n',
+        encoding="utf-8",
+    )
+    (economics_overlay / "manifest.json").write_text(
+        '{"manifest_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n',
+        encoding="utf-8",
+    )
     destination = tmp_path / "first-champion-preparation"
     artifact = prepare_fast_first_champion_evidence(
         proof_workspace_path=proof,
         observer_database_path=database,
+        training_economics_overlay_path=economics_overlay,
+        training_execution_cost_policy=_training_economics_policy(),
         destination=destination,
         hydration_policy=object(),
         validation_policy=chronological_policy(),

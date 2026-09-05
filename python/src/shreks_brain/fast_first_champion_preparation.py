@@ -26,12 +26,16 @@ from shreks_brain.fast_validation import FastChronologicalValidationPolicy
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 
 
 FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_NAME = (
     "shreks.fast_first_champion_preparation"
 )
-FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_VERSION = 1
+FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_VERSION = 2
 
 _PROOF_DIR = "proof-workspace"
 _HYDRATION_DIR = "context-hydration"
@@ -59,6 +63,8 @@ _MANIFEST_KEYS = frozenset(
         "proof_workspace_export_database_wal_sha256",
         "observer_database_sha256",
         "observer_database_wal_sha256",
+        "training_economics_overlay_manifest_fingerprint_sha256",
+        "training_execution_cost_policy_fingerprint_sha256",
         "training_bundle_fingerprint_sha256",
         "validation_policy_fingerprint_sha256",
         "hydration_artifact_fingerprint_sha256",
@@ -90,6 +96,8 @@ class FastFirstChampionPreparationManifest:
     proof_workspace_export_database_wal_sha256: str | None
     observer_database_sha256: str
     observer_database_wal_sha256: str | None
+    training_economics_overlay_manifest_fingerprint_sha256: str
+    training_execution_cost_policy_fingerprint_sha256: str
     training_bundle_fingerprint_sha256: str
     validation_policy_fingerprint_sha256: str
     hydration_artifact_fingerprint_sha256: str
@@ -122,6 +130,8 @@ class FastFirstChampionPreparationManifest:
             "proof_workspace_feature_logical_fingerprint_sha256",
             "proof_workspace_export_database_sha256",
             "observer_database_sha256",
+            "training_economics_overlay_manifest_fingerprint_sha256",
+            "training_execution_cost_policy_fingerprint_sha256",
             "training_bundle_fingerprint_sha256",
             "validation_policy_fingerprint_sha256",
             "hydration_artifact_fingerprint_sha256",
@@ -182,10 +192,19 @@ class _DatabaseSnapshot:
     wal_sha256: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class _TrainingEconomicsSnapshot:
+    manifest_fingerprint_sha256: str
+    manifest_file_sha256: str
+    rows_file_sha256: str
+
+
 def prepare_fast_first_champion_evidence(
     *,
     proof_workspace_path: str | Path,
     observer_database_path: str | Path,
+    training_economics_overlay_path: str | Path,
+    training_execution_cost_policy: FastTrainingExecutionCostPolicy,
     destination: str | Path,
     hydration_policy: FastForecastContextHydrationPolicy,
     validation_policy: FastChronologicalValidationPolicy,
@@ -211,6 +230,31 @@ def prepare_fast_first_champion_evidence(
         raise ValueError(
             "preparation observer database must be an existing regular file"
         )
+    economics_overlay = Path(
+        training_economics_overlay_path
+    ).expanduser().resolve()
+    if economics_overlay.is_symlink() or not economics_overlay.is_dir():
+        raise ValueError(
+            "training economics overlay must be an existing real directory"
+        )
+    if {child.name for child in economics_overlay.iterdir()} != {
+        "rows.jsonl",
+        "manifest.json",
+    }:
+        raise ValueError(
+            "training economics overlay must contain exactly rows.jsonl and manifest.json"
+        )
+    if type(training_execution_cost_policy) is not FastTrainingExecutionCostPolicy:
+        raise ValueError(
+            "training_execution_cost_policy must be exact FastTrainingExecutionCostPolicy"
+        )
+    training_cost_policy_fingerprint = (
+        fast_training_execution_cost_policy_fingerprint_sha256(
+            training_execution_cost_policy
+        )
+    )
+    economics_before = _capture_training_economics(economics_overlay)
+
     destination_path = Path(destination).expanduser().resolve()
     if destination_path.exists() or destination_path.is_symlink():
         raise FileExistsError(
@@ -263,6 +307,8 @@ def prepare_fast_first_champion_evidence(
             sqlite_path=database,
             future_path_label_version=future_path_label_version,
             counterfactual_base_quantity=counterfactual_base_quantity,
+            training_economics_overlay_path=economics_overlay,
+            training_execution_cost_policy=training_execution_cost_policy,
         )
         if (
             bundle.features.source_sha256
@@ -299,6 +345,14 @@ def prepare_fast_first_champion_evidence(
             feature_jsonl_path=f"{_PROOF_DIR}/features.jsonl",
             observer_database_path=str(database),
             context_corpus_path=f"{_HYDRATION_DIR}/contexts.json",
+            training_economics_overlay_path=str(economics_overlay),
+            expected_training_economics_overlay_manifest_fingerprint_sha256=(
+                economics_before.manifest_fingerprint_sha256
+            ),
+            training_execution_cost_policy=training_execution_cost_policy,
+            training_execution_cost_policy_fingerprint_sha256=(
+                training_cost_policy_fingerprint
+            ),
             destination_path=_CHAMPION_DIR,
             future_path_label_version=future_path_label_version,
             counterfactual_base_quantity=counterfactual_base_quantity,
@@ -323,6 +377,11 @@ def prepare_fast_first_champion_evidence(
         )
 
         after = _capture_database(database)
+        economics_after = _capture_training_economics(economics_overlay)
+        if economics_after != economics_before:
+            raise ValueError(
+                "first champion preparation training economics source changed during execution"
+            )
         if after != before:
             raise ValueError(
                 "first champion preparation database source changed during execution"
@@ -340,6 +399,12 @@ def prepare_fast_first_champion_evidence(
         material = _manifest_material(
             proof_workspace=copied_workspace,
             database_snapshot=before,
+            training_economics_overlay_manifest_fingerprint_sha256=(
+                economics_before.manifest_fingerprint_sha256
+            ),
+            training_execution_cost_policy_fingerprint_sha256=(
+                training_cost_policy_fingerprint
+            ),
             bundle=bundle,
             hydration=hydration,
             request=request,
@@ -434,6 +499,12 @@ def read_fast_first_champion_preparation(
             ],
             observer_database_wal_sha256=document[
                 "observer_database_wal_sha256"
+            ],
+            training_economics_overlay_manifest_fingerprint_sha256=document[
+                "training_economics_overlay_manifest_fingerprint_sha256"
+            ],
+            training_execution_cost_policy_fingerprint_sha256=document[
+                "training_execution_cost_policy_fingerprint_sha256"
             ],
             training_bundle_fingerprint_sha256=document[
                 "training_bundle_fingerprint_sha256"
@@ -578,6 +649,15 @@ def _validate_first_champion_chain(
         )
     manifest = first_champion.manifest
     if (
+        manifest.training_economics_overlay_manifest_fingerprint_sha256
+        != request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        or manifest.training_execution_cost_policy_fingerprint_sha256
+        != request.training_execution_cost_policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion economics fingerprint mismatch"
+        )
+    if (
         manifest.request_fingerprint_sha256
         != request.request_fingerprint_sha256
     ):
@@ -697,6 +777,10 @@ def _validate_reopened_chain(
         != manifest.first_champion_artifact_fingerprint_sha256
         or champion_manifest.champion_fingerprint_sha256
         != manifest.champion_fingerprint_sha256
+        or champion_manifest.training_economics_overlay_manifest_fingerprint_sha256
+        != manifest.training_economics_overlay_manifest_fingerprint_sha256
+        or champion_manifest.training_execution_cost_policy_fingerprint_sha256
+        != manifest.training_execution_cost_policy_fingerprint_sha256
         or champion_manifest.training_bundle_fingerprint_sha256
         != manifest.training_bundle_fingerprint_sha256
         or champion_manifest.context_fingerprint_sha256
@@ -745,6 +829,8 @@ def _manifest_material(
     *,
     proof_workspace,
     database_snapshot: _DatabaseSnapshot,
+    training_economics_overlay_manifest_fingerprint_sha256: str,
+    training_execution_cost_policy_fingerprint_sha256: str,
     bundle,
     hydration,
     request: FastFirstChampionFileRequest,
@@ -776,6 +862,12 @@ def _manifest_material(
         ),
         "observer_database_sha256": database_snapshot.database_sha256,
         "observer_database_wal_sha256": database_snapshot.wal_sha256,
+        "training_economics_overlay_manifest_fingerprint_sha256": (
+            training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        "training_execution_cost_policy_fingerprint_sha256": (
+            training_execution_cost_policy_fingerprint_sha256
+        ),
         "training_bundle_fingerprint_sha256": (
             bundle.manifest.bundle_fingerprint_sha256
         ),
@@ -843,6 +935,12 @@ def _manifest_document(
         "observer_database_wal_sha256": (
             manifest.observer_database_wal_sha256
         ),
+        "training_economics_overlay_manifest_fingerprint_sha256": (
+            manifest.training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        "training_execution_cost_policy_fingerprint_sha256": (
+            manifest.training_execution_cost_policy_fingerprint_sha256
+        ),
         "training_bundle_fingerprint_sha256": (
             manifest.training_bundle_fingerprint_sha256
         ),
@@ -890,6 +988,33 @@ def _capture_database(database: Path) -> _DatabaseSnapshot:
     return _DatabaseSnapshot(
         database_sha256=_sha256_file_stable(database),
         wal_sha256=_sha256_file_stable(wal) if wal.is_file() else None,
+    )
+
+
+def _capture_training_economics(
+    overlay: Path,
+) -> _TrainingEconomicsSnapshot:
+    manifest = overlay / "manifest.json"
+    rows = overlay / "rows.jsonl"
+    if manifest.is_symlink() or rows.is_symlink():
+        raise ValueError("training economics overlay files must not be symlinks")
+    if not manifest.is_file() or not rows.is_file():
+        raise ValueError("training economics overlay files are missing")
+    try:
+        document = json.loads(manifest.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("training economics overlay manifest is malformed JSON") from exc
+    if not isinstance(document, dict):
+        raise ValueError("training economics overlay manifest must be an object")
+    fingerprint = document.get("manifest_fingerprint_sha256")
+    _require_sha256(
+        "training_economics_overlay_manifest_fingerprint_sha256",
+        fingerprint,
+    )
+    return _TrainingEconomicsSnapshot(
+        manifest_fingerprint_sha256=fingerprint,
+        manifest_file_sha256=_sha256_file_stable(manifest),
+        rows_file_sha256=_sha256_file_stable(rows),
     )
 
 

@@ -27,6 +27,12 @@ from shreks_brain.fast_validation import (
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    decode_fast_training_execution_cost_policy,
+    encode_fast_training_execution_cost_policy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 
 from .builder import build_fast_first_champion
 from .context_corpus import (
@@ -39,11 +45,11 @@ from .context_corpus import (
 FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_NAME = (
     "shreks.fast_first_champion_file_request"
 )
-FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION = 1
+FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION = 2
 FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME = (
     "shreks.fast_first_champion_artifact"
 )
-FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION = 1
+FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION = 2
 
 _REQUEST_FILE = "request.json"
 _CONTEXT_FILE = "contexts.json"
@@ -54,6 +60,10 @@ _REQUEST_FIELDS = (
     "feature_jsonl_path",
     "observer_database_path",
     "context_corpus_path",
+    "training_economics_overlay_path",
+    "expected_training_economics_overlay_manifest_fingerprint_sha256",
+    "training_execution_cost_policy",
+    "training_execution_cost_policy_fingerprint_sha256",
     "destination_path",
     "future_path_label_version",
     "counterfactual_base_quantity",
@@ -109,6 +119,8 @@ _MANIFEST_KEYS = frozenset(
         "observer_database_wal_sha256",
         "context_corpus_file_sha256",
         "context_fingerprint_sha256",
+        "training_economics_overlay_manifest_fingerprint_sha256",
+        "training_execution_cost_policy_fingerprint_sha256",
         "training_bundle_fingerprint_sha256",
         "champion_fingerprint_sha256",
         "champion_file_sha256",
@@ -137,6 +149,10 @@ class FastFirstChampionFileRequest:
     feature_jsonl_path: str
     observer_database_path: str
     context_corpus_path: str
+    training_economics_overlay_path: str
+    expected_training_economics_overlay_manifest_fingerprint_sha256: str
+    training_execution_cost_policy: FastTrainingExecutionCostPolicy
+    training_execution_cost_policy_fingerprint_sha256: str
     destination_path: str
     future_path_label_version: int
     counterfactual_base_quantity: float
@@ -161,6 +177,7 @@ class FastFirstChampionFileRequest:
             "feature_jsonl_path",
             "observer_database_path",
             "context_corpus_path",
+            "training_economics_overlay_path",
             "destination_path",
             "champion_version",
             "decision_reference",
@@ -169,6 +186,26 @@ class FastFirstChampionFileRequest:
             "training_policy_version",
         ):
             _require_non_empty(name, getattr(self, name))
+        _require_sha256(
+            "expected_training_economics_overlay_manifest_fingerprint_sha256",
+            self.expected_training_economics_overlay_manifest_fingerprint_sha256,
+        )
+        if type(self.training_execution_cost_policy) is not FastTrainingExecutionCostPolicy:
+            raise ValueError(
+                "training_execution_cost_policy must be exact FastTrainingExecutionCostPolicy"
+            )
+        _require_sha256(
+            "training_execution_cost_policy_fingerprint_sha256",
+            self.training_execution_cost_policy_fingerprint_sha256,
+        )
+        if self.training_execution_cost_policy_fingerprint_sha256 != (
+            fast_training_execution_cost_policy_fingerprint_sha256(
+                self.training_execution_cost_policy
+            )
+        ):
+            raise ValueError(
+                "training execution cost policy fingerprint mismatch"
+            )
         _require_positive_int(
             "future_path_label_version",
             self.future_path_label_version,
@@ -250,6 +287,8 @@ class FastFirstChampionArtifactManifest:
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
     context_fingerprint_sha256: str
+    training_economics_overlay_manifest_fingerprint_sha256: str
+    training_execution_cost_policy_fingerprint_sha256: str
     training_bundle_fingerprint_sha256: str
     champion_fingerprint_sha256: str
     champion_file_sha256: str
@@ -268,6 +307,8 @@ class FastFirstChampionArtifactManifest:
             "observer_database_sha256",
             "context_corpus_file_sha256",
             "context_fingerprint_sha256",
+            "training_economics_overlay_manifest_fingerprint_sha256",
+            "training_execution_cost_policy_fingerprint_sha256",
             "training_bundle_fingerprint_sha256",
             "champion_fingerprint_sha256",
             "champion_file_sha256",
@@ -349,6 +390,9 @@ class _SourceSnapshot:
     observer_database_sha256: str
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
+    training_economics_overlay_manifest_fingerprint_sha256: str
+    training_economics_overlay_manifest_file_sha256: str
+    training_economics_overlay_rows_file_sha256: str
 
 
 def build_fast_first_champion_file_request(
@@ -356,6 +400,10 @@ def build_fast_first_champion_file_request(
     feature_jsonl_path: str,
     observer_database_path: str,
     context_corpus_path: str,
+    training_economics_overlay_path: str,
+    expected_training_economics_overlay_manifest_fingerprint_sha256: str,
+    training_execution_cost_policy: FastTrainingExecutionCostPolicy,
+    training_execution_cost_policy_fingerprint_sha256: str,
     destination_path: str,
     future_path_label_version: int,
     counterfactual_base_quantity: float,
@@ -374,6 +422,14 @@ def build_fast_first_champion_file_request(
         feature_jsonl_path=feature_jsonl_path,
         observer_database_path=observer_database_path,
         context_corpus_path=context_corpus_path,
+        training_economics_overlay_path=training_economics_overlay_path,
+        expected_training_economics_overlay_manifest_fingerprint_sha256=(
+            expected_training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        training_execution_cost_policy=training_execution_cost_policy,
+        training_execution_cost_policy_fingerprint_sha256=(
+            training_execution_cost_policy_fingerprint_sha256
+        ),
         destination_path=destination_path,
         future_path_label_version=future_path_label_version,
         counterfactual_base_quantity=counterfactual_base_quantity,
@@ -394,6 +450,14 @@ def build_fast_first_champion_file_request(
         feature_jsonl_path=feature_jsonl_path,
         observer_database_path=observer_database_path,
         context_corpus_path=context_corpus_path,
+        training_economics_overlay_path=training_economics_overlay_path,
+        expected_training_economics_overlay_manifest_fingerprint_sha256=(
+            expected_training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        training_execution_cost_policy=training_execution_cost_policy,
+        training_execution_cost_policy_fingerprint_sha256=(
+            training_execution_cost_policy_fingerprint_sha256
+        ),
         destination_path=destination_path,
         future_path_label_version=future_path_label_version,
         counterfactual_base_quantity=counterfactual_base_quantity,
@@ -458,6 +522,9 @@ def decode_fast_first_champion_file_request(
         )
     validation_policy = _decode_validation_policy(raw["validation_policy"])
     evaluation_policy = _decode_evaluation_policy(raw["evaluation_policy"])
+    training_execution_cost_policy = _decode_training_execution_cost_policy(
+        raw["training_execution_cost_policy"]
+    )
     try:
         request = FastFirstChampionFileRequest(
             schema_name=document["schema_name"],
@@ -470,6 +537,21 @@ def decode_fast_first_champion_file_request(
             context_corpus_path=_text(
                 raw["context_corpus_path"],
                 "context_corpus_path",
+            ),
+            training_economics_overlay_path=_text(
+                raw["training_economics_overlay_path"],
+                "training_economics_overlay_path",
+            ),
+            expected_training_economics_overlay_manifest_fingerprint_sha256=_text(
+                raw[
+                    "expected_training_economics_overlay_manifest_fingerprint_sha256"
+                ],
+                "expected_training_economics_overlay_manifest_fingerprint_sha256",
+            ),
+            training_execution_cost_policy=training_execution_cost_policy,
+            training_execution_cost_policy_fingerprint_sha256=_text(
+                raw["training_execution_cost_policy_fingerprint_sha256"],
+                "training_execution_cost_policy_fingerprint_sha256",
             ),
             destination_path=_text(raw["destination_path"], "destination_path"),
             future_path_label_version=_integer(
@@ -550,6 +632,10 @@ def run_fast_first_champion_file_request(
     feature_path = _resolve_source(base, request.feature_jsonl_path)
     database_path = _resolve_source(base, request.observer_database_path)
     context_path = _resolve_source(base, request.context_corpus_path)
+    training_economics_overlay_path = _resolve_source_directory(
+        base,
+        request.training_economics_overlay_path,
+    )
     destination = _resolve_destination(base, request.destination_path)
     if destination.exists():
         raise FileExistsError(
@@ -560,6 +646,7 @@ def run_fast_first_champion_file_request(
         feature_path=feature_path,
         database_path=database_path,
         context_path=context_path,
+        training_economics_overlay_path=training_economics_overlay_path,
     )
     context_payload = context_path.read_text(encoding="utf-8")
     if hashlib.sha256(context_payload.encode("utf-8")).hexdigest() != (
@@ -571,11 +658,20 @@ def run_fast_first_champion_file_request(
     context_corpus = decode_fast_forecast_evaluation_context_corpus(
         context_payload
     )
+    if (
+        before.training_economics_overlay_manifest_fingerprint_sha256
+        != request.expected_training_economics_overlay_manifest_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion training economics overlay fingerprint mismatch"
+        )
     bundle = build_fast_training_bundle_from_runtime_sources(
         feature_jsonl_path=feature_path,
         sqlite_path=database_path,
         future_path_label_version=request.future_path_label_version,
         counterfactual_base_quantity=request.counterfactual_base_quantity,
+        training_economics_overlay_path=training_economics_overlay_path,
+        training_execution_cost_policy=request.training_execution_cost_policy,
     )
     if bundle.features.source_sha256 != before.feature_jsonl_sha256:
         raise ValueError(
@@ -610,6 +706,7 @@ def run_fast_first_champion_file_request(
         feature_path=feature_path,
         database_path=database_path,
         context_path=context_path,
+        training_economics_overlay_path=training_economics_overlay_path,
     )
     if after != before:
         raise ValueError(
@@ -683,6 +780,12 @@ def run_fast_first_champion_file_request(
             "context_fingerprint_sha256": (
                 context_corpus.context_fingerprint_sha256
             ),
+            "training_economics_overlay_manifest_fingerprint_sha256": (
+                before.training_economics_overlay_manifest_fingerprint_sha256
+            ),
+            "training_execution_cost_policy_fingerprint_sha256": (
+                request.training_execution_cost_policy_fingerprint_sha256
+            ),
             "training_bundle_fingerprint_sha256": (
                 bundle.manifest.bundle_fingerprint_sha256
             ),
@@ -713,6 +816,12 @@ def run_fast_first_champion_file_request(
             ],
             context_fingerprint_sha256=material[
                 "context_fingerprint_sha256"
+            ],
+            training_economics_overlay_manifest_fingerprint_sha256=material[
+                "training_economics_overlay_manifest_fingerprint_sha256"
+            ],
+            training_execution_cost_policy_fingerprint_sha256=material[
+                "training_execution_cost_policy_fingerprint_sha256"
             ],
             training_bundle_fingerprint_sha256=material[
                 "training_bundle_fingerprint_sha256"
@@ -791,6 +900,12 @@ def read_fast_first_champion_artifact(
             context_fingerprint_sha256=document[
                 "context_fingerprint_sha256"
             ],
+            training_economics_overlay_manifest_fingerprint_sha256=document[
+                "training_economics_overlay_manifest_fingerprint_sha256"
+            ],
+            training_execution_cost_policy_fingerprint_sha256=document[
+                "training_execution_cost_policy_fingerprint_sha256"
+            ],
             training_bundle_fingerprint_sha256=document[
                 "training_bundle_fingerprint_sha256"
             ],
@@ -854,6 +969,15 @@ def read_fast_first_champion_artifact(
     ):
         raise ValueError(
             "first champion request fingerprint does not match manifest"
+        )
+    if (
+        request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        != manifest.training_economics_overlay_manifest_fingerprint_sha256
+        or request.training_execution_cost_policy_fingerprint_sha256
+        != manifest.training_execution_cost_policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion economics fingerprints do not match manifest"
         )
     champion = read_fast_forecast_champion(champion_path)
     if (
@@ -958,6 +1082,14 @@ def _request_document(
         feature_jsonl_path=request.feature_jsonl_path,
         observer_database_path=request.observer_database_path,
         context_corpus_path=request.context_corpus_path,
+        training_economics_overlay_path=request.training_economics_overlay_path,
+        expected_training_economics_overlay_manifest_fingerprint_sha256=(
+            request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        training_execution_cost_policy=request.training_execution_cost_policy,
+        training_execution_cost_policy_fingerprint_sha256=(
+            request.training_execution_cost_policy_fingerprint_sha256
+        ),
         destination_path=request.destination_path,
         future_path_label_version=request.future_path_label_version,
         counterfactual_base_quantity=request.counterfactual_base_quantity,
@@ -979,6 +1111,10 @@ def _request_document_from_values(
     feature_jsonl_path: str,
     observer_database_path: str,
     context_corpus_path: str,
+    training_economics_overlay_path: str,
+    expected_training_economics_overlay_manifest_fingerprint_sha256: str,
+    training_execution_cost_policy: FastTrainingExecutionCostPolicy,
+    training_execution_cost_policy_fingerprint_sha256: str,
     destination_path: str,
     future_path_label_version: int,
     counterfactual_base_quantity: float,
@@ -997,6 +1133,16 @@ def _request_document_from_values(
         "feature_jsonl_path": feature_jsonl_path,
         "observer_database_path": observer_database_path,
         "context_corpus_path": context_corpus_path,
+        "training_economics_overlay_path": training_economics_overlay_path,
+        "expected_training_economics_overlay_manifest_fingerprint_sha256": (
+            expected_training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        "training_execution_cost_policy": _training_execution_cost_policy_document(
+            training_execution_cost_policy
+        ),
+        "training_execution_cost_policy_fingerprint_sha256": (
+            training_execution_cost_policy_fingerprint_sha256
+        ),
         "destination_path": destination_path,
         "future_path_label_version": future_path_label_version,
         "counterfactual_base_quantity": _encode_numeric(
@@ -1013,6 +1159,28 @@ def _request_document_from_values(
         "training_policy_version": training_policy_version,
         "minimum_test_scored_observations": minimum_test_scored_observations,
     }
+
+
+def _training_execution_cost_policy_document(
+    policy: FastTrainingExecutionCostPolicy,
+) -> dict[str, object]:
+    return json.loads(encode_fast_training_execution_cost_policy(policy))
+
+
+def _decode_training_execution_cost_policy(
+    value: object,
+) -> FastTrainingExecutionCostPolicy:
+    if not isinstance(value, dict):
+        raise ValueError("training execution cost policy must be an object")
+    return decode_fast_training_execution_cost_policy(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    )
 
 
 def _validation_policy_document(
@@ -1149,6 +1317,7 @@ def _capture_sources(
     feature_path: Path,
     database_path: Path,
     context_path: Path,
+    training_economics_overlay_path: Path,
 ) -> _SourceSnapshot:
     wal_path = Path(str(database_path) + "-wal")
     return _SourceSnapshot(
@@ -1158,6 +1327,17 @@ def _capture_sources(
             _sha256_file_stable(wal_path) if wal_path.is_file() else None
         ),
         context_corpus_file_sha256=_sha256_file_stable(context_path),
+        training_economics_overlay_manifest_fingerprint_sha256=(
+            _read_training_economics_overlay_manifest_fingerprint(
+                training_economics_overlay_path
+            )
+        ),
+        training_economics_overlay_manifest_file_sha256=_sha256_file_stable(
+            training_economics_overlay_path / "manifest.json"
+        ),
+        training_economics_overlay_rows_file_sha256=_sha256_file_stable(
+            training_economics_overlay_path / "rows.jsonl"
+        ),
     )
 
 
@@ -1169,6 +1349,44 @@ def _resolve_source(base: Path, value: str) -> Path:
     if not path.is_file():
         raise ValueError(f"first champion source file is missing: {value}")
     return path
+
+
+def _resolve_source_directory(base: Path, value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    path = path.resolve()
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(
+            f"first champion source directory is missing or unsafe: {value}"
+        )
+    if {child.name for child in path.iterdir()} != {"rows.jsonl", "manifest.json"}:
+        raise ValueError(
+            "first champion training economics overlay must contain exactly rows.jsonl and manifest.json"
+        )
+    return path
+
+
+def _read_training_economics_overlay_manifest_fingerprint(path: Path) -> str:
+    manifest_path = path / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("training economics overlay manifest must be a regular file")
+    try:
+        document = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("training economics overlay manifest is malformed JSON") from exc
+    if not isinstance(document, dict):
+        raise ValueError("training economics overlay manifest must be an object")
+    fingerprint = document.get("manifest_fingerprint_sha256")
+    _require_sha256(
+        "training economics overlay manifest fingerprint",
+        fingerprint,
+    )
+    return fingerprint
 
 
 def _resolve_destination(base: Path, value: str) -> Path:
@@ -1251,6 +1469,12 @@ def _manifest_document(
         ),
         "context_corpus_file_sha256": value.context_corpus_file_sha256,
         "context_fingerprint_sha256": value.context_fingerprint_sha256,
+        "training_economics_overlay_manifest_fingerprint_sha256": (
+            value.training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        "training_execution_cost_policy_fingerprint_sha256": (
+            value.training_execution_cost_policy_fingerprint_sha256
+        ),
         "training_bundle_fingerprint_sha256": (
             value.training_bundle_fingerprint_sha256
         ),

@@ -19,10 +19,34 @@ from shreks_brain.fast_first_champion_host_run import (
     FAST_FIRST_CHAMPION_HOST_SELECTION_CLOCK,
     decode_fast_first_champion_host_request,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+    encode_fast_training_execution_cost_policy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
+)
 from test_fast_context_hydration import _policy
 
 
 _RELEASE_SHA = "ead8a1f504e00a6491bb2a01d3240a8bc4d91d6d"
+
+
+
+
+
+def _training_economics_policy() -> FastTrainingExecutionCostPolicy:
+    return FastTrainingExecutionCostPolicy(
+        version="writer-training-cost-v1",
+        additional_entry_slippage_bps=10,
+        additional_exit_slippage_bps=20,
+        entry_latency_bps=5,
+        exit_latency_bps=5,
+        entry_network_fee_quote=0.0,
+        exit_network_fee_quote=0.0,
+        entry_priority_fee_quote=0.0,
+        exit_priority_fee_quote=0.0,
+        entry_expected_failure_cost_quote=0.0,
+        exit_expected_failure_cost_quote=0.0,
+    )
 
 
 def _evaluation_policy() -> FastForecastEvaluationPolicy:
@@ -43,6 +67,23 @@ def _sources(monkeypatch, tmp_path: Path):
     database.write_bytes(b"observer-db")
     policy_path = tmp_path / "hydration-policy.json"
     policy = _policy()
+    economics_overlay = tmp_path / "training-economics"
+    economics_overlay.mkdir()
+    (economics_overlay / "rows.jsonl").write_text(
+        '{"sealed":"rows"}\n',
+        encoding="utf-8",
+    )
+    (economics_overlay / "manifest.json").write_text(
+        '{"manifest_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n',
+        encoding="utf-8",
+    )
+    training_cost_path = tmp_path / "training-cost-policy.json"
+    training_cost_path.write_text(
+        encode_fast_training_execution_cost_policy(
+            _training_economics_policy()
+        ),
+        encoding="utf-8",
+    )
     policy_path.write_text(
         encode_fast_forecast_context_hydration_policy(policy),
         encoding="utf-8",
@@ -58,6 +99,12 @@ def _sources(monkeypatch, tmp_path: Path):
         writer,
         "read_fast_proof_workspace",
         lambda path: proof_artifact,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_read_training_economics_overlay_manifest_fingerprint",
+        lambda _path: "a" * 64,
+        raising=False,
     )
     return proof, database, policy_path, policy, proof_artifact
 
@@ -77,6 +124,8 @@ def test_writer_derives_authenticated_release_and_policy_identity(
         proof_workspace_path=proof,
         observer_database_path=database,
         hydration_policy_path=policy_path,
+        training_economics_overlay_path=tmp_path / "training-economics",
+        training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
         request_destination=request_path,
         host_run_destination=host_run_destination,
         future_path_label_version=1,
@@ -107,6 +156,16 @@ def test_writer_derives_authenticated_release_and_policy_identity(
     assert request.proof_workspace_path == str(proof.resolve())
     assert request.observer_database_path == str(database.resolve())
     assert request.hydration_policy_path == str(policy_path.resolve())
+    assert request.training_economics_overlay_path == str(
+        (tmp_path / "training-economics").resolve()
+    )
+    assert request.expected_training_economics_overlay_manifest_fingerprint_sha256 == "a" * 64
+    assert request.training_execution_cost_policy == _training_economics_policy()
+    assert request.training_execution_cost_policy_fingerprint_sha256 == (
+        fast_training_execution_cost_policy_fingerprint_sha256(
+            _training_economics_policy()
+        )
+    )
     assert request.destination_path == str(host_run_destination.resolve())
     assert request.expected_release_source_sha == _RELEASE_SHA
     assert request.expected_hydration_policy_fingerprint_sha256 == (
@@ -129,6 +188,8 @@ def test_writer_refuses_existing_request_or_host_run_destination(
             proof_workspace_path=proof,
             observer_database_path=database,
             hydration_policy_path=policy_path,
+            training_economics_overlay_path=tmp_path / "training-economics",
+            training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
             request_destination=request_path,
             host_run_destination=tmp_path / "run",
             future_path_label_version=1,
@@ -151,6 +212,8 @@ def test_writer_refuses_existing_request_or_host_run_destination(
             proof_workspace_path=proof,
             observer_database_path=database,
             hydration_policy_path=policy_path,
+            training_economics_overlay_path=tmp_path / "training-economics",
+            training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
             request_destination=request_path,
             host_run_destination=host_run,
             future_path_label_version=1,
@@ -193,6 +256,8 @@ def test_writer_rejects_hydration_policy_mutation_and_publishes_nothing(
             proof_workspace_path=proof,
             observer_database_path=database,
             hydration_policy_path=policy_path,
+            training_economics_overlay_path=tmp_path / "training-economics",
+            training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
             request_destination=request_path,
             host_run_destination=tmp_path / "run",
             future_path_label_version=1,
@@ -240,6 +305,8 @@ def test_writer_rejects_proof_workspace_mutation(
             proof_workspace_path=proof,
             observer_database_path=database,
             hydration_policy_path=policy_path,
+            training_economics_overlay_path=tmp_path / "training-economics",
+            training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
             request_destination=request_path,
             host_run_destination=tmp_path / "run",
             future_path_label_version=1,
@@ -273,6 +340,10 @@ def test_cli_builds_test_evaluation_policy_without_hidden_defaults(
             str(database),
             "--hydration-policy",
             str(policy_path),
+            "--training-economics-overlay",
+            str(tmp_path / "training-economics"),
+            "--training-execution-cost-policy",
+            str(tmp_path / "training-cost-policy.json"),
             "--request-destination",
             str(request_path),
             "--host-run-destination",
