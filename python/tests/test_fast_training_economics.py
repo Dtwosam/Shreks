@@ -68,15 +68,18 @@ def _reserve(signature: str, sequence: int, observed_at: int):
 
 
 def _fee(signature: str, sequence: int, observed_at: int, bps: int):
+    market_quote_amount_raw = 100_000_000
+    signed_user_cost_quote_raw = market_quote_amount_raw * bps // 10_000
+    assert signed_user_cost_quote_raw * 10_000 == market_quote_amount_raw * bps
     return FastTrainingEconomicsFeeProvenance(
         source_signature=signature,
         source_ordinal=2,
         source_sequence=sequence,
         source_observed_at_unix_ms=observed_at,
         age_ms=0,
-        market_quote_amount_raw=100_000_000,
-        user_quote_amount_raw=100_500_000,
-        signed_user_cost_quote_raw=500_000,
+        market_quote_amount_raw=market_quote_amount_raw,
+        user_quote_amount_raw=market_quote_amount_raw + signed_user_cost_quote_raw,
+        signed_user_cost_quote_raw=signed_user_cost_quote_raw,
         effective_fee_bps=bps,
     )
 
@@ -418,7 +421,7 @@ def test_unavailable_overlay_keeps_entry_and_exit_unknown() -> None:
 def test_exit_cost_rate_at_or_above_one_hundred_percent_fails_closed() -> None:
     row = replace(
         _available_row(),
-        exit_fee=replace(_available_row().exit_fee, effective_fee_bps=9_980),
+        exit_fee=_fee("endpoint-fee-high", 11, 1_200, 9_980),
     )
     with pytest.raises(ValueError, match="exit.*100|exit.*rate"):
         build_entry_counterfactual_context_from_training_economics(
