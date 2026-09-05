@@ -146,6 +146,15 @@ def _install_component_fakes(
             validation_policy=validation_policy,
             validation_policy_fingerprint_sha256="a" * 64,
             horizon_ms=horizon_ms,
+            training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
+            training_execution_cost_policy_fingerprint_sha256=(
+                __import__(
+                    "shreks_brain.research.fast_training_economics",
+                    fromlist=["fast_training_execution_cost_policy_fingerprint_sha256"],
+                ).fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             training_bundle_fingerprint_sha256=(
                 bundle.manifest.bundle_fingerprint_sha256
             ),
@@ -273,7 +282,7 @@ def _prepare(monkeypatch, tmp_path: Path, **fake_overrides):
         encoding="utf-8",
     )
     (economics_overlay / "manifest.json").write_text(
-        '{"sealed":"manifest"}\n',
+        '{"manifest_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n',
         encoding="utf-8",
     )
     destination = tmp_path / "first-champion-preparation"
