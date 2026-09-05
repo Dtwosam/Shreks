@@ -240,6 +240,24 @@ impl ShreksDb {
                 "endpoint",
             )?;
 
+            let entry_base_decimals = pump_swap_base_decimals(decision_event)?;
+            let exit_base_decimals = pump_swap_base_decimals(endpoint_event)?;
+            let requested_base_quantity_raw = decimal_quantity_to_raw(
+                counterfactual_base_quantity,
+                entry_base_decimals,
+            )?;
+            let exit_quantity_raw = decimal_quantity_to_raw(
+                counterfactual_base_quantity,
+                exit_base_decimals,
+            )?;
+            if requested_base_quantity_raw != exit_quantity_raw {
+                return Err(StorageError::InvalidData(
+                    "training economics decision/endpoint base decimals contradict requested quantity"
+                        .to_owned(),
+                ));
+            }
+            row.requested_base_quantity_raw = Some(requested_base_quantity_raw);
+
             let Some(entry_reserve) = pump_swap_reserve_provenance(decision_event)? else {
                 row.status = FastTrainingEconomicsStatus::EntryReserveUnavailable;
                 rows.push(row);
@@ -252,21 +270,6 @@ impl ShreksDb {
                 continue;
             };
 
-            let requested_base_quantity_raw = decimal_quantity_to_raw(
-                counterfactual_base_quantity,
-                entry_reserve.base_decimals,
-            )?;
-            let exit_quantity_raw = decimal_quantity_to_raw(
-                counterfactual_base_quantity,
-                exit_reserve.base_decimals,
-            )?;
-            if requested_base_quantity_raw != exit_quantity_raw {
-                return Err(StorageError::InvalidData(
-                    "training economics decision/endpoint base decimals contradict requested quantity"
-                        .to_owned(),
-                ));
-            }
-            row.requested_base_quantity_raw = Some(requested_base_quantity_raw);
             row.entry_reserve = Some(entry_reserve.clone());
             row.exit_reserve = Some(exit_reserve.clone());
 
@@ -678,6 +681,18 @@ fn find_replay_event<'a>(
                 "training economics canonical {role} event was not found in reserve-aware replay"
             ))
         })
+}
+
+fn pump_swap_base_decimals(stored: &StoredFastEvent) -> Result<u8, StorageError> {
+    match stored.event.reserve_context.as_ref() {
+        Some(FastReserveContext::PumpSwapPool { base_decimals, .. }) => Ok(*base_decimals),
+        Some(other) => Err(StorageError::InvalidData(format!(
+            "training economics PumpSwap event carried incompatible reserve context: {other:?}"
+        ))),
+        None => Err(StorageError::InvalidData(
+            "training economics PumpSwap canonical replay omitted reserve context".to_owned(),
+        )),
+    }
 }
 
 fn pump_swap_reserve_provenance(
