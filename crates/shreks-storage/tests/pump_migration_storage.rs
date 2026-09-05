@@ -314,3 +314,55 @@ fn invalid_completion_inputs_fail_closed_without_partial_event_rows() {
 
     cleanup_dir(&root);
 }
+
+
+#[test]
+fn lifecycle_storage_round_trips_every_supported_provider_id() {
+    let root = unique_test_dir("provider-round-trip");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let providers = [
+        ProviderId::DexScreener,
+        ProviderId::Helius,
+        ProviderId::Alchemy,
+        ProviderId::Chainstack,
+        ProviderId::SolanaPublic,
+        ProviderId::Jupiter,
+        ProviderId::Meteora,
+    ];
+
+    for (index, provider) in providers.into_iter().enumerate() {
+        let signature = format!("sig-provider-{index}");
+        let mint = format!("mint-provider-{index}");
+        db.record_pump_migration_signal(
+            &signature,
+            u64::try_from(index + 1).unwrap(),
+            1_000 + i64::try_from(index).unwrap(),
+        )
+        .unwrap();
+
+        let mut lifecycle = event(
+            &signature,
+            &mint,
+            "quote",
+            &format!("pool-provider-{index}"),
+            1_000 + i64::try_from(index).unwrap(),
+        );
+        lifecycle.provider = provider;
+
+        db.complete_pump_migration(
+            &signature,
+            2_000 + i64::try_from(index).unwrap(),
+            std::slice::from_ref(&lifecycle),
+        )
+        .unwrap();
+
+        assert_eq!(
+            db.lifecycle_events_for_mint(&mint).unwrap(),
+            vec![lifecycle],
+        );
+    }
+
+    cleanup_dir(&root);
+}
