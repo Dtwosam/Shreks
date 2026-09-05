@@ -287,7 +287,6 @@ class FastFirstChampionArtifactManifest:
     observer_database_sha256: str
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
-    training_economics_overlay_manifest_fingerprint_sha256: str
     context_fingerprint_sha256: str
     training_economics_overlay_manifest_fingerprint_sha256: str
     training_execution_cost_policy_fingerprint_sha256: str
@@ -392,6 +391,7 @@ class _SourceSnapshot:
     observer_database_sha256: str
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
+    training_economics_overlay_manifest_fingerprint_sha256: str
 
 
 def build_fast_first_champion_file_request(
@@ -705,6 +705,7 @@ def run_fast_first_champion_file_request(
         feature_path=feature_path,
         database_path=database_path,
         context_path=context_path,
+        training_economics_overlay_path=training_economics_overlay_path,
     )
     if after != before:
         raise ValueError(
