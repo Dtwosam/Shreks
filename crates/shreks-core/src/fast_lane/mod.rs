@@ -31,7 +31,8 @@ pub use baseline_replay::{
     FAST_BASELINE_REPLAY_VERSION,
 };
 pub use capacity::{
-    maximum_exit_capacity, project_exit, ExitCapacity, ExitCapacityError, ExitProjection,
+    maximum_exit_capacity, project_entry, project_exit, EntryProjection, EntryProjectionError,
+    ExitCapacity, ExitCapacityError, ExitProjection,
 };
 pub use campaign::{
     assess_continuous_action_from_champion, decode_fast_campaign_decision_batch_json,
