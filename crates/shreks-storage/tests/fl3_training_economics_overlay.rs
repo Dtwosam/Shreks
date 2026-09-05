@@ -344,6 +344,7 @@ fn swap_economics(
     source: &PumpSwapTradeEvidenceWrite,
     virtual_quote_reserves_raw: Option<i128>,
 ) -> PumpSwapExecutionEconomicsWrite {
+    let has_current_suffix = virtual_quote_reserves_raw.is_some();
     PumpSwapExecutionEconomicsWrite {
         signature: source.signature.clone(),
         ordinal: source.ordinal,
@@ -352,16 +353,17 @@ fn swap_economics(
         protocol_fee_basis_points: 10,
         protocol_fee_raw: 1,
         quote_amount_with_or_without_lp_fee_raw: source.quote_amount_raw,
-        coin_creator: Some("creator-training-economics".to_owned()),
-        coin_creator_fee_basis_points: Some(5),
-        coin_creator_fee_raw: Some(1),
-        cashback_fee_basis_points: Some(1),
-        cashback_raw: Some(0),
-        buyback_fee_basis_points: Some(1),
-        buyback_fee_raw: Some(0),
+        coin_creator: has_current_suffix
+            .then(|| "creator-training-economics".to_owned()),
+        coin_creator_fee_basis_points: has_current_suffix.then_some(5),
+        coin_creator_fee_raw: has_current_suffix.then_some(1),
+        cashback_fee_basis_points: has_current_suffix.then_some(1),
+        cashback_raw: has_current_suffix.then_some(0),
+        buyback_fee_basis_points: has_current_suffix.then_some(1),
+        buyback_fee_raw: has_current_suffix.then_some(0),
         virtual_quote_reserves_raw,
-        can_boost: Some(true),
-        base_supply_raw: Some(10_000_000_000),
+        can_boost: has_current_suffix.then_some(true),
+        base_supply_raw: has_current_suffix.then_some(10_000_000_000),
     }
 }
 
