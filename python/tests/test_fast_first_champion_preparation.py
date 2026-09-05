@@ -26,6 +26,7 @@ from shreks_brain.research.fast_training_bundle import (
 )
 from shreks_brain.research.fast_training_economics import (
     FastTrainingExecutionCostPolicy,
+    fast_training_execution_cost_policy_fingerprint_sha256,
 )
 from shreks_brain.fast_first_champion_preparation import (
     FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_NAME,
@@ -148,10 +149,7 @@ def _install_component_fakes(
             horizon_ms=horizon_ms,
             training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
             training_execution_cost_policy_fingerprint_sha256=(
-                __import__(
-                    "shreks_brain.research.fast_training_economics",
-                    fromlist=["fast_training_execution_cost_policy_fingerprint_sha256"],
-                ).fast_training_execution_cost_policy_fingerprint_sha256(
+                fast_training_execution_cost_policy_fingerprint_sha256(
                     _training_economics_policy()
                 )
             ),
@@ -217,6 +215,12 @@ def _install_component_fakes(
                 hydration.manifest.contexts_file_sha256
             ),
             context_fingerprint_sha256="6" * 64,
+            training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
+            training_execution_cost_policy_fingerprint_sha256=(
+                fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             training_bundle_fingerprint_sha256=bundle_fingerprint,
             champion_fingerprint_sha256="8" * 64,
             artifact_fingerprint_sha256="9" * 64,
