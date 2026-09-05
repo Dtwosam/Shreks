@@ -464,6 +464,9 @@ git commit -m "feat: export training economics evidence"
 **Interfaces:**
 - Produces:
   - `FastTrainingExecutionCostPolicy`
+  - `encode_fast_training_execution_cost_policy(policy) -> str`
+  - `decode_fast_training_execution_cost_policy(payload) -> FastTrainingExecutionCostPolicy`
+  - `fast_training_execution_cost_policy_fingerprint_sha256(policy) -> str`
   - `FastTrainingEconomicsOverlayRow`
   - `FastTrainingEconomicsOverlayDataset`
   - `read_fast_training_economics_overlay(path)`
@@ -523,7 +526,34 @@ class FastTrainingExecutionCostPolicy:
 
 Require bps fields `0 <= value <= 10_000`, all fixed costs finite/non-negative, and total exit variable rate including source fee strictly below 10,000 when applying a row.
 
-- [ ] **Step 4: Write RED overlay reader/fingerprint tests**
+Add canonical JSON encode/decode using exact keys, sorted-key compact JSON, no NaN/Infinity, and a SHA-256 fingerprint over the canonical policy document. Unknown/missing keys must fail closed.
+
+- [ ] **Step 4: Write RED policy codec/fingerprint tests**
+
+Add a round-trip test:
+
+```python
+policy = FastTrainingExecutionCostPolicy(
+    version="training-cost-v1",
+    additional_entry_slippage_bps=10,
+    additional_exit_slippage_bps=20,
+    entry_latency_bps=5,
+    exit_latency_bps=5,
+    entry_network_fee_quote=0.0,
+    exit_network_fee_quote=0.0,
+    entry_priority_fee_quote=0.0,
+    exit_priority_fee_quote=0.0,
+    entry_expected_failure_cost_quote=0.0,
+    exit_expected_failure_cost_quote=0.0,
+)
+payload = encode_fast_training_execution_cost_policy(policy)
+assert decode_fast_training_execution_cost_policy(payload) == policy
+assert len(fast_training_execution_cost_policy_fingerprint_sha256(policy)) == 64
+```
+
+Tampering with a key or adding an unknown key must fail.
+
+- [ ] **Step 5: Write RED overlay reader/fingerprint tests**
 
 Generate the artifact with the Rust test fixture/subcommand and assert Python:
 
@@ -543,13 +573,13 @@ assert (
 
 Tamper one row byte and one manifest fingerprint separately; both must fail closed.
 
-- [ ] **Step 5: Implement canonical reader**
+- [ ] **Step 6: Implement canonical reader**
 
 Require exactly `rows.jsonl` and `manifest.json`, exact schema/version, exact row count, unique decision/horizon identities, canonical ordering, valid status enum, valid nullable evidence-group invariants, row fingerprint, and manifest fingerprint.
 
 Use `Decimal` for the manifest counterfactual quantity string. Do not convert it through binary float for equality checks.
 
-- [ ] **Step 6: Write RED cost application tests**
+- [ ] **Step 7: Write RED cost application tests**
 
 For an available row with:
 
@@ -570,7 +600,7 @@ assert exact formula parity using `pytest.approx`.
 
 Also assert reserve impact is not represented by any separate policy field.
 
-- [ ] **Step 7: Implement FL5 evidence construction**
+- [ ] **Step 8: Implement FL5 evidence construction**
 
 For `available`:
 
@@ -592,7 +622,7 @@ Create analogous SELL evidence from endpoint identity/time.
 
 For any non-`available` status, set both to `None` so the existing FL5 labeler produces BUY_NOW UNKNOWN and SKIP EXECUTABLE.
 
-- [ ] **Step 8: Run GREEN Python overlay tests**
+- [ ] **Step 9: Run GREEN Python overlay tests**
 
 ```bash
 python -m pytest python/tests/test_fast_training_economics.py -q
@@ -600,7 +630,7 @@ python -m pytest python/tests/test_fast_training_economics.py -q
 
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add python/src/shreks_brain/research/fast_training_economics.py         python/tests/test_fast_training_economics.py
@@ -724,7 +754,7 @@ The file request must include:
 "training_execution_cost_policy"
 ```
 
-The policy document uses exactly the ten fields from `FastTrainingExecutionCostPolicy`.
+The policy document uses exactly the eleven fields from `FastTrainingExecutionCostPolicy` (one version field plus ten numeric fields).
 
 - [ ] **Step 2: Run RED request tests**
 
@@ -742,16 +772,16 @@ Every caller of `build_fast_training_bundle_from_runtime_sources(...)` must pass
 
 Where the existing first-champion artifact snapshots input files, add overlay manifest/rows hashes or the overlay manifest fingerprint to the request/artifact fingerprint material so swapping the overlay after request creation fails closed.
 
-- [ ] **Step 5: Add host request CLI flags**
+- [ ] **Step 5: Add exact host request CLI inputs**
 
-Add explicit flags for the overlay path and each policy component, or one canonical policy JSON file if the existing request-writer conventions favor file-backed policy. Prefer one canonical policy JSON file to avoid an error-prone long flag surface:
+Use exactly two new source inputs:
 
 ```text
 --training-economics-overlay <directory>
 --training-execution-cost-policy <json-file>
 ```
 
-Decode and fingerprint that policy before writing the request.
+Read the policy file stably, decode it only with `decode_fast_training_execution_cost_policy(...)`, compute `fast_training_execution_cost_policy_fingerprint_sha256(...)`, and embed the exact decoded policy plus its fingerprint in the authenticated request material. Do not expose per-component CLI defaults.
 
 - [ ] **Step 6: Run GREEN first-champion tests**
 
