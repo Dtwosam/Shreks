@@ -150,7 +150,7 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         encoding="utf-8",
     )
     (economics_overlay / "manifest.json").write_text(
-        '{"sealed":"manifest"}\n',
+        '{"manifest_fingerprint_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\n',
         encoding="utf-8",
     )
     hydration_policy = object()
@@ -180,6 +180,15 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         request = SimpleNamespace(
             validation_policy=plan.validation_policy,
             evaluation_policy=kwargs["evaluation_policy"],
+            expected_training_economics_overlay_manifest_fingerprint_sha256=(
+                "b" * 64
+            ),
+            training_execution_cost_policy=_training_economics_policy(),
+            training_execution_cost_policy_fingerprint_sha256=(
+                fast_training_execution_cost_policy_fingerprint_sha256(
+                    _training_economics_policy()
+                )
+            ),
             horizon_ms=plan.horizon_ms,
             decided_at_unix_ms=plan.selection_at_unix_ms,
             minimum_test_scored_observations=(
@@ -200,6 +209,14 @@ def _install_fakes(monkeypatch, tmp_path: Path):
             manifest=SimpleNamespace(
                 proof_workspace_release_source_sha=RELEASE_SHA,
                 proof_workspace_artifact_fingerprint_sha256="2" * 64,
+                training_economics_overlay_manifest_fingerprint_sha256=(
+                    "b" * 64
+                ),
+                training_execution_cost_policy_fingerprint_sha256=(
+                    fast_training_execution_cost_policy_fingerprint_sha256(
+                        _training_economics_policy()
+                    )
+                ),
                 training_bundle_fingerprint_sha256=(
                     bundle.manifest.bundle_fingerprint_sha256
                 ),
