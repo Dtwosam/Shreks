@@ -189,6 +189,7 @@ impl ShreksDb {
 
         let mut rows = Vec::with_capacity(labels.len());
         let mut seen = BTreeSet::new();
+        let mut replay_cache: Option<(String, String, Vec<StoredFastEvent>)> = None;
         for stored in labels {
             let key = (
                 stored.decision.event_id.signature.clone(),
@@ -228,13 +229,36 @@ impl ShreksDb {
                 )
             })?;
 
-            let replay = self.fast_events_for_market_with_reserve_context(
-                &stored.decision.market.mint,
-                &stored.decision.market.quote_mint,
-                VenueId::PumpSwap,
-            )?;
+            let replay_cache_requires_reload = match replay_cache.as_ref() {
+                Some((mint, quote_mint, _)) => {
+                    mint != &stored.decision.market.mint
+                        || quote_mint != &stored.decision.market.quote_mint
+                }
+                None => true,
+            };
+            if replay_cache_requires_reload {
+                let replay = self.fast_events_for_market_with_reserve_context(
+                    &stored.decision.market.mint,
+                    &stored.decision.market.quote_mint,
+                    VenueId::PumpSwap,
+                )?;
+                replay_cache = Some((
+                    stored.decision.market.mint.clone(),
+                    stored.decision.market.quote_mint.clone(),
+                    replay,
+                ));
+            }
+            let replay = replay_cache
+                .as_ref()
+                .map(|(_, _, replay)| replay)
+                .ok_or_else(|| {
+                    StorageError::InvalidData(
+                        "training economics reserve-aware replay cache was unexpectedly empty"
+                            .to_owned(),
+                    )
+                })?;
             let decision_event = find_replay_event(
-                &replay,
+                replay,
                 &stored.decision.event_id.signature,
                 stored.decision.event_id.ordinal,
                 stored.decision.sequence,
