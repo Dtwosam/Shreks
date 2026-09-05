@@ -6,14 +6,19 @@ use std::{
 };
 
 use shreks_core::{
-    FastEvent, FastEventId, FastEventKind, FastMarketKey, FuturePathCompleteness,
-    FuturePathCoverage, FuturePathDecision, FuturePathLabel, ProviderId, VenueId,
-    FUTURE_PATH_LABEL_VERSION,
+    project_entry, project_exit, FastEvent, FastEventId, FastEventKind, FastMarketKey,
+    FastReserveContext, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
+    FuturePathLabel, ProviderId, VenueId, FUTURE_PATH_LABEL_VERSION,
 };
-use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb};
+use shreks_storage::{
+    decimal_quantity_to_raw, pump_swap_event_ordinal, EvidenceWriteOutcome,
+    FastTrainingEconomicsStatus, PumpSwapExecutionEconomicsWrite, PumpSwapMarket,
+    PumpSwapTradeEvidenceWrite, PumpTradeEvidenceWrite, ShreksDb,
+};
 
 const WSOL: &str = "So11111111111111111111111111111111111111112";
 const MINT: &str = "mint-training-economics";
+const SWAP_MINT: &str = "mint-training-economics-swap";
 
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -272,6 +277,229 @@ fn fixture(label: &str) -> (PathBuf, ShreksDb) {
     (root, db)
 }
 
+
+fn complete_no_trade_label(horizon_ms: u64) -> FuturePathLabel {
+    FuturePathLabel {
+        version: FUTURE_PATH_LABEL_VERSION,
+        horizon_ms,
+        completeness: FuturePathCompleteness::Complete,
+        event_count: 0,
+        no_trade_events: true,
+        endpoint_event_id: None,
+        endpoint_observed_at_unix_ms: None,
+        endpoint_price_quote: None,
+        endpoint_return_bps: None,
+        mfe_bps: None,
+        mae_bps: None,
+        time_to_peak_ms: None,
+        time_to_trough_ms: None,
+        reversal_occurred: None,
+        first_reversal_after_ms: None,
+        min_exit_capacity_base: None,
+        endpoint_exit_capacity_base: None,
+        route_unavailability_observed: None,
+        best_cost_adjusted_return_bps: None,
+        endpoint_cost_adjusted_return_bps: None,
+    }
+}
+
+fn swap_market() -> PumpSwapMarket {
+    PumpSwapMarket {
+        mint: SWAP_MINT.to_owned(),
+        quote_mint: WSOL.to_owned(),
+        pool_address: "pool-training-economics".to_owned(),
+    }
+}
+
+fn swap_raw(
+    signature: &str,
+    log_index: u32,
+    is_buy: bool,
+    observed_at_unix_ms: i64,
+    pool_base_reserves_raw: u64,
+    pool_quote_reserves_raw: u64,
+    market_quote_amount_raw: u64,
+    user_quote_amount_raw: u64,
+) -> PumpSwapTradeEvidenceWrite {
+    PumpSwapTradeEvidenceWrite {
+        provider: ProviderId::SolanaPublic,
+        signature: signature.to_owned(),
+        ordinal: pump_swap_event_ordinal(log_index).unwrap(),
+        log_index,
+        slot: 1_000 + u64::from(log_index),
+        observed_at_unix_ms: observed_at_unix_ms.saturating_sub(20),
+        pool: "pool-training-economics".to_owned(),
+        user: format!("wallet-{signature}"),
+        is_buy,
+        base_amount_raw: 2_000_000,
+        quote_amount_raw: market_quote_amount_raw,
+        user_quote_amount_raw,
+        timestamp_unix_seconds: observed_at_unix_ms / 1_000,
+        pool_base_reserves_raw,
+        pool_quote_reserves_raw,
+    }
+}
+
+fn swap_economics(
+    source: &PumpSwapTradeEvidenceWrite,
+    virtual_quote_reserves_raw: Option<i128>,
+) -> PumpSwapExecutionEconomicsWrite {
+    PumpSwapExecutionEconomicsWrite {
+        signature: source.signature.clone(),
+        ordinal: source.ordinal,
+        lp_fee_basis_points: 20,
+        lp_fee_raw: 1,
+        protocol_fee_basis_points: 10,
+        protocol_fee_raw: 1,
+        quote_amount_with_or_without_lp_fee_raw: source.quote_amount_raw,
+        coin_creator: Some("creator-training-economics".to_owned()),
+        coin_creator_fee_basis_points: Some(5),
+        coin_creator_fee_raw: Some(1),
+        cashback_fee_basis_points: Some(1),
+        cashback_raw: Some(0),
+        buyback_fee_basis_points: Some(1),
+        buyback_fee_raw: Some(0),
+        virtual_quote_reserves_raw,
+        can_boost: Some(true),
+        base_supply_raw: Some(10_000_000_000),
+    }
+}
+
+fn swap_event(
+    source: &PumpSwapTradeEvidenceWrite,
+    sequence: u64,
+    observed_at_unix_ms: i64,
+) -> FastEvent {
+    let base_quantity = source.base_amount_raw as f64 / 1_000_000.0;
+    let quote_quantity = source.quote_amount_raw as f64 / 1_000_000_000.0;
+    FastEvent::new(
+        FastEventId::new(source.signature.clone(), source.ordinal).unwrap(),
+        sequence,
+        ProviderId::SolanaPublic,
+        FastMarketKey::new(SWAP_MINT, WSOL, VenueId::PumpSwap).unwrap(),
+        if source.is_buy {
+            FastEventKind::Buy
+        } else {
+            FastEventKind::Sell
+        },
+        Some(format!("wallet-{}", source.signature)),
+        source.slot,
+        source.timestamp_unix_seconds * 1_000,
+        observed_at_unix_ms,
+        base_quantity,
+        quote_quantity,
+        quote_quantity / base_quantity,
+    )
+    .unwrap()
+}
+
+fn store_swap_event(
+    db: &ShreksDb,
+    signature: &str,
+    log_index: u32,
+    is_buy: bool,
+    sequence: u64,
+    observed_at_unix_ms: i64,
+    pool_base_reserves_raw: u64,
+    pool_quote_reserves_raw: u64,
+    market_quote_amount_raw: u64,
+    user_quote_amount_raw: u64,
+    virtual_quote_reserves_raw: Option<i128>,
+) -> PumpSwapTradeEvidenceWrite {
+    let source = swap_raw(
+        signature,
+        log_index,
+        is_buy,
+        observed_at_unix_ms,
+        pool_base_reserves_raw,
+        pool_quote_reserves_raw,
+        market_quote_amount_raw,
+        user_quote_amount_raw,
+    );
+    assert!(db.record_pump_swap_trade_evidence(&source).unwrap());
+    assert!(db
+        .record_pump_swap_execution_economics(&swap_economics(
+            &source,
+            virtual_quote_reserves_raw,
+        ))
+        .unwrap());
+    assert!(db
+        .record_pump_swap_fast_event_from_source(
+            &swap_event(&source, sequence, observed_at_unix_ms),
+            &source,
+            &swap_market(),
+            6,
+            9,
+        )
+        .unwrap());
+    source
+}
+
+fn swap_decision(
+    source: &PumpSwapTradeEvidenceWrite,
+    sequence: u64,
+    observed_at_unix_ms: i64,
+) -> FuturePathDecision {
+    let event = swap_event(source, sequence, observed_at_unix_ms);
+    FuturePathDecision::new(
+        FastMarketKey::new(SWAP_MINT, WSOL, VenueId::PumpSwap).unwrap(),
+        event.id,
+        sequence,
+        observed_at_unix_ms,
+        event.price_quote,
+    )
+    .unwrap()
+}
+
+fn record_swap_path(
+    db: &ShreksDb,
+    decision_source: &PumpSwapTradeEvidenceWrite,
+    decision_sequence: u64,
+    decision_observed_at_unix_ms: i64,
+    endpoint_source: Option<&PumpSwapTradeEvidenceWrite>,
+    endpoint_observed_at_unix_ms: Option<i64>,
+    horizon_ms: u64,
+) {
+    let decision = swap_decision(
+        decision_source,
+        decision_sequence,
+        decision_observed_at_unix_ms,
+    );
+    let coverage = FuturePathCoverage::new(
+        decision_observed_at_unix_ms + i64::try_from(horizon_ms).unwrap() + 1_000,
+        true,
+    )
+    .unwrap();
+    let label = match (endpoint_source, endpoint_observed_at_unix_ms) {
+        (Some(source), Some(endpoint_time)) => {
+            let endpoint_event = swap_event(source, decision_sequence + 1, endpoint_time);
+            complete_label(
+                horizon_ms,
+                &source.signature,
+                endpoint_time,
+                endpoint_event.price_quote,
+            )
+        }
+        (None, None) => complete_no_trade_label(horizon_ms),
+        _ => panic!("endpoint source/time must be present together"),
+    };
+    db.record_future_path_label(&decision, coverage, &label)
+        .unwrap();
+}
+
+fn overlay_rows(db: &ShreksDb, quantity: &str, maximum_age_ms: u64) -> Vec<shreks_storage::FastTrainingEconomicsOverlayRow> {
+    let features = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    db.fast_training_economics_overlay_rows(
+        &features,
+        FUTURE_PATH_LABEL_VERSION,
+        quantity,
+        maximum_age_ms,
+    )
+    .unwrap()
+}
+
 #[test]
 fn training_economics_overlay_has_exact_fl4_population() {
     let (root, db) = fixture("population");
@@ -289,6 +517,9 @@ fn training_economics_overlay_has_exact_fl4_population() {
         .unwrap();
 
     assert_eq!(rows.len(), 4);
+    assert!(rows
+        .iter()
+        .all(|row| row.status == FastTrainingEconomicsStatus::UnsupportedVenue));
     assert!(rows.windows(2).all(|pair| {
         (
             pair[0].decision_sequence,
@@ -342,6 +573,625 @@ fn training_economics_overlay_rejects_feature_identity_drift() {
     assert!(error
         .to_string()
         .contains("training economics feature/FL4 decision identity mismatch"));
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+
+#[test]
+fn counterfactual_decimal_quantity_is_never_rounded() {
+    assert_eq!(decimal_quantity_to_raw("2.5", 6).unwrap(), 2_500_000);
+    assert_eq!(decimal_quantity_to_raw("2e0", 6).unwrap(), 2_000_000);
+    assert!(decimal_quantity_to_raw("0.0000001", 6).is_err());
+    assert!(decimal_quantity_to_raw("2e-7", 6).is_err());
+}
+
+#[test]
+fn pumpswap_available_row_uses_exact_quantity_projection_and_causal_fees() {
+    let root = unique_test_dir("swap-available");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-decision",
+        2,
+        true,
+        1,
+        1_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-endpoint",
+        4,
+        false,
+        2,
+        1_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 1_000, Some(&endpoint), Some(1_200), 500);
+
+    let rows = overlay_rows(&db, "2", 1_000);
+    assert_eq!(rows.len(), 1);
+    let row = &rows[0];
+    assert_eq!(row.status, FastTrainingEconomicsStatus::Available);
+    assert_eq!(row.requested_base_quantity_raw, Some(2_000_000));
+    assert_eq!(row.entry_fee.as_ref().unwrap().effective_fee_bps, 50);
+    assert_eq!(row.exit_fee.as_ref().unwrap().effective_fee_bps, 50);
+    assert_eq!(row.entry_fee.as_ref().unwrap().source_sequence, 1);
+    assert_eq!(row.exit_fee.as_ref().unwrap().source_sequence, 2);
+
+    let replay = db
+        .fast_events_for_market_with_reserve_context(SWAP_MINT, WSOL, VenueId::PumpSwap)
+        .unwrap();
+    let entry_reserve = replay[0].event.reserve_context.as_ref().unwrap();
+    let exit_reserve = replay[1].event.reserve_context.as_ref().unwrap();
+    let expected_entry = project_entry(entry_reserve, 2_000_000).unwrap();
+    let expected_exit = project_exit(exit_reserve, 2_000_000).unwrap();
+    let actual_entry = row.entry_projection.as_ref().unwrap();
+    let actual_exit = row.exit_projection.as_ref().unwrap();
+    assert_eq!(actual_entry.base_quantity_raw, expected_entry.base_quantity_raw);
+    assert_eq!(actual_entry.quote_input_raw, expected_entry.quote_input_raw);
+    assert_eq!(actual_entry.quote_input, expected_entry.quote_input);
+    assert_eq!(actual_entry.average_price_quote, expected_entry.average_price_quote);
+    assert_eq!(actual_exit.base_quantity_raw, expected_exit.base_quantity_raw);
+    assert_eq!(actual_exit.quote_output_raw, expected_exit.quote_output_raw);
+    assert_eq!(actual_exit.quote_output, expected_exit.quote_output);
+    assert_eq!(actual_exit.average_price_quote, expected_exit.average_price_quote);
+
+    let FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw,
+        pool_quote_reserve_raw,
+        base_decimals,
+        quote_decimals,
+        ..
+    } = entry_reserve
+    else {
+        panic!("expected PumpSwap entry reserve");
+    };
+    let zero_virtual_entry = FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw: *pool_base_reserve_raw,
+        pool_quote_reserve_raw: *pool_quote_reserve_raw,
+        virtual_quote_reserve_raw: Some(0),
+        base_decimals: *base_decimals,
+        quote_decimals: *quote_decimals,
+    };
+    assert_ne!(
+        expected_entry.quote_input_raw,
+        project_entry(&zero_virtual_entry, 2_000_000)
+            .unwrap()
+            .quote_input_raw
+    );
+
+    let FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw,
+        pool_quote_reserve_raw,
+        base_decimals,
+        quote_decimals,
+        ..
+    } = exit_reserve
+    else {
+        panic!("expected PumpSwap exit reserve");
+    };
+    let zero_virtual_exit = FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw: *pool_base_reserve_raw,
+        pool_quote_reserve_raw: *pool_quote_reserve_raw,
+        virtual_quote_reserve_raw: Some(0),
+        base_decimals: *base_decimals,
+        quote_decimals: *quote_decimals,
+    };
+    assert_ne!(
+        expected_exit.quote_output_raw,
+        project_exit(&zero_virtual_exit, 2_000_000)
+            .unwrap()
+            .quote_output_raw
+    );
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_complete_no_trade_horizon_is_explicitly_no_endpoint() {
+    let root = unique_test_dir("swap-no-endpoint");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-no-endpoint-decision",
+        6,
+        true,
+        1,
+        2_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 2_000, None, None, 500);
+
+    let rows = overlay_rows(&db, "2", 1_000);
+    assert_eq!(rows[0].status, FastTrainingEconomicsStatus::NoEndpoint);
+    assert!(rows[0].endpoint_signature.is_none());
+    assert!(rows[0].exit_projection.is_none());
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_missing_virtual_reserve_maps_to_entry_or_exit_unavailable() {
+    let root = unique_test_dir("swap-reserve-unavailable-entry");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-entry-reserve-missing",
+        8,
+        true,
+        1,
+        3_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        None,
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-entry-reserve-endpoint",
+        10,
+        false,
+        2,
+        3_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 3_000, Some(&endpoint), Some(3_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::EntryReserveUnavailable
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-reserve-unavailable-exit");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-exit-reserve-decision",
+        12,
+        true,
+        1,
+        4_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-exit-reserve-missing",
+        14,
+        false,
+        2,
+        4_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        None,
+    );
+    record_swap_path(&db, &decision, 1, 4_000, Some(&endpoint), Some(4_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::ExitReserveUnavailable
+    );
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_projection_limits_are_explicit_unavailable_statuses() {
+    let root = unique_test_dir("swap-entry-projection");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-projection-decision",
+        16,
+        true,
+        1,
+        5_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-projection-endpoint",
+        18,
+        false,
+        2,
+        5_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 5_000, Some(&endpoint), Some(5_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "20_000", 1_000)[0].status,
+        FastTrainingEconomicsStatus::EntryProjectionUnavailable
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-exit-projection");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-exit-projection-decision",
+        20,
+        true,
+        1,
+        6_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-exit-projection-endpoint",
+        22,
+        false,
+        2,
+        6_200,
+        9_500_000_000,
+        1,
+        1,
+        1,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 6_000, Some(&endpoint), Some(6_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::ExitProjectionUnavailable
+    );
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_fee_missing_stale_and_rate_unknown_map_without_fallback() {
+    let root = unique_test_dir("swap-entry-fee-missing");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-entry-fee-missing-decision",
+        24,
+        false,
+        1,
+        7_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        99_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-entry-fee-missing-endpoint",
+        26,
+        false,
+        2,
+        7_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 7_000, Some(&endpoint), Some(7_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::EntryFeeMissing
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-entry-fee-stale");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let _older_buy = store_swap_event(
+        &db,
+        "swap-old-buy",
+        28,
+        true,
+        1,
+        8_000,
+        10_500_000_000,
+        4_900_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let decision = store_swap_event(
+        &db,
+        "swap-stale-decision",
+        30,
+        false,
+        2,
+        8_300,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        99_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-stale-endpoint",
+        32,
+        false,
+        3,
+        8_400,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 2, 8_300, Some(&endpoint), Some(8_400), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 100)[0].status,
+        FastTrainingEconomicsStatus::EntryFeeStale
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-entry-fee-unknown");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let _older_buy = store_swap_event(
+        &db,
+        "swap-exact-buy",
+        34,
+        true,
+        1,
+        9_000,
+        10_500_000_000,
+        4_900_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let decision = store_swap_event(
+        &db,
+        "swap-unknown-buy",
+        36,
+        true,
+        2,
+        9_100,
+        10_000_000_000,
+        5_000_000_000,
+        3,
+        4,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-unknown-buy-endpoint",
+        38,
+        false,
+        3,
+        9_300,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 2, 9_100, Some(&endpoint), Some(9_300), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::EntryFeeRateUnknown
+    );
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn pumpswap_exit_fee_missing_stale_and_rate_unknown_map_exactly() {
+    let root = unique_test_dir("swap-exit-fee-missing");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-exit-fee-missing-decision",
+        40,
+        true,
+        1,
+        10_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-exit-fee-missing-endpoint",
+        42,
+        true,
+        2,
+        10_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        120_600_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 10_000, Some(&endpoint), Some(10_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::ExitFeeMissing
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-exit-fee-stale");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let _older_sell = store_swap_event(
+        &db,
+        "swap-old-sell",
+        44,
+        false,
+        1,
+        11_000,
+        10_500_000_000,
+        4_900_000_000,
+        100_000_000,
+        99_500_000,
+        Some(1_000_000_000),
+    );
+    let decision = store_swap_event(
+        &db,
+        "swap-exit-stale-decision",
+        46,
+        true,
+        2,
+        11_100,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-exit-stale-endpoint",
+        48,
+        true,
+        3,
+        11_300,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        120_600_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 2, 11_100, Some(&endpoint), Some(11_300), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 100)[0].status,
+        FastTrainingEconomicsStatus::ExitFeeStale
+    );
+    drop(db);
+    cleanup_dir(&root);
+
+    let root = unique_test_dir("swap-exit-fee-unknown");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-exit-unknown-decision",
+        50,
+        true,
+        1,
+        12_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-exit-unknown-endpoint",
+        52,
+        false,
+        2,
+        12_200,
+        9_500_000_000,
+        5_500_000_000,
+        3,
+        4,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 12_000, Some(&endpoint), Some(12_200), 500);
+    assert_eq!(
+        overlay_rows(&db, "2", 1_000)[0].status,
+        FastTrainingEconomicsStatus::ExitFeeRateUnknown
+    );
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn conflict_quarantined_pumpswap_source_aborts_overlay() {
+    let root = unique_test_dir("swap-conflict");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let decision = store_swap_event(
+        &db,
+        "swap-conflict-decision",
+        54,
+        true,
+        1,
+        13_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-conflict-endpoint",
+        56,
+        false,
+        2,
+        13_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 1, 13_000, Some(&endpoint), Some(13_200), 500);
+
+    let mut conflict = decision.clone();
+    conflict.quote_amount_raw += 1;
+    assert_eq!(
+        db.record_pump_swap_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
+
+    let features = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    let error = db
+        .fast_training_economics_overlay_rows(
+            &features,
+            FUTURE_PATH_LABEL_VERSION,
+            "2",
+            1_000,
+        )
+        .unwrap_err();
+    assert!(error.to_string().contains("conflict-quarantined"));
 
     drop(db);
     cleanup_dir(&root);
