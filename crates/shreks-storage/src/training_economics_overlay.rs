@@ -24,7 +24,7 @@ use crate::{
 
 pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME: &str =
     "shreks.fast_training_economics_overlay";
-pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION: u16 = 1;
+pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION: u16 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -105,7 +105,7 @@ pub struct FastTrainingEconomicsFeeProvenance {
     pub market_quote_amount_raw: u64,
     pub user_quote_amount_raw: u64,
     pub signed_user_cost_quote_raw: i128,
-    pub effective_fee_bps: u32,
+    pub effective_fee_bps: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -357,10 +357,13 @@ impl ShreksDb {
                     rows.push(row);
                     continue;
                 }
-                PumpSwapEffectiveFeeContext::RateUnknown(_) => {
-                    row.status = FastTrainingEconomicsStatus::EntryFeeRateUnknown;
-                    rows.push(row);
-                    continue;
+                PumpSwapEffectiveFeeContext::RateUnknown(value) => {
+                    if value.evidence.signed_user_cost_quote_raw < 0 {
+                        row.status = FastTrainingEconomicsStatus::EntryFeeRateUnknown;
+                        rows.push(row);
+                        continue;
+                    }
+                    row.entry_fee = Some(fee_provenance(value)?);
                 }
                 PumpSwapEffectiveFeeContext::Available(value) => {
                     row.entry_fee = Some(fee_provenance(value)?);
@@ -394,10 +397,13 @@ impl ShreksDb {
                     rows.push(row);
                     continue;
                 }
-                PumpSwapEffectiveFeeContext::RateUnknown(_) => {
-                    row.status = FastTrainingEconomicsStatus::ExitFeeRateUnknown;
-                    rows.push(row);
-                    continue;
+                PumpSwapEffectiveFeeContext::RateUnknown(value) => {
+                    if value.evidence.signed_user_cost_quote_raw < 0 {
+                        row.status = FastTrainingEconomicsStatus::ExitFeeRateUnknown;
+                        rows.push(row);
+                        continue;
+                    }
+                    row.exit_fee = Some(fee_provenance(value)?);
                 }
                 PumpSwapEffectiveFeeContext::Available(value) => {
                     row.exit_fee = Some(fee_provenance(value)?);
@@ -909,11 +915,18 @@ fn reserve_context_from_provenance(
 fn fee_provenance(
     value: PumpSwapEffectiveFeeContextValue,
 ) -> Result<FastTrainingEconomicsFeeProvenance, StorageError> {
-    let effective_fee_bps = value.evidence.effective_fee_bps.ok_or_else(|| {
-        StorageError::InvalidData(
-            "training economics available fee context omitted exact fee bps".to_owned(),
-        )
-    })?;
+    if value.evidence.signed_user_cost_quote_raw < 0 {
+        return Err(StorageError::InvalidData(
+            "training economics attached fee provenance cannot encode a negative user-cost delta"
+                .to_owned(),
+        ));
+    }
+    if value.evidence.market_quote_amount_raw == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics attached fee provenance requires positive market quote"
+                .to_owned(),
+        ));
+    }
     Ok(FastTrainingEconomicsFeeProvenance {
         source_signature: value.evidence.signature,
         source_ordinal: value.evidence.ordinal,
@@ -923,7 +936,7 @@ fn fee_provenance(
         market_quote_amount_raw: value.evidence.market_quote_amount_raw,
         user_quote_amount_raw: value.evidence.user_quote_amount_raw,
         signed_user_cost_quote_raw: value.evidence.signed_user_cost_quote_raw,
-        effective_fee_bps,
+        effective_fee_bps: value.evidence.effective_fee_bps,
     })
 }
 

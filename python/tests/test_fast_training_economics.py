@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields, replace
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -67,15 +68,18 @@ def _reserve(signature: str, sequence: int, observed_at: int):
 
 
 def _fee(signature: str, sequence: int, observed_at: int, bps: int):
+    market_quote_amount_raw = 100_000_000
+    signed_user_cost_quote_raw = market_quote_amount_raw * bps // 10_000
+    assert signed_user_cost_quote_raw * 10_000 == market_quote_amount_raw * bps
     return FastTrainingEconomicsFeeProvenance(
         source_signature=signature,
         source_ordinal=2,
         source_sequence=sequence,
         source_observed_at_unix_ms=observed_at,
         age_ms=0,
-        market_quote_amount_raw=100_000_000,
-        user_quote_amount_raw=100_500_000,
-        signed_user_cost_quote_raw=500_000,
+        market_quote_amount_raw=market_quote_amount_raw,
+        user_quote_amount_raw=market_quote_amount_raw + signed_user_cost_quote_raw,
+        signed_user_cost_quote_raw=signed_user_cost_quote_raw,
         effective_fee_bps=bps,
     )
 
@@ -261,6 +265,107 @@ def test_rust_overlay_reader_authenticates_source_fl4_rows_and_manifest(
         read_fast_training_economics_overlay(tampered_manifest)
 
 
+def test_fee_provenance_accepts_exact_non_integral_ratio_and_rejects_contradictions() -> None:
+    exact_rational = FastTrainingEconomicsFeeProvenance(
+        source_signature="rational-fee",
+        source_ordinal=2,
+        source_sequence=9,
+        source_observed_at_unix_ms=1_000,
+        age_ms=0,
+        market_quote_amount_raw=3,
+        user_quote_amount_raw=4,
+        signed_user_cost_quote_raw=1,
+        effective_fee_bps=None,
+    )
+    assert exact_rational.effective_fee_bps is None
+
+    with pytest.raises(ValueError, match="fee|bps|ratio|represent"):
+        FastTrainingEconomicsFeeProvenance(
+            source_signature="contradictory-fee",
+            source_ordinal=2,
+            source_sequence=9,
+            source_observed_at_unix_ms=1_000,
+            age_ms=0,
+            market_quote_amount_raw=3,
+            user_quote_amount_raw=4,
+            signed_user_cost_quote_raw=1,
+            effective_fee_bps=100,
+        )
+
+    with pytest.raises(ValueError, match="negative|user-cost|delta|fee"):
+        FastTrainingEconomicsFeeProvenance(
+            source_signature="negative-fee",
+            source_ordinal=2,
+            source_sequence=9,
+            source_observed_at_unix_ms=1_000,
+            age_ms=0,
+            market_quote_amount_raw=100,
+            user_quote_amount_raw=99,
+            signed_user_cost_quote_raw=-1,
+            effective_fee_bps=0,
+        )
+
+
+def test_available_overlay_applies_exact_rational_source_fee_without_rounding() -> None:
+    row = replace(
+        _available_row(),
+        entry_fee=FastTrainingEconomicsFeeProvenance(
+            source_signature="decision-fee-rational",
+            source_ordinal=2,
+            source_sequence=9,
+            source_observed_at_unix_ms=1_000,
+            age_ms=0,
+            market_quote_amount_raw=3,
+            user_quote_amount_raw=4,
+            signed_user_cost_quote_raw=1,
+            effective_fee_bps=None,
+        ),
+        exit_fee=FastTrainingEconomicsFeeProvenance(
+            source_signature="endpoint-fee-rational",
+            source_ordinal=2,
+            source_sequence=11,
+            source_observed_at_unix_ms=1_200,
+            age_ms=0,
+            market_quote_amount_raw=7,
+            user_quote_amount_raw=6,
+            signed_user_cost_quote_raw=1,
+            effective_fee_bps=None,
+        ),
+    )
+    policy = _policy()
+    context = build_entry_counterfactual_context_from_training_economics(
+        row,
+        policy=policy,
+        overlay_manifest_fingerprint_sha256="d" * 64,
+        base_quantity=2.0,
+        horizon_complete=True,
+    )
+
+    entry_rate = Fraction(1, 3) + Fraction(
+        policy.additional_entry_slippage_bps + policy.entry_latency_bps,
+        10_000,
+    )
+    exit_rate = Fraction(1, 7) + Fraction(
+        policy.additional_exit_slippage_bps + policy.exit_latency_bps,
+        10_000,
+    )
+    expected_entry = (
+        Fraction(row.entry_projection.quote_input_raw, 10**row.entry_reserve.quote_decimals)
+        * (1 + entry_rate)
+        + Fraction(str(policy.entry_network_fee_quote))
+    )
+    expected_exit = (
+        Fraction(row.exit_projection.quote_output_raw, 10**row.exit_reserve.quote_decimals)
+        * (1 - exit_rate)
+        - Fraction(str(policy.exit_network_fee_quote))
+    )
+
+    assert context.buy_now is not None
+    assert context.exit_at_horizon is not None
+    assert context.buy_now.quote_amount == pytest.approx(float(expected_entry))
+    assert context.exit_at_horizon.quote_amount == pytest.approx(float(expected_exit))
+
+
 def test_available_overlay_applies_only_source_fee_and_explicit_non_source_costs() -> None:
     row = _available_row()
     context = build_entry_counterfactual_context_from_training_economics(
@@ -316,7 +421,7 @@ def test_unavailable_overlay_keeps_entry_and_exit_unknown() -> None:
 def test_exit_cost_rate_at_or_above_one_hundred_percent_fails_closed() -> None:
     row = replace(
         _available_row(),
-        exit_fee=replace(_available_row().exit_fee, effective_fee_bps=9_980),
+        exit_fee=_fee("endpoint-fee-high", 11, 1_200, 9_980),
     )
     with pytest.raises(ValueError, match="exit.*100|exit.*rate"):
         build_entry_counterfactual_context_from_training_economics(
