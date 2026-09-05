@@ -248,7 +248,7 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
 
     assert set(by_decision) == {
         "mixed-pump-decision:0:h500:v1",
-        "mixed-swap-decision:2:h500:v1",
+        "mixed-swap-decision:2147483650:h500:v1",
     }
 
     pump_actions = {
@@ -266,7 +266,7 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
 
     swap_actions = {
         row["action"]: row["execution_status"]
-        for row in by_decision["mixed-swap-decision:2:h500:v1"]
+        for row in by_decision["mixed-swap-decision:2147483650:h500:v1"]
     }
     assert (
         swap_actions[CounterfactualAction.BUY_NOW.value]
@@ -310,13 +310,16 @@ def test_component_builder_rejects_tampered_feature_or_future_path_fingerprint(
 
 
 def test_runtime_bundle_source_has_no_provider_execution_promotion_or_live_authority() -> None:
-    source = (
+    research_root = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "shreks_brain"
         / "research"
-        / "fast_training_bundle.py"
-    ).read_text(encoding="utf-8")
+    )
+    sources = (
+        (research_root / "fast_training_bundle.py").read_text(encoding="utf-8"),
+        (research_root / "fast_training_economics.py").read_text(encoding="utf-8"),
+    )
 
     for forbidden in (
         "requests.",
@@ -327,4 +330,4 @@ def test_runtime_bundle_source_has_no_provider_execution_promotion_or_live_autho
         "submit_transaction",
         "promotion",
     ):
-        assert forbidden not in source
+        assert all(forbidden not in source for source in sources)
