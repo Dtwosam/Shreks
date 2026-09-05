@@ -1,4 +1,5 @@
 use std::{
+    env,
     fs,
     path::{Path, PathBuf},
     process,
@@ -1351,4 +1352,120 @@ fn immutable_overlay_writer_creates_exact_two_file_artifact_and_never_overwrites
 
     drop(db);
     cleanup_dir(&root);
+}
+
+
+#[test]
+#[ignore = "invoked explicitly by the Python FL8.1 mixed economics integration proof"]
+fn write_mixed_training_economics_python_integration_fixture() {
+    let root = PathBuf::from(
+        env::var("SHREKS_TRAINING_ECONOMICS_INTEGRATION_DIR")
+            .expect("SHREKS_TRAINING_ECONOMICS_INTEGRATION_DIR must be set"),
+    );
+    assert!(
+        !root.exists(),
+        "mixed training economics fixture destination must be fresh"
+    );
+    fs::create_dir_all(&root).unwrap();
+
+    let database = root.join("shreks.db");
+    let features = root.join("features.jsonl");
+    let overlay = root.join("training-economics");
+    let db = ShreksDb::open(&database).unwrap();
+
+    // Unsupported Pump bonding-curve decision/horizon.
+    store_event(
+        &db,
+        "mixed-pump-decision",
+        1,
+        1_000,
+        FastEventKind::Buy,
+        0.050,
+        10_000_000_000,
+    );
+    store_event(
+        &db,
+        "mixed-pump-endpoint",
+        2,
+        1_200,
+        FastEventKind::Sell,
+        0.055,
+        9_000_000_000,
+    );
+    let pump_decision = decision("mixed-pump-decision", 1, 1_000, 0.050);
+    db.record_future_path_label(
+        &pump_decision,
+        FuturePathCoverage::new(2_000, true).unwrap(),
+        &complete_label(500, "mixed-pump-endpoint", 1_200, 0.055),
+    )
+    .unwrap();
+
+    // Fully source-backed PumpSwap decision/horizon with exact 50 bps BUY/SELL
+    // user-vs-market fee deltas and migration-15 virtual quote reserves.
+    let swap_decision_source = store_swap_event(
+        &db,
+        "mixed-swap-decision",
+        2,
+        true,
+        3,
+        2_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let swap_endpoint_source = store_swap_event(
+        &db,
+        "mixed-swap-endpoint",
+        4,
+        false,
+        4,
+        2_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(
+        &db,
+        &swap_decision_source,
+        3,
+        2_000,
+        Some(&swap_endpoint_source),
+        Some(2_200),
+        500,
+    );
+
+    let feature_manifest = db
+        .write_fast_training_feature_jsonl(FUTURE_PATH_LABEL_VERSION, &features)
+        .unwrap();
+    assert_eq!(feature_manifest.row_count, 2);
+
+    let economics_manifest = db
+        .write_fast_training_economics_overlay(
+            &features,
+            FUTURE_PATH_LABEL_VERSION,
+            "2",
+            60_000,
+            &overlay,
+        )
+        .unwrap();
+    assert_eq!(economics_manifest.row_count, 2);
+    assert_eq!(economics_manifest.available_row_count, 1);
+    assert_eq!(
+        economics_manifest.status_counts.get("available"),
+        Some(&1)
+    );
+    assert_eq!(
+        economics_manifest.status_counts.get("unsupported_venue"),
+        Some(&1)
+    );
+
+    drop(db);
+    assert!(database.is_file());
+    assert!(features.is_file());
+    assert!(overlay.join("rows.jsonl").is_file());
+    assert!(overlay.join("manifest.json").is_file());
 }
