@@ -169,7 +169,11 @@ def _write_rust_overlay_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
             str(overlay),
         ],
         cwd=repo_root,
-        env={},
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("SHREKS_")
+        },
         check=True,
         capture_output=True,
         text=True,
