@@ -125,7 +125,7 @@ Required explicit inputs:
 - `--future-path-label-version <positive integer>`;
 - `--counterfactual-base-quantity <positive finite decimal>`;
 - `--pump-swap-fee-maximum-age-ms <non-negative integer>`;
-- `--output <path>`.
+- `--output <directory>`.
 
 The command:
 
@@ -134,10 +134,10 @@ The command:
 3. loads matching FL4 labels for the requested label version;
 4. requires exact feature/FL4 decision-identity alignment;
 5. computes one overlay row for every exact FL4 decision/horizon/version identity;
-6. writes canonical JSONL plus one deterministic manifest;
+6. creates the requested output directory and writes exactly `rows.jsonl` plus `manifest.json`;
 7. performs no provider/network access and no trading action.
 
-The destination must not already exist. The exporter is an immutable artifact writer, not an in-place updater.
+The destination directory must not already exist. The exporter is an immutable artifact writer, not an in-place updater.
 
 ## Overlay schema
 
@@ -231,9 +231,27 @@ For an available row, record the exact output from existing `project_exit(...)` 
 - gross quote output;
 - gross average exit price.
 
-Version 1 does not claim maximum route capacity. It proves executable deterministic reserve projection for exactly the requested base quantity. A projection failure produces `exit_projection_unavailable`.
+Version 1 does not claim maximum route capacity. It proves deterministic PumpSwap pool-state projection for exactly the requested base quantity. A projection failure produces `exit_projection_unavailable`.
 
-### Fee provenance
+### Executability semantics
+
+An `available` overlay row proves that, at the immutable historical PumpSwap pool states and exact requested quantity:
+
+- the pool reserve math supports the requested BUY quantity at the decision;
+- the pool reserve math supports the same requested SELL quantity at the canonical endpoint;
+- exact causal source fee rates are available for both legs;
+- the explicit non-source cost policy can be applied without arithmetic contradiction.
+
+It does **not** prove:
+
+- Jupiter or another aggregator exposed a route;
+- a transaction would have landed;
+- account contention, compute, blockhash, RPC, or priority conditions would have succeeded;
+- maximum route capacity.
+
+The downstream FL5 `ExecutableTradeEvidence` created by this slice is therefore specifically a **training-research pool-execution projection**. Its evidence version must identify this overlay contract. It must not be reused as provider-route or transaction-landing proof by PAPER/LIVE authority code.
+
+## Fee provenance
 
 Entry fee context is selected for:
 
@@ -528,9 +546,9 @@ After the implementation is sealed and deployed, physical evidence should use th
 
 The acceptance run must:
 
-1. export the overlay for the exact 512-decision FL4 population;
-2. report all 176 Pump rows as `unsupported_venue`;
-3. evaluate all 336 PumpSwap decision/horizon rows according to exact evidence availability;
+1. export the overlay for the exact 512-decision / 6,144-label FL4 population;
+2. report all 2,112 Pump decision/horizon rows (176 decisions × 12 horizons) as `unsupported_venue`;
+3. evaluate all 4,032 PumpSwap decision/horizon rows (336 decisions × 12 horizons) according to exact evidence availability;
 4. show zero hard source conflicts;
 5. report exact counts for `available`, fee-unavailable, projection-unavailable, and no-endpoint statuses;
 6. build a real runtime FL8.1 logical bundle from the exported overlay;
