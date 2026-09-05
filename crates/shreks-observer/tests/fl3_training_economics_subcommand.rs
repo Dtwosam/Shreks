@@ -169,7 +169,7 @@ fn training_economics_subcommand_runs_read_only_without_runtime_environment() {
         "expected one canonical JSON report: {stdout}"
     );
     assert!(stdout.contains(r#""schema_name":"shreks.fast_training_economics_overlay""#));
-    assert!(stdout.contains(r#""schema_version":1"#));
+    assert!(stdout.contains(r#""schema_version":2"#));
     assert!(stdout.contains(r#""row_count":1"#));
     assert!(stdout.contains(r#""unsupported_venue":1"#));
 
