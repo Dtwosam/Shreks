@@ -646,8 +646,8 @@ fn pumpswap_available_row_uses_exact_quantity_projection_and_causal_fees() {
     let row = &rows[0];
     assert_eq!(row.status, FastTrainingEconomicsStatus::Available);
     assert_eq!(row.requested_base_quantity_raw, Some(2_000_000));
-    assert_eq!(row.entry_fee.as_ref().unwrap().effective_fee_bps, 50);
-    assert_eq!(row.exit_fee.as_ref().unwrap().effective_fee_bps, 50);
+    assert_eq!(row.entry_fee.as_ref().unwrap().effective_fee_bps, Some(50));
+    assert_eq!(row.exit_fee.as_ref().unwrap().effective_fee_bps, Some(50));
     assert_eq!(row.entry_fee.as_ref().unwrap().source_sequence, 1);
     assert_eq!(row.exit_fee.as_ref().unwrap().source_sequence, 2);
 
