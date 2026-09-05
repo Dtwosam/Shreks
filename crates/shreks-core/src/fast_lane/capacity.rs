@@ -276,10 +276,10 @@ fn reserve_view(reserves: &FastReserveContext) -> Result<ReserveView, ExitCapaci
         FastReserveContext::PumpCurve {
             virtual_base_reserve_raw,
             virtual_quote_reserve_raw,
+            real_base_reserve_raw,
             real_quote_reserve_raw,
             base_decimals,
             quote_decimals,
-            ..
         } => ReserveView {
             base_reserve_raw: *virtual_base_reserve_raw,
             physical_base_reserve_raw: *real_base_reserve_raw,
