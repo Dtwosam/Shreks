@@ -27,6 +27,9 @@ from shreks_brain.research.fast_training_bundle import (
     read_fast_training_bundle,
     write_fast_training_bundle,
 )
+from shreks_brain.research.fast_training_economics import (
+    FastTrainingExecutionCostPolicy,
+)
 from shreks_brain.research.fast_training_features import (
     read_fast_training_feature_jsonl,
 )
@@ -81,6 +84,56 @@ def _write_rust_fixture(tmp_path: Path) -> tuple[Path, Path]:
     assert database.is_file()
     assert features.is_file()
     return database, features
+
+
+def _write_mixed_training_economics_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, Path]:
+    repo_root = Path(__file__).resolve().parents[2]
+    fixture_root = tmp_path / "mixed-training-economics-fixture"
+    env = os.environ.copy()
+    env["SHREKS_TRAINING_ECONOMICS_INTEGRATION_DIR"] = str(fixture_root)
+    subprocess.run(
+        [
+            "cargo",
+            "test",
+            "-p",
+            "shreks-storage",
+            "--test",
+            "fl3_training_economics_overlay",
+            "write_mixed_training_economics_python_integration_fixture",
+            "--",
+            "--ignored",
+            "--exact",
+        ],
+        cwd=repo_root,
+        env=env,
+        check=True,
+    )
+    database = fixture_root / "shreks.db"
+    features = fixture_root / "features.jsonl"
+    overlay = fixture_root / "training-economics"
+    assert database.is_file()
+    assert features.is_file()
+    assert (overlay / "rows.jsonl").is_file()
+    assert (overlay / "manifest.json").is_file()
+    return database, features, overlay
+
+
+def _training_cost_policy() -> FastTrainingExecutionCostPolicy:
+    return FastTrainingExecutionCostPolicy(
+        version="runtime-training-cost-v1",
+        additional_entry_slippage_bps=10,
+        additional_exit_slippage_bps=20,
+        entry_latency_bps=5,
+        exit_latency_bps=5,
+        entry_network_fee_quote=0.0,
+        exit_network_fee_quote=0.0,
+        entry_priority_fee_quote=0.0,
+        exit_priority_fee_quote=0.0,
+        entry_expected_failure_cost_quote=0.0,
+        exit_expected_failure_cost_quote=0.0,
+    )
 
 
 def _all_counterfactuals(database: Path):
@@ -160,7 +213,9 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    database, features_path = _write_rust_fixture(tmp_path)
+    database, features_path, overlay_path = _write_mixed_training_economics_fixture(
+        tmp_path
+    )
     imported_pyarrow = False
     original_import = builtins.__import__
 
@@ -178,22 +233,49 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
         sqlite_path=database,
         future_path_label_version=1,
         counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
     )
 
     assert not imported_pyarrow
     assert bundle.manifest.decision_count == 2
-    assert bundle.manifest.future_path_label_row_count == 4
-    assert bundle.manifest.counterfactual_row_count == 8
+    assert bundle.manifest.future_path_label_row_count == 2
+    assert bundle.manifest.counterfactual_row_count == 4
 
     by_decision = {}
     for row in bundle.counterfactual_rows:
         by_decision.setdefault(row["decision_id"], []).append(row)
 
-    assert len(by_decision) == 4
-    for rows in by_decision.values():
-        actions = {row["action"]: row["execution_status"] for row in rows}
-        assert actions[CounterfactualAction.BUY_NOW.value] == ExecutionStatus.UNKNOWN.value
-        assert actions[CounterfactualAction.SKIP.value] == ExecutionStatus.EXECUTABLE.value
+    assert set(by_decision) == {
+        "mixed-pump-decision:0:h500:v1",
+        "mixed-swap-decision:2:h500:v1",
+    }
+
+    pump_actions = {
+        row["action"]: row["execution_status"]
+        for row in by_decision["mixed-pump-decision:0:h500:v1"]
+    }
+    assert (
+        pump_actions[CounterfactualAction.BUY_NOW.value]
+        == ExecutionStatus.UNKNOWN.value
+    )
+    assert (
+        pump_actions[CounterfactualAction.SKIP.value]
+        == ExecutionStatus.EXECUTABLE.value
+    )
+
+    swap_actions = {
+        row["action"]: row["execution_status"]
+        for row in by_decision["mixed-swap-decision:2:h500:v1"]
+    }
+    assert (
+        swap_actions[CounterfactualAction.BUY_NOW.value]
+        == ExecutionStatus.EXECUTABLE.value
+    )
+    assert (
+        swap_actions[CounterfactualAction.SKIP.value]
+        == ExecutionStatus.EXECUTABLE.value
+    )
 
 
 def test_component_builder_rejects_tampered_feature_or_future_path_fingerprint(
