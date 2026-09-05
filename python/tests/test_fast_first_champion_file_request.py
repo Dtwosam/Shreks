@@ -100,6 +100,16 @@ def _request(tmp_path: Path):
     features.write_text('{"sealed":"feature-source"}\n', encoding="utf-8")
     database.write_bytes(b"sealed-sqlite-source")
     contexts = _context_corpus(tmp_path)
+    economics_overlay = tmp_path / "training-economics"
+    economics_overlay.mkdir()
+    (economics_overlay / "rows.jsonl").write_text(
+        '{"sealed":"rows"}\n',
+        encoding="utf-8",
+    )
+    (economics_overlay / "manifest.json").write_text(
+        '{"manifest_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\n',
+        encoding="utf-8",
+    )
     destination = tmp_path / "first-champion-artifact"
 
     request = build_fast_first_champion_file_request(
