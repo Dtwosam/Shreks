@@ -137,7 +137,7 @@ pub use reserve_context::{
     pump_reserve_context_from_source, pump_swap_reserve_context_from_source,
 };
 pub use training_economics_overlay::{
-    python_float_hex, FastTrainingEconomicsEntryProjection,
+    decimal_quantity_to_raw, python_float_hex, FastTrainingEconomicsEntryProjection,
     FastTrainingEconomicsExitProjection, FastTrainingEconomicsFeeProvenance,
     FastTrainingEconomicsOverlayManifest, FastTrainingEconomicsOverlayRow,
     FastTrainingEconomicsReserveProvenance, FastTrainingEconomicsStatus,
