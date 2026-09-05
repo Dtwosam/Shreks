@@ -836,7 +836,7 @@ fn pumpswap_projection_limits_are_explicit_unavailable_statuses() {
     );
     record_swap_path(&db, &decision, 1, 5_000, Some(&endpoint), Some(5_200), 500);
     assert_eq!(
-        overlay_rows(&db, "20_000", 1_000)[0].status,
+        overlay_rows(&db, "20000", 1_000)[0].status,
         FastTrainingEconomicsStatus::EntryProjectionUnavailable
     );
     drop(db);
