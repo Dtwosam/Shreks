@@ -1005,10 +1005,12 @@ fn pumpswap_positive_non_integral_fee_ratio_is_available_exact_rational_evidence
     assert_eq!(entry_fee.market_quote_amount_raw, 3);
     assert_eq!(entry_fee.user_quote_amount_raw, 4);
     assert_eq!(entry_fee.signed_user_cost_quote_raw, 1);
-    assert_eq!(entry_fee.effective_fee_bps, None);
+    let entry_fee_json = serde_json::to_value(entry_fee).unwrap();
+    assert!(entry_fee_json["effective_fee_bps"].is_null());
 
     let exit_fee = row.exit_fee.as_ref().unwrap();
-    assert_eq!(exit_fee.effective_fee_bps, Some(50));
+    let exit_fee_json = serde_json::to_value(exit_fee).unwrap();
+    assert_eq!(exit_fee_json["effective_fee_bps"], 50);
 
     drop(db);
     cleanup_dir(&root);
