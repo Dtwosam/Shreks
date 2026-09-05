@@ -32,7 +32,6 @@ from shreks_brain.research.fast_training_economics import (
     decode_fast_training_execution_cost_policy,
     encode_fast_training_execution_cost_policy,
     fast_training_execution_cost_policy_fingerprint_sha256,
-    read_fast_training_economics_overlay,
 )
 
 from .builder import build_fast_first_champion
@@ -392,6 +391,8 @@ class _SourceSnapshot:
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
     training_economics_overlay_manifest_fingerprint_sha256: str
+    training_economics_overlay_manifest_file_sha256: str
+    training_economics_overlay_rows_file_sha256: str
 
 
 def build_fast_first_champion_file_request(
@@ -1327,9 +1328,15 @@ def _capture_sources(
         ),
         context_corpus_file_sha256=_sha256_file_stable(context_path),
         training_economics_overlay_manifest_fingerprint_sha256=(
-            read_fast_training_economics_overlay(
+            _read_training_economics_overlay_manifest_fingerprint(
                 training_economics_overlay_path
-            ).manifest.manifest_fingerprint_sha256
+            )
+        ),
+        training_economics_overlay_manifest_file_sha256=_sha256_file_stable(
+            training_economics_overlay_path / "manifest.json"
+        ),
+        training_economics_overlay_rows_file_sha256=_sha256_file_stable(
+            training_economics_overlay_path / "rows.jsonl"
         ),
     )
 
@@ -1353,7 +1360,33 @@ def _resolve_source_directory(base: Path, value: str) -> Path:
         raise ValueError(
             f"first champion source directory is missing or unsafe: {value}"
         )
+    if {child.name for child in path.iterdir()} != {"rows.jsonl", "manifest.json"}:
+        raise ValueError(
+            "first champion training economics overlay must contain exactly rows.jsonl and manifest.json"
+        )
     return path
+
+
+def _read_training_economics_overlay_manifest_fingerprint(path: Path) -> str:
+    manifest_path = path / "manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("training economics overlay manifest must be a regular file")
+    try:
+        document = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_json_constant,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("training economics overlay manifest is malformed JSON") from exc
+    if not isinstance(document, dict):
+        raise ValueError("training economics overlay manifest must be an object")
+    fingerprint = document.get("manifest_fingerprint_sha256")
+    _require_sha256(
+        "training economics overlay manifest fingerprint",
+        fingerprint,
+    )
+    return fingerprint
 
 
 def _resolve_destination(base: Path, value: str) -> Path:
