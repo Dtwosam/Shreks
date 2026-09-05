@@ -125,7 +125,10 @@ pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
 };
-pub use pumpswap_effective_fee::PumpSwapEffectiveFeeEvidence;
+pub use pumpswap_effective_fee::{
+    PumpSwapEffectiveFeeContext, PumpSwapEffectiveFeeContextValue,
+    PumpSwapEffectiveFeeEvidence,
+};
 pub use pump_swap_fast_lane::{
     pump_swap_event_ordinal, PumpSwapMarket, PumpSwapTradeEvidenceWrite,
 };
