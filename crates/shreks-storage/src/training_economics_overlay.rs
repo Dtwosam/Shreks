@@ -1,4 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    process,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
@@ -10,8 +17,9 @@ use shreks_core::{
 };
 
 use crate::{
-    FastTrainingFeatureRecord, PumpSwapEffectiveFeeContext, PumpSwapEffectiveFeeContextValue,
-    ShreksDb, StorageError, StoredFastEvent, StoredFuturePathLabel,
+    decode_fast_training_feature_record_json, FastTrainingFeatureRecord,
+    PumpSwapEffectiveFeeContext, PumpSwapEffectiveFeeContextValue, ShreksDb, StorageError,
+    StoredFastEvent, StoredFuturePathLabel,
 };
 
 pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME: &str =
@@ -398,6 +406,157 @@ impl ShreksDb {
         Ok(rows)
     }
 
+    /// Write a deterministic, immutable training-economics artifact without
+    /// mutating the operational database.
+    pub fn write_fast_training_economics_overlay<P: AsRef<Path>, Q: AsRef<Path>>(
+        &self,
+        feature_jsonl: P,
+        label_version: u16,
+        counterfactual_base_quantity: &str,
+        pump_swap_fee_maximum_age_ms: u64,
+        destination: Q,
+    ) -> Result<FastTrainingEconomicsOverlayManifest, StorageError> {
+        if label_version == 0 {
+            return Err(StorageError::InvalidData(
+                "training economics future-path label version must be positive".to_owned(),
+            ));
+        }
+        let canonical_quantity = canonical_decimal_quantity(counterfactual_base_quantity)?;
+        let feature_path = feature_jsonl.as_ref();
+        let feature_bytes = fs::read(feature_path)?;
+        if feature_bytes.is_empty() {
+            return Err(StorageError::InvalidData(
+                "training economics feature JSONL cannot be empty".to_owned(),
+            ));
+        }
+        let feature_source_jsonl_sha256 = format!("{:x}", Sha256::digest(&feature_bytes));
+        let feature_text = std::str::from_utf8(&feature_bytes).map_err(|error| {
+            StorageError::InvalidData(format!(
+                "training economics feature JSONL must be UTF-8: {error}"
+            ))
+        })?;
+        let mut features = Vec::new();
+        let mut seen_feature_identities = BTreeSet::new();
+        for (index, line) in feature_text.lines().enumerate() {
+            if line.trim().is_empty() {
+                return Err(StorageError::InvalidData(format!(
+                    "training economics feature JSONL line {} is blank",
+                    index + 1
+                )));
+            }
+            let feature = decode_fast_training_feature_record_json(line)?;
+            let identity = feature_identity(&feature);
+            if !seen_feature_identities.insert(identity) {
+                return Err(StorageError::InvalidData(
+                    "training economics feature JSONL contains a duplicate decision identity"
+                        .to_owned(),
+                ));
+            }
+            features.push(feature);
+        }
+        if features.is_empty() {
+            return Err(StorageError::InvalidData(
+                "training economics feature JSONL cannot be empty".to_owned(),
+            ));
+        }
+
+        let rows = self.fast_training_economics_overlay_rows(
+            &features,
+            label_version,
+            &canonical_quantity,
+            pump_swap_fee_maximum_age_ms,
+        )?;
+        if rows.is_empty() {
+            return Err(StorageError::InvalidData(
+                "training economics overlay requires at least one row".to_owned(),
+            ));
+        }
+
+        let future_path_logical_fingerprint_sha256 =
+            self.fast_training_future_path_logical_fingerprint_sha256(label_version)?;
+
+        let mut status_counts = BTreeMap::<String, u64>::new();
+        let mut available_row_count = 0_u64;
+        let mut rows_bytes = Vec::new();
+        let mut row_hasher = Sha256::new();
+        for row in &rows {
+            let encoded = canonical_json_bytes(row, "training economics overlay row")?;
+            rows_bytes.extend_from_slice(&encoded);
+            rows_bytes.push(b'\n');
+            row_hasher.update(&encoded);
+            row_hasher.update(b"\n");
+            *status_counts
+                .entry(row.status.as_str().to_owned())
+                .or_insert(0) += 1;
+            if row.status == FastTrainingEconomicsStatus::Available {
+                available_row_count = available_row_count.checked_add(1).ok_or_else(|| {
+                    StorageError::InvalidData(
+                        "training economics available row count overflowed".to_owned(),
+                    )
+                })?;
+            }
+        }
+
+        let row_count = u64::try_from(rows.len()).map_err(|_| {
+            StorageError::InvalidData("training economics row count exceeds u64".to_owned())
+        })?;
+        let counted_rows = status_counts.values().try_fold(0_u64, |total, count| {
+            total.checked_add(*count).ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics status row count overflowed".to_owned(),
+                )
+            })
+        })?;
+        if counted_rows != row_count {
+            return Err(StorageError::InvalidData(
+                "training economics status counts do not equal row count".to_owned(),
+            ));
+        }
+
+        let min_decision_observed_at_unix_ms = rows
+            .iter()
+            .map(|row| row.decision_observed_at_unix_ms)
+            .min()
+            .ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics overlay has no minimum decision timestamp".to_owned(),
+                )
+            })?;
+        let max_decision_observed_at_unix_ms = rows
+            .iter()
+            .map(|row| row.decision_observed_at_unix_ms)
+            .max()
+            .ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics overlay has no maximum decision timestamp".to_owned(),
+                )
+            })?;
+
+        let mut manifest = FastTrainingEconomicsOverlayManifest {
+            schema_name: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME.to_owned(),
+            schema_version: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
+            row_count,
+            available_row_count,
+            status_counts,
+            feature_source_jsonl_sha256,
+            future_path_logical_fingerprint_sha256,
+            future_path_label_version: label_version,
+            counterfactual_base_quantity: canonical_quantity,
+            pump_swap_fee_maximum_age_ms,
+            min_decision_observed_at_unix_ms,
+            max_decision_observed_at_unix_ms,
+            ordered_row_logical_fingerprint_sha256: format!("{:x}", row_hasher.finalize()),
+            manifest_fingerprint_sha256: String::new(),
+        };
+        manifest.manifest_fingerprint_sha256 = manifest_fingerprint_sha256(&manifest)?;
+        let mut manifest_bytes =
+            canonical_json_bytes(&manifest, "training economics overlay manifest")?;
+        manifest_bytes.push(b'\n');
+
+        write_immutable_overlay_directory(destination.as_ref(), &rows_bytes, &manifest_bytes)?;
+        Ok(manifest)
+    }
+
     pub fn fast_training_future_path_logical_fingerprint_sha256(
         &self,
         label_version: u16,
@@ -767,6 +926,61 @@ fn fee_provenance(
 struct ParsedDecimalQuantity {
     coefficient: u128,
     scale10: i32,
+}
+
+fn canonical_decimal_quantity(input: &str) -> Result<String, StorageError> {
+    let parsed = parse_decimal_quantity(input)?;
+    if parsed.coefficient == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must be positive".to_owned(),
+        ));
+    }
+
+    let mut digits = parsed.coefficient.to_string();
+    if parsed.scale10 >= 0 {
+        let zeros = usize::try_from(parsed.scale10).map_err(|_| {
+            StorageError::InvalidData(
+                "training economics counterfactual base quantity scale is too large".to_owned(),
+            )
+        })?;
+        digits.extend(std::iter::repeat_n('0', zeros));
+        return Ok(digits);
+    }
+
+    let fractional_digits = usize::try_from(parsed.scale10.checked_neg().ok_or_else(|| {
+        StorageError::InvalidData(
+            "training economics counterfactual base quantity scale overflowed".to_owned(),
+        )
+    })?)
+    .map_err(|_| {
+        StorageError::InvalidData(
+            "training economics counterfactual base quantity scale is too large".to_owned(),
+        )
+    })?;
+
+    if fractional_digits >= digits.len() {
+        let leading_zeros = fractional_digits - digits.len();
+        let mut value = String::from("0.");
+        value.extend(std::iter::repeat_n('0', leading_zeros));
+        value.push_str(&digits);
+        while value.ends_with('0') {
+            value.pop();
+        }
+        if value.ends_with('.') {
+            value.pop();
+        }
+        return Ok(value);
+    }
+
+    let split_at = digits.len() - fractional_digits;
+    digits.insert(split_at, '.');
+    while digits.ends_with('0') {
+        digits.pop();
+    }
+    if digits.ends_with('.') {
+        digits.pop();
+    }
+    Ok(digits)
 }
 
 fn validate_decimal_quantity_text(input: &str) -> Result<(), StorageError> {
@@ -1205,6 +1419,132 @@ pub fn python_float_hex(value: f64) -> Result<String, StorageError> {
 
     let exponent = exponent_bits - 1023;
     Ok(format!("{sign}0x1.{mantissa:013x}p{exponent:+}"))
+}
+
+fn canonical_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(canonical_json_value).collect())
+        }
+        Value::Object(values) => {
+            let mut ordered = BTreeMap::new();
+            for (key, value) in values {
+                ordered.insert(key, canonical_json_value(value));
+            }
+            let mut object = serde_json::Map::new();
+            for (key, value) in ordered {
+                object.insert(key, value);
+            }
+            Value::Object(object)
+        }
+        other => other,
+    }
+}
+
+fn canonical_json_bytes<T: Serialize>(
+    value: &T,
+    label: &str,
+) -> Result<Vec<u8>, StorageError> {
+    let value = serde_json::to_value(value).map_err(|error| {
+        StorageError::InvalidData(format!("{label} could not be converted to JSON: {error}"))
+    })?;
+    serde_json::to_vec(&canonical_json_value(value)).map_err(|error| {
+        StorageError::InvalidData(format!("{label} could not be serialized: {error}"))
+    })
+}
+
+fn manifest_fingerprint_sha256(
+    manifest: &FastTrainingEconomicsOverlayManifest,
+) -> Result<String, StorageError> {
+    let value = serde_json::to_value(manifest).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "training economics overlay manifest fingerprint conversion failed: {error}"
+        ))
+    })?;
+    let Value::Object(mut object) = value else {
+        return Err(StorageError::InvalidData(
+            "training economics overlay manifest did not serialize as an object".to_owned(),
+        ));
+    };
+    object.remove("manifest_fingerprint_sha256");
+    let bytes = serde_json::to_vec(&canonical_json_value(Value::Object(object))).map_err(
+        |error| {
+            StorageError::InvalidData(format!(
+                "training economics overlay manifest fingerprint serialization failed: {error}"
+            ))
+        },
+    )?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+pub fn encode_fast_training_economics_overlay_manifest_json(
+    manifest: &FastTrainingEconomicsOverlayManifest,
+) -> Result<String, StorageError> {
+    let bytes = canonical_json_bytes(manifest, "training economics overlay manifest")?;
+    String::from_utf8(bytes).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "training economics overlay manifest was not UTF-8: {error}"
+        ))
+    })
+}
+
+fn write_immutable_overlay_directory(
+    destination: &Path,
+    rows_bytes: &[u8],
+    manifest_bytes: &[u8],
+) -> Result<(), StorageError> {
+    if destination.exists() {
+        return Err(StorageError::InvalidData(
+            "training economics overlay destination already exists".to_owned(),
+        ));
+    }
+    let file_name = destination.file_name().ok_or_else(|| {
+        StorageError::InvalidData(
+            "training economics overlay destination must name a directory".to_owned(),
+        )
+    })?;
+    let parent = destination
+        .parent()
+        .filter(|value| !value.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+
+    let now = SystemTime::now().duration_since(UNIX_EPOCH)?;
+    let staging_name = format!(
+        ".{}.staging-{}-{}",
+        file_name.to_string_lossy(),
+        process::id(),
+        now.as_nanos()
+    );
+    let staging = parent.join(staging_name);
+    fs::create_dir(&staging)?;
+
+    let result = (|| -> Result<(), StorageError> {
+        write_new_synced_file(&staging.join("rows.jsonl"), rows_bytes)?;
+        write_new_synced_file(&staging.join("manifest.json"), manifest_bytes)?;
+        if destination.exists() {
+            return Err(StorageError::InvalidData(
+                "training economics overlay destination already exists".to_owned(),
+            ));
+        }
+        fs::rename(&staging, destination)?;
+        Ok(())
+    })();
+
+    if result.is_err() {
+        let _ = fs::remove_dir_all(&staging);
+    }
+    result
+}
+
+fn write_new_synced_file(path: &PathBuf, bytes: &[u8]) -> Result<(), StorageError> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 #[cfg(test)]
