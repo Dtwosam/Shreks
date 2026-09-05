@@ -1192,6 +1192,10 @@ fn conflict_quarantined_pumpswap_source_aborts_overlay() {
     );
     record_swap_path(&db, &decision, 1, 13_000, Some(&endpoint), Some(13_200), 500);
 
+    let features = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+
     let mut conflict = decision.clone();
     conflict.quote_amount_raw += 1;
     assert_eq!(
@@ -1200,9 +1204,6 @@ fn conflict_quarantined_pumpswap_source_aborts_overlay() {
         EvidenceWriteOutcome::QuarantinedConflict
     );
 
-    let features = db
-        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
-        .unwrap();
     let error = db
         .fast_training_economics_overlay_rows(
             &features,
