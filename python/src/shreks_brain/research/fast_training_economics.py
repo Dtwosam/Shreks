@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, fields
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
+from fractions import Fraction
 import hashlib
 import json
 import math
@@ -18,7 +19,7 @@ from .counterfactuals import (
 
 
 FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME = "shreks.fast_training_economics_overlay"
-FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION = 1
+FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION = 2
 
 _ROWS_FILENAME = "rows.jsonl"
 _MANIFEST_FILENAME = "manifest.json"
@@ -155,7 +156,7 @@ class FastTrainingEconomicsFeeProvenance:
     market_quote_amount_raw: int
     user_quote_amount_raw: int
     signed_user_cost_quote_raw: int
-    effective_fee_bps: int
+    effective_fee_bps: int | None
 
     def __post_init__(self) -> None:
         _require_canonical_text("fee source_signature", self.source_signature)
@@ -171,7 +172,33 @@ class FastTrainingEconomicsFeeProvenance:
             self.signed_user_cost_quote_raw, int
         ):
             raise ValueError("signed_user_cost_quote_raw must be an integer")
-        _require_non_negative_int("effective_fee_bps", self.effective_fee_bps)
+        if self.signed_user_cost_quote_raw < 0:
+            raise ValueError(
+                "attached fee provenance cannot contain a negative user-cost delta"
+            )
+
+        bps_numerator = self.signed_user_cost_quote_raw * 10_000
+        exact_bps, remainder = divmod(
+            bps_numerator,
+            self.market_quote_amount_raw,
+        )
+        if remainder == 0:
+            if self.effective_fee_bps is None:
+                raise ValueError(
+                    "exact integer-bps fee ratio requires effective_fee_bps"
+                )
+            _require_non_negative_int(
+                "effective_fee_bps",
+                self.effective_fee_bps,
+            )
+            if self.effective_fee_bps != exact_bps:
+                raise ValueError(
+                    "effective_fee_bps contradicts exact raw fee ratio"
+                )
+        elif self.effective_fee_bps is not None:
+            raise ValueError(
+                "non-integral raw fee ratio must not carry effective_fee_bps"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,7 +325,7 @@ class FastTrainingEconomicsOverlayRow:
             expected = (False, False, False, False, False, False, False)
         else:
             if self.venue != "pump_swap":
-                raise ValueError("version-1 supported training economics rows must be PumpSwap")
+                raise ValueError("supported training economics rows must be PumpSwap")
             if self.status is FastTrainingEconomicsStatus.NO_ENDPOINT:
                 if self.endpoint_signature is not None:
                     raise ValueError("no_endpoint row cannot contain an endpoint")
@@ -703,39 +730,62 @@ def build_entry_counterfactual_context_from_training_economics(
     if exit_projection.base_quantity != base_quantity:
         raise ValueError("exit projection base quantity contradicts requested quantity")
 
-    entry_variable_bps = (
-        entry_fee.effective_fee_bps
-        + policy.additional_entry_slippage_bps
-        + policy.entry_latency_bps
+    if row.entry_reserve is None or row.exit_reserve is None:
+        raise ValueError("available training economics row requires reserve provenance")
+
+    entry_source_rate = Fraction(
+        entry_fee.signed_user_cost_quote_raw,
+        entry_fee.market_quote_amount_raw,
     )
-    exit_variable_bps = (
-        exit_fee.effective_fee_bps
-        + policy.additional_exit_slippage_bps
-        + policy.exit_latency_bps
+    exit_source_rate = Fraction(
+        exit_fee.signed_user_cost_quote_raw,
+        exit_fee.market_quote_amount_raw,
     )
-    if exit_variable_bps >= 10_000:
+    entry_policy_rate = Fraction(
+        policy.additional_entry_slippage_bps + policy.entry_latency_bps,
+        10_000,
+    )
+    exit_policy_rate = Fraction(
+        policy.additional_exit_slippage_bps + policy.exit_latency_bps,
+        10_000,
+    )
+    entry_variable_rate = entry_source_rate + entry_policy_rate
+    exit_variable_rate = exit_source_rate + exit_policy_rate
+    if exit_variable_rate >= 1:
         raise ValueError("exit variable cost rate must remain below 100 percent")
 
-    entry_fixed_quote = (
-        policy.entry_network_fee_quote
-        + policy.entry_priority_fee_quote
-        + policy.entry_expected_failure_cost_quote
+    entry_gross_quote = Fraction(
+        entry_projection.quote_input_raw,
+        10 ** row.entry_reserve.quote_decimals,
     )
-    exit_fixed_quote = (
-        policy.exit_network_fee_quote
-        + policy.exit_priority_fee_quote
-        + policy.exit_expected_failure_cost_quote
+    exit_gross_quote = Fraction(
+        exit_projection.quote_output_raw,
+        10 ** row.exit_reserve.quote_decimals,
     )
-    entry_total_quote = (
-        entry_projection.quote_input
-        * (1.0 + entry_variable_bps / 10_000.0)
-        + entry_fixed_quote
+    entry_fixed_quote = sum(
+        (
+            Fraction(str(policy.entry_network_fee_quote)),
+            Fraction(str(policy.entry_priority_fee_quote)),
+            Fraction(str(policy.entry_expected_failure_cost_quote)),
+        ),
+        Fraction(0),
     )
-    exit_net_quote = (
-        exit_projection.quote_output
-        * (1.0 - exit_variable_bps / 10_000.0)
-        - exit_fixed_quote
+    exit_fixed_quote = sum(
+        (
+            Fraction(str(policy.exit_network_fee_quote)),
+            Fraction(str(policy.exit_priority_fee_quote)),
+            Fraction(str(policy.exit_expected_failure_cost_quote)),
+        ),
+        Fraction(0),
     )
+    entry_total_quote_fraction = (
+        entry_gross_quote * (1 + entry_variable_rate) + entry_fixed_quote
+    )
+    exit_net_quote_fraction = (
+        exit_gross_quote * (1 - exit_variable_rate) - exit_fixed_quote
+    )
+    entry_total_quote = float(entry_total_quote_fraction)
+    exit_net_quote = float(exit_net_quote_fraction)
     _require_positive_finite("entry_total_quote", entry_total_quote)
     _require_positive_finite("exit_net_quote", exit_net_quote)
 
