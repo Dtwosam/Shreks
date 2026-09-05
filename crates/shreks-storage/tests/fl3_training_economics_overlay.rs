@@ -473,12 +473,30 @@ fn record_swap_path(
     let label = match (endpoint_source, endpoint_observed_at_unix_ms) {
         (Some(source), Some(endpoint_time)) => {
             let endpoint_event = swap_event(source, decision_sequence + 1, endpoint_time);
-            complete_label(
+            FuturePathLabel {
+                version: FUTURE_PATH_LABEL_VERSION,
                 horizon_ms,
-                &source.signature,
-                endpoint_time,
-                endpoint_event.price_quote,
-            )
+                completeness: FuturePathCompleteness::Complete,
+                event_count: 1,
+                no_trade_events: false,
+                endpoint_event_id: Some(
+                    FastEventId::new(source.signature.clone(), source.ordinal).unwrap(),
+                ),
+                endpoint_observed_at_unix_ms: Some(endpoint_time),
+                endpoint_price_quote: Some(endpoint_event.price_quote),
+                endpoint_return_bps: Some(100.0),
+                mfe_bps: Some(150.0),
+                mae_bps: Some(-25.0),
+                time_to_peak_ms: Some(horizon_ms.min(200)),
+                time_to_trough_ms: Some(horizon_ms.min(50)),
+                reversal_occurred: Some(false),
+                first_reversal_after_ms: None,
+                min_exit_capacity_base: None,
+                endpoint_exit_capacity_base: None,
+                route_unavailability_observed: None,
+                best_cost_adjusted_return_bps: None,
+                endpoint_cost_adjusted_return_bps: None,
+            }
         }
         (None, None) => complete_no_trade_label(horizon_ms),
         _ => panic!("endpoint source/time must be present together"),
