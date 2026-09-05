@@ -1129,6 +1129,15 @@ def _validate_reopened_chain(
     preparation,
 ) -> None:
     if (
+        request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        != manifest.training_economics_overlay_manifest_fingerprint_sha256
+        or request.training_execution_cost_policy_fingerprint_sha256
+        != manifest.training_execution_cost_policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion host economics inputs do not match run manifest"
+        )
+    if (
         request.request_fingerprint_sha256
         != manifest.request_fingerprint_sha256
         or request.selection_clock != manifest.selection_clock
@@ -1164,6 +1173,10 @@ def _validate_reopened_chain(
         != manifest.expected_release_source_sha
         or prep.proof_workspace_artifact_fingerprint_sha256
         != manifest.proof_workspace_artifact_fingerprint_sha256
+        or prep.training_economics_overlay_manifest_fingerprint_sha256
+        != manifest.training_economics_overlay_manifest_fingerprint_sha256
+        or prep.training_execution_cost_policy_fingerprint_sha256
+        != manifest.training_execution_cost_policy_fingerprint_sha256
         or prep.training_bundle_fingerprint_sha256
         != manifest.training_bundle_fingerprint_sha256
         or prep.validation_policy_fingerprint_sha256
@@ -1196,6 +1209,12 @@ def _validate_reopened_chain(
     if (
         child_request.validation_policy != plan.validation_policy
         or child_request.evaluation_policy != request.evaluation_policy
+        or child_request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        != request.expected_training_economics_overlay_manifest_fingerprint_sha256
+        or child_request.training_execution_cost_policy
+        != request.training_execution_cost_policy
+        or child_request.training_execution_cost_policy_fingerprint_sha256
+        != request.training_execution_cost_policy_fingerprint_sha256
         or child_request.horizon_ms != request.horizon_ms
         or child_request.minimum_test_scored_observations
         != request.minimum_test_scored_observations
@@ -1436,6 +1455,12 @@ def _manifest_document(
         ),
         "feature_source_jsonl_sha256": (
             manifest.feature_source_jsonl_sha256
+        ),
+        "training_economics_overlay_manifest_fingerprint_sha256": (
+            manifest.training_economics_overlay_manifest_fingerprint_sha256
+        ),
+        "training_execution_cost_policy_fingerprint_sha256": (
+            manifest.training_execution_cost_policy_fingerprint_sha256
         ),
         "plan_fingerprint_sha256": manifest.plan_fingerprint_sha256,
         "plan_file_sha256": manifest.plan_file_sha256,
