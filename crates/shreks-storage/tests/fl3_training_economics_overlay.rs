@@ -1181,8 +1181,8 @@ fn pumpswap_fee_missing_stale_and_rate_unknown_map_without_fallback() {
         9_100,
         10_000_000_000,
         5_000_000_000,
-        3,
         4,
+        3,
         Some(1_000_000_000),
     );
     let endpoint = store_swap_event(
