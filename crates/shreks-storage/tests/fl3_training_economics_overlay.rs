@@ -1271,3 +1271,84 @@ fn nonrepresentable_quantity_fails_closed_before_missing_virtual_reserve_status(
     drop(db);
     cleanup_dir(&root);
 }
+
+
+#[test]
+fn immutable_overlay_writer_creates_exact_two_file_artifact_and_never_overwrites() {
+    let (root, db) = fixture("writer");
+    let features_path = root.join("features.jsonl");
+    let destination = root.join("training-economics");
+    db.write_fast_training_feature_jsonl(
+        FUTURE_PATH_LABEL_VERSION,
+        &features_path,
+    )
+    .unwrap();
+
+    let before_fl4 = db
+        .fast_training_future_path_logical_fingerprint_sha256(
+            FUTURE_PATH_LABEL_VERSION,
+        )
+        .unwrap();
+
+    let manifest = db
+        .write_fast_training_economics_overlay(
+            &features_path,
+            FUTURE_PATH_LABEL_VERSION,
+            "2",
+            60_000,
+            &destination,
+        )
+        .unwrap();
+
+    assert_eq!(manifest.row_count, 4);
+    assert_eq!(manifest.available_row_count, 0);
+    assert_eq!(
+        manifest.status_counts.get("unsupported_venue"),
+        Some(&4)
+    );
+    assert_eq!(
+        manifest.status_counts.values().copied().sum::<u64>(),
+        manifest.row_count
+    );
+
+    let mut names = fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    assert_eq!(names, vec!["manifest.json", "rows.jsonl"]);
+
+    let rows_before = fs::read(destination.join("rows.jsonl")).unwrap();
+    let manifest_before = fs::read(destination.join("manifest.json")).unwrap();
+
+    let error = db
+        .write_fast_training_economics_overlay(
+            &features_path,
+            FUTURE_PATH_LABEL_VERSION,
+            "2",
+            60_000,
+            &destination,
+        )
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("training economics overlay destination already exists"));
+    assert_eq!(
+        fs::read(destination.join("rows.jsonl")).unwrap(),
+        rows_before
+    );
+    assert_eq!(
+        fs::read(destination.join("manifest.json")).unwrap(),
+        manifest_before
+    );
+
+    let after_fl4 = db
+        .fast_training_future_path_logical_fingerprint_sha256(
+            FUTURE_PATH_LABEL_VERSION,
+        )
+        .unwrap();
+    assert_eq!(before_fl4, after_fl4);
+
+    drop(db);
+    cleanup_dir(&root);
+}
