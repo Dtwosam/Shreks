@@ -4,9 +4,15 @@ use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use shreks_core::{FuturePathCompleteness, VenueId};
+use shreks_core::{
+    project_entry, project_exit, EntryProjectionError, ExitCapacityError, FastReserveContext,
+    FuturePathCompleteness, VenueId,
+};
 
-use crate::{FastTrainingFeatureRecord, ShreksDb, StorageError, StoredFuturePathLabel};
+use crate::{
+    FastTrainingFeatureRecord, PumpSwapEffectiveFeeContext, PumpSwapEffectiveFeeContextValue,
+    ShreksDb, StorageError, StoredFastEvent, StoredFuturePathLabel,
+};
 
 pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME: &str =
     "shreks.fast_training_economics_overlay";
@@ -144,23 +150,20 @@ impl ShreksDb {
         features: &[FastTrainingFeatureRecord],
         label_version: u16,
         counterfactual_base_quantity: &str,
-        _pump_swap_fee_maximum_age_ms: u64,
+        pump_swap_fee_maximum_age_ms: u64,
     ) -> Result<Vec<FastTrainingEconomicsOverlayRow>, StorageError> {
         if label_version == 0 {
             return Err(StorageError::InvalidData(
                 "training economics future-path label version must be positive".to_owned(),
             ));
         }
-        if counterfactual_base_quantity.trim().is_empty() {
-            return Err(StorageError::InvalidData(
-                "training economics counterfactual base quantity must not be blank".to_owned(),
-            ));
-        }
+        validate_decimal_quantity_text(counterfactual_base_quantity)?;
 
         let expected_features = self.fast_training_feature_records(label_version)?;
         validate_feature_population(features, &expected_features)?;
 
-        let mut labels = self.training_economics_labels_for_features(&expected_features, label_version)?;
+        let mut labels =
+            self.training_economics_labels_for_features(&expected_features, label_version)?;
         labels.sort_by(|left, right| {
             (
                 left.decision.sequence,
@@ -193,52 +196,200 @@ impl ShreksDb {
             }
             self.validate_training_economics_canonical_sources(&stored)?;
 
-            let endpoint = self.training_economics_endpoint_sequence(&stored)?;
-            let status = match stored.decision.market.venue {
-                VenueId::PumpSwap => {
-                    if stored.label.endpoint_event_id.is_none() {
-                        FastTrainingEconomicsStatus::NoEndpoint
-                    } else {
-                        // Task 2 replaces this truthful unavailable placeholder with
-                        // requested-size projection and causal fee evaluation.
-                        FastTrainingEconomicsStatus::EntryProjectionUnavailable
-                    }
-                }
-                _ => FastTrainingEconomicsStatus::UnsupportedVenue,
+            let endpoint_sequence = self.training_economics_endpoint_sequence(&stored)?;
+            let mut row = base_overlay_row(
+                &stored,
+                endpoint_sequence,
+                counterfactual_base_quantity,
+            );
+
+            if stored.decision.market.venue != VenueId::PumpSwap {
+                row.status = FastTrainingEconomicsStatus::UnsupportedVenue;
+                rows.push(row);
+                continue;
+            }
+
+            let Some(endpoint_id) = stored.label.endpoint_event_id.as_ref() else {
+                row.status = FastTrainingEconomicsStatus::NoEndpoint;
+                rows.push(row);
+                continue;
+            };
+            let endpoint_sequence = endpoint_sequence.ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics endpoint identity is missing canonical sequence".to_owned(),
+                )
+            })?;
+
+            let replay = self.fast_events_for_market_with_reserve_context(
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+                VenueId::PumpSwap,
+            )?;
+            let decision_event = find_replay_event(
+                &replay,
+                &stored.decision.event_id.signature,
+                stored.decision.event_id.ordinal,
+                stored.decision.sequence,
+                "decision",
+            )?;
+            let endpoint_event = find_replay_event(
+                &replay,
+                &endpoint_id.signature,
+                endpoint_id.ordinal,
+                endpoint_sequence,
+                "endpoint",
+            )?;
+
+            let Some(entry_reserve) = pump_swap_reserve_provenance(decision_event)? else {
+                row.status = FastTrainingEconomicsStatus::EntryReserveUnavailable;
+                rows.push(row);
+                continue;
+            };
+            let Some(exit_reserve) = pump_swap_reserve_provenance(endpoint_event)? else {
+                row.status = FastTrainingEconomicsStatus::ExitReserveUnavailable;
+                row.entry_reserve = Some(entry_reserve);
+                rows.push(row);
+                continue;
             };
 
-            rows.push(FastTrainingEconomicsOverlayRow {
-                decision_signature: stored.decision.event_id.signature.clone(),
-                decision_ordinal: stored.decision.event_id.ordinal,
-                decision_sequence: stored.decision.sequence,
-                decision_observed_at_unix_ms: stored.decision.observed_at_unix_ms,
-                mint: stored.decision.market.mint.clone(),
-                quote_mint: stored.decision.market.quote_mint.clone(),
-                venue: stored.decision.market.venue.as_str().to_owned(),
-                horizon_ms: stored.label.horizon_ms,
-                future_path_label_version: stored.label.version,
-                counterfactual_base_quantity: counterfactual_base_quantity.to_owned(),
-                endpoint_signature: stored
-                    .label
-                    .endpoint_event_id
-                    .as_ref()
-                    .map(|value| value.signature.clone()),
-                endpoint_ordinal: stored
-                    .label
-                    .endpoint_event_id
-                    .as_ref()
-                    .map(|value| value.ordinal),
-                endpoint_sequence: endpoint,
-                endpoint_observed_at_unix_ms: stored.label.endpoint_observed_at_unix_ms,
-                status,
-                requested_base_quantity_raw: None,
-                entry_reserve: None,
-                exit_reserve: None,
-                entry_projection: None,
-                exit_projection: None,
-                entry_fee: None,
-                exit_fee: None,
+            let requested_base_quantity_raw = decimal_quantity_to_raw(
+                counterfactual_base_quantity,
+                entry_reserve.base_decimals,
+            )?;
+            let exit_quantity_raw = decimal_quantity_to_raw(
+                counterfactual_base_quantity,
+                exit_reserve.base_decimals,
+            )?;
+            if requested_base_quantity_raw != exit_quantity_raw {
+                return Err(StorageError::InvalidData(
+                    "training economics decision/endpoint base decimals contradict requested quantity"
+                        .to_owned(),
+                ));
+            }
+            row.requested_base_quantity_raw = Some(requested_base_quantity_raw);
+            row.entry_reserve = Some(entry_reserve.clone());
+            row.exit_reserve = Some(exit_reserve.clone());
+
+            let entry_context = reserve_context_from_provenance(&entry_reserve);
+            let entry_projection = match project_entry(
+                &entry_context,
+                requested_base_quantity_raw,
+            ) {
+                Ok(value) => value,
+                Err(
+                    EntryProjectionError::PhysicalBaseReserveExhausted
+                    | EntryProjectionError::BaseReserveExhausted,
+                ) => {
+                    row.status = FastTrainingEconomicsStatus::EntryProjectionUnavailable;
+                    rows.push(row);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(StorageError::InvalidData(format!(
+                        "training economics entry projection failed closed: {error}"
+                    )));
+                }
+            };
+            row.entry_projection = Some(FastTrainingEconomicsEntryProjection {
+                base_quantity_raw: entry_projection.base_quantity_raw,
+                quote_input_raw: entry_projection.quote_input_raw,
+                base_quantity: entry_projection.base_quantity,
+                quote_input: entry_projection.quote_input,
+                average_price_quote: entry_projection.average_price_quote,
             });
+
+            let exit_context = reserve_context_from_provenance(&exit_reserve);
+            let exit_projection = match project_exit(
+                &exit_context,
+                requested_base_quantity_raw,
+            ) {
+                Ok(value) => value,
+                Err(ExitCapacityError::PhysicalQuoteReserveExhausted) => {
+                    row.status = FastTrainingEconomicsStatus::ExitProjectionUnavailable;
+                    rows.push(row);
+                    continue;
+                }
+                Err(error) => {
+                    return Err(StorageError::InvalidData(format!(
+                        "training economics exit projection failed closed: {error}"
+                    )));
+                }
+            };
+            row.exit_projection = Some(FastTrainingEconomicsExitProjection {
+                base_quantity_raw: exit_projection.base_quantity_raw,
+                quote_output_raw: exit_projection.quote_output_raw,
+                base_quantity: exit_projection.base_quantity,
+                quote_output: exit_projection.quote_output,
+                average_price_quote: exit_projection.average_price_quote,
+            });
+
+            match self.pump_swap_effective_fee_context(
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+                true,
+                stored.decision.sequence,
+                stored.decision.observed_at_unix_ms,
+                pump_swap_fee_maximum_age_ms,
+            )? {
+                PumpSwapEffectiveFeeContext::Missing => {
+                    row.status = FastTrainingEconomicsStatus::EntryFeeMissing;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::Stale(_) => {
+                    row.status = FastTrainingEconomicsStatus::EntryFeeStale;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::RateUnknown(_) => {
+                    row.status = FastTrainingEconomicsStatus::EntryFeeRateUnknown;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::Available(value) => {
+                    row.entry_fee = Some(fee_provenance(value)?);
+                }
+            }
+
+            let endpoint_observed_at_unix_ms = stored
+                .label
+                .endpoint_observed_at_unix_ms
+                .ok_or_else(|| {
+                    StorageError::InvalidData(
+                        "training economics endpoint identity is missing observation time"
+                            .to_owned(),
+                    )
+                })?;
+            match self.pump_swap_effective_fee_context(
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+                false,
+                endpoint_sequence,
+                endpoint_observed_at_unix_ms,
+                pump_swap_fee_maximum_age_ms,
+            )? {
+                PumpSwapEffectiveFeeContext::Missing => {
+                    row.status = FastTrainingEconomicsStatus::ExitFeeMissing;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::Stale(_) => {
+                    row.status = FastTrainingEconomicsStatus::ExitFeeStale;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::RateUnknown(_) => {
+                    row.status = FastTrainingEconomicsStatus::ExitFeeRateUnknown;
+                    rows.push(row);
+                    continue;
+                }
+                PumpSwapEffectiveFeeContext::Available(value) => {
+                    row.exit_fee = Some(fee_provenance(value)?);
+                }
+            }
+
+            row.status = FastTrainingEconomicsStatus::Available;
+            rows.push(row);
         }
 
         Ok(rows)
@@ -466,6 +617,317 @@ impl ShreksDb {
         }
         Ok(())
     }
+}
+
+
+fn base_overlay_row(
+    stored: &StoredFuturePathLabel,
+    endpoint_sequence: Option<u64>,
+    counterfactual_base_quantity: &str,
+) -> FastTrainingEconomicsOverlayRow {
+    FastTrainingEconomicsOverlayRow {
+        decision_signature: stored.decision.event_id.signature.clone(),
+        decision_ordinal: stored.decision.event_id.ordinal,
+        decision_sequence: stored.decision.sequence,
+        decision_observed_at_unix_ms: stored.decision.observed_at_unix_ms,
+        mint: stored.decision.market.mint.clone(),
+        quote_mint: stored.decision.market.quote_mint.clone(),
+        venue: stored.decision.market.venue.as_str().to_owned(),
+        horizon_ms: stored.label.horizon_ms,
+        future_path_label_version: stored.label.version,
+        counterfactual_base_quantity: counterfactual_base_quantity.to_owned(),
+        endpoint_signature: stored
+            .label
+            .endpoint_event_id
+            .as_ref()
+            .map(|value| value.signature.clone()),
+        endpoint_ordinal: stored
+            .label
+            .endpoint_event_id
+            .as_ref()
+            .map(|value| value.ordinal),
+        endpoint_sequence,
+        endpoint_observed_at_unix_ms: stored.label.endpoint_observed_at_unix_ms,
+        status: FastTrainingEconomicsStatus::UnsupportedVenue,
+        requested_base_quantity_raw: None,
+        entry_reserve: None,
+        exit_reserve: None,
+        entry_projection: None,
+        exit_projection: None,
+        entry_fee: None,
+        exit_fee: None,
+    }
+}
+
+fn find_replay_event<'a>(
+    replay: &'a [StoredFastEvent],
+    signature: &str,
+    ordinal: u32,
+    sequence: u64,
+    role: &str,
+) -> Result<&'a StoredFastEvent, StorageError> {
+    replay
+        .iter()
+        .find(|stored| {
+            stored.event.id.signature == signature
+                && stored.event.id.ordinal == ordinal
+                && stored.event.sequence == sequence
+        })
+        .ok_or_else(|| {
+            StorageError::InvalidData(format!(
+                "training economics canonical {role} event was not found in reserve-aware replay"
+            ))
+        })
+}
+
+fn pump_swap_reserve_provenance(
+    stored: &StoredFastEvent,
+) -> Result<Option<FastTrainingEconomicsReserveProvenance>, StorageError> {
+    match stored.event.reserve_context.as_ref() {
+        Some(FastReserveContext::PumpSwapPool {
+            pool_base_reserve_raw,
+            pool_quote_reserve_raw,
+            virtual_quote_reserve_raw,
+            base_decimals,
+            quote_decimals,
+        }) => {
+            let Some(virtual_quote_reserve_raw) = virtual_quote_reserve_raw else {
+                return Ok(None);
+            };
+            Ok(Some(FastTrainingEconomicsReserveProvenance {
+                source_signature: stored.event.id.signature.clone(),
+                source_ordinal: stored.event.id.ordinal,
+                source_sequence: stored.event.sequence,
+                source_observed_at_unix_ms: stored.source_observed_at_unix_ms,
+                pool_base_reserve_raw: *pool_base_reserve_raw,
+                pool_quote_reserve_raw: *pool_quote_reserve_raw,
+                virtual_quote_reserve_raw: *virtual_quote_reserve_raw,
+                base_decimals: *base_decimals,
+                quote_decimals: *quote_decimals,
+            }))
+        }
+        Some(other) => Err(StorageError::InvalidData(format!(
+            "training economics PumpSwap event carried incompatible reserve context: {other:?}"
+        ))),
+        None => Err(StorageError::InvalidData(
+            "training economics PumpSwap canonical replay omitted reserve context".to_owned(),
+        )),
+    }
+}
+
+fn reserve_context_from_provenance(
+    value: &FastTrainingEconomicsReserveProvenance,
+) -> FastReserveContext {
+    FastReserveContext::PumpSwapPool {
+        pool_base_reserve_raw: value.pool_base_reserve_raw,
+        pool_quote_reserve_raw: value.pool_quote_reserve_raw,
+        virtual_quote_reserve_raw: Some(value.virtual_quote_reserve_raw),
+        base_decimals: value.base_decimals,
+        quote_decimals: value.quote_decimals,
+    }
+}
+
+fn fee_provenance(
+    value: PumpSwapEffectiveFeeContextValue,
+) -> Result<FastTrainingEconomicsFeeProvenance, StorageError> {
+    let effective_fee_bps = value.evidence.effective_fee_bps.ok_or_else(|| {
+        StorageError::InvalidData(
+            "training economics available fee context omitted exact fee bps".to_owned(),
+        )
+    })?;
+    Ok(FastTrainingEconomicsFeeProvenance {
+        source_signature: value.evidence.signature,
+        source_ordinal: value.evidence.ordinal,
+        source_sequence: value.source_sequence,
+        source_observed_at_unix_ms: value.source_observed_at_unix_ms,
+        age_ms: value.age_ms,
+        market_quote_amount_raw: value.evidence.market_quote_amount_raw,
+        user_quote_amount_raw: value.evidence.user_quote_amount_raw,
+        signed_user_cost_quote_raw: value.evidence.signed_user_cost_quote_raw,
+        effective_fee_bps,
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ParsedDecimalQuantity {
+    coefficient: u128,
+    scale10: i32,
+}
+
+fn validate_decimal_quantity_text(input: &str) -> Result<(), StorageError> {
+    let parsed = parse_decimal_quantity(input)?;
+    if parsed.coefficient == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must be positive".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+pub fn decimal_quantity_to_raw(
+    input: &str,
+    base_decimals: u8,
+) -> Result<u64, StorageError> {
+    let parsed = parse_decimal_quantity(input)?;
+    if parsed.coefficient == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must be positive".to_owned(),
+        ));
+    }
+
+    let net_power = parsed
+        .scale10
+        .checked_add(i32::from(base_decimals))
+        .ok_or_else(|| {
+            StorageError::InvalidData(
+                "training economics decimal quantity exponent overflowed".to_owned(),
+            )
+        })?;
+
+    let raw = if net_power >= 0 {
+        let factor = checked_pow10(u32::try_from(net_power).map_err(|_| {
+            StorageError::InvalidData(
+                "training economics decimal quantity exponent is outside u32".to_owned(),
+            )
+        })?)?;
+        parsed.coefficient.checked_mul(factor).ok_or_else(|| {
+            StorageError::InvalidData(
+                "training economics decimal quantity raw conversion overflowed".to_owned(),
+            )
+        })?
+    } else {
+        let magnitude = net_power.checked_neg().ok_or_else(|| {
+            StorageError::InvalidData(
+                "training economics decimal quantity negative exponent overflowed".to_owned(),
+            )
+        })?;
+        let divisor = checked_pow10(u32::try_from(magnitude).map_err(|_| {
+            StorageError::InvalidData(
+                "training economics decimal quantity exponent is outside u32".to_owned(),
+            )
+        })?)?;
+        if parsed.coefficient % divisor != 0 {
+            return Err(StorageError::InvalidData(
+                "training economics counterfactual base quantity cannot be represented exactly in raw base units"
+                    .to_owned(),
+            ));
+        }
+        parsed.coefficient / divisor
+    };
+
+    if raw == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity rounds below one raw unit"
+                .to_owned(),
+        ));
+    }
+    u64::try_from(raw).map_err(|_| {
+        StorageError::InvalidData(
+            "training economics counterfactual base quantity exceeds u64 raw units".to_owned(),
+        )
+    })
+}
+
+fn parse_decimal_quantity(input: &str) -> Result<ParsedDecimalQuantity, StorageError> {
+    if input.is_empty() || input != input.trim() {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must be canonical decimal text"
+                .to_owned(),
+        ));
+    }
+    let input = input.strip_prefix('+').unwrap_or(input);
+    if input.is_empty() || input.starts_with('-') {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must be positive decimal text"
+                .to_owned(),
+        ));
+    }
+
+    let mut exponent_split = input.split(|character| character == 'e' || character == 'E');
+    let mantissa = exponent_split.next().unwrap_or_default();
+    let exponent_text = exponent_split.next();
+    if exponent_split.next().is_some() {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity has multiple exponents".to_owned(),
+        ));
+    }
+    let exponent = match exponent_text {
+        Some(value) if !value.is_empty() => value.parse::<i32>().map_err(|_| {
+            StorageError::InvalidData(
+                "training economics counterfactual base quantity exponent is invalid".to_owned(),
+            )
+        })?,
+        Some(_) => {
+            return Err(StorageError::InvalidData(
+                "training economics counterfactual base quantity exponent is empty".to_owned(),
+            ));
+        }
+        None => 0,
+    };
+
+    let mut decimal_split = mantissa.split('.');
+    let integer = decimal_split.next().unwrap_or_default();
+    let fraction = decimal_split.next();
+    if decimal_split.next().is_some() {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity has multiple decimal points"
+                .to_owned(),
+        ));
+    }
+    let fraction = fraction.unwrap_or("");
+    if integer.is_empty() && fraction.is_empty() {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity has no digits".to_owned(),
+        ));
+    }
+    if !integer.bytes().all(|value| value.is_ascii_digit())
+        || !fraction.bytes().all(|value| value.is_ascii_digit())
+    {
+        return Err(StorageError::InvalidData(
+            "training economics counterfactual base quantity must contain decimal digits only"
+                .to_owned(),
+        ));
+    }
+
+    let mut coefficient = 0_u128;
+    for digit in integer.bytes().chain(fraction.bytes()) {
+        coefficient = coefficient
+            .checked_mul(10)
+            .and_then(|value| value.checked_add(u128::from(digit - b'0')))
+            .ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics counterfactual base quantity coefficient overflowed"
+                        .to_owned(),
+                )
+            })?;
+    }
+    let fractional_digits = i32::try_from(fraction.len()).map_err(|_| {
+        StorageError::InvalidData(
+            "training economics counterfactual base quantity has too many fractional digits"
+                .to_owned(),
+        )
+    })?;
+    let scale10 = exponent.checked_sub(fractional_digits).ok_or_else(|| {
+        StorageError::InvalidData(
+            "training economics counterfactual base quantity scale overflowed".to_owned(),
+        )
+    })?;
+    Ok(ParsedDecimalQuantity {
+        coefficient,
+        scale10,
+    })
+}
+
+fn checked_pow10(exponent: u32) -> Result<u128, StorageError> {
+    let mut value = 1_u128;
+    for _ in 0..exponent {
+        value = value.checked_mul(10).ok_or_else(|| {
+            StorageError::InvalidData(
+                "training economics decimal quantity power-of-ten overflowed".to_owned(),
+            )
+        })?;
+    }
+    Ok(value)
 }
 
 fn validate_feature_population(
