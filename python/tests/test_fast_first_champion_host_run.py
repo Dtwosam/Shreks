@@ -294,6 +294,26 @@ def test_host_request_codec_is_canonical_and_authenticated(
     assert decoded == request
     assert encode_fast_first_champion_host_request(decoded) == payload
 
+    legacy = json.loads(payload)
+    legacy["schema_version"] = 1
+    for key in (
+        "training_economics_overlay_path",
+        "expected_training_economics_overlay_manifest_fingerprint_sha256",
+        "training_execution_cost_policy",
+        "training_execution_cost_policy_fingerprint_sha256",
+    ):
+        legacy["request"].pop(key)
+    with pytest.raises(ValueError, match="schema|fields"):
+        decode_fast_first_champion_host_request(
+            json.dumps(
+                legacy,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+
 
 def test_host_run_captures_clock_plans_and_cross_links_preparation(
     monkeypatch,
