@@ -213,11 +213,16 @@ def build_fast_first_champion(
         horizon_ms=horizon_ms,
     )
 
+    cohort_start = min(
+        fold.training_started_at_unix_ms
+        for fold in validation_policy.folds
+    )
     mature_identities = tuple(
         record.decision_identity
         for record in bundle.features.records
         if (
-            record.decision_observed_at_unix_ms < decided_at_unix_ms
+            record.decision_observed_at_unix_ms >= cohort_start
+            and record.decision_observed_at_unix_ms < decided_at_unix_ms
             and record.decision_observed_at_unix_ms + horizon_ms
             <= decided_at_unix_ms
         )
@@ -269,11 +274,13 @@ def build_fast_first_champion(
             mature_identities,
         )
         if (
-            artifact.max_training_decision_observed_at_unix_ms + horizon_ms
+            artifact.min_training_decision_observed_at_unix_ms
+            < cohort_start
+            or artifact.max_training_decision_observed_at_unix_ms + horizon_ms
             > decided_at_unix_ms
         ):
             raise ValueError(
-                "runtime artifact includes training evidence not mature at selection"
+                "runtime artifact includes evidence outside the fresh mature cohort"
             )
 
         artifacts.append(artifact)
