@@ -31,6 +31,7 @@ def _plan(bundle=None, **overrides):
         bundle=bundle or chronological_bundle(),
         horizon_ms=HORIZON_MS,
         selection_at_unix_ms=SELECTION_AT,
+        minimum_decision_observed_at_unix_ms=0,
         minimum_raw_rows_per_partition=2,
         minimum_test_scored_observations=2,
     )
@@ -81,6 +82,7 @@ def test_plan_uses_fixed_feature_only_60_20_20_split() -> None:
     assert plan.version == FAST_FIRST_CHAMPION_EVIDENCE_PLAN_VERSION
     assert plan.horizon_ms == HORIZON_MS
     assert plan.selection_at_unix_ms == SELECTION_AT
+    assert plan.minimum_decision_observed_at_unix_ms == 0
     assert plan.minimum_raw_rows_per_partition == 2
     assert plan.minimum_test_scored_observations == 2
     assert plan.eligible_preselection_row_count == 12
@@ -105,6 +107,19 @@ def test_plan_uses_fixed_feature_only_60_20_20_split() -> None:
         value.test_target_available_count >= 2
         for value in plan.target_evidence
     )
+
+
+def test_plan_excludes_every_decision_before_fresh_cohort_floor() -> None:
+    plan = _plan(minimum_decision_observed_at_unix_ms=1_300)
+
+    assert plan.minimum_decision_observed_at_unix_ms == 1_300
+    assert plan.eligible_preselection_row_count == 9
+    fold = plan.validation_policy.folds[0]
+    assert fold.training_started_at_unix_ms == 1_300
+    assert plan.training_raw_row_count == 5
+    assert plan.validation_raw_row_count == 2
+    assert plan.test_raw_row_count == 2
+
 
 
 def test_split_is_independent_of_future_target_values() -> None:
