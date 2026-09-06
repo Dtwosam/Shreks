@@ -101,3 +101,16 @@ overlay v3 through exact-rational raw integers.
 9. full Rust/Python/repository-safety/native ARM64 gates pass.
 
 LIVE remains disabled.
+
+## Implementation seal
+
+Implementation PR #227 merged as `034d8e564f5d6496b5f12e388a3fe24e2016aeb9` after CI run `34027827399` passed all required gates:
+
+- Rust workspace: GREEN;
+- Python suite: GREEN;
+- repository safety: GREEN;
+- native ARM64 release verification: GREEN.
+
+The implementation preserves the lower-level raw fee normalizer, adds sidecar-proven current BUY fee recovery only in training-economics overlay v3, keeps mismatches unknown, and changes no FL4/PAPER/LIVE authority.
+
+This follow-up commit exists only to create the repository-standard `seal:` main commit required by the automatic immutable ARM64 release workflow.
