@@ -61,3 +61,19 @@ Add regression coverage proving:
 - no change to first-champion thresholds, horizon, selection logic, or model families;
 - no champion construction or promotion;
 - no LIVE enablement.
+
+
+## Implementation seal
+
+Implementation PR #229 merged as `14c0d19d0f03ea963c80c79cbe69c44aa0c1eb05`.
+
+The PR CI run `34038186807` and merged-main CI run `34038351493` both passed all required gates:
+
+- Rust workspace: GREEN;
+- Python suite: GREEN;
+- repository safety: GREEN;
+- native ARM64 release verification: GREEN.
+
+The implementation reuses exactly one read-only counterfactual-source SQLite connection during runtime-bundle provenance validation while retaining the existing per-row canonical source, conflict-quarantine, execution-economics, and fail-closed checks. It changes no FL4 target semantics, economics policy, first-champion cohort or thresholds, PAPER authority, promotion behavior, or LIVE authority.
+
+This follow-up commit exists only to create the repository-standard `seal:` main commit required by the automatic immutable ARM64 release workflow.
