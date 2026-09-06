@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,47 @@ def test_first_champion_builds_exact_dependency_free_fl9_member_set() -> None:
     assert result.champion.selection.decided_at_unix_ms == (
         TEST_END + HORIZON_MS + 1
     )
+
+
+def test_runtime_artifacts_honor_validation_training_start_as_cohort_floor() -> None:
+    bundle = chronological_bundle()
+    base_policy = chronological_policy()
+    fold = replace(
+        base_policy.folds[0],
+        training_started_at_unix_ms=1_300,
+    )
+    policy = replace(base_policy, folds=(fold,))
+    context_run = run_fast_chronological_validation(
+        bundle,
+        forecast_request(
+            FastForecastModelFamily.MEAN_REGRESSOR,
+            FastForecastTarget.ENDPOINT_RETURN_BPS,
+        ),
+        policy,
+    )
+
+    result = build_fast_first_champion(
+        bundle=bundle,
+        contexts=evaluation_contexts(context_run),
+        validation_policy=policy,
+        evaluation_policy=evaluation_policy(
+            FastForecastEvaluationPartition.TEST
+        ),
+        champion_version="fl9-first-fresh-v1",
+        decision_reference="fresh-cohort-fixture",
+        decided_at_unix_ms=TEST_END + HORIZON_MS + 1,
+        reason="exclude retired pre-cohort evidence",
+        horizon_ms=HORIZON_MS,
+        model_version_prefix="fl9-first-fresh",
+        training_policy_version="fl9-first-fresh-naive-v1",
+        minimum_test_scored_observations=1,
+    )
+
+    assert all(
+        artifact.min_training_decision_observed_at_unix_ms >= 1_300
+        for artifact in result.runtime_artifacts
+    )
+
 
 
 def test_first_champion_rejects_non_test_evaluation_policy() -> None:
