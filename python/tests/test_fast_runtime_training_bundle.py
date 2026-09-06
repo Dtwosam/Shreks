@@ -242,6 +242,31 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     assert bundle.manifest.future_path_label_row_count == 2
     assert bundle.manifest.counterfactual_row_count == 4
 
+    persisted_future_path = load_future_path_training_labels_from_sqlite(
+        database,
+        future_path_label_version=1,
+    )
+    assert all(
+        label.endpoint_cost_adjusted_return_bps is None
+        and label.route_unavailability_observed is None
+        for label in persisted_future_path.labels
+    )
+
+    runtime_labels = {
+        label.decision_signature: label
+        for label in bundle.future_path_labels.labels
+    }
+    pump_runtime = runtime_labels["mixed-pump-decision"]
+    swap_runtime = runtime_labels["mixed-swap-decision"]
+    assert pump_runtime.endpoint_cost_adjusted_return_bps is None
+    assert pump_runtime.route_unavailability_observed is None
+    assert swap_runtime.endpoint_cost_adjusted_return_bps is not None
+    assert swap_runtime.route_unavailability_observed is False
+    assert (
+        bundle.future_path_labels.logical_fingerprint_sha256
+        != persisted_future_path.logical_fingerprint_sha256
+    )
+
     by_decision = {}
     for row in bundle.counterfactual_rows:
         by_decision.setdefault(row["decision_id"], []).append(row)
@@ -275,6 +300,16 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     assert (
         swap_actions[CounterfactualAction.SKIP.value]
         == ExecutionStatus.EXECUTABLE.value
+    )
+
+    swap_buy_now = next(
+        row
+        for row in by_decision["mixed-swap-decision:2147483650:h500:v1"]
+        if row["action"] == CounterfactualAction.BUY_NOW.value
+    )
+    assert swap_buy_now["return_bps"] is not None
+    assert swap_runtime.endpoint_cost_adjusted_return_bps == pytest.approx(
+        swap_buy_now["return_bps"]
     )
 
 
