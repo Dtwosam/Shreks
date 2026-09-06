@@ -124,3 +124,14 @@ Required coverage:
 7. existing Python/Rust/repository-safety/native ARM64 gates remain green.
 
 LIVE remains disabled.
+
+## Implementation seal
+
+Implementation PR #225 merged as `dcd06ecdaa50e09fb928b5f4ed37d37f379da2ff` after CI run `34003907152` passed all required gates:
+
+- Python: 3,193 tests passed;
+- Rust workspace: GREEN;
+- repository safety: GREEN;
+- native ARM64 release verification: GREEN.
+
+This follow-up commit exists only to create the repository-standard `seal:` main commit required by the automatic immutable ARM64 release workflow. No implementation semantics are changed by this documentation seal.
