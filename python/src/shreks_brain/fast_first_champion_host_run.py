@@ -43,7 +43,7 @@ from shreks_brain.research.fast_training_economics import (
 FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_NAME = (
     "shreks.fast_first_champion_host_request"
 )
-FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION = 2
+FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION = 3
 FAST_FIRST_CHAMPION_HOST_RUN_SCHEMA_NAME = (
     "shreks.fast_first_champion_host_run"
 )
@@ -95,6 +95,7 @@ _REQUEST_KEYS = frozenset(
         "future_path_label_version",
         "counterfactual_base_quantity",
         "horizon_ms",
+        "minimum_decision_observed_at_unix_ms",
         "minimum_raw_rows_per_partition",
         "minimum_test_scored_observations",
         "evaluation_policy",
@@ -160,6 +161,7 @@ class FastFirstChampionHostRequest:
     future_path_label_version: int
     counterfactual_base_quantity: float | int
     horizon_ms: int
+    minimum_decision_observed_at_unix_ms: int
     minimum_raw_rows_per_partition: int
     minimum_test_scored_observations: int
     evaluation_policy: FastForecastEvaluationPolicy
@@ -229,6 +231,10 @@ class FastFirstChampionHostRequest:
         _require_positive_finite(
             "counterfactual_base_quantity",
             self.counterfactual_base_quantity,
+        )
+        _require_non_negative_int(
+            "minimum_decision_observed_at_unix_ms",
+            self.minimum_decision_observed_at_unix_ms,
         )
         if type(self.evaluation_policy) is not FastForecastEvaluationPolicy:
             raise ValueError(
@@ -363,6 +369,7 @@ def build_fast_first_champion_host_request(
     future_path_label_version: int,
     counterfactual_base_quantity: float | int,
     horizon_ms: int,
+    minimum_decision_observed_at_unix_ms: int,
     minimum_raw_rows_per_partition: int,
     minimum_test_scored_observations: int,
     evaluation_policy: FastForecastEvaluationPolicy,
@@ -392,6 +399,9 @@ def build_fast_first_champion_host_request(
         future_path_label_version=future_path_label_version,
         counterfactual_base_quantity=counterfactual_base_quantity,
         horizon_ms=horizon_ms,
+        minimum_decision_observed_at_unix_ms=(
+            minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=minimum_raw_rows_per_partition,
         minimum_test_scored_observations=(
             minimum_test_scored_observations
@@ -425,6 +435,9 @@ def build_fast_first_champion_host_request(
         future_path_label_version=future_path_label_version,
         counterfactual_base_quantity=counterfactual_base_quantity,
         horizon_ms=horizon_ms,
+        minimum_decision_observed_at_unix_ms=(
+            minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=minimum_raw_rows_per_partition,
         minimum_test_scored_observations=(
             minimum_test_scored_observations
@@ -542,6 +555,10 @@ def decode_fast_first_champion_host_request(
             "counterfactual_base_quantity",
         ),
         horizon_ms=_integer(raw["horizon_ms"], "horizon_ms"),
+        minimum_decision_observed_at_unix_ms=_integer(
+            raw["minimum_decision_observed_at_unix_ms"],
+            "minimum_decision_observed_at_unix_ms",
+        ),
         minimum_raw_rows_per_partition=_integer(
             raw["minimum_raw_rows_per_partition"],
             "minimum_raw_rows_per_partition",
@@ -683,6 +700,9 @@ def run_fast_first_champion_host_request(
         bundle=bundle,
         horizon_ms=request.horizon_ms,
         selection_at_unix_ms=selection_at,
+        minimum_decision_observed_at_unix_ms=(
+            request.minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=(
             request.minimum_raw_rows_per_partition
         ),
@@ -1277,6 +1297,9 @@ def _request_material(
             request.counterfactual_base_quantity
         ),
         horizon_ms=request.horizon_ms,
+        minimum_decision_observed_at_unix_ms=(
+            request.minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=(
             request.minimum_raw_rows_per_partition
         ),
@@ -1307,6 +1330,7 @@ def _request_material_from_values(
     future_path_label_version: int,
     counterfactual_base_quantity: float | int,
     horizon_ms: int,
+    minimum_decision_observed_at_unix_ms: int,
     minimum_raw_rows_per_partition: int,
     minimum_test_scored_observations: int,
     evaluation_policy: FastForecastEvaluationPolicy,
@@ -1340,6 +1364,9 @@ def _request_material_from_values(
             counterfactual_base_quantity
         ),
         "horizon_ms": horizon_ms,
+        "minimum_decision_observed_at_unix_ms": (
+            minimum_decision_observed_at_unix_ms
+        ),
         "minimum_raw_rows_per_partition": (
             minimum_raw_rows_per_partition
         ),
