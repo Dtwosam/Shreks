@@ -6,9 +6,11 @@ import sqlite3
 
 import pytest
 
+import shreks_brain.research.counterfactual_source as counterfactual_source_module
 from shreks_brain.research.counterfactual_source import (
     CounterfactualSourceError,
     load_entry_counterfactual_from_sqlite,
+    load_entry_counterfactual_provenance_batch_from_sqlite,
     load_open_position_counterfactual_from_sqlite,
 )
 from shreks_brain.research.counterfactuals import (
@@ -283,6 +285,84 @@ def test_conflict_quarantined_source_event_fails_closed(tmp_path: Path) -> None:
             horizon_ms=1000,
             label_version=1,
             base_quantity=4.0,
+        )
+
+
+def test_entry_provenance_batch_reuses_one_read_only_connection(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.sqlite"
+    _create_source_db(db_path)
+    baseline = load_entry_counterfactual_from_sqlite(
+        db_path,
+        decision_signature="decision-sig",
+        decision_ordinal=1,
+        horizon_ms=1000,
+        label_version=1,
+        base_quantity=2.0,
+    ).provenance
+
+    open_count = 0
+    original_open = counterfactual_source_module._open_read_only
+
+    def counted_open(path: Path):
+        nonlocal open_count
+        open_count += 1
+        return original_open(path)
+
+    seen_connections: list[int] = []
+
+    def fake_load_provenance(
+        db_path,
+        *,
+        decision_signature,
+        decision_ordinal,
+        horizon_ms,
+        label_version,
+        connection=None,
+    ):
+        assert connection is not None
+        seen_connections.append(id(connection))
+        return baseline
+
+    monkeypatch.setattr(
+        counterfactual_source_module,
+        "_open_read_only",
+        counted_open,
+    )
+    monkeypatch.setattr(
+        counterfactual_source_module,
+        "_load_provenance",
+        fake_load_provenance,
+    )
+
+    identities = (
+        ("decision-sig", 1, 1000, 1),
+        ("other-sig", 2, 500, 1),
+    )
+    loaded = load_entry_counterfactual_provenance_batch_from_sqlite(
+        db_path,
+        lookup_identities=identities,
+    )
+
+    assert tuple(loaded) == identities
+    assert open_count == 1
+    assert len(seen_connections) == 2
+    assert len(set(seen_connections)) == 1
+
+
+def test_entry_provenance_batch_rejects_duplicate_lookup_identity(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "source.sqlite"
+    _create_source_db(db_path)
+    identity = ("decision-sig", 1, 1000, 1)
+
+    with pytest.raises(CounterfactualSourceError, match="duplicate"):
+        load_entry_counterfactual_provenance_batch_from_sqlite(
+            db_path,
+            lookup_identities=(identity, identity),
         )
 
 
