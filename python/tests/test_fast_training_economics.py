@@ -19,6 +19,7 @@ from shreks_brain.research.fast_training_economics import (
     FastTrainingEconomicsEntryProjection,
     FastTrainingEconomicsExitProjection,
     FastTrainingEconomicsFeeProvenance,
+    FastTrainingEconomicsOverlayManifest,
     FastTrainingEconomicsOverlayRow,
     FastTrainingEconomicsReserveProvenance,
     FastTrainingEconomicsStatus,
@@ -263,6 +264,26 @@ def test_rust_overlay_reader_authenticates_source_fl4_rows_and_manifest(
     )
     with pytest.raises(ValueError, match="manifest.*fingerprint|fingerprint.*manifest"):
         read_fast_training_economics_overlay(tampered_manifest)
+
+
+def test_training_economics_manifest_rejects_legacy_v2_schema() -> None:
+    with pytest.raises(ValueError, match="schema version|schema_version|incompatible"):
+        FastTrainingEconomicsOverlayManifest(
+            schema_name=FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME,
+            schema_version=2,
+            row_count=1,
+            available_row_count=1,
+            status_counts={"available": 1},
+            feature_source_jsonl_sha256="a" * 64,
+            future_path_logical_fingerprint_sha256="b" * 64,
+            future_path_label_version=1,
+            counterfactual_base_quantity="2",
+            pump_swap_fee_maximum_age_ms=60_000,
+            min_decision_observed_at_unix_ms=1_000,
+            max_decision_observed_at_unix_ms=1_000,
+            ordered_row_logical_fingerprint_sha256="c" * 64,
+            manifest_fingerprint_sha256="d" * 64,
+        )
 
 
 def test_fee_provenance_accepts_exact_non_integral_ratio_and_rejects_contradictions() -> None:

@@ -19,7 +19,7 @@ from .counterfactuals import (
 
 
 FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME = "shreks.fast_training_economics_overlay"
-FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION = 2
+FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION = 3
 
 _ROWS_FILENAME = "rows.jsonl"
 _MANIFEST_FILENAME = "manifest.json"

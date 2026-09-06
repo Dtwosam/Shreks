@@ -24,7 +24,7 @@ use crate::{
 
 pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME: &str =
     "shreks.fast_training_economics_overlay";
-pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION: u16 = 2;
+pub const FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION: u16 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -381,11 +381,18 @@ impl ShreksDb {
                 }
                 PumpSwapEffectiveFeeContext::RateUnknown(value) => {
                     if value.evidence.signed_user_cost_quote_raw < 0 {
-                        row.status = FastTrainingEconomicsStatus::EntryFeeRateUnknown;
-                        rows.push(row);
-                        continue;
+                        let Some(provenance) =
+                            self.current_pumpswap_buy_fee_provenance(&value)?
+                        else {
+                            row.status =
+                                FastTrainingEconomicsStatus::EntryFeeRateUnknown;
+                            rows.push(row);
+                            continue;
+                        };
+                        row.entry_fee = Some(provenance);
+                    } else {
+                        row.entry_fee = Some(fee_provenance(value)?);
                     }
-                    row.entry_fee = Some(fee_provenance(value)?);
                 }
                 PumpSwapEffectiveFeeContext::Available(value) => {
                     row.entry_fee = Some(fee_provenance(value)?);
@@ -812,6 +819,105 @@ impl ShreksDb {
         }
         Ok(())
     }
+
+    fn current_pumpswap_buy_fee_provenance(
+        &self,
+        value: &PumpSwapEffectiveFeeContextValue,
+    ) -> Result<Option<FastTrainingEconomicsFeeProvenance>, StorageError> {
+        if !value.evidence.is_buy
+            || value.evidence.signed_user_cost_quote_raw >= 0
+        {
+            return Ok(None);
+        }
+
+        let Some(economics) = self.pump_swap_execution_economics(
+            &value.evidence.signature,
+            value.evidence.ordinal,
+        )? else {
+            return Ok(None);
+        };
+
+        if economics.coin_creator.is_none()
+            || economics.coin_creator_fee_basis_points.is_none()
+            || economics.coin_creator_fee_raw.is_none()
+            || economics.cashback_fee_basis_points.is_none()
+            || economics.cashback_raw.is_none()
+            || economics.buyback_fee_basis_points.is_none()
+            || economics.buyback_fee_raw.is_none()
+            || economics.virtual_quote_reserves_raw.is_none()
+            || economics.can_boost.is_none()
+            || economics.base_supply_raw.is_none()
+        {
+            return Ok(None);
+        }
+
+        let market = value.evidence.market_quote_amount_raw;
+        let user = value.evidence.user_quote_amount_raw;
+        let Some(corrected_cost) = market.checked_sub(user) else {
+            return Ok(None);
+        };
+        if corrected_cost == 0 {
+            return Ok(None);
+        }
+
+        let creator_fee_raw = economics
+            .coin_creator_fee_raw
+            .expect("current PumpSwap suffix completeness checked above");
+        let protocol_creator = economics
+            .protocol_fee_raw
+            .checked_add(creator_fee_raw)
+            .ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics current PumpSwap BUY fee stack overflowed"
+                        .to_owned(),
+                )
+            })?;
+        let full_fee_stack = economics
+            .lp_fee_raw
+            .checked_add(protocol_creator)
+            .ok_or_else(|| {
+                StorageError::InvalidData(
+                    "training economics current PumpSwap BUY fee stack overflowed"
+                        .to_owned(),
+                )
+            })?;
+
+        let Some(lp_identity) = economics
+            .quote_amount_with_or_without_lp_fee_raw
+            .checked_sub(user)
+        else {
+            return Ok(None);
+        };
+        let Some(protocol_creator_identity) = market
+            .checked_sub(economics.quote_amount_with_or_without_lp_fee_raw)
+        else {
+            return Ok(None);
+        };
+
+        if corrected_cost != full_fee_stack
+            || lp_identity != economics.lp_fee_raw
+            || protocol_creator_identity != protocol_creator
+        {
+            return Ok(None);
+        }
+
+        let effective_fee_bps = exact_nonnegative_fee_bps(
+            corrected_cost,
+            market,
+        )?;
+
+        Ok(Some(FastTrainingEconomicsFeeProvenance {
+            source_signature: value.evidence.signature.clone(),
+            source_ordinal: value.evidence.ordinal,
+            source_sequence: value.source_sequence,
+            source_observed_at_unix_ms: value.source_observed_at_unix_ms,
+            age_ms: value.age_ms,
+            market_quote_amount_raw: market,
+            user_quote_amount_raw: user,
+            signed_user_cost_quote_raw: i128::from(corrected_cost),
+            effective_fee_bps,
+        }))
+    }
 }
 
 
@@ -945,6 +1051,36 @@ fn reserve_context_from_provenance(
         base_decimals: value.base_decimals,
         quote_decimals: value.quote_decimals,
     }
+}
+
+fn exact_nonnegative_fee_bps(
+    fee_raw: u64,
+    market_quote_amount_raw: u64,
+) -> Result<Option<u32>, StorageError> {
+    if market_quote_amount_raw == 0 {
+        return Err(StorageError::InvalidData(
+            "training economics fee basis-point denominator must be positive"
+                .to_owned(),
+        ));
+    }
+    let numerator = u128::from(fee_raw)
+        .checked_mul(10_000)
+        .ok_or_else(|| {
+            StorageError::InvalidData(
+                "training economics fee basis-point numerator overflowed"
+                    .to_owned(),
+            )
+        })?;
+    let denominator = u128::from(market_quote_amount_raw);
+    if numerator % denominator != 0 {
+        return Ok(None);
+    }
+    let exact = numerator / denominator;
+    u32::try_from(exact).map(Some).map_err(|_| {
+        StorageError::InvalidData(
+            "training economics exact fee basis points exceed u32".to_owned(),
+        )
+    })
 }
 
 fn fee_provenance(

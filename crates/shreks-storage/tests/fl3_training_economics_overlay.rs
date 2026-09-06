@@ -1017,6 +1017,153 @@ fn pumpswap_positive_non_integral_fee_ratio_is_available_exact_rational_evidence
 }
 
 #[test]
+fn current_pumpswap_buy_fee_sign_is_recovered_only_from_exact_sidecar_identity() {
+    let root = unique_test_dir("swap-current-buy-sign");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = swap_raw(
+        "swap-current-buy-sign-decision",
+        25,
+        true,
+        7_200,
+        10_000_000_000,
+        5_000_000_000,
+        741_190,
+        732_400,
+    );
+    assert!(db.record_pump_swap_trade_evidence(&decision).unwrap());
+    assert!(db
+        .record_pump_swap_execution_economics(&PumpSwapExecutionEconomicsWrite {
+            signature: decision.signature.clone(),
+            ordinal: decision.ordinal,
+            lp_fee_basis_points: 20,
+            lp_fee_raw: 1_465,
+            protocol_fee_basis_points: 5,
+            protocol_fee_raw: 367,
+            quote_amount_with_or_without_lp_fee_raw: 733_865,
+            coin_creator: Some("creator-current-buy-sign".to_owned()),
+            coin_creator_fee_basis_points: Some(94),
+            coin_creator_fee_raw: Some(6_958),
+            cashback_fee_basis_points: Some(0),
+            cashback_raw: Some(0),
+            buyback_fee_basis_points: Some(2),
+            buyback_fee_raw: Some(183),
+            virtual_quote_reserves_raw: Some(1_000_000_000),
+            can_boost: Some(true),
+            base_supply_raw: Some(10_000_000_000),
+        })
+        .unwrap());
+    assert!(db
+        .record_pump_swap_fast_event_from_source(
+            &swap_event(&decision, 1, 7_200),
+            &decision,
+            &swap_market(),
+            6,
+            9,
+        )
+        .unwrap());
+
+    let endpoint = store_swap_event(
+        &db,
+        "swap-current-buy-sign-endpoint",
+        26,
+        false,
+        2,
+        7_400,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+
+    record_swap_path(
+        &db,
+        &decision,
+        1,
+        7_200,
+        Some(&endpoint),
+        Some(7_400),
+        500,
+    );
+
+    let row = &overlay_rows(&db, "2", 1_000)[0];
+    assert_eq!(row.status, FastTrainingEconomicsStatus::Available);
+
+    let entry_fee = row.entry_fee.as_ref().unwrap();
+    assert_eq!(entry_fee.market_quote_amount_raw, 741_190);
+    assert_eq!(entry_fee.user_quote_amount_raw, 732_400);
+    assert_eq!(entry_fee.signed_user_cost_quote_raw, 8_790);
+    assert_eq!(entry_fee.effective_fee_bps, None);
+
+    let source_fee = db
+        .pump_swap_effective_fee_evidence(
+            &decision.signature,
+            decision.ordinal,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(source_fee.signed_user_cost_quote_raw, -8_790);
+    assert_eq!(source_fee.effective_fee_bps, None);
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn current_pumpswap_buy_fee_sign_mismatch_remains_rate_unknown() {
+    let root = unique_test_dir("swap-current-buy-sign-mismatch");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+
+    let decision = store_swap_event(
+        &db,
+        "swap-current-buy-sign-mismatch-decision",
+        25,
+        true,
+        1,
+        7_300,
+        10_000_000_000,
+        5_000_000_000,
+        100,
+        99,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-current-buy-sign-mismatch-endpoint",
+        26,
+        false,
+        2,
+        7_500,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+
+    record_swap_path(
+        &db,
+        &decision,
+        1,
+        7_300,
+        Some(&endpoint),
+        Some(7_500),
+        500,
+    );
+
+    let row = &overlay_rows(&db, "2", 1_000)[0];
+    assert_eq!(
+        row.status,
+        FastTrainingEconomicsStatus::EntryFeeRateUnknown
+    );
+    assert!(row.entry_fee.is_none());
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
 fn pumpswap_negative_fee_delta_remains_rate_unknown() {
     let root = unique_test_dir("swap-negative-fee");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
