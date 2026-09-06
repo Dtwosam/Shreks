@@ -98,6 +98,7 @@ def _request(tmp_path: Path):
         future_path_label_version=1,
         counterfactual_base_quantity=2.0,
         horizon_ms=HORIZON_MS,
+        minimum_decision_observed_at_unix_ms=1_300,
         minimum_raw_rows_per_partition=2,
         minimum_test_scored_observations=2,
         evaluation_policy=evaluation_policy(
@@ -282,6 +283,7 @@ def test_host_request_codec_is_canonical_and_authenticated(
     assert request.schema_name == FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_NAME
     assert request.schema_version == FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION
     assert request.selection_clock == FAST_FIRST_CHAMPION_HOST_SELECTION_CLOCK
+    assert request.minimum_decision_observed_at_unix_ms == 1_300
     assert request.training_economics_overlay_path == "training-economics"
     assert request.expected_training_economics_overlay_manifest_fingerprint_sha256 == "b" * 64
     assert request.training_execution_cost_policy == _training_economics_policy()
@@ -344,6 +346,7 @@ def test_host_run_captures_clock_plans_and_cross_links_preparation(
         bundle.manifest.bundle_fingerprint_sha256
     )
     assert artifact.plan.selection_at_unix_ms == SELECTION_AT
+    assert artifact.plan.minimum_decision_observed_at_unix_ms == 1_300
     assert artifact.plan.validation_policy == (
         artifact.preparation.request.validation_policy
     )

@@ -32,9 +32,9 @@ from shreks_brain.research.fast_training_targets import (
 FAST_FIRST_CHAMPION_EVIDENCE_PLAN_SCHEMA_NAME = (
     "shreks.fast_first_champion_evidence_plan"
 )
-FAST_FIRST_CHAMPION_EVIDENCE_PLAN_SCHEMA_VERSION = 1
+FAST_FIRST_CHAMPION_EVIDENCE_PLAN_SCHEMA_VERSION = 2
 FAST_FIRST_CHAMPION_EVIDENCE_PLAN_VERSION = (
-    "fl9-first-champion-evidence-plan-v1"
+    "fl9-first-champion-evidence-plan-v2"
 )
 FAST_FIRST_CHAMPION_PLAN_VALIDATION_POLICY_VERSION = (
     "fl9-first-champion-60-20-20-v1"
@@ -61,6 +61,7 @@ _PLAN_KEYS = frozenset(
         "future_path_logical_fingerprint_sha256",
         "horizon_ms",
         "selection_at_unix_ms",
+        "minimum_decision_observed_at_unix_ms",
         "minimum_raw_rows_per_partition",
         "minimum_test_scored_observations",
         "eligible_preselection_row_count",
@@ -141,6 +142,7 @@ class FastFirstChampionEvidencePlan:
     future_path_logical_fingerprint_sha256: str
     horizon_ms: int
     selection_at_unix_ms: int
+    minimum_decision_observed_at_unix_ms: int
     minimum_raw_rows_per_partition: int
     minimum_test_scored_observations: int
     eligible_preselection_row_count: int
@@ -194,6 +196,10 @@ class FastFirstChampionEvidencePlan:
             "selection_at_unix_ms",
             self.selection_at_unix_ms,
         )
+        _require_non_negative_int(
+            "minimum_decision_observed_at_unix_ms",
+            self.minimum_decision_observed_at_unix_ms,
+        )
         if type(self.validation_policy) is not FastChronologicalValidationPolicy:
             raise ValueError(
                 "validation_policy must be exact FastChronologicalValidationPolicy"
@@ -204,6 +210,8 @@ class FastFirstChampionEvidencePlan:
             or len(self.validation_policy.folds) != 1
             or self.validation_policy.folds[0].name
             != FAST_FIRST_CHAMPION_PLAN_FOLD_NAME
+            or self.validation_policy.folds[0].training_started_at_unix_ms
+            < self.minimum_decision_observed_at_unix_ms
         ):
             raise ValueError(
                 "first champion evidence plan validation policy is incompatible"
@@ -264,6 +272,7 @@ def build_fast_first_champion_evidence_plan(
     bundle: FastTrainingBundle,
     horizon_ms: int,
     selection_at_unix_ms: int,
+    minimum_decision_observed_at_unix_ms: int,
     minimum_raw_rows_per_partition: int,
     minimum_test_scored_observations: int,
 ) -> FastFirstChampionEvidencePlan:
@@ -272,6 +281,10 @@ def build_fast_first_champion_evidence_plan(
     _require_non_negative_int(
         "selection_at_unix_ms",
         selection_at_unix_ms,
+    )
+    _require_non_negative_int(
+        "minimum_decision_observed_at_unix_ms",
+        minimum_decision_observed_at_unix_ms,
     )
     _require_positive_int(
         "minimum_raw_rows_per_partition",
@@ -292,7 +305,9 @@ def build_fast_first_champion_evidence_plan(
             (
                 record
                 for record in bundle.features.records
-                if record.decision_observed_at_unix_ms < test_end
+                if minimum_decision_observed_at_unix_ms
+                <= record.decision_observed_at_unix_ms
+                < test_end
             ),
             key=_record_sort_key,
         )
@@ -454,6 +469,9 @@ def build_fast_first_champion_evidence_plan(
         ),
         "horizon_ms": horizon_ms,
         "selection_at_unix_ms": selection_at_unix_ms,
+        "minimum_decision_observed_at_unix_ms": (
+            minimum_decision_observed_at_unix_ms
+        ),
         "minimum_raw_rows_per_partition": (
             minimum_raw_rows_per_partition
         ),
@@ -492,6 +510,9 @@ def build_fast_first_champion_evidence_plan(
         ],
         horizon_ms=horizon_ms,
         selection_at_unix_ms=selection_at_unix_ms,
+        minimum_decision_observed_at_unix_ms=(
+            minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=(
             minimum_raw_rows_per_partition
         ),
@@ -591,6 +612,10 @@ def decode_fast_first_champion_evidence_plan(
         selection_at_unix_ms=_integer(
             raw["selection_at_unix_ms"],
             "selection_at_unix_ms",
+        ),
+        minimum_decision_observed_at_unix_ms=_integer(
+            raw["minimum_decision_observed_at_unix_ms"],
+            "minimum_decision_observed_at_unix_ms",
         ),
         minimum_raw_rows_per_partition=_integer(
             raw["minimum_raw_rows_per_partition"],
@@ -809,6 +834,9 @@ def _plan_material(
         ),
         "horizon_ms": plan.horizon_ms,
         "selection_at_unix_ms": plan.selection_at_unix_ms,
+        "minimum_decision_observed_at_unix_ms": (
+            plan.minimum_decision_observed_at_unix_ms
+        ),
         "minimum_raw_rows_per_partition": (
             plan.minimum_raw_rows_per_partition
         ),

@@ -69,6 +69,7 @@ def write_fast_first_champion_host_request_from_sources(
     future_path_label_version: int,
     counterfactual_base_quantity: float | int,
     horizon_ms: int,
+    minimum_decision_observed_at_unix_ms: int,
     minimum_raw_rows_per_partition: int,
     minimum_test_scored_observations: int,
     evaluation_policy: FastForecastEvaluationPolicy,
@@ -206,6 +207,9 @@ def write_fast_first_champion_host_request_from_sources(
         future_path_label_version=future_path_label_version,
         counterfactual_base_quantity=counterfactual_base_quantity,
         horizon_ms=horizon_ms,
+        minimum_decision_observed_at_unix_ms=(
+            minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=(
             minimum_raw_rows_per_partition
         ),
@@ -336,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--horizon-ms", required=True, type=int)
     parser.add_argument(
+        "--minimum-decision-observed-at-unix-ms",
+        required=True,
+        type=int,
+    )
+    parser.add_argument(
         "--minimum-raw-rows-per-partition",
         required=True,
         type=int,
@@ -408,6 +417,9 @@ def main(argv: list[str] | None = None) -> int:
             args.counterfactual_base_quantity
         ),
         horizon_ms=args.horizon_ms,
+        minimum_decision_observed_at_unix_ms=(
+            args.minimum_decision_observed_at_unix_ms
+        ),
         minimum_raw_rows_per_partition=(
             args.minimum_raw_rows_per_partition
         ),
