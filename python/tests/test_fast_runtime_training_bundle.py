@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+import shreks_brain.research.counterfactual_source as counterfactual_source_module
 from shreks_brain.research.counterfactual_parquet import (
     build_counterfactual_dataset,
     read_counterfactual_parquet,
@@ -251,6 +252,20 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
 
     monkeypatch.setattr(builtins, "__import__", _guard)
 
+    provenance_connection_opens = 0
+    original_open = counterfactual_source_module._open_read_only
+
+    def _counted_provenance_open(path: Path):
+        nonlocal provenance_connection_opens
+        provenance_connection_opens += 1
+        return original_open(path)
+
+    monkeypatch.setattr(
+        counterfactual_source_module,
+        "_open_read_only",
+        _counted_provenance_open,
+    )
+
     bundle = build_fast_training_bundle_from_runtime_sources(
         feature_jsonl_path=features_path,
         sqlite_path=database,
@@ -261,6 +276,7 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     )
 
     assert not imported_pyarrow
+    assert provenance_connection_opens == 1
     assert bundle.manifest.decision_count == 2
     assert bundle.manifest.future_path_label_row_count == 2
     assert bundle.manifest.counterfactual_row_count == 4

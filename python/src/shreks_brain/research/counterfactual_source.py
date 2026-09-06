@@ -102,6 +102,66 @@ def load_entry_counterfactual_from_sqlite(
     return LoadedEntryCounterfactual(provenance=provenance, context=context)
 
 
+def load_entry_counterfactual_provenance_batch_from_sqlite(
+    db_path: str | Path,
+    *,
+    lookup_identities: tuple[tuple[str, int, int, int], ...],
+) -> dict[tuple[str, int, int, int], CounterfactualSourceProvenance]:
+    """Load canonical FL4 provenance for many entry lookups on one connection."""
+
+    if not isinstance(lookup_identities, tuple) or not lookup_identities:
+        raise CounterfactualSourceError(
+            "lookup_identities must be a non-empty tuple"
+        )
+
+    normalized: list[tuple[str, int, int, int]] = []
+    for identity in lookup_identities:
+        if not isinstance(identity, tuple) or len(identity) != 4:
+            raise CounterfactualSourceError(
+                "lookup identity must be a four-item tuple"
+            )
+        decision_signature, decision_ordinal, horizon_ms, label_version = identity
+        _validate_lookup_identity(
+            decision_signature=decision_signature,
+            decision_ordinal=decision_ordinal,
+            horizon_ms=horizon_ms,
+            label_version=label_version,
+        )
+        normalized.append(
+            (
+                decision_signature,
+                decision_ordinal,
+                horizon_ms,
+                label_version,
+            )
+        )
+
+    if len(set(normalized)) != len(normalized):
+        raise CounterfactualSourceError(
+            "lookup_identities cannot contain duplicate identities"
+        )
+
+    connection = _open_read_only(Path(db_path))
+    try:
+        loaded: dict[
+            tuple[str, int, int, int],
+            CounterfactualSourceProvenance,
+        ] = {}
+        for identity in normalized:
+            decision_signature, decision_ordinal, horizon_ms, label_version = identity
+            loaded[identity] = _load_provenance(
+                db_path,
+                decision_signature=decision_signature,
+                decision_ordinal=decision_ordinal,
+                horizon_ms=horizon_ms,
+                label_version=label_version,
+                connection=connection,
+            )
+        return loaded
+    finally:
+        connection.close()
+
+
 def load_open_position_counterfactual_from_sqlite(
     db_path: str | Path,
     *,
@@ -167,9 +227,11 @@ def _load_provenance(
     decision_ordinal: int,
     horizon_ms: int,
     label_version: int,
+    connection: sqlite3.Connection | None = None,
 ) -> CounterfactualSourceProvenance:
-    path = Path(db_path)
-    connection = _open_read_only(path)
+    owns_connection = connection is None
+    if connection is None:
+        connection = _open_read_only(Path(db_path))
     try:
         row = connection.execute(
             """
@@ -312,7 +374,8 @@ def _load_provenance(
             f"canonical source database schema/query failed closed: {error}"
         ) from error
     finally:
-        connection.close()
+        if owns_connection:
+            connection.close()
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
