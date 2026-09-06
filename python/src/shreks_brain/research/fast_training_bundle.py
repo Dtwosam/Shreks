@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from decimal import Decimal
 import hashlib
 import json
@@ -19,11 +19,14 @@ from .counterfactual_parquet import (
 )
 from .counterfactual_source import load_entry_counterfactual_from_sqlite
 from .counterfactuals import (
+    CounterfactualAction,
     CounterfactualOutcomeSet,
+    ExecutionStatus,
     label_entry_counterfactuals,
 )
 from .fast_training_economics import (
     FastTrainingEconomicsOverlayRow,
+    FastTrainingEconomicsStatus,
     FastTrainingExecutionCostPolicy,
     build_entry_counterfactual_context_from_training_economics,
     read_fast_training_economics_overlay,
@@ -320,6 +323,7 @@ def build_fast_training_bundle_from_runtime_sources(
         )
 
     outcome_sets: list[CounterfactualOutcomeSet] = []
+    projected_labels = []
     for key, label in labels_by_key.items():
         row = overlay_by_key[key]
         _validate_runtime_training_economics_row(row, label)
@@ -363,11 +367,65 @@ def build_fast_training_bundle_from_runtime_sources(
             base_quantity=float(counterfactual_base_quantity),
             horizon_complete=label.completeness == "complete",
         )
-        outcome_sets.append(label_entry_counterfactuals(context))
+        outcomes = label_entry_counterfactuals(context)
+        outcome_sets.append(outcomes)
+
+        buy_now = outcomes[0]
+        if buy_now.action is not CounterfactualAction.BUY_NOW:
+            raise ValueError(
+                "runtime counterfactual outcome order does not begin with BUY_NOW"
+            )
+        endpoint_cost_adjusted_return_bps = (
+            label.endpoint_cost_adjusted_return_bps
+        )
+        if (
+            endpoint_cost_adjusted_return_bps is None
+            and buy_now.execution_status is ExecutionStatus.EXECUTABLE
+        ):
+            if buy_now.return_bps is None:
+                raise ValueError(
+                    "executable runtime BUY_NOW outcome is missing return_bps"
+                )
+            endpoint_cost_adjusted_return_bps = buy_now.return_bps
+
+        route_unavailability_observed = (
+            label.route_unavailability_observed
+        )
+        if route_unavailability_observed is None:
+            if (
+                row.status
+                is FastTrainingEconomicsStatus.EXIT_PROJECTION_UNAVAILABLE
+            ):
+                route_unavailability_observed = True
+            elif row.exit_projection is not None:
+                route_unavailability_observed = False
+
+        projected_labels.append(
+            replace(
+                label,
+                route_unavailability_observed=(
+                    route_unavailability_observed
+                ),
+                endpoint_cost_adjusted_return_bps=(
+                    endpoint_cost_adjusted_return_bps
+                ),
+            )
+        )
+
+    projected_label_tuple = tuple(projected_labels)
+    projected_future_path = FuturePathTrainingLabelDataset(
+        labels=projected_label_tuple,
+        logical_fingerprint_sha256=(
+            future_path_logical_fingerprint_sha256(
+                projected_label_tuple
+            )
+        ),
+        label_version=future_path.label_version,
+    )
 
     return build_fast_training_bundle_from_components(
         features=features,
-        future_path_labels=future_path,
+        future_path_labels=projected_future_path,
         counterfactual_outcome_sets=tuple(outcome_sets),
     )
 
