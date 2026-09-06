@@ -216,6 +216,29 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     database, features_path, overlay_path = _write_mixed_training_economics_fixture(
         tmp_path
     )
+    persisted_before = load_future_path_training_labels_from_sqlite(
+        database,
+        future_path_label_version=1,
+    )
+    persisted_before_by_decision = {
+        label.decision_signature: label
+        for label in persisted_before.labels
+    }
+    assert (
+        persisted_before_by_decision["mixed-pump-decision"]
+        .endpoint_cost_adjusted_return_bps
+        is not None
+    )
+    assert (
+        persisted_before_by_decision["mixed-swap-decision"]
+        .endpoint_cost_adjusted_return_bps
+        is None
+    )
+    assert (
+        persisted_before_by_decision["mixed-swap-decision"]
+        .route_unavailability_observed
+        is None
+    )
     imported_pyarrow = False
     original_import = builtins.__import__
 
@@ -242,15 +265,11 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     assert bundle.manifest.future_path_label_row_count == 2
     assert bundle.manifest.counterfactual_row_count == 4
 
-    persisted_future_path = load_future_path_training_labels_from_sqlite(
+    persisted_after = load_future_path_training_labels_from_sqlite(
         database,
         future_path_label_version=1,
     )
-    assert all(
-        label.endpoint_cost_adjusted_return_bps is None
-        and label.route_unavailability_observed is None
-        for label in persisted_future_path.labels
-    )
+    assert persisted_after == persisted_before
 
     runtime_labels = {
         label.decision_signature: label
@@ -258,13 +277,18 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     }
     pump_runtime = runtime_labels["mixed-pump-decision"]
     swap_runtime = runtime_labels["mixed-swap-decision"]
-    assert pump_runtime.endpoint_cost_adjusted_return_bps is None
-    assert pump_runtime.route_unavailability_observed is None
+    pump_persisted = persisted_before_by_decision["mixed-pump-decision"]
+    assert pump_runtime.endpoint_cost_adjusted_return_bps == (
+        pump_persisted.endpoint_cost_adjusted_return_bps
+    )
+    assert pump_runtime.route_unavailability_observed == (
+        pump_persisted.route_unavailability_observed
+    )
     assert swap_runtime.endpoint_cost_adjusted_return_bps is not None
     assert swap_runtime.route_unavailability_observed is False
     assert (
         bundle.future_path_labels.logical_fingerprint_sha256
-        != persisted_future_path.logical_fingerprint_sha256
+        != persisted_before.logical_fingerprint_sha256
     )
 
     by_decision = {}
