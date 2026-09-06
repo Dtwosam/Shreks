@@ -17,7 +17,9 @@ from .counterfactual_parquet import (
     build_counterfactual_dataset,
     read_counterfactual_parquet,
 )
-from .counterfactual_source import load_entry_counterfactual_from_sqlite
+from .counterfactual_source import (
+    load_entry_counterfactual_provenance_batch_from_sqlite,
+)
 from .counterfactuals import (
     CounterfactualAction,
     CounterfactualOutcomeSet,
@@ -322,21 +324,22 @@ def build_fast_training_bundle_from_runtime_sources(
             "training economics overlay population does not match FL4 exactly"
         )
 
+    provenance_by_key = load_entry_counterfactual_provenance_batch_from_sqlite(
+        sqlite_path,
+        lookup_identities=tuple(labels_by_key),
+    )
+    if set(provenance_by_key) != set(labels_by_key):
+        raise ValueError(
+            "runtime counterfactual provenance population does not match FL4 exactly"
+        )
+
     outcome_sets: list[CounterfactualOutcomeSet] = []
     projected_labels = []
     for key, label in labels_by_key.items():
         row = overlay_by_key[key]
         _validate_runtime_training_economics_row(row, label)
 
-        loaded = load_entry_counterfactual_from_sqlite(
-            sqlite_path,
-            decision_signature=label.decision_signature,
-            decision_ordinal=label.decision_ordinal,
-            horizon_ms=label.horizon_ms,
-            label_version=label.label_version,
-            base_quantity=float(counterfactual_base_quantity),
-        )
-        provenance = loaded.provenance
+        provenance = provenance_by_key[key]
         if (
             provenance.decision_signature != label.decision_signature
             or provenance.decision_ordinal != label.decision_ordinal
