@@ -131,6 +131,7 @@ def test_writer_derives_authenticated_release_and_policy_identity(
         future_path_label_version=1,
         counterfactual_base_quantity=2.0,
         horizon_ms=30_000,
+        minimum_decision_observed_at_unix_ms=1_300,
         minimum_raw_rows_per_partition=20,
         minimum_test_scored_observations=10,
         evaluation_policy=_evaluation_policy(),
@@ -172,6 +173,7 @@ def test_writer_derives_authenticated_release_and_policy_identity(
         result.hydration_policy_fingerprint_sha256
     )
     assert request.selection_clock == FAST_FIRST_CHAMPION_HOST_SELECTION_CLOCK
+    assert request.minimum_decision_observed_at_unix_ms == 1_300
     assert request.evaluation_policy == _evaluation_policy()
 
 
@@ -195,6 +197,7 @@ def test_writer_refuses_existing_request_or_host_run_destination(
             future_path_label_version=1,
             counterfactual_base_quantity=2.0,
             horizon_ms=30_000,
+            minimum_decision_observed_at_unix_ms=1_300,
             minimum_raw_rows_per_partition=20,
             minimum_test_scored_observations=10,
             evaluation_policy=_evaluation_policy(),
@@ -219,6 +222,7 @@ def test_writer_refuses_existing_request_or_host_run_destination(
             future_path_label_version=1,
             counterfactual_base_quantity=2.0,
             horizon_ms=30_000,
+            minimum_decision_observed_at_unix_ms=1_300,
             minimum_raw_rows_per_partition=20,
             minimum_test_scored_observations=10,
             evaluation_policy=_evaluation_policy(),
@@ -263,6 +267,7 @@ def test_writer_rejects_hydration_policy_mutation_and_publishes_nothing(
             future_path_label_version=1,
             counterfactual_base_quantity=2.0,
             horizon_ms=30_000,
+            minimum_decision_observed_at_unix_ms=1_300,
             minimum_raw_rows_per_partition=20,
             minimum_test_scored_observations=10,
             evaluation_policy=_evaluation_policy(),
@@ -312,6 +317,7 @@ def test_writer_rejects_proof_workspace_mutation(
             future_path_label_version=1,
             counterfactual_base_quantity=2.0,
             horizon_ms=30_000,
+            minimum_decision_observed_at_unix_ms=1_300,
             minimum_raw_rows_per_partition=20,
             minimum_test_scored_observations=10,
             evaluation_policy=_evaluation_policy(),
@@ -354,6 +360,8 @@ def test_cli_builds_test_evaluation_policy_without_hidden_defaults(
             "2.0",
             "--horizon-ms",
             "30000",
+            "--minimum-decision-observed-at-unix-ms",
+            "1300",
             "--minimum-raw-rows-per-partition",
             "20",
             "--minimum-test-scored-observations",
