@@ -40,7 +40,7 @@ A decision is BUY-eligible only when all conditions below are proven from point-
 3. that lifecycle transition is exactly
    `pump_fun_bonding_curve -> pump_swap`;
 4. the graduation was detected no later than the decision timestamp;
-5. the market snapshot maps to the exact verified graduation `pool_address`;
+5. the liquidity/volume market snapshot is the fresh canonical PumpSwap pair for the exact mint/quote market under the established current-pair selection semantics;
 6. snapshot source is exactly `dexscreener`;
 7. snapshot observation is no later than the decision/evaluation timestamp;
 8. snapshot age is at most **60,000 ms**;
@@ -52,6 +52,32 @@ Missing, ambiguous, stale, or contradictory evidence is ineligible and must fail
 
 No bonding-curve decision is BUY-eligible, regardless of activity, forecast, return, or later
 graduation.
+
+
+## Exact graduation-pool join audit correction
+
+The first production audit using an exact equality join between
+`token_lifecycle_events.pool_address` and `market_snapshots.pair_address` produced only 770
+eligible decisions across 3 mints, with 104,782 PumpSwap decisions classified as
+`missing_exact_pool_snapshot`.
+
+That result does **not** prove those markets lacked liquidity/volume evidence.
+
+Repository PR #69 (`fix: align Fresh Launch selection with canonical market pair`) already sealed
+the market-selection rule: current tradability is based on the canonical fresh market pair selected
+from point-in-time snapshots. A secondary/older pair must not override that current canonical pair,
+but canonical market identity is not defined as equality with the lifecycle graduation pool address.
+
+Therefore v1 requires:
+
+- verified Pump graduation before the decision;
+- current point-in-time canonical snapshot venue exactly `pump_swap`;
+- exact mint/quote attribution;
+- canonical pair chronology/freshness;
+- liquidity/volume thresholds on that canonical pair.
+
+The exact graduation pool address remains immutable lifecycle provenance but is **not** an equality
+join requirement for market-quality eligibility.
 
 ## Historical versus runtime chronology
 
@@ -183,7 +209,8 @@ fields above.
 Required output:
 
 - PumpSwap decision count;
-- exact-pool graduation-matched count;
+- verified-graduation count;
+- canonical fresh PumpSwap-pair snapshot coverage;
 - fresh DexScreener snapshot coverage;
 - missing/stale snapshot counts;
 - liquidity-threshold exclusion count;
