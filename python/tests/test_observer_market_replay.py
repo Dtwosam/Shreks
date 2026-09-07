@@ -437,3 +437,33 @@ def test_load_window_rejects_invalid_identity_and_timestamp_arguments(tmp_path):
         store.load_window(1, -1, _policy())
     with pytest.raises(ValueError, match="policy"):
         store.load_window(1, _AS_OF, object())
+
+
+def test_load_window_skips_newer_snapshot_with_future_pair_creation_time(tmp_path):
+    path = tmp_path / "observer.sqlite3"
+    candidate_id = _database(path)
+    valid_row_id = _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=1_994_000,
+        source="alpha",
+        pair_address="PairA",
+        price_usd=2.0,
+        pair_created_at_unix_ms=500_000,
+    )
+    _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=1_995_000,
+        source="alpha",
+        pair_address="PairA",
+        price_usd=99.0,
+        pair_created_at_unix_ms=1_996_000,
+    )
+
+    window = ObserverMarketStore(path).load_window(candidate_id, _AS_OF, _policy())
+
+    assert window.current.row_id == valid_row_id
+    assert window.current.observed_at_unix_ms == 1_994_000
+    assert window.current.price_usd == 2.0
+    assert window.pair_created_at_unix_ms == 500_000
