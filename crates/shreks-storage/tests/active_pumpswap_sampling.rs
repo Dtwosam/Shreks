@@ -34,6 +34,63 @@ fn insert_fast_event(
     observed_at_unix_ms: i64,
 ) {
     let connection = Connection::open(db_path).unwrap();
+    let signature = format!("sig-{sequence}");
+    let log_index = sequence;
+    let ordinal = 2_147_483_648_i64 + log_index;
+
+    if venue == "pump_swap" {
+        connection
+            .execute(
+                r#"INSERT INTO pump_swap_trade_evidence (
+                       signature, ordinal, log_index, provider, slot,
+                       observed_at_unix_ms, pool, user, is_buy,
+                       base_amount_raw, quote_amount_raw, user_quote_amount_raw,
+                       timestamp_unix_seconds, pool_base_reserves_raw,
+                       pool_quote_reserves_raw
+                   ) VALUES (
+                       ?1, ?2, ?3, 'solana_public', '1',
+                       ?4, 'test-pool', 'actor', 1,
+                       '1000000', '1000000000', '1000000000',
+                       ?5, '1000000', '1000000000'
+                   )"#,
+                params![
+                    signature,
+                    ordinal,
+                    log_index,
+                    observed_at_unix_ms,
+                    observed_at_unix_ms / 1000,
+                ],
+            )
+            .unwrap();
+    } else {
+        connection
+            .execute(
+                r#"INSERT INTO pump_trade_evidence (
+                       signature, ordinal, provider, slot,
+                       observed_at_unix_ms, mint, quote_mint, user, is_buy,
+                       token_amount_raw, sol_amount_raw, quote_amount_raw,
+                       timestamp_unix_seconds, virtual_sol_reserves_raw,
+                       virtual_token_reserves_raw, real_sol_reserves_raw,
+                       real_token_reserves_raw, virtual_quote_reserves_raw,
+                       real_quote_reserves_raw, ix_name
+                   ) VALUES (
+                       ?1, 0, 'solana_public', '1',
+                       ?2, ?3,
+                       'So11111111111111111111111111111111111111112',
+                       'actor', 1, '1000000', '1000000000', '1000000000',
+                       ?4, '1000000000', '1000000', '1000000000',
+                       '1000000', '1000000000', '1000000000', 'buy'
+                   )"#,
+                params![
+                    signature,
+                    observed_at_unix_ms,
+                    mint,
+                    observed_at_unix_ms / 1000,
+                ],
+            )
+            .unwrap();
+    }
+
     connection
         .execute(
             r#"INSERT INTO fast_events (
@@ -43,14 +100,15 @@ fn insert_fast_event(
                    actor, base_quantity, quote_quantity, price_quote,
                    base_decimals, quote_decimals
                ) VALUES (
-                   ?1, ?2, 0, 'solana_public', '1',
-                   ?3, ?3, ?3, ?4,
+                   ?1, ?2, ?3, 'solana_public', '1',
+                   ?4, ?4, ?4, ?5,
                    'So11111111111111111111111111111111111111112',
-                   ?5, 'buy', 'actor', 1.0, 1.0, 1.0, 6, 9
+                   ?6, 'buy', 'actor', 1.0, 1.0, 1.0, 6, 9
                )"#,
             params![
                 sequence,
-                format!("sig-{sequence}"),
+                signature,
+                if venue == "pump_swap" { ordinal } else { 0 },
                 observed_at_unix_ms,
                 mint,
                 venue,
