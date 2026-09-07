@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId, VenueId};
+use shreks_core::{ProviderHealthState, ProviderId};
 use shreks_providers::{DiscoveryProvider, MarketDataProvider, ProviderError};
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::time::{sleep, Instant};
@@ -22,7 +22,6 @@ use super::sampling::{
 
 const REGISTRY_STREAM: &str = "observer_v2_registry_v1";
 const DISCOVERY_INTERVAL_MS: i64 = 30_000;
-const MIGRATION_SYNC_INTERVAL_MS: i64 = 30_000;
 const RUNTIME_LOOP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// One market provider plus an optional request budget used by the high-resolution sampler.
@@ -101,7 +100,6 @@ pub struct HighResolutionSampler {
     policy: SamplingPolicy,
     registry: SamplingRegistry,
     next_discovery_at_unix_ms: i64,
-    next_migration_sync_at_unix_ms: i64,
     discovery_consecutive_failures: u64,
 }
 
@@ -124,7 +122,6 @@ impl HighResolutionSampler {
             policy,
             registry: SamplingRegistry::default(),
             next_discovery_at_unix_ms: 0,
-            next_migration_sync_at_unix_ms: 0,
             discovery_consecutive_failures: 0,
         })
     }
@@ -271,74 +268,6 @@ impl HighResolutionSampler {
             report.migration_registered_candidate_count = report
                 .migration_registered_candidate_count
                 .saturating_add(1);
-        }
-
-        Ok(())
-    }
-
-    fn sync_verified_migrations_if_due(
-        &mut self,
-        now_unix_ms: i64,
-        report: &mut SamplerCycleReport,
-    ) -> Result<(), SamplerError> {
-        if now_unix_ms < self.next_migration_sync_at_unix_ms {
-            return Ok(());
-        }
-        self.next_migration_sync_at_unix_ms =
-            now_unix_ms.saturating_add(MIGRATION_SYNC_INTERVAL_MS);
-
-        let from = now_unix_ms
-            .saturating_sub(self.policy.retention_window_ms())
-            .max(0);
-        let targets = self
-            .db
-            .verified_pump_swap_sampling_targets(from, now_unix_ms)?;
-
-        for target in targets {
-            if self.registry.candidate_for_mint(&target.mint).is_some() {
-                if self
-                    .registry
-                    .reanchor_mint_for_migration(&target.mint, target.detected_at_unix_ms)?
-                {
-                    report.migrated_candidate_count =
-                        report.migrated_candidate_count.saturating_add(1);
-                }
-                continue;
-            }
-
-            let candidate = match self
-                .db
-                .migration_sampling_candidate_for_mint(&target.mint)?
-            {
-                Some(candidate) => candidate,
-                None => {
-                    let candidate_id = self.db.upsert_candidate(&DiscoveredToken {
-                        mint: target.mint.clone(),
-                        pair_address: None,
-                        dex_id: None,
-                        venue: Some(VenueId::PumpSwap),
-                        discovered_at_unix_ms: target.detected_at_unix_ms,
-                        source: ProviderId::DexScreener,
-                    })?;
-                    shreks_storage::MigrationSamplingCandidate {
-                        candidate_id,
-                        mint: target.mint.clone(),
-                        discovered_at_unix_ms: target.detected_at_unix_ms,
-                    }
-                }
-            };
-
-            self.db.ensure_outcome_checkpoints(
-                candidate.candidate_id,
-                target.detected_at_unix_ms,
-            )?;
-            self.registry.register(TrackedCandidate::new(
-                candidate.candidate_id,
-                candidate.mint,
-                target.detected_at_unix_ms,
-            )?)?;
-            report.migrated_candidate_count =
-                report.migrated_candidate_count.saturating_add(1);
         }
 
         Ok(())
