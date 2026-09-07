@@ -181,6 +181,11 @@ class ObserverCampaignCandidateStore:
                           ON snapshot.candidate_id = candidate.id
                         WHERE candidate.discovered_at_unix_ms <= ?
                           AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                          AND (
+                              snapshot.pair_created_at_unix_ms IS NULL
+                              OR snapshot.pair_created_at_unix_ms
+                                  <= snapshot.observed_at_unix_ms
+                          )
                         GROUP BY candidate.id, candidate.mint
                         ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
                     (as_of_unix_ms, cutoff, as_of_unix_ms),
@@ -218,6 +223,11 @@ class ObserverCampaignCandidateStore:
                           ON snapshot.candidate_id = candidate.id
                         WHERE candidate.discovered_at_unix_ms <= ?
                           AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                          AND (
+                              snapshot.pair_created_at_unix_ms IS NULL
+                              OR snapshot.pair_created_at_unix_ms
+                                  <= snapshot.observed_at_unix_ms
+                          )
                         GROUP BY candidate.id, candidate.mint
                         HAVING COUNT(snapshot.pair_created_at_unix_ms) > 0
                            AND MIN(snapshot.pair_created_at_unix_ms)
@@ -261,6 +271,11 @@ class ObserverCampaignCandidateStore:
                           ON snapshot.candidate_id = candidate.id
                         WHERE candidate.discovered_at_unix_ms <= ?
                           AND snapshot.observed_at_unix_ms BETWEEN ? AND ?
+                          AND (
+                              snapshot.pair_created_at_unix_ms IS NULL
+                              OR snapshot.pair_created_at_unix_ms
+                                  <= snapshot.observed_at_unix_ms
+                          )
                         GROUP BY candidate.id, candidate.mint
                         ORDER BY latest_market_observed_at DESC, candidate.id ASC""",
                     (as_of_unix_ms, cutoff, as_of_unix_ms),
@@ -638,6 +653,10 @@ def _current_market_snapshot_metadata(
                WHERE candidate_id = ?
                  AND source = ?
                  AND observed_at_unix_ms BETWEEN ? AND ?
+                 AND (
+                     pair_created_at_unix_ms IS NULL
+                     OR pair_created_at_unix_ms <= observed_at_unix_ms
+                 )
                ORDER BY observed_at_unix_ms DESC, id ASC
                LIMIT 1""",
             (candidate_id, source, minimum_observed_at, as_of_unix_ms),
