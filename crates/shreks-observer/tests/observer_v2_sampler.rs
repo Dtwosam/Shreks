@@ -199,6 +199,37 @@ fn scalar_i64(db_path: &Path, sql: &str) -> i64 {
         .unwrap()
 }
 
+fn insert_test_fast_event(
+    db_path: &Path,
+    sequence: i64,
+    mint: &str,
+    observed_at_unix_ms: i64,
+) {
+    Connection::open(db_path)
+        .unwrap()
+        .execute(
+            r#"INSERT INTO fast_events (
+                   sequence, signature, ordinal, provider, slot,
+                   source_observed_at_unix_ms, occurred_at_unix_ms,
+                   observed_at_unix_ms, mint, quote_mint, venue, kind,
+                   actor, base_quantity, quote_quantity, price_quote,
+                   base_decimals, quote_decimals
+               ) VALUES (
+                   ?1, ?2, 0, 'solana_public', '1',
+                   ?3, ?3, ?3, ?4,
+                   'So11111111111111111111111111111111111111112',
+                   'pump_swap', 'buy', 'actor', 1.0, 1.0, 1.0, 6, 9
+               )"#,
+            rusqlite::params![
+                sequence,
+                format!("priority-sig-{sequence}"),
+                observed_at_unix_ms,
+                mint,
+            ],
+        )
+        .unwrap();
+}
+
 fn candidate_id(db_path: &Path, mint: &str) -> i64 {
     Connection::open(db_path)
         .unwrap()
@@ -208,6 +239,136 @@ fn candidate_id(db_path: &Path, mint: &str) -> i64 {
             |row| row.get(0),
         )
         .unwrap()
+}
+
+#[tokio::test]
+async fn active_pumpswap_priority_samples_dex_without_waiting_for_meteora_broad_work() {
+    let root = unique_test_dir("active-pumpswap-priority");
+    let db_path = root.join("shreks.db");
+    let discovery = Arc::new(StaticDiscovery::new(vec![discovered(
+        "mint-priority",
+        0,
+    )]));
+    let dex = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-priority",
+                "pair-dex-initial",
+                0,
+                100.0,
+                50_000.0,
+            )]),
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-priority",
+                "pair-dex-priority",
+                100_000,
+                101.0,
+                55_000.0,
+            )]),
+        ],
+    ));
+    let meteora = Arc::new(SequenceMarket::new(
+        ProviderId::Meteora,
+        vec![Ok(vec![snapshot(
+            ProviderId::Meteora,
+            "mint-priority",
+            "pair-meteora-initial",
+            0,
+            100.0,
+            60_000.0,
+        )])],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![
+            SamplerProvider::unpaced(dex.clone()),
+            SamplerProvider::unpaced(meteora.clone()),
+        ],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let initial = sampler.run_cycle_at(0).await.unwrap();
+    assert_eq!(initial.sampled_candidate_count, 1);
+    assert_eq!(dex.call_count(), 1);
+    assert_eq!(meteora.call_count(), 1);
+
+    insert_test_fast_event(&db_path, 1, "mint-priority", 99_000);
+
+    let priority = sampler.run_cycle_at(100_000).await.unwrap();
+    assert_eq!(priority.priority_candidate_count, 1);
+    assert_eq!(priority.priority_persisted_snapshot_count, 1);
+    assert_eq!(priority.sampled_candidate_count, 0);
+    assert_eq!(dex.call_count(), 2);
+    assert_eq!(meteora.call_count(), 1);
+    assert_eq!(
+        scalar_i64(
+            &db_path,
+            "SELECT COUNT(*) FROM market_snapshots
+             WHERE source='dexscreener'
+               AND base_mint='mint-priority'"
+        ),
+        2
+    );
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn broad_sampling_is_bounded_to_one_due_candidate_per_cycle() {
+    let root = unique_test_dir("bounded-broad");
+    let db_path = root.join("shreks.db");
+    let discovery = Arc::new(StaticDiscovery::new(vec![
+        discovered("mint-broad-a", 0),
+        discovered("mint-broad-b", 0),
+    ]));
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-broad-a",
+                "pair-a",
+                0,
+                100.0,
+                50_000.0,
+            )]),
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-broad-b",
+                "pair-b",
+                1,
+                100.0,
+                50_000.0,
+            )]),
+        ],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(market.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let first = sampler.run_cycle_at(0).await.unwrap();
+    assert_eq!(sampler.registry().len(), 2);
+    assert_eq!(first.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 1);
+
+    let second = sampler.run_cycle_at(1).await.unwrap();
+    assert_eq!(second.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 2);
+
+    drop(sampler);
+    cleanup_dir(&root);
 }
 
 #[tokio::test]
