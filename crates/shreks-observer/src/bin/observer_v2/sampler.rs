@@ -222,8 +222,9 @@ impl HighResolutionSampler {
         now_unix_ms: i64,
         report: &mut SamplerCycleReport,
     ) -> Result<(), SamplerError> {
-        let minimum_detected_at_unix_ms =
-            now_unix_ms.saturating_sub(self.policy.retention_window_ms());
+        let minimum_detected_at_unix_ms = now_unix_ms
+            .saturating_sub(self.policy.retention_window_ms())
+            .max(0);
         let targets = self.db.verified_pump_swap_sampling_targets(
             minimum_detected_at_unix_ms,
             now_unix_ms,
