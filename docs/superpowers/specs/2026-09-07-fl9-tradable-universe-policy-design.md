@@ -254,6 +254,30 @@ It is contemporaneous market-snapshot coverage.
 This population is insufficient for first-champion training under v1. It remains immutable raw FL4
 research evidence only.
 
+
+## Migration-to-sampler linkage audit
+
+A read-only production linkage audit over the 84 fresh migrated PumpSwap mints proved:
+
+- 84/84 have verified Pump graduation lifecycle evidence;
+- only 2/84 have exactly one verified Pump launch-linked `candidate_id`;
+- 82/84 have no verified Pump launch-linked candidate;
+- 0/84 have ambiguous verified launch linkage;
+- Observer V2 registry contains 304 total mints;
+- only 3/84 fresh migrated mints are currently in that registry;
+- 81/84 are absent;
+- only 8/84 have any historical DexScreener PumpSwap snapshot in the fresh interval;
+- 76/84 have none.
+
+Therefore verified Pump launch linkage is not a valid prerequisite for migrated-market sampling.
+
+The migration lifecycle event itself is the complete authoritative trigger for all 84 markets.
+
+Before implementing migration-driven sampler registration, production must classify existing
+`token_candidates` identities for those mints. The implementation must reuse an existing canonical
+candidate identity when possible and must not blindly create a second candidate row that could
+introduce duplicate-mint ambiguity into campaign selection.
+
 ## Capture-path root cause
 
 Repository inspection shows the two evidence lanes are currently driven by different target
