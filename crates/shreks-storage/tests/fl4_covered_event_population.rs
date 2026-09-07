@@ -11,8 +11,9 @@ use shreks_core::{
     DEFAULT_FUTURE_PATH_HORIZONS_MS, FUTURE_PATH_LABEL_VERSION,
 };
 use shreks_storage::{
-    populate_fast_future_path_labels, FastCoveredFuturePathPopulationRequest,
-    PumpTradeEvidenceWrite, ShreksDb, FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
+    populate_fast_future_path_labels, EvidenceWriteOutcome,
+    FastCoveredFuturePathPopulationRequest, PumpTradeEvidenceWrite, ShreksDb,
+    FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_VERSION,
 };
 
@@ -91,6 +92,22 @@ fn seed_event(db: &ShreksDb, signature: &str, sequence: u64, observed_at: i64, p
             9,
         )
         .unwrap());
+}
+
+
+
+fn quarantine_conflict(
+    db: &ShreksDb,
+    signature: &str,
+    observed_at: i64,
+    conflicting_price: f64,
+) {
+    let conflict = raw_trade(signature, observed_at, conflicting_price);
+    assert_eq!(
+        db.record_pump_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
 }
 
 fn historical_coverage(db: &ShreksDb) -> (u64, u64) {
@@ -308,6 +325,62 @@ fn covered_population_rolls_back_the_entire_invocation_on_label_conflict() {
     assert_eq!(preserved.len(), 1);
     assert_eq!(preserved[0].coverage, older_coverage);
     assert_eq!(preserved[0].label.horizon_ms, 250);
+
+    cleanup_dir(&root);
+}
+
+
+#[test]
+fn covered_population_ignores_quarantine_before_required_replay_window() {
+    let root = unique_test_dir("old-quarantine");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let (historical_session, _) = historical_coverage(&db);
+
+    seed_event(&db, "ancient-conflict", 1, 800, 0.04);
+    quarantine_conflict(&db, "ancient-conflict", 850, 0.041);
+    seed_event(&db, "decision-a", 2, 1_000, 0.05);
+    seed_event(&db, "decision-b", 3, 1_250, 0.06);
+    seed_event(&db, "future-c", 4, 1_600, 0.07);
+
+    let full_replay_error = db
+        .fast_events_for_market(MINT, WSOL, VenueId::PumpFunBondingCurve)
+        .expect_err("full-history replay must remain fail-closed");
+    assert!(full_replay_error.to_string().contains("quarantine"));
+
+    let report =
+        populate_fast_future_path_labels(&db, &request(historical_session, 2)).unwrap();
+
+    assert_eq!(report.decision_count, 2);
+    assert_eq!(report.inserted_label_count, 24);
+    assert_eq!(report.already_existing_label_count, 0);
+    assert_eq!(report.min_decision_sequence, 2);
+    assert_eq!(report.max_decision_sequence, 3);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn covered_population_rejects_quarantine_inside_required_replay_window() {
+    let root = unique_test_dir("relevant-quarantine");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let (historical_session, _) = historical_coverage(&db);
+
+    seed_event(&db, "decision-a", 1, 1_000, 0.05);
+    seed_event(&db, "decision-b", 2, 1_250, 0.06);
+    seed_event(&db, "future-conflict", 3, 1_600, 0.07);
+    quarantine_conflict(&db, "future-conflict", 1_650, 0.071);
+
+    let error =
+        populate_fast_future_path_labels(&db, &request(historical_session, 2)).unwrap_err();
+    assert!(error.to_string().contains("quarantine"));
+
+    for signature in ["decision-a", "decision-b"] {
+        assert!(
+            db.future_path_labels_for_decision(signature, 0, FUTURE_PATH_LABEL_VERSION)
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     cleanup_dir(&root);
 }
