@@ -143,6 +143,38 @@ mutated, or relabeled. They are simply not admitted to first-champion BUY learni
 Threshold changes require a new policy version and a new evidence campaign. They are not
 self-tuning parameters.
 
+
+## Input-only activity/concentration audit
+
+Before any target, future-return, or model-performance inspection, the completed fresh PumpSwap
+population was audited using only 10-second point-in-time participation inputs.
+
+Observed structural PumpSwap population:
+
+- 106,799 decisions;
+- 84 unique mints;
+- top-1 mint share: 12.010%;
+- top-3 mint share: 31.141%;
+- top-5 mint share: 45.617%;
+- top-10 mint share: 68.852%;
+- maximum decisions contributed by one mint: 12,827.
+
+Stricter short-window activity cuts did **not** solve concentration. They reduced mint diversity while
+raising top-10 decision concentration:
+
+- trades>=10, actors>=5, quote-flow>=1 SOL: 46 mints, top-10 share 71.848%;
+- trades>=20, actors>=10, quote-flow>=5 SOL: 39 mints, top-10 share 76.533%;
+- trades>=50, actors>=20, quote-flow>=25 SOL: 23 mints, top-10 share 78.797%.
+
+Therefore `fl9-tradable-universe-v1` does **not** add an arbitrary 10-second trade/actor/flow
+threshold. Market-quality eligibility remains the independently frozen migration/liquidity/24h-volume
+contract.
+
+After the v1 market-quality gate is audited, mint concentration must be measured again before model
+training. If the final eligible population remains materially dominated by a small number of mints,
+the solution must be an explicit versioned training-balance policy or additional fresh evidence—not
+an outcome-driven activity filter and not silent row deletion.
+
 ## Pre-implementation production audit
 
 Before champion training, run a read-only audit over the fresh 146,432 decisions using only the
