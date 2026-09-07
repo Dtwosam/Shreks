@@ -1,5 +1,6 @@
 //! Operational SQLite storage for Shreks.
 
+mod active_pumpswap_sampling;
 mod conflict_quarantine;
 mod execution_economics;
 mod fast_baseline_batch;
@@ -28,6 +29,7 @@ mod safety_evidence;
 mod training_economics_overlay;
 mod training_features;
 mod wallet;
+pub use active_pumpswap_sampling::ActivePumpSwapMint;
 pub use conflict_quarantine::EvidenceWriteOutcome;
 pub use execution_economics::{
     PumpSwapExecutionEconomicsWrite, PumpTradeExecutionEconomicsWrite,
