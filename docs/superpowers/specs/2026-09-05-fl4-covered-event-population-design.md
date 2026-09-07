@@ -133,11 +133,23 @@ The writer:
 
 1. preflights event count;
 2. finds distinct markets in the decision window;
-3. loads each canonical market replay once through the existing conflict-quarantine-aware API;
+3. loads each canonical market replay once through a conflict-quarantine-aware observed-time window;
 4. selects decision events from that replay;
 5. uses deterministic bounds within the already-loaded replay for future observations.
 
-This avoids quadratic whole-market database replay.
+The required replay interval is exactly:
+
+`request.from_observed_at_unix_ms <= observed_at_unix_ms <= coverage.complete_through_unix_ms`.
+
+A quarantined canonical identity inside that interval still fails closed. A quarantined identity before
+the selected decision start or after the authenticated coverage watermark is outside the evidence
+needed for these FL4 labels and must not poison an otherwise independent later covered replay.
+
+The unbounded `fast_events_for_market` API keeps its original global fail-closed semantics for
+callers that request full market history.
+
+This avoids quadratic whole-market database replay while preserving quarantine authority over every
+canonical identity that can actually contribute a decision or a complete future-path label.
 
 ## Atomicity and idempotency
 
