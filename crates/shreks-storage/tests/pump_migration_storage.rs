@@ -549,33 +549,137 @@ fn migration_sampling_candidate_rejects_multiple_dexscreener_identities_without_
     assert!(
         error
             .to_string()
-            .contains("0 snapshot owners and 2 DexScreener candidates")
+            .contains("0 snapshot owners, 2 DexScreener candidates, and 0 DexScreener snapshot owners")
     );
 
     cleanup_dir(&root);
 }
 
 #[test]
-fn migration_sampling_candidate_rejects_multiple_snapshot_owners() {
-    let root = unique_test_dir("sampling-ambiguous-owners");
+fn migration_sampling_candidate_prefers_unique_dexscreener_snapshot_owner_among_multiple_owners() {
+    let root = unique_test_dir("sampling-dexscreener-among-owners");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let chain_owner = db
+        .upsert_candidate(&candidate(
+            "mint-dexscreener-among-owners",
+            ProviderId::Helius,
+            100,
+        ))
+        .unwrap();
+    let expected = db
+        .upsert_candidate(&candidate(
+            "mint-dexscreener-among-owners",
+            ProviderId::DexScreener,
+            120,
+        ))
+        .unwrap();
+    db.insert_market_snapshot(
+        chain_owner,
+        &market_snapshot("mint-dexscreener-among-owners", 130),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        expected,
+        &market_snapshot("mint-dexscreener-among-owners", 140),
+    )
+    .unwrap();
+
+    let resolved = db
+        .migration_sampling_candidate_for_mint("mint-dexscreener-among-owners")
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.candidate_id, expected);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_rejects_multiple_snapshot_owners_without_dexscreener_owner() {
+    let root = unique_test_dir("sampling-ambiguous-nondex-owners");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
     let first = db
-        .upsert_candidate(&candidate("mint-ambiguous", ProviderId::SolanaPublic, 100))
+        .upsert_candidate(&candidate(
+            "mint-ambiguous-nondex",
+            ProviderId::SolanaPublic,
+            100,
+        ))
         .unwrap();
     let second = db
-        .upsert_candidate(&candidate("mint-ambiguous", ProviderId::DexScreener, 120))
+        .upsert_candidate(&candidate(
+            "mint-ambiguous-nondex",
+            ProviderId::Helius,
+            120,
+        ))
         .unwrap();
-    db.insert_market_snapshot(first, &market_snapshot("mint-ambiguous", 130))
-        .unwrap();
-    db.insert_market_snapshot(second, &market_snapshot("mint-ambiguous", 140))
-        .unwrap();
+    db.insert_market_snapshot(
+        first,
+        &market_snapshot("mint-ambiguous-nondex", 130),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        second,
+        &market_snapshot("mint-ambiguous-nondex", 140),
+    )
+    .unwrap();
 
     let error = db
-        .migration_sampling_candidate_for_mint("mint-ambiguous")
+        .migration_sampling_candidate_for_mint("mint-ambiguous-nondex")
         .unwrap_err();
-    assert!(error.to_string().contains("ambiguous"));
+    assert!(
+        error
+            .to_string()
+            .contains("2 snapshot owners, 0 DexScreener candidates, and 0 DexScreener snapshot owners")
+    );
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_rejects_multiple_dexscreener_snapshot_owners() {
+    let root = unique_test_dir("sampling-multiple-dexscreener-owners");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let first = db
+        .upsert_candidate(&candidate(
+            "mint-multiple-dex-owners",
+            ProviderId::DexScreener,
+            100,
+        ))
+        .unwrap();
+    let second = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-multiple-dex-owners".to_owned(),
+            pair_address: Some("pair-alt".to_owned()),
+            dex_id: Some("pump_swap".to_owned()),
+            venue: Some(VenueId::PumpSwap),
+            discovered_at_unix_ms: 120,
+            source: ProviderId::DexScreener,
+        })
+        .unwrap();
+    db.insert_market_snapshot(
+        first,
+        &market_snapshot("mint-multiple-dex-owners", 130),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        second,
+        &market_snapshot("mint-multiple-dex-owners", 140),
+    )
+    .unwrap();
+
+    let error = db
+        .migration_sampling_candidate_for_mint("mint-multiple-dex-owners")
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("2 snapshot owners, 2 DexScreener candidates, and 2 DexScreener snapshot owners")
+    );
 
     cleanup_dir(&root);
 }
