@@ -57,6 +57,49 @@ fn discovered(mint: &str, at: i64) -> DiscoveredToken {
     }
 }
 
+fn migrated_event(
+    signature: &str,
+    mint: &str,
+    pool: &str,
+    detected_at_unix_ms: i64,
+) -> TokenLifecycleEvent {
+    TokenLifecycleEvent {
+        kind: LifecycleEventKind::PumpGraduation,
+        provider: ProviderId::SolanaPublic,
+        mint: mint.to_owned(),
+        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        from_venue: VenueId::PumpFunBondingCurve,
+        to_venue: VenueId::PumpSwap,
+        pool_address: pool.to_owned(),
+        signature: signature.to_owned(),
+        slot: 1,
+        detected_at_unix_ms,
+        occurred_at_unix_ms: Some(detected_at_unix_ms),
+    }
+}
+
+fn verify_migration(
+    db: &ShreksDb,
+    signature: &str,
+    mint: &str,
+    pool: &str,
+    detected_at_unix_ms: i64,
+) {
+    db.record_pump_migration_signal(signature, 1, detected_at_unix_ms)
+        .unwrap();
+    db.complete_pump_migration(
+        signature,
+        detected_at_unix_ms,
+        &[migrated_event(
+            signature,
+            mint,
+            pool,
+            detected_at_unix_ms,
+        )],
+    )
+    .unwrap();
+}
+
 fn snapshot(
     provider: ProviderId,
     mint: &str,
@@ -208,6 +251,242 @@ fn candidate_id(db_path: &Path, mint: &str) -> i64 {
             |row| row.get(0),
         )
         .unwrap()
+}
+
+
+#[tokio::test]
+async fn verified_migration_registers_and_samples_existing_single_candidate() {
+    let root = unique_test_dir("migration-single-candidate");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let existing_id = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-migrated".to_owned(),
+            pair_address: None,
+            dex_id: None,
+            venue: Some(VenueId::PumpFunBondingCurve),
+            discovered_at_unix_ms: 0,
+            source: ProviderId::SolanaPublic,
+        })
+        .unwrap();
+    verify_migration(&db, "sig-migrated", "mint-migrated", "pool-migrated", 100_000);
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-migrated",
+            "pair-migrated",
+            100_000,
+            1.0,
+            25_000.0,
+        )])],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let report = sampler.run_cycle_at(100_000).await.unwrap();
+    assert_eq!(report.migrated_candidate_count, 1);
+    assert_eq!(report.sampled_candidate_count, 1);
+    let tracked = &sampler.registry().candidates()[0];
+    assert_eq!(tracked.candidate_id, existing_id);
+    assert_eq!(tracked.mint, "mint-migrated");
+    assert_eq!(tracked.discovered_at_unix_ms, 100_000);
+
+    let owner = Connection::open(&db_path)
+        .unwrap()
+        .query_row(
+            "SELECT candidate_id FROM market_snapshots WHERE base_mint='mint-migrated' ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(owner, existing_id);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn verified_migration_reuses_unique_snapshot_owner_among_duplicate_candidates() {
+    let root = unique_test_dir("migration-snapshot-owner");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let zero_snapshot_id = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-owner".to_owned(),
+            pair_address: None,
+            dex_id: None,
+            venue: Some(VenueId::PumpFunBondingCurve),
+            discovered_at_unix_ms: 0,
+            source: ProviderId::SolanaPublic,
+        })
+        .unwrap();
+    let snapshot_owner_id = db
+        .upsert_candidate(&discovered("mint-owner", 10_000))
+        .unwrap();
+    db.insert_market_snapshot(
+        snapshot_owner_id,
+        &snapshot(
+            ProviderId::DexScreener,
+            "mint-owner",
+            "pair-old",
+            20_000,
+            1.0,
+            20_000.0,
+        ),
+    )
+    .unwrap();
+    verify_migration(&db, "sig-owner", "mint-owner", "pool-owner", 100_000);
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-owner",
+            "pair-new",
+            100_000,
+            1.1,
+            30_000.0,
+        )])],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    sampler.run_cycle_at(100_000).await.unwrap();
+    let tracked = &sampler.registry().candidates()[0];
+    assert_eq!(tracked.candidate_id, snapshot_owner_id);
+    assert_ne!(tracked.candidate_id, zero_snapshot_id);
+    assert_eq!(tracked.discovered_at_unix_ms, 100_000);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn verified_migration_reanchors_existing_registry_to_migration_time() {
+    let root = unique_test_dir("migration-reanchor");
+    let db_path = root.join("shreks.db");
+    let discovery = Arc::new(StaticDiscovery::new(vec![discovered("mint-reanchor", 0)]));
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-reanchor",
+                "pair-reanchor",
+                0,
+                1.0,
+                20_000.0,
+            )]),
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-reanchor",
+                "pair-reanchor",
+                100_000,
+                1.1,
+                25_000.0,
+            )]),
+        ],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    sampler.run_cycle_at(0).await.unwrap();
+    assert_eq!(
+        sampler.registry().candidates()[0].discovered_at_unix_ms,
+        0
+    );
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    verify_migration(
+        &db,
+        "sig-reanchor",
+        "mint-reanchor",
+        "pool-reanchor",
+        100_000,
+    );
+    drop(db);
+
+    let report = sampler.run_cycle_at(100_000).await.unwrap();
+    assert_eq!(report.migrated_candidate_count, 1);
+    assert_eq!(
+        sampler.registry().candidates()[0].discovered_at_unix_ms,
+        100_000
+    );
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn verified_migration_fails_closed_when_duplicate_candidates_have_no_snapshot_owner() {
+    let root = unique_test_dir("migration-ambiguous");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    db.upsert_candidate(&DiscoveredToken {
+        mint: "mint-ambiguous".to_owned(),
+        pair_address: None,
+        dex_id: None,
+        venue: Some(VenueId::PumpFunBondingCurve),
+        discovered_at_unix_ms: 0,
+        source: ProviderId::SolanaPublic,
+    })
+    .unwrap();
+    db.upsert_candidate(&discovered("mint-ambiguous", 10_000))
+        .unwrap();
+    verify_migration(
+        &db,
+        "sig-ambiguous",
+        "mint-ambiguous",
+        "pool-ambiguous",
+        100_000,
+    );
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        Vec::new(),
+    ));
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let error = sampler.run_cycle_at(100_000).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("ambiguous across 2 candidate identities with 0 snapshot owners")
+    );
+
+    drop(sampler);
+    cleanup_dir(&root);
 }
 
 #[tokio::test]
