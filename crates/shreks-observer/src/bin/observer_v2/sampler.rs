@@ -85,6 +85,8 @@ impl SamplerProvider {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SamplerCycleReport {
     pub discovered_candidate_count: usize,
+    pub migration_registered_candidate_count: usize,
+    pub migration_reanchored_candidate_count: usize,
     pub sampled_candidate_count: usize,
     pub persisted_snapshot_count: usize,
     pub market_provider_failure_count: usize,
@@ -150,6 +152,7 @@ impl HighResolutionSampler {
         }
 
         let mut report = SamplerCycleReport::default();
+        self.sync_verified_pump_migrations(now_unix_ms, &mut report)?;
         self.run_discovery_if_due(now_unix_ms, &mut report).await?;
         self.registry.expire(now_unix_ms, &self.policy);
 
@@ -214,6 +217,61 @@ impl HighResolutionSampler {
         Ok(())
     }
 
+    fn sync_verified_pump_migrations(
+        &mut self,
+        now_unix_ms: i64,
+        report: &mut SamplerCycleReport,
+    ) -> Result<(), SamplerError> {
+        let minimum_detected_at_unix_ms =
+            now_unix_ms.saturating_sub(self.policy.retention_window_ms());
+        let targets = self.db.verified_pump_swap_sampling_targets(
+            minimum_detected_at_unix_ms,
+            now_unix_ms,
+        )?;
+
+        for target in targets {
+            if self.registry.candidate_for_mint(&target.mint).is_some() {
+                if self
+                    .registry
+                    .reanchor_mint_for_migration(&target.mint, target.detected_at_unix_ms)?
+                {
+                    report.migration_reanchored_candidate_count = report
+                        .migration_reanchored_candidate_count
+                        .saturating_add(1);
+                }
+                continue;
+            }
+
+            let candidate = self
+                .db
+                .migration_sampling_candidate_for_mint(&target.mint)?
+                .ok_or_else(|| {
+                    SamplerError::InvalidData(format!(
+                        "verified PumpSwap migration mint '{}' has no existing candidate identity",
+                        target.mint
+                    ))
+                })?;
+
+            if candidate.mint != target.mint {
+                return Err(SamplerError::InvalidData(format!(
+                    "migration sampling candidate mint '{}' does not match verified migration '{}'",
+                    candidate.mint, target.mint
+                )));
+            }
+
+            self.registry.register(TrackedCandidate::new(
+                candidate.candidate_id,
+                target.mint,
+                target.detected_at_unix_ms,
+            )?)?;
+            report.migration_registered_candidate_count = report
+                .migration_registered_candidate_count
+                .saturating_add(1);
+        }
+
+        Ok(())
+    }
+
     async fn run_discovery_if_due(
         &mut self,
         now_unix_ms: i64,
@@ -251,7 +309,9 @@ impl HighResolutionSampler {
                         candidate_id,
                         candidate.discovered_at_unix_ms,
                     )?;
-                    if !self.registry.contains_candidate_id(candidate_id) {
+                    if self.registry.candidate_for_mint(&candidate.mint).is_none()
+                        && !self.registry.contains_candidate_id(candidate_id)
+                    {
                         self.registry.register(TrackedCandidate::new(
                             candidate_id,
                             candidate.mint.clone(),
