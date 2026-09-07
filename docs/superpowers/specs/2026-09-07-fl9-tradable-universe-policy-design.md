@@ -278,6 +278,38 @@ Before implementing migration-driven sampler registration, production must class
 candidate identity when possible and must not blindly create a second candidate row that could
 introduce duplicate-mint ambiguity into campaign selection.
 
+
+## Migrated-mint candidate identity audit
+
+The final read-only candidate-identity audit over the 84 fresh migrated PumpSwap mints showed:
+
+- zero-candidate mints: 0;
+- exactly-one-candidate mints: 61;
+- multiple-candidate mints: 23;
+- current Observer V2 registry candidate available: 3;
+- mints with exactly one snapshot-owning candidate identity: 23;
+- mints with multiple snapshot-owning candidate identities: 0;
+- directly reusable under registry-or-single-candidate logic: 64;
+- candidate creation required for the audited population: 0;
+- multi-candidate mints needing deterministic selection: 20.
+
+Every multi-candidate mint had exactly one snapshot-owning identity. Therefore the migration sampler
+bridge can resolve the complete audited population without creating a new candidate row:
+
+1. if the mint is already actively tracked by Observer V2, preserve that candidate identity and
+   re-anchor its sampling horizon to migration detection time;
+2. otherwise, if multiple candidate rows exist and exactly one owns persisted market snapshots,
+   reuse that snapshot-owning candidate;
+3. otherwise, if exactly one candidate row exists, reuse it;
+4. otherwise fail closed.
+
+The first implementation version must not create a new candidate identity when none exists. A future
+zero-candidate migration is an explicit evidence/identity failure until a separately designed
+candidate-creation contract exists.
+
+Ordinary DexScreener discovery may persist its own candidate evidence, but it must not replace the
+active registry identity for a mint already tracking from verified migration.
+
 ## Capture-path root cause
 
 Repository inspection shows the two evidence lanes are currently driven by different target
