@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     error::Error,
     fmt,
     future::Future,
@@ -22,6 +23,10 @@ use super::sampling::{
 
 const REGISTRY_STREAM: &str = "observer_v2_registry_v1";
 const DISCOVERY_INTERVAL_MS: i64 = 30_000;
+const ACTIVE_PUMPSWAP_LOOKBACK_MS: i64 = 60_000;
+const ACTIVE_PUMPSWAP_FRESHNESS_TARGET_MS: i64 = 45_000;
+const ACTIVE_PUMPSWAP_PRIORITY_LIMIT: usize = 32;
+const BROAD_CANDIDATES_PER_CYCLE: usize = 1;
 const RUNTIME_LOOP_INTERVAL: Duration = Duration::from_secs(1);
 
 /// One market provider plus an optional request budget used by the high-resolution sampler.
@@ -87,6 +92,8 @@ pub struct SamplerCycleReport {
     pub discovered_candidate_count: usize,
     pub migration_registered_candidate_count: usize,
     pub migration_reanchored_candidate_count: usize,
+    pub priority_candidate_count: usize,
+    pub priority_persisted_snapshot_count: usize,
     pub sampled_candidate_count: usize,
     pub persisted_snapshot_count: usize,
     pub market_provider_failure_count: usize,
@@ -156,8 +163,16 @@ impl HighResolutionSampler {
         self.run_discovery_if_due(now_unix_ms, &mut report).await?;
         self.registry.expire(now_unix_ms, &self.policy);
 
+        let priority_sampled = self
+            .sample_active_pumpswap_priority(now_unix_ms, &mut report)
+            .await?;
+
         let due = self.registry.due_candidates(now_unix_ms);
-        for candidate in due {
+        for candidate in due
+            .into_iter()
+            .filter(|candidate| !priority_sampled.contains(&candidate.candidate_id))
+            .take(BROAD_CANDIDATES_PER_CYCLE)
+        {
             self.sample_candidate(&candidate, now_unix_ms, &mut report)
                 .await?;
         }
@@ -343,6 +358,143 @@ impl HighResolutionSampler {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    async fn sample_active_pumpswap_priority(
+        &mut self,
+        now_unix_ms: i64,
+        report: &mut SamplerCycleReport,
+    ) -> Result<HashSet<i64>, SamplerError> {
+        if !self
+            .market
+            .iter()
+            .any(|provider| provider.provider_id() == ProviderId::DexScreener)
+        {
+            return Ok(HashSet::new());
+        }
+
+        let active = self
+            .db
+            .active_pump_swap_mints_needing_dexscreener_snapshot(
+                now_unix_ms,
+                ACTIVE_PUMPSWAP_LOOKBACK_MS,
+                ACTIVE_PUMPSWAP_FRESHNESS_TARGET_MS,
+                ACTIVE_PUMPSWAP_PRIORITY_LIMIT,
+            )?;
+
+        let mut sampled = HashSet::with_capacity(active.len());
+        for target in active {
+            let candidate_id = if let Some(candidate) =
+                self.registry.candidate_for_mint(&target.mint)
+            {
+                candidate.candidate_id
+            } else {
+                match self
+                    .db
+                    .migration_sampling_candidate_for_mint(&target.mint)?
+                {
+                    Some(candidate) => candidate.candidate_id,
+                    None => {
+                        let candidate_id = self.db.upsert_candidate(&DiscoveredToken {
+                            mint: target.mint.clone(),
+                            pair_address: None,
+                            dex_id: None,
+                            venue: Some(VenueId::PumpSwap),
+                            discovered_at_unix_ms: target.last_event_at_unix_ms,
+                            source: ProviderId::DexScreener,
+                        })?;
+                        self.db.ensure_outcome_checkpoints(
+                            candidate_id,
+                            target.last_event_at_unix_ms,
+                        )?;
+                        candidate_id
+                    }
+                }
+            };
+
+            report.priority_candidate_count =
+                report.priority_candidate_count.saturating_add(1);
+            self.sample_candidate_from_provider(
+                candidate_id,
+                &target.mint,
+                ProviderId::DexScreener,
+                now_unix_ms,
+                report,
+            )
+            .await?;
+            sampled.insert(candidate_id);
+        }
+
+        Ok(sampled)
+    }
+
+    async fn sample_candidate_from_provider(
+        &mut self,
+        candidate_id: i64,
+        mint: &str,
+        provider_id: ProviderId,
+        now_unix_ms: i64,
+        report: &mut SamplerCycleReport,
+    ) -> Result<(), SamplerError> {
+        let Some(index) = self
+            .market
+            .iter()
+            .position(|provider| provider.provider_id() == provider_id)
+        else {
+            return Ok(());
+        };
+
+        let result = self.market[index].token_pairs(mint).await;
+        match result {
+            Ok(provider_snapshots) => {
+                self.market[index].consecutive_failures = 0;
+                self.db.upsert_provider_health(
+                    provider_id,
+                    ProviderHealthState::Healthy,
+                    now_unix_ms,
+                    None,
+                    None,
+                    0,
+                )?;
+                for snapshot in provider_snapshots {
+                    if snapshot.provider != provider_id {
+                        return Err(SamplerError::InvalidData(format!(
+                            "market provider {provider_id} returned snapshot attributed to {}",
+                            snapshot.provider
+                        )));
+                    }
+                    if snapshot.base_mint != mint {
+                        return Err(SamplerError::InvalidData(format!(
+                            "market provider {provider_id} returned mint {} while priority sampling {}",
+                            snapshot.base_mint, mint
+                        )));
+                    }
+                    self.db.insert_market_snapshot(candidate_id, &snapshot)?;
+                    report.priority_persisted_snapshot_count = report
+                        .priority_persisted_snapshot_count
+                        .saturating_add(1);
+                }
+                report.completed_checkpoint_count = report
+                    .completed_checkpoint_count
+                    .saturating_add(
+                        self.db
+                            .finalize_due_outcome_checkpoints(candidate_id, now_unix_ms)?,
+                    );
+            }
+            Err(error) => {
+                self.market[index].consecutive_failures =
+                    self.market[index].consecutive_failures.saturating_add(1);
+                report.market_provider_failure_count =
+                    report.market_provider_failure_count.saturating_add(1);
+                self.record_provider_error(
+                    &error,
+                    now_unix_ms,
+                    self.market[index].consecutive_failures,
+                )?;
+            }
+        }
+
         Ok(())
     }
 
