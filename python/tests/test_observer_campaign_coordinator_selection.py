@@ -4,6 +4,7 @@ import sqlite3
 
 import pytest
 
+from shreks_brain.observer_market import ObserverMarketReadPolicy
 from shreks_brain.observer_campaign.coordinator import (
     ObserverCampaignCandidate,
     ObserverCampaignCandidateStore,
