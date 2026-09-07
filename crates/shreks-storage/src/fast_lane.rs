@@ -454,6 +454,105 @@ impl ShreksDb {
         rows.into_iter().map(decode_stored_fast_event).collect()
     }
 
+    /// Replay one market's canonical journal inside one inclusive observation-time window.
+    ///
+    /// Quarantine remains authoritative inside the requested window, but a
+    /// conflict-quarantined canonical identity outside the caller's bounded
+    /// evidence interval does not poison an otherwise independent replay.
+    pub fn fast_events_for_market_observed_window(
+        &self,
+        mint: &str,
+        quote_mint: &str,
+        venue: VenueId,
+        from_observed_at_unix_ms: i64,
+        through_observed_at_unix_ms: i64,
+    ) -> Result<Vec<StoredFastEvent>, StorageError> {
+        validate_nonempty(mint, "FastEvent mint")?;
+        validate_nonempty(quote_mint, "FastEvent quote mint")?;
+        if from_observed_at_unix_ms < 0
+            || through_observed_at_unix_ms < 0
+            || from_observed_at_unix_ms > through_observed_at_unix_ms
+        {
+            return Err(StorageError::InvalidData(
+                "FastEvent market replay observation bounds are invalid".to_owned(),
+            ));
+        }
+
+        let quarantined_canonical: i64 = match venue {
+            VenueId::PumpFunBondingCurve => self.connection.query_row(
+                r#"SELECT COUNT(*)
+                   FROM fast_events AS f
+                   WHERE f.mint = ?1 AND f.quote_mint = ?2 AND f.venue = ?3
+                     AND f.observed_at_unix_ms BETWEEN ?4 AND ?5
+                     AND EXISTS (
+                         SELECT 1
+                         FROM pump_trade_evidence_conflicts AS c
+                         WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                     )"#,
+                params![
+                    mint,
+                    quote_mint,
+                    venue.as_str(),
+                    from_observed_at_unix_ms,
+                    through_observed_at_unix_ms
+                ],
+                |row| row.get(0),
+            )?,
+            VenueId::PumpSwap => self.connection.query_row(
+                r#"SELECT COUNT(*)
+                   FROM fast_events AS f
+                   WHERE f.mint = ?1 AND f.quote_mint = ?2 AND f.venue = ?3
+                     AND f.observed_at_unix_ms BETWEEN ?4 AND ?5
+                     AND EXISTS (
+                         SELECT 1
+                         FROM pump_swap_trade_evidence_conflicts AS c
+                         WHERE c.signature = f.signature AND c.ordinal = f.ordinal
+                     )"#,
+                params![
+                    mint,
+                    quote_mint,
+                    venue.as_str(),
+                    from_observed_at_unix_ms,
+                    through_observed_at_unix_ms
+                ],
+                |row| row.get(0),
+            )?,
+            _ => 0,
+        };
+        if quarantined_canonical > 0 {
+            return Err(StorageError::InvalidData(format!(
+                "FastEvent market replay blocked by {quarantined_canonical} conflict-quarantined canonical identities for venue '{}' inside observation window [{from_observed_at_unix_ms}, {through_observed_at_unix_ms}]",
+                venue.as_str()
+            )));
+        }
+
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   sequence, signature, ordinal, provider, slot,
+                   source_observed_at_unix_ms, occurred_at_unix_ms, observed_at_unix_ms,
+                   mint, quote_mint, venue, kind, actor,
+                   base_quantity, quote_quantity, price_quote,
+                   base_decimals, quote_decimals
+               FROM fast_events
+               WHERE mint = ?1 AND quote_mint = ?2 AND venue = ?3
+                 AND observed_at_unix_ms BETWEEN ?4 AND ?5
+               ORDER BY sequence ASC"#,
+        )?;
+        let rows = statement
+            .query_map(
+                params![
+                    mint,
+                    quote_mint,
+                    venue.as_str(),
+                    from_observed_at_unix_ms,
+                    through_observed_at_unix_ms
+                ],
+                decode_fast_event_row,
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter().map(decode_stored_fast_event).collect()
+    }
+
     fn pump_trade_evidence_by_identity(
         &self,
         signature: &str,

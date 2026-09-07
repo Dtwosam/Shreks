@@ -284,10 +284,12 @@ fn prepare_labels(
     let mut prepared = Vec::new();
 
     for market in markets {
-        let replay = db.fast_events_for_market(
+        let replay = db.fast_events_for_market_observed_window(
             &market.mint,
             &market.quote_mint,
             market.venue,
+            request.from_observed_at_unix_ms,
+            coverage.complete_through_unix_ms,
         )?;
 
         for stored in replay.iter().filter(|stored| {
