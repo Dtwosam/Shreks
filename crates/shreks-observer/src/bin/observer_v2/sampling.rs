@@ -80,6 +80,11 @@ impl SamplingPolicy {
             .saturating_add(self.retention_grace_ms)
     }
 
+    pub fn retention_window_ms(&self) -> i64 {
+        self.retention_horizon_ms
+            .saturating_add(self.retention_grace_ms)
+    }
+
     fn failure_interval_ms(&self, age_ms: i64, consecutive_failures: u32) -> i64 {
         let base = self.interval_ms(age_ms, ActivityClass::Calm);
         let shift = consecutive_failures.min(31);
@@ -389,6 +394,44 @@ impl SamplingRegistry {
         self.candidates
             .iter()
             .any(|candidate| candidate.candidate_id == candidate_id)
+    }
+
+    pub fn candidate_for_mint(&self, mint: &str) -> Option<&TrackedCandidate> {
+        self.candidates
+            .iter()
+            .find(|candidate| candidate.mint == mint)
+    }
+
+    pub fn reanchor_mint_for_migration(
+        &mut self,
+        mint: &str,
+        detected_at_unix_ms: i64,
+    ) -> Result<bool, SamplingError> {
+        if detected_at_unix_ms < 0 {
+            return Err(SamplingError::InvalidData(
+                "migration tracking anchor must be nonnegative".to_owned(),
+            ));
+        }
+        let Some(index) = self
+            .candidates
+            .iter()
+            .position(|candidate| candidate.mint == mint)
+        else {
+            return Ok(false);
+        };
+
+        if self.candidates[index].discovered_at_unix_ms == detected_at_unix_ms {
+            return Ok(false);
+        }
+
+        let candidate_id = self.candidates[index].candidate_id;
+        self.candidates[index] = TrackedCandidate::new(
+            candidate_id,
+            mint.to_owned(),
+            detected_at_unix_ms,
+        )?;
+        self.sort_canonical();
+        Ok(true)
     }
 
     pub fn due_candidates(&self, now_unix_ms: i64) -> Vec<TrackedCandidate> {
