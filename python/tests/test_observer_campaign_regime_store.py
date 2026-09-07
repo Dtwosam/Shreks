@@ -321,3 +321,29 @@ def test_regime_medians_remain_unknown_if_any_selected_candidate_is_missing_fiel
     assert window.candidate_count == 3
     assert window.median_liquidity_usd is None
     assert window.median_volume_m5_usd is None
+
+
+def test_regime_window_skips_snapshot_with_future_pair_creation_time(tmp_path):
+    path = tmp_path / "observer.db"
+    _seed_regime_fixture(path)
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """UPDATE market_snapshots
+           SET pair_created_at_unix_ms = observed_at_unix_ms + 1
+           WHERE id = 5"""
+    )
+    connection.commit()
+    connection.close()
+
+    window = ObserverCampaignStore(path).build_regime_market_window(
+        AS_OF,
+        _regime_policy(),
+        _safety_policy(),
+        _safety_probe(),
+        global_risk_halt=False,
+    )
+
+    assert window.candidate_count == 2
+    assert window.executable_candidate_count == 1
+    assert window.median_liquidity_usd == 75.0
+    assert window.median_volume_m5_usd == 7.5
