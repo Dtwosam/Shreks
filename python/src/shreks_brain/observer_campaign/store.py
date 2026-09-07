@@ -474,6 +474,10 @@ class ObserverCampaignStore:
                     WHERE candidate_id = ?
                       AND source = ?
                       AND observed_at_unix_ms BETWEEN ? AND ?
+                      AND (
+                          pair_created_at_unix_ms IS NULL
+                          OR pair_created_at_unix_ms <= observed_at_unix_ms
+                      )
                     ORDER BY observed_at_unix_ms DESC, id ASC
                     LIMIT 1""",
                 (
