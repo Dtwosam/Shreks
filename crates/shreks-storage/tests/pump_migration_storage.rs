@@ -7,7 +7,7 @@ use std::{
 
 use rusqlite::Connection;
 use shreks_core::{
-    LifecycleEventKind, ProviderId, TokenLifecycleEvent, VenueId,
+    DiscoveredToken, LifecycleEventKind, PairMarketData, ProviderId, TokenLifecycleEvent, VenueId,
 };
 use shreks_storage::{PumpSignalStatus, ShreksDb};
 
@@ -24,6 +24,45 @@ fn unique_test_dir(label: &str) -> PathBuf {
 
 fn cleanup_dir(path: &Path) {
     let _ = fs::remove_dir_all(path);
+}
+
+fn candidate(mint: &str, source: ProviderId, discovered_at_unix_ms: i64) -> DiscoveredToken {
+    DiscoveredToken {
+        mint: mint.to_owned(),
+        pair_address: None,
+        dex_id: None,
+        venue: None,
+        discovered_at_unix_ms,
+        source,
+    }
+}
+
+fn market_snapshot(mint: &str, observed_at_unix_ms: i64) -> PairMarketData {
+    PairMarketData {
+        provider: ProviderId::DexScreener,
+        venue: VenueId::PumpSwap,
+        chain_id: "solana".to_owned(),
+        dex_id: "pump_swap".to_owned(),
+        pair_address: format!("pair-{mint}"),
+        base_mint: mint.to_owned(),
+        base_name: None,
+        base_symbol: None,
+        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        quote_name: None,
+        quote_symbol: None,
+        price_native: None,
+        price_usd: Some("1.0".to_owned()),
+        liquidity_usd: Some(10_000.0),
+        volume_5m: Some(1_000.0),
+        volume_1h: Some(2_000.0),
+        volume_6h: Some(3_000.0),
+        volume_24h: Some(4_000.0),
+        transactions: Vec::new(),
+        fdv_usd: None,
+        market_cap_usd: None,
+        pair_created_at_unix_ms: Some(0),
+        observed_at_unix_ms,
+    }
 }
 
 fn event(
@@ -366,3 +405,105 @@ fn lifecycle_storage_round_trips_every_supported_provider_id() {
 
     cleanup_dir(&root);
 }
+
+#[test]
+fn verified_migration_sampling_targets_are_bounded_and_deduplicated_by_mint() {
+    let root = unique_test_dir("sampling-targets");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    db.record_pump_migration_signal("sig-target", 1, 1_000).unwrap();
+    let row = event(
+        "sig-target",
+        "mint-target",
+        "So11111111111111111111111111111111111111112",
+        "pool-target",
+        1_000,
+    );
+    db.complete_pump_migration("sig-target", 1_100, std::slice::from_ref(&row))
+        .unwrap();
+
+    let before = db.verified_pump_swap_sampling_targets(0, 999).unwrap();
+    assert!(before.is_empty());
+
+    let selected = db
+        .verified_pump_swap_sampling_targets(1_000, 2_000)
+        .unwrap();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].mint, "mint-target");
+    assert_eq!(selected[0].pool_address, "pool-target");
+    assert_eq!(selected[0].detected_at_unix_ms, 1_000);
+    assert_eq!(selected[0].provider, ProviderId::Helius);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_reuses_sole_candidate_without_snapshots() {
+    let root = unique_test_dir("sampling-sole-candidate");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let expected = db
+        .upsert_candidate(&candidate("mint-sole", ProviderId::SolanaPublic, 100))
+        .unwrap();
+
+    let resolved = db
+        .migration_sampling_candidate_for_mint("mint-sole")
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.candidate_id, expected);
+    assert_eq!(resolved.mint, "mint-sole");
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_prefers_unique_snapshot_owner() {
+    let root = unique_test_dir("sampling-snapshot-owner");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let _empty = db
+        .upsert_candidate(&candidate("mint-owner", ProviderId::SolanaPublic, 100))
+        .unwrap();
+    let owner = db
+        .upsert_candidate(&candidate("mint-owner", ProviderId::DexScreener, 120))
+        .unwrap();
+    db.insert_market_snapshot(owner, &market_snapshot("mint-owner", 130))
+        .unwrap();
+
+    let resolved = db
+        .migration_sampling_candidate_for_mint("mint-owner")
+        .unwrap()
+        .unwrap();
+    assert_eq!(resolved.candidate_id, owner);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_rejects_multiple_snapshot_owners() {
+    let root = unique_test_dir("sampling-ambiguous-owners");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let first = db
+        .upsert_candidate(&candidate("mint-ambiguous", ProviderId::SolanaPublic, 100))
+        .unwrap();
+    let second = db
+        .upsert_candidate(&candidate("mint-ambiguous", ProviderId::DexScreener, 120))
+        .unwrap();
+    db.insert_market_snapshot(first, &market_snapshot("mint-ambiguous", 130))
+        .unwrap();
+    db.insert_market_snapshot(second, &market_snapshot("mint-ambiguous", 140))
+        .unwrap();
+
+    let error = db
+        .migration_sampling_candidate_for_mint("mint-ambiguous")
+        .unwrap_err();
+    assert!(error.to_string().contains("ambiguous"));
+
+    cleanup_dir(&root);
+}
+

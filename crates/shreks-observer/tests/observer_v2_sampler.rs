@@ -10,7 +10,8 @@ use std::{
 use async_trait::async_trait;
 use rusqlite::Connection;
 use shreks_core::{
-    DiscoveredToken, PairMarketData, ProviderId, TransactionWindow, VenueId,
+    DiscoveredToken, LifecycleEventKind, PairMarketData, ProviderId, TokenLifecycleEvent,
+    TransactionWindow, VenueId,
 };
 use shreks_providers::{
     DiscoveryProvider, MarketDataProvider, ProviderError, ProviderErrorKind,
@@ -27,6 +28,8 @@ use sampling::SamplingPolicy;
 
 const SECOND: i64 = 1_000;
 const MINUTE: i64 = 60 * SECOND;
+const HOUR: i64 = 60 * MINUTE;
+const DAY: i64 = 24 * HOUR;
 
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
@@ -94,6 +97,27 @@ fn snapshot(
         market_cap_usd: None,
         pair_created_at_unix_ms: Some(0),
         observed_at_unix_ms: at,
+    }
+}
+
+fn migration_event(
+    signature: &str,
+    mint: &str,
+    pool: &str,
+    detected_at_unix_ms: i64,
+) -> TokenLifecycleEvent {
+    TokenLifecycleEvent {
+        kind: LifecycleEventKind::PumpGraduation,
+        provider: ProviderId::SolanaPublic,
+        mint: mint.to_owned(),
+        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        from_venue: VenueId::PumpFunBondingCurve,
+        to_venue: VenueId::PumpSwap,
+        pool_address: pool.to_owned(),
+        signature: signature.to_owned(),
+        slot: 1,
+        detected_at_unix_ms,
+        occurred_at_unix_ms: Some(detected_at_unix_ms),
     }
 }
 
@@ -511,3 +535,149 @@ async fn registry_restoration_resumes_tracking_after_database_reopen() {
     drop(resumed);
     cleanup_dir(&root);
 }
+
+#[tokio::test]
+async fn verified_migration_registers_existing_candidate_and_reanchors_sampling() {
+    let root = unique_test_dir("migration-register");
+    let db_path = root.join("shreks.db");
+    let migration_at = 2 * DAY;
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-migrated".to_owned(),
+            pair_address: None,
+            dex_id: None,
+            venue: Some(VenueId::PumpFunBondingCurve),
+            discovered_at_unix_ms: 0,
+            source: ProviderId::SolanaPublic,
+        })
+        .unwrap();
+    db.record_pump_migration_signal("sig-migrated", 1, migration_at)
+        .unwrap();
+    let lifecycle = migration_event(
+        "sig-migrated",
+        "mint-migrated",
+        "pool-migrated",
+        migration_at,
+    );
+    db.complete_pump_migration(
+        "sig-migrated",
+        migration_at + 1,
+        std::slice::from_ref(&lifecycle),
+    )
+    .unwrap();
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-migrated",
+            "pair-migrated",
+            migration_at,
+            1.0,
+            10_000.0,
+        )])],
+    ));
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let report = sampler.run_cycle_at(migration_at).await.unwrap();
+    assert_eq!(report.migration_registered_candidate_count, 1);
+    assert_eq!(report.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 1);
+
+    let tracked = sampler
+        .registry()
+        .candidate_for_mint("mint-migrated")
+        .unwrap();
+    assert_eq!(tracked.candidate_id, candidate_id);
+    assert_eq!(tracked.discovered_at_unix_ms, migration_at);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn migration_sync_prefers_unique_snapshot_owner_for_multi_candidate_mint() {
+    let root = unique_test_dir("migration-snapshot-owner");
+    let db_path = root.join("shreks.db");
+    let migration_at = 10 * MINUTE;
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let _empty_candidate = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-owner".to_owned(),
+            pair_address: None,
+            dex_id: None,
+            venue: Some(VenueId::PumpFunBondingCurve),
+            discovered_at_unix_ms: 0,
+            source: ProviderId::SolanaPublic,
+        })
+        .unwrap();
+    let owner_candidate = db
+        .upsert_candidate(&discovered("mint-owner", MINUTE))
+        .unwrap();
+    db.insert_market_snapshot(
+        owner_candidate,
+        &snapshot(
+            ProviderId::DexScreener,
+            "mint-owner",
+            "pair-owner-old",
+            migration_at - SECOND,
+            1.0,
+            10_000.0,
+        ),
+    )
+    .unwrap();
+
+    db.record_pump_migration_signal("sig-owner", 1, migration_at)
+        .unwrap();
+    let lifecycle = migration_event(
+        "sig-owner",
+        "mint-owner",
+        "pool-owner",
+        migration_at,
+    );
+    db.complete_pump_migration(
+        "sig-owner",
+        migration_at + 1,
+        std::slice::from_ref(&lifecycle),
+    )
+    .unwrap();
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-owner",
+            "pair-owner-new",
+            migration_at,
+            1.1,
+            12_000.0,
+        )])],
+    ));
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let report = sampler.run_cycle_at(migration_at).await.unwrap();
+    assert_eq!(report.migration_registered_candidate_count, 1);
+    let tracked = sampler.registry().candidate_for_mint("mint-owner").unwrap();
+    assert_eq!(tracked.candidate_id, owner_candidate);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+

@@ -19,6 +19,7 @@ mod fast_population_parity;
 mod fast_realtime_coverage;
 mod future_path_labels;
 mod lifecycle;
+mod migration_sampling;
 mod outcomes;
 mod pump_swap_fast_lane;
 mod pumpswap_effective_fee;
@@ -122,6 +123,7 @@ pub use fast_population_parity::{
     FastBaselinePopulationParityProof, FAST_BASELINE_POPULATION_PARITY_VERSION,
 };
 pub use lifecycle::PumpMigrationSignalRecord;
+pub use migration_sampling::{MigrationSamplingCandidate, VerifiedPumpSwapSamplingTarget};
 pub use outcomes::{
     DueOutcomeCheckpoint, OutcomeCheckpointCompletion, OutcomeCheckpointRecord,
     OutcomeCheckpointStatus, OUTCOME_HORIZONS_SECONDS,
