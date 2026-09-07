@@ -230,6 +230,50 @@ The audit must report:
 If the resulting population is too small or overly concentrated, collect more fresh PumpSwap
 evidence. Do not relax thresholds after inspecting outcomes.
 
+
+## Production canonical-pair audit result
+
+The corrected canonical-pair production audit still produced:
+
+- 146,432 raw fresh decisions;
+- 39,633 bonding-curve decisions excluded;
+- 106,799 verified migrated PumpSwap decisions;
+- 106,029 PumpSwap decisions with no fresh canonical DexScreener snapshot within 60 seconds;
+- 770 eligible decisions;
+- 3 eligible mints;
+- top-1 eligible mint share: 99.610%.
+
+The surviving snapshots all greatly exceeded the frozen market-quality thresholds:
+
+- minimum observed eligible liquidity: $18,254.97;
+- minimum observed eligible trailing 24h volume: $247,241.04.
+
+Therefore the limiting factor is **not** the $3,000 liquidity or $1,000 trailing-24h volume threshold.
+It is contemporaneous market-snapshot coverage.
+
+This population is insufficient for first-champion training under v1. It remains immutable raw FL4
+research evidence only.
+
+## Capture-path root cause
+
+Repository inspection shows the two evidence lanes are currently driven by different target
+populations:
+
+- broad Pump/PumpSwap FastEvent capture is driven by verified Pump migration pools through the
+  bounded realtime target publisher;
+- Observer V2 high-resolution DexScreener sampling is driven by its own discovery registry.
+
+Observer V2 does not currently import verified PumpSwap migrations into that registry. Therefore a
+migrated mint can generate dense canonical PumpSwap FastEvents without ever receiving contemporaneous
+DexScreener liquidity/volume snapshots unless independent discovery happens to register it.
+
+The next implementation slice must explicitly bridge verified Pump migrations into the
+high-resolution market sampler without creating duplicate candidate identities.
+
+After the bridged sampler is sealed and deployed, the first champion cohort lower bound must be
+captured **after deployment**. Historical rows missing contemporaneous market evidence may not be
+backfilled from present-day snapshots.
+
 ## Authority boundary
 
 This policy adds no:
