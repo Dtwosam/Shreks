@@ -138,12 +138,17 @@ impl ShreksDb {
                    c.id,
                    c.mint,
                    c.discovered_at_unix_ms,
-                   COUNT(s.id) AS snapshot_count
+                   COUNT(s.id) AS snapshot_count,
+                   c.discovery_source
                FROM token_candidates AS c
                LEFT JOIN market_snapshots AS s
                  ON s.candidate_id = c.id
                WHERE c.mint = ?1
-               GROUP BY c.id, c.mint, c.discovered_at_unix_ms
+               GROUP BY
+                   c.id,
+                   c.mint,
+                   c.discovered_at_unix_ms,
+                   c.discovery_source
                ORDER BY c.id ASC"#,
         )?;
 
@@ -154,6 +159,7 @@ impl ShreksDb {
                     row.get::<_, String>(1)?,
                     row.get::<_, i64>(2)?,
                     row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -162,7 +168,7 @@ impl ShreksDb {
             return Ok(None);
         }
 
-        let decode = |row: &(i64, String, i64, i64)| -> Result<MigrationSamplingCandidate, StorageError> {
+        let decode = |row: &(i64, String, i64, i64, String)| -> Result<MigrationSamplingCandidate, StorageError> {
             if row.0 <= 0 {
                 return Err(StorageError::InvalidData(
                     "migration sampling candidate id must be positive".to_owned(),
@@ -179,6 +185,7 @@ impl ShreksDb {
                     "migration sampling snapshot count must be nonnegative".to_owned(),
                 ));
             }
+            parse_provider(&row.4)?;
             Ok(MigrationSamplingCandidate {
                 candidate_id: row.0,
                 mint: row.1.clone(),
@@ -199,10 +206,25 @@ impl ShreksDb {
             return decode(owners[0]).map(Some);
         }
 
+        if owners.is_empty() {
+            let dexscreener = rows
+                .iter()
+                .filter(|row| row.4 == ProviderId::DexScreener.as_str())
+                .collect::<Vec<_>>();
+            if dexscreener.len() == 1 {
+                return decode(dexscreener[0]).map(Some);
+            }
+        }
+
+        let dexscreener_count = rows
+            .iter()
+            .filter(|row| row.4 == ProviderId::DexScreener.as_str())
+            .count();
         Err(StorageError::InvalidData(format!(
-            "migration sampling mint '{mint}' is ambiguous across {} candidate identities with {} snapshot owners",
+            "migration sampling mint '{mint}' is ambiguous across {} candidate identities with {} snapshot owners and {} DexScreener candidates",
             rows.len(),
-            owners.len()
+            owners.len(),
+            dexscreener_count
         )))
     }
 }

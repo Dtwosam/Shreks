@@ -483,6 +483,79 @@ fn migration_sampling_candidate_prefers_unique_snapshot_owner() {
 }
 
 #[test]
+fn migration_sampling_candidate_prefers_unique_dexscreener_identity_without_snapshots() {
+    let root = unique_test_dir("sampling-dexscreener-ownerless");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let _chain = db
+        .upsert_candidate(&candidate(
+            "mint-dexscreener-ownerless",
+            ProviderId::SolanaPublic,
+            100,
+        ))
+        .unwrap();
+    let expected = db
+        .upsert_candidate(&candidate(
+            "mint-dexscreener-ownerless",
+            ProviderId::DexScreener,
+            120,
+        ))
+        .unwrap();
+
+    let resolved = db
+        .migration_sampling_candidate_for_mint("mint-dexscreener-ownerless")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(resolved.candidate_id, expected);
+    assert_eq!(resolved.mint, "mint-dexscreener-ownerless");
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn migration_sampling_candidate_rejects_multiple_dexscreener_identities_without_snapshots() {
+    let root = unique_test_dir("sampling-multiple-dexscreener-ownerless");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    db.upsert_candidate(&candidate(
+        "mint-multiple-dex",
+        ProviderId::SolanaPublic,
+        100,
+    ))
+    .unwrap();
+    db.upsert_candidate(&candidate(
+        "mint-multiple-dex",
+        ProviderId::DexScreener,
+        120,
+    ))
+    .unwrap();
+    db.upsert_candidate(&DiscoveredToken {
+        mint: "mint-multiple-dex".to_owned(),
+        pair_address: Some("pair-alt".to_owned()),
+        dex_id: Some("pump_swap".to_owned()),
+        venue: Some(VenueId::PumpSwap),
+        discovered_at_unix_ms: 130,
+        source: ProviderId::DexScreener,
+    })
+    .unwrap();
+
+    let error = db
+        .migration_sampling_candidate_for_mint("mint-multiple-dex")
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains("0 snapshot owners and 2 DexScreener candidates")
+    );
+
+    cleanup_dir(&root);
+}
+
+#[test]
 fn migration_sampling_candidate_rejects_multiple_snapshot_owners() {
     let root = unique_test_dir("sampling-ambiguous-owners");
     let db_path = root.join("shreks.db");

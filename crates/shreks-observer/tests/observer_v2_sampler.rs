@@ -537,6 +537,167 @@ async fn registry_restoration_resumes_tracking_after_database_reopen() {
 }
 
 #[tokio::test]
+async fn verified_migration_bootstraps_missing_dexscreener_candidate_and_samples() {
+    let root = unique_test_dir("migration-bootstrap");
+    let db_path = root.join("shreks.db");
+    let migration_at = 2 * DAY;
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    db.record_pump_migration_signal("sig-bootstrap", 1, migration_at)
+        .unwrap();
+    let lifecycle = migration_event(
+        "sig-bootstrap",
+        "mint-bootstrap",
+        "pool-bootstrap",
+        migration_at,
+    );
+    db.complete_pump_migration(
+        "sig-bootstrap",
+        migration_at + 1,
+        std::slice::from_ref(&lifecycle),
+    )
+    .unwrap();
+    assert_eq!(
+        scalar_i64(
+            &db_path,
+            "SELECT COUNT(*) FROM token_candidates WHERE mint='mint-bootstrap'"
+        ),
+        0
+    );
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-bootstrap",
+            "pair-bootstrap",
+            migration_at,
+            1.0,
+            10_000.0,
+        )])],
+    ));
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let report = sampler.run_cycle_at(migration_at).await.unwrap();
+    assert_eq!(report.migration_registered_candidate_count, 1);
+    assert_eq!(report.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 1);
+
+    let connection = Connection::open(&db_path).unwrap();
+    let candidate: (i64, String, Option<String>, String) = connection
+        .query_row(
+            "SELECT id, discovery_source, venue, pair_address
+             FROM token_candidates
+             WHERE mint='mint-bootstrap'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(candidate.1, "dexscreener");
+    assert_eq!(candidate.2.as_deref(), Some("pump_swap"));
+    assert_eq!(candidate.3, "");
+    assert_eq!(
+        scalar_i64(
+            &db_path,
+            "SELECT COUNT(*) FROM candidate_outcome_checkpoints
+             WHERE candidate_id = (
+                 SELECT id FROM token_candidates WHERE mint='mint-bootstrap'
+             )"
+        ),
+        7
+    );
+    assert_eq!(
+        sampler
+            .registry()
+            .candidate_for_mint("mint-bootstrap")
+            .unwrap()
+            .candidate_id,
+        candidate.0
+    );
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn migration_sync_prefers_unique_dexscreener_candidate_without_snapshots() {
+    let root = unique_test_dir("migration-ownerless-dex");
+    let db_path = root.join("shreks.db");
+    let migration_at = 2 * DAY;
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let _chain_candidate = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "mint-ownerless-dex".to_owned(),
+            pair_address: None,
+            dex_id: None,
+            venue: Some(VenueId::PumpFunBondingCurve),
+            discovered_at_unix_ms: migration_at - HOUR,
+            source: ProviderId::SolanaPublic,
+        })
+        .unwrap();
+    let dex_candidate = db
+        .upsert_candidate(&discovered(
+            "mint-ownerless-dex",
+            migration_at - MINUTE,
+        ))
+        .unwrap();
+
+    db.record_pump_migration_signal("sig-ownerless-dex", 1, migration_at)
+        .unwrap();
+    let lifecycle = migration_event(
+        "sig-ownerless-dex",
+        "mint-ownerless-dex",
+        "pool-ownerless-dex",
+        migration_at,
+    );
+    db.complete_pump_migration(
+        "sig-ownerless-dex",
+        migration_at + 1,
+        std::slice::from_ref(&lifecycle),
+    )
+    .unwrap();
+    drop(db);
+
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![Ok(vec![snapshot(
+            ProviderId::DexScreener,
+            "mint-ownerless-dex",
+            "pair-ownerless-dex",
+            migration_at,
+            1.0,
+            10_000.0,
+        )])],
+    ));
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        None,
+        vec![SamplerProvider::unpaced(market)],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let report = sampler.run_cycle_at(migration_at).await.unwrap();
+    assert_eq!(report.migration_registered_candidate_count, 1);
+    let tracked = sampler
+        .registry()
+        .candidate_for_mint("mint-ownerless-dex")
+        .unwrap();
+    assert_eq!(tracked.candidate_id, dex_candidate);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn verified_migration_registers_existing_candidate_and_reanchors_sampling() {
     let root = unique_test_dir("migration-register");
     let db_path = root.join("shreks.db");
