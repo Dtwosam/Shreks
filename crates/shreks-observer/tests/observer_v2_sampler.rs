@@ -205,8 +205,34 @@ fn insert_test_fast_event(
     mint: &str,
     observed_at_unix_ms: i64,
 ) {
-    Connection::open(db_path)
-        .unwrap()
+    let connection = Connection::open(db_path).unwrap();
+    let signature = format!("priority-sig-{sequence}");
+    let log_index = sequence;
+    let ordinal = 2_147_483_648_i64 + log_index;
+    connection
+        .execute(
+            r#"INSERT INTO pump_swap_trade_evidence (
+                   signature, ordinal, log_index, provider, slot,
+                   observed_at_unix_ms, pool, user, is_buy,
+                   base_amount_raw, quote_amount_raw, user_quote_amount_raw,
+                   timestamp_unix_seconds, pool_base_reserves_raw,
+                   pool_quote_reserves_raw
+               ) VALUES (
+                   ?1, ?2, ?3, 'solana_public', '1',
+                   ?4, 'priority-pool', 'actor', 1,
+                   '1000000', '1000000000', '1000000000',
+                   ?5, '1000000', '1000000000'
+               )"#,
+            rusqlite::params![
+                signature,
+                ordinal,
+                log_index,
+                observed_at_unix_ms,
+                observed_at_unix_ms / 1000,
+            ],
+        )
+        .unwrap();
+    connection
         .execute(
             r#"INSERT INTO fast_events (
                    sequence, signature, ordinal, provider, slot,
@@ -215,14 +241,15 @@ fn insert_test_fast_event(
                    actor, base_quantity, quote_quantity, price_quote,
                    base_decimals, quote_decimals
                ) VALUES (
-                   ?1, ?2, 0, 'solana_public', '1',
-                   ?3, ?3, ?3, ?4,
+                   ?1, ?2, ?3, 'solana_public', '1',
+                   ?4, ?4, ?4, ?5,
                    'So11111111111111111111111111111111111111112',
                    'pump_swap', 'buy', 'actor', 1.0, 1.0, 1.0, 6, 9
                )"#,
             rusqlite::params![
                 sequence,
-                format!("priority-sig-{sequence}"),
+                signature,
+                ordinal,
                 observed_at_unix_ms,
                 mint,
             ],
