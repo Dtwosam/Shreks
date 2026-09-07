@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime, SystemTimeError, UNIX_EPOCH},
 };
 
-use shreks_core::{ProviderHealthState, ProviderId};
+use shreks_core::{DiscoveredToken, ProviderHealthState, ProviderId, VenueId};
 use shreks_providers::{DiscoveryProvider, MarketDataProvider, ProviderError};
 use shreks_storage::{ShreksDb, StorageError};
 use tokio::time::{sleep, Instant};
@@ -243,25 +243,35 @@ impl HighResolutionSampler {
                 continue;
             }
 
-            let candidate = self
-                .db
-                .migration_sampling_candidate_for_mint(&target.mint)?
-                .ok_or_else(|| {
-                    SamplerError::InvalidData(format!(
-                        "verified PumpSwap migration mint '{}' has no existing candidate identity",
-                        target.mint
-                    ))
-                })?;
+            let (candidate_id, candidate_mint) =
+                match self.db.migration_sampling_candidate_for_mint(&target.mint)? {
+                    Some(candidate) => (candidate.candidate_id, candidate.mint),
+                    None => {
+                        let candidate_id = self.db.upsert_candidate(&DiscoveredToken {
+                            mint: target.mint.clone(),
+                            pair_address: None,
+                            dex_id: None,
+                            venue: Some(VenueId::PumpSwap),
+                            discovered_at_unix_ms: target.detected_at_unix_ms,
+                            source: ProviderId::DexScreener,
+                        })?;
+                        self.db.ensure_outcome_checkpoints(
+                            candidate_id,
+                            target.detected_at_unix_ms,
+                        )?;
+                        (candidate_id, target.mint.clone())
+                    }
+                };
 
-            if candidate.mint != target.mint {
+            if candidate_mint != target.mint {
                 return Err(SamplerError::InvalidData(format!(
                     "migration sampling candidate mint '{}' does not match verified migration '{}'",
-                    candidate.mint, target.mint
+                    candidate_mint, target.mint
                 )));
             }
 
             self.registry.register(TrackedCandidate::new(
-                candidate.candidate_id,
+                candidate_id,
                 target.mint,
                 target.detected_at_unix_ms,
             )?)?;
