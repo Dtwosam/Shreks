@@ -201,30 +201,33 @@ impl ShreksDb {
             .iter()
             .filter(|row| row.3 > 0)
             .collect::<Vec<_>>();
+        let dexscreener = rows
+            .iter()
+            .filter(|row| row.4 == ProviderId::DexScreener.as_str())
+            .collect::<Vec<_>>();
 
         if owners.len() == 1 {
             return decode(owners[0]).map(Some);
         }
 
-        if owners.is_empty() {
-            let dexscreener = rows
-                .iter()
-                .filter(|row| row.4 == ProviderId::DexScreener.as_str())
-                .collect::<Vec<_>>();
-            if dexscreener.len() == 1 {
-                return decode(dexscreener[0]).map(Some);
-            }
+        if owners.len() > 1 && dexscreener.len() == 1 && dexscreener[0].3 > 0 {
+            return decode(dexscreener[0]).map(Some);
         }
 
-        let dexscreener_count = rows
+        if owners.is_empty() && dexscreener.len() == 1 {
+            return decode(dexscreener[0]).map(Some);
+        }
+
+        let dexscreener_snapshot_owner_count = dexscreener
             .iter()
-            .filter(|row| row.4 == ProviderId::DexScreener.as_str())
+            .filter(|row| row.3 > 0)
             .count();
         Err(StorageError::InvalidData(format!(
-            "migration sampling mint '{mint}' is ambiguous across {} candidate identities with {} snapshot owners and {} DexScreener candidates",
+            "migration sampling mint '{mint}' is ambiguous across {} candidate identities with {} snapshot owners, {} DexScreener candidates, and {} DexScreener snapshot owners",
             rows.len(),
             owners.len(),
-            dexscreener_count
+            dexscreener.len(),
+            dexscreener_snapshot_owner_count
         )))
     }
 }
