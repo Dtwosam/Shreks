@@ -1,0 +1,186 @@
+# FL9 Tradable Universe Policy — Design
+
+**Date:** 2026-09-07  
+**Base:** `c28eb704073c53b22f299b9617f40608abaf6c34`
+
+## Status
+
+Design slice before first genuine FL9 champion training.
+
+The fresh FL4 cohort is physically complete at:
+
+- 146,432 decisions;
+- 1,757,184 FL4 labels;
+- fresh lower bound `1788687602234`;
+- target values not inspected;
+- model performance not inspected.
+
+FL9 economic superiority remains **EVIDENCE PENDING**.
+LIVE remains disabled.
+
+## Problem
+
+The raw fresh FL4 cohort intentionally includes every canonical decision opportunity in the
+authenticated coverage windows. That population contains both Pump.fun bonding-curve decisions and
+post-graduation PumpSwap decisions.
+
+Raw evidence population is not the same thing as BUY eligibility.
+
+The first-champion evidence planner currently preselects by chronology only. Without a separate
+tradable-universe contract, bonding-curve decisions or inactive/illiquid PumpSwap markets can
+participate in first-champion BUY learning even though those markets are not intended production
+entry targets.
+
+## Production BUY universe
+
+A decision is BUY-eligible only when all conditions below are proven from point-in-time evidence:
+
+1. the decision venue is exactly `pump_swap`;
+2. a verified `pump_graduation` lifecycle event exists for the exact mint/quote market;
+3. that lifecycle transition is exactly
+   `pump_fun_bonding_curve -> pump_swap`;
+4. the graduation was detected no later than the decision timestamp;
+5. the market snapshot maps to the exact verified graduation `pool_address`;
+6. snapshot source is exactly `dexscreener`;
+7. snapshot observation is no later than the decision/evaluation timestamp;
+8. snapshot age is at most **60,000 ms**;
+9. snapshot pair chronology is valid;
+10. `liquidity_usd >= 3000.0`;
+11. `volume_h24_usd >= 1000.0`.
+
+Missing, ambiguous, stale, or contradictory evidence is ineligible and must fail closed to SKIP.
+
+No bonding-curve decision is BUY-eligible, regardless of activity, forecast, return, or later
+graduation.
+
+## Historical versus runtime chronology
+
+For champion training/validation/TEST/final fit, liquidity and trailing 24h volume are taken from the
+latest eligible persisted market snapshot **at or before that historical decision timestamp**.
+
+Current market state must never be used to decide whether a historical row enters training.
+
+For PAPER/shadow/LIVE entry authority, the exact same policy is evaluated against the current
+point-in-time snapshot.
+
+Therefore:
+
+- a token that is dead today may still remain valid historical evidence if it satisfied the policy
+  when the decision occurred;
+- a token that was historically active but is dead now must be rejected by current BUY authority;
+- a token still on the bonding curve is always rejected.
+
+## Evidence source
+
+The existing normalized observer schema already persists:
+
+- `market_snapshots.liquidity_usd`;
+- `market_snapshots.volume_h24_usd`;
+- snapshot source/venue/pair/base/quote identity;
+- snapshot and pair-created timestamps;
+- `token_lifecycle_events` with verified Pump graduation pool identity.
+
+The current Python observer market read model does not expose `volume_h24_usd`; implementation must
+extend the authenticated point-in-time read surface rather than add ad-hoc production SQL inside the
+champion planner.
+
+## First-champion preselection
+
+Tradable-universe eligibility is applied **before** chronological 60/20/20 partitioning.
+
+The exact same eligible identity population must feed:
+
+- training;
+- validation;
+- TEST;
+- final runtime-artifact fit.
+
+The evidence plan fingerprints:
+
+- policy version;
+- minimum liquidity USD;
+- minimum trailing-24h volume USD;
+- required venue;
+- required lifecycle transition;
+- required snapshot source;
+- maximum snapshot age;
+- eligible decision identity population/fingerprint;
+- explicit exclusion counts/reasons.
+
+No target value or model-performance result may influence eligibility.
+
+## Runtime authority
+
+The learned action policy may only consider BUY when the current caller-supplied tradable-universe
+assessment is eligible.
+
+An attractive forecast cannot override an ineligible market.
+
+Conceptually:
+
+`model BUY + tradable-universe ineligible = SKIP`.
+
+Open-position HOLD/REDUCE/SELL safety behavior remains separate; this policy controls new BUY
+authority and does not forbid defensive exits from a market that later falls below the thresholds.
+
+## Raw evidence preservation
+
+The complete 146,432-decision FL4 population remains immutable research evidence.
+
+Bonding-curve, low-liquidity, low-volume, stale, and missing-market-evidence rows are not deleted,
+mutated, or relabeled. They are simply not admitted to first-champion BUY learning.
+
+## Initial production policy
+
+- version: `fl9-tradable-universe-v1`
+- required venue: `pump_swap`
+- required graduation: verified Pump.fun bonding curve -> PumpSwap
+- required market source: `dexscreener`
+- maximum market snapshot age: `60000 ms`
+- minimum liquidity: `3000.0 USD`
+- minimum trailing 24h volume: `1000.0 USD`
+
+Threshold changes require a new policy version and a new evidence campaign. They are not
+self-tuning parameters.
+
+## Pre-implementation production audit
+
+Before champion training, run a read-only audit over the fresh 146,432 decisions using only the
+fields above.
+
+Required output:
+
+- PumpSwap decision count;
+- exact-pool graduation-matched count;
+- fresh DexScreener snapshot coverage;
+- missing/stale snapshot counts;
+- liquidity-threshold exclusion count;
+- 24h-volume-threshold exclusion count;
+- final eligible decision count;
+- final eligible unique-mint count;
+- per-mint concentration summary.
+
+The audit must report:
+
+- database mutation = NO;
+- target values inspected = no;
+- future returns inspected = no;
+- model performance inspected = no;
+- champion training performed = no.
+
+If the resulting population is too small or overly concentrated, collect more fresh PumpSwap
+evidence. Do not relax thresholds after inspecting outcomes.
+
+## Authority boundary
+
+This policy adds no:
+
+- provider/network call inside training;
+- historical DB mutation;
+- future-label/outcome input to eligibility;
+- strategy edge threshold;
+- model self-promotion;
+- signer/submission;
+- LIVE enablement.
+
+LIVE remains disabled.
