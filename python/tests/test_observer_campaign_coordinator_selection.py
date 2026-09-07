@@ -221,3 +221,38 @@ def test_candidate_store_is_read_only_and_does_not_create_missing_database(tmp_p
                 max_entry_candidates=2,
             ),
         )
+
+
+def test_recent_candidates_skip_current_snapshot_with_future_pair_creation_time(tmp_path) -> None:
+    database = tmp_path / "observer.sqlite"
+    _seed(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """UPDATE market_snapshots
+           SET pair_created_at_unix_ms = observed_at_unix_ms + 1
+           WHERE candidate_id = 2"""
+    )
+    connection.commit()
+    connection.close()
+
+    candidates = ObserverCampaignCandidateStore(database).recent_candidates(
+        as_of_unix_ms=1_000,
+        policy=ObserverPaperCampaignSelectionPolicy(
+            recent_lookback_ms=100,
+            max_entry_candidates=2,
+        ),
+        market_read_policy=ObserverMarketReadPolicy(
+            version="market-read-v1",
+            source_priority=("dexscreener",),
+            max_current_age_ms=100,
+            local_range_lookback_ms=1_000,
+        ),
+    )
+
+    assert candidates == (
+        ObserverCampaignCandidate(
+            candidate_id=3,
+            mint="MintRecentA",
+            latest_market_observed_at_unix_ms=980,
+        ),
+    )
