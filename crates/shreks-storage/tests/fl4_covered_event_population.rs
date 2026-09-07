@@ -336,10 +336,10 @@ fn covered_population_ignores_quarantine_before_required_replay_window() {
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
     let (historical_session, _) = historical_coverage(&db);
 
-    seed_event(&db, "ancient-conflict", 1, 800, 0.04);
-    quarantine_conflict(&db, "ancient-conflict", 850, 0.041);
-    seed_event(&db, "decision-a", 2, 1_000, 0.05);
-    seed_event(&db, "decision-b", 3, 1_250, 0.06);
+    seed_event(&db, "ancient-conflict", 1, 1_000, 0.04);
+    quarantine_conflict(&db, "ancient-conflict", 1_050, 0.041);
+    seed_event(&db, "decision-a", 2, 1_200, 0.05);
+    seed_event(&db, "decision-b", 3, 1_450, 0.06);
     seed_event(&db, "future-c", 4, 1_600, 0.07);
 
     let full_replay_error = db
@@ -347,8 +347,13 @@ fn covered_population_ignores_quarantine_before_required_replay_window() {
         .expect_err("full-history replay must remain fail-closed");
     assert!(full_replay_error.to_string().contains("quarantine"));
 
-    let report =
-        populate_fast_future_path_labels(&db, &request(historical_session, 2)).unwrap();
+    let bounded_request = FastCoveredFuturePathPopulationRequest {
+        coverage_session_id: historical_session,
+        from_observed_at_unix_ms: 1_200,
+        through_observed_at_unix_ms: 1_450,
+        maximum_decisions: 2,
+    };
+    let report = populate_fast_future_path_labels(&db, &bounded_request).unwrap();
 
     assert_eq!(report.decision_count, 2);
     assert_eq!(report.inserted_label_count, 24);
