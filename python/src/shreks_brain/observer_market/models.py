@@ -62,6 +62,9 @@ class ObserverMarketSnapshot:
     buys_h1: int | None
     sells_h1: int | None
     pair_created_at_unix_ms: int | None
+    base_mint: str | None = None
+    quote_mint: str | None = None
+    volume_h24_usd: float | None = None
 
     def __post_init__(self) -> None:
         _require_positive_int("row_id", self.row_id)
@@ -84,6 +87,9 @@ class ObserverMarketSnapshot:
         _require_optional_non_negative_finite("liquidity_usd", self.liquidity_usd)
         _require_optional_non_negative_finite("volume_m5_usd", self.volume_m5_usd)
         _require_optional_non_negative_finite("volume_h1_usd", self.volume_h1_usd)
+        _require_optional_non_negative_finite("volume_h24_usd", self.volume_h24_usd)
+        _require_optional_non_empty_string("base_mint", self.base_mint)
+        _require_optional_non_empty_string("quote_mint", self.quote_mint)
         _require_optional_non_negative_int("buys_m5", self.buys_m5)
         _require_optional_non_negative_int("sells_m5", self.sells_m5)
         _require_optional_non_negative_int("buys_h1", self.buys_h1)
