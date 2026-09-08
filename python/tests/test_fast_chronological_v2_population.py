@@ -163,3 +163,56 @@ def test_giant_mint_actor_connectivity_no_longer_empties_evaluation() -> None:
     assert prepared.signature_quarantine.shared_signature_count == 0
     assert prepared.validation_novelty.unseen_mint_identities
     assert prepared.test_novelty.unseen_mint_identities
+
+
+def test_null_actor_is_distinct_from_unseen_actor_diagnostic() -> None:
+    records = list(v2_records())
+    validation_index = next(
+        index
+        for index, record in enumerate(records)
+        if record.decision_observed_at_unix_ms == 2_100
+    )
+    records[validation_index] = replace(
+        records[validation_index],
+        decision_actor=None,
+    )
+
+    prepared = prepare_fast_chronological_generalization_populations(
+        tuple(records),
+        v2_policy(),
+    )[0]
+
+    assert prepared.validation_novelty.null_actor_row_count == 1
+    assert (
+        prepared.validation_novelty.seen_actor_row_count
+        + prepared.validation_novelty.unseen_actor_row_count
+        + prepared.validation_novelty.null_actor_row_count
+        == prepared.validation_novelty.prediction_count
+    )
+
+
+def test_novelty_and_quarantine_fingerprints_are_input_order_invariant() -> None:
+    records = v2_records(shared_signature=True)
+    forward = prepare_fast_chronological_generalization_populations(
+        records,
+        v2_policy(),
+    )[0]
+    reversed_result = (
+        prepare_fast_chronological_generalization_populations(
+            tuple(reversed(records)),
+            v2_policy(),
+        )[0]
+    )
+
+    assert (
+        forward.signature_quarantine.quarantine_fingerprint_sha256
+        == reversed_result.signature_quarantine.quarantine_fingerprint_sha256
+    )
+    assert (
+        forward.validation_novelty.novelty_fingerprint_sha256
+        == reversed_result.validation_novelty.novelty_fingerprint_sha256
+    )
+    assert (
+        forward.test_novelty.novelty_fingerprint_sha256
+        == reversed_result.test_novelty.novelty_fingerprint_sha256
+    )
