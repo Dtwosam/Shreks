@@ -20,6 +20,22 @@ _FEATURE_FIREWALL_FINGERPRINT = (
 )
 
 
+def _non_empty(name: str, value: object) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be non-empty text")
+
+
+def _non_negative_int(name: str, value: object) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer")
+
+
+def _positive_int(name: str, value: object) -> None:
+    _non_negative_int(name, value)
+    if value == 0:
+        raise ValueError(f"{name} must be positive")
+
+
 @dataclass(frozen=True, slots=True)
 class Fl9V2CoverageSessionCheckpoint:
     session_id: int
@@ -616,23 +632,6 @@ def _reason_counts(value: object) -> None:
         seen.add(reason)
     if tuple(sorted(value)) != value:
         raise ValueError("eligibility reason counts must be canonical")
-
-
-def _non_empty(name: str, value: object) -> None:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{name} must be non-empty text")
-
-
-def _non_negative_int(name: str, value: object) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{name} must be a non-negative integer")
-
-
-def _positive_int(name: str, value: object) -> None:
-    _non_negative_int(name, value)
-    if value == 0:
-        raise ValueError(f"{name} must be positive")
-
 
 def _finite_non_negative(name: str, value: object) -> None:
     if (
