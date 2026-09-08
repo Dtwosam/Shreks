@@ -53,6 +53,9 @@ def _snapshot(**changes):
         "buys_h1": 300,
         "sells_h1": 150,
         "pair_created_at_unix_ms": 500_000,
+        "base_mint": "Mint111",
+        "quote_mint": "Quote111",
+        "volume_h24_usd": 120_000.0,
     }
     values.update(changes)
     return ObserverMarketSnapshot(**values)
@@ -136,6 +139,9 @@ def test_snapshot_rejects_invalid_persisted_market_values_but_allows_empty_pair_
         {"price_usd": math.nan},
         {"liquidity_usd": -1.0},
         {"volume_m5_usd": math.inf},
+        {"volume_h24_usd": -1.0},
+        {"base_mint": ""},
+        {"quote_mint": ""},
         {"buys_m5": -1},
         {"sells_h1": -1},
         {"pair_created_at_unix_ms": -1},
@@ -205,6 +211,9 @@ def test_window_allows_nullable_market_fields_missing_anchors_and_empty_pair_pat
         liquidity_usd=None,
         volume_m5_usd=None,
         volume_h1_usd=None,
+        volume_h24_usd=None,
+        base_mint=None,
+        quote_mint=None,
         buys_m5=None,
         sells_m5=None,
         buys_h1=None,

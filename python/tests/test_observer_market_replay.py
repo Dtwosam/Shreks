@@ -36,10 +36,13 @@ CREATE TABLE market_snapshots (
     source_observed_at_unix_ms INTEGER,
     venue TEXT NOT NULL DEFAULT 'other_solana',
     pair_address TEXT NOT NULL DEFAULT '',
+    base_mint TEXT NOT NULL DEFAULT 'Mint111',
+    quote_mint TEXT NOT NULL DEFAULT 'Quote111',
     price_usd REAL,
     liquidity_usd REAL,
     volume_m5_usd REAL,
     volume_h1_usd REAL,
+    volume_h24_usd REAL,
     buys_m5 INTEGER,
     sells_m5 INTEGER,
     buys_h1 INTEGER,
@@ -82,12 +85,16 @@ def _insert_snapshot(
     *,
     observed_at_unix_ms: int,
     source: str = "alpha",
+    venue: str = "raydium",
     pair_address: str = "PairA",
+    base_mint: str = "Mint111",
+    quote_mint: str = "Quote111",
     source_observed_at_unix_ms: int | None = None,
     price_usd=2.0,
     liquidity_usd=50_000.0,
     volume_m5_usd=5_000.0,
     volume_h1_usd=40_000.0,
+    volume_h24_usd=120_000.0,
     buys_m5=60,
     sells_m5=40,
     buys_h1=500,
@@ -102,21 +109,26 @@ def _insert_snapshot(
             """INSERT INTO market_snapshots (
                    candidate_id, observed_at_unix_ms, source,
                    source_observed_at_unix_ms, venue, pair_address,
+                   base_mint, quote_mint,
                    price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+                   volume_h24_usd,
                    buys_m5, sells_m5, buys_h1, sells_h1,
                    pair_created_at_unix_ms
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 candidate_id,
                 observed_at_unix_ms,
                 source,
                 source_observed_at_unix_ms,
-                "raydium",
+                venue,
                 pair_address,
+                base_mint,
+                quote_mint,
                 price_usd,
                 liquidity_usd,
                 volume_m5_usd,
                 volume_h1_usd,
+                volume_h24_usd,
                 buys_m5,
                 sells_m5,
                 buys_h1,
@@ -467,3 +479,97 @@ def test_load_window_skips_newer_snapshot_with_future_pair_creation_time(tmp_pat
     assert window.current.observed_at_unix_ms == 1_994_000
     assert window.current.price_usd == 2.0
     assert window.pair_created_at_unix_ms == 500_000
+
+
+def test_exact_market_read_uses_exact_quote_venue_and_h24_volume(tmp_path):
+    path = tmp_path / "observer.sqlite3"
+    candidate_id = _database(path)
+    exact_id = _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=_AS_OF - 5_000,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint="Mint111",
+        quote_mint="QuoteSOL",
+        pair_address="PumpPair",
+        liquidity_usd=8_000.0,
+        volume_h24_usd=25_000.0,
+    )
+    _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=_AS_OF - 1_000,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint="Mint111",
+        quote_mint="WrongQuote",
+        pair_address="WrongQuotePair",
+        liquidity_usd=99_000.0,
+        volume_h24_usd=99_000.0,
+    )
+    _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=_AS_OF - 500,
+        source="dexscreener",
+        venue="raydium",
+        base_mint="Mint111",
+        quote_mint="QuoteSOL",
+        pair_address="WrongVenuePair",
+        liquidity_usd=99_000.0,
+        volume_h24_usd=99_000.0,
+    )
+
+    snapshot = ObserverMarketStore(path).load_current_exact_market(
+        candidate_id,
+        _AS_OF,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint="Mint111",
+        quote_mint="QuoteSOL",
+        max_age_ms=60_000,
+    )
+
+    assert snapshot.row_id == exact_id
+    assert snapshot.base_mint == "Mint111"
+    assert snapshot.quote_mint == "QuoteSOL"
+    assert snapshot.venue == "pump_swap"
+    assert snapshot.liquidity_usd == 8_000.0
+    assert snapshot.volume_h24_usd == 25_000.0
+
+
+def test_exact_market_read_fails_closed_when_only_wrong_or_stale_market_exists(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    candidate_id = _database(path)
+    _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=_AS_OF - 60_001,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint="Mint111",
+        quote_mint="QuoteSOL",
+    )
+    _insert_snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=_AS_OF - 1,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint="Mint111",
+        quote_mint="WrongQuote",
+    )
+
+    with pytest.raises(ObserverMarketReadError, match="fresh exact"):
+        ObserverMarketStore(path).load_current_exact_market(
+            candidate_id,
+            _AS_OF,
+            source="dexscreener",
+            venue="pump_swap",
+            base_mint="Mint111",
+            quote_mint="QuoteSOL",
+            max_age_ms=60_000,
+        )

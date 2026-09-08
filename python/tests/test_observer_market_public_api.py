@@ -60,7 +60,12 @@ def test_store_public_methods_are_read_only_evidence_operations():
         if not name.startswith("_")
     }
 
-    assert public_methods == {"load_window", "resolve_candidate"}
+    assert public_methods == {
+        "load_current_exact_market",
+        "load_window",
+        "resolve_candidate",
+        "resolve_candidate_at",
+    }
     assert not any(
         word in method_name.lower()
         for method_name in public_methods

@@ -63,6 +63,23 @@ _MARKET_SELECT = """SELECT
     buys_m5, sells_m5, buys_h1, sells_h1, pair_created_at_unix_ms
 FROM market_snapshots"""
 
+_EXACT_MARKET_REQUIRED_COLUMNS = frozenset(
+    {
+        "base_mint",
+        "quote_mint",
+        "volume_h24_usd",
+    }
+)
+
+_EXACT_MARKET_SELECT = """SELECT
+    id, candidate_id, observed_at_unix_ms, source,
+    source_observed_at_unix_ms, venue, pair_address,
+    base_mint, quote_mint,
+    price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+    volume_h24_usd,
+    buys_m5, sells_m5, buys_h1, sells_h1, pair_created_at_unix_ms
+FROM market_snapshots"""
+
 
 class ObserverMarketReadError(ValueError):
     """Raised when observer market evidence cannot be read safely."""
@@ -126,6 +143,166 @@ class ObserverMarketStore:
         if len(rows) != 1:
             raise ObserverMarketReadError("observer candidate identity is ambiguous")
         return _candidate_from_row(rows[0])
+
+    def resolve_candidate_at(
+        self,
+        mint: str,
+        as_of_unix_ms: int,
+        *,
+        preferred_discovery_source: str,
+    ) -> ObserverCandidateIdentity:
+        """Resolve one candidate using only snapshot ownership known by as-of time."""
+        _require_non_empty_string("mint", mint)
+        _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+        _require_non_empty_string(
+            "preferred_discovery_source",
+            preferred_discovery_source,
+        )
+
+        connection = self._connect()
+        try:
+            rows = connection.execute(
+                """SELECT
+                       c.id,
+                       c.mint,
+                       c.pair_address,
+                       c.discovery_source,
+                       c.discovered_at_unix_ms,
+                       c.venue,
+                       COUNT(s.id) AS snapshot_count
+                   FROM token_candidates AS c
+                   LEFT JOIN market_snapshots AS s
+                     ON s.candidate_id = c.id
+                    AND s.observed_at_unix_ms <= ?
+                   WHERE c.mint = ?
+                     AND c.discovered_at_unix_ms <= ?
+                   GROUP BY
+                       c.id,
+                       c.mint,
+                       c.pair_address,
+                       c.discovery_source,
+                       c.discovered_at_unix_ms,
+                       c.venue
+                   ORDER BY c.id ASC""",
+                (as_of_unix_ms, mint, as_of_unix_ms),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise ObserverMarketReadError(
+                f"observer point-in-time candidate read failed: {error}"
+            ) from error
+        finally:
+            connection.close()
+
+        if not rows:
+            raise ObserverMarketReadError(
+                "observer candidate not found at point-in-time boundary"
+            )
+
+        if len(rows) == 1:
+            return _candidate_from_row(rows[0])
+
+        owners = tuple(row for row in rows if row["snapshot_count"] > 0)
+        preferred = tuple(
+            row
+            for row in rows
+            if row["discovery_source"] == preferred_discovery_source
+        )
+
+        if len(owners) == 1:
+            return _candidate_from_row(owners[0])
+
+        if (
+            len(owners) > 1
+            and len(preferred) == 1
+            and preferred[0]["snapshot_count"] > 0
+        ):
+            return _candidate_from_row(preferred[0])
+
+        if not owners and len(preferred) == 1:
+            return _candidate_from_row(preferred[0])
+
+        preferred_owner_count = sum(
+            1 for row in preferred if row["snapshot_count"] > 0
+        )
+        raise ObserverMarketReadError(
+            "observer candidate identity is ambiguous at point-in-time boundary "
+            f"across {len(rows)} candidates with {len(owners)} snapshot owners, "
+            f"{len(preferred)} preferred-source candidates, and "
+            f"{preferred_owner_count} preferred-source snapshot owners"
+        )
+
+    def load_current_exact_market(
+        self,
+        candidate_id: int,
+        as_of_unix_ms: int,
+        *,
+        source: str,
+        venue: str,
+        base_mint: str,
+        quote_mint: str,
+        max_age_ms: int,
+    ) -> ObserverMarketSnapshot:
+        """Read the canonical current snapshot for one exact point-in-time market."""
+        _require_positive_int("candidate_id", candidate_id)
+        _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+        _require_non_empty_string("source", source)
+        _require_non_empty_string("venue", venue)
+        _require_non_empty_string("base_mint", base_mint)
+        _require_non_empty_string("quote_mint", quote_mint)
+        _require_non_negative_int("max_age_ms", max_age_ms)
+
+        minimum_observed_at = max(0, as_of_unix_ms - max_age_ms)
+        connection = self._connect()
+        try:
+            self._validate_exact_market_columns(connection)
+            self._candidate_by_id(connection, candidate_id)
+            row = connection.execute(
+                f"""{_EXACT_MARKET_SELECT}
+                    WHERE candidate_id = ?
+                      AND source = ?
+                      AND venue = ?
+                      AND base_mint = ?
+                      AND quote_mint = ?
+                      AND observed_at_unix_ms BETWEEN ? AND ?
+                      AND (
+                          pair_created_at_unix_ms IS NULL
+                          OR pair_created_at_unix_ms <= observed_at_unix_ms
+                      )
+                    ORDER BY observed_at_unix_ms DESC, id ASC
+                    LIMIT 1""",
+                (
+                    candidate_id,
+                    source,
+                    venue,
+                    base_mint,
+                    quote_mint,
+                    minimum_observed_at,
+                    as_of_unix_ms,
+                ),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise ObserverMarketReadError(
+                f"observer exact-market read failed: {error}"
+            ) from error
+        finally:
+            connection.close()
+
+        if row is None:
+            raise ObserverMarketReadError(
+                "no fresh exact observer market snapshot matches caller boundary"
+            )
+
+        snapshot = _snapshot_from_row(row)
+        if (
+            snapshot.base_mint != base_mint
+            or snapshot.quote_mint != quote_mint
+            or snapshot.source != source
+            or snapshot.venue != venue
+        ):
+            raise ObserverMarketReadError(
+                "observer exact-market attribution mismatch"
+            )
+        return snapshot
 
     def load_window(
         self,
@@ -313,6 +490,28 @@ class ObserverMarketStore:
             ) from error
 
     @staticmethod
+    def _validate_exact_market_columns(
+        connection: sqlite3.Connection,
+    ) -> None:
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(market_snapshots)"
+                ).fetchall()
+            }
+        except sqlite3.Error as error:
+            raise ObserverMarketReadError(
+                f"observer exact-market schema read failed: {error}"
+            ) from error
+        missing = _EXACT_MARKET_REQUIRED_COLUMNS - columns
+        if missing:
+            raise ObserverMarketReadError(
+                "observer database table market_snapshots missing exact-market columns: "
+                + ", ".join(sorted(missing))
+            )
+
+    @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
         try:
             tables = {
@@ -400,6 +599,21 @@ def _snapshot_from_row(row: sqlite3.Row) -> ObserverMarketSnapshot:
             buys_h1=row["buys_h1"],
             sells_h1=row["sells_h1"],
             pair_created_at_unix_ms=row["pair_created_at_unix_ms"],
+            base_mint=(
+                row["base_mint"]
+                if "base_mint" in row.keys()
+                else None
+            ),
+            quote_mint=(
+                row["quote_mint"]
+                if "quote_mint" in row.keys()
+                else None
+            ),
+            volume_h24_usd=(
+                row["volume_h24_usd"]
+                if "volume_h24_usd" in row.keys()
+                else None
+            ),
         )
     except (TypeError, ValueError) as error:
         raise ObserverMarketReadError(
