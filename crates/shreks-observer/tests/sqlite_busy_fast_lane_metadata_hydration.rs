@@ -18,13 +18,13 @@ const MINT: &str = "HydrateBusyMint11111111111111111111111111111";
 const OBSERVED_MS: i64 = 1_788_203_000_000;
 const BLOCK_LONGER_THAN_STORAGE_BUSY_TIMEOUT: Duration = Duration::from_millis(5_200);
 
-fn unique_test_dir() -> PathBuf {
+fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "shreks-fast-lane-metadata-busy-{}-{nanos}",
+        "shreks-fast-lane-metadata-busy-{label}-{}-{nanos}",
         process::id()
     ))
 }
@@ -118,7 +118,7 @@ impl ChainDataProvider for LockBeforeMintStateWritePublicChain {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn candidate_upsert_survives_one_transient_sqlite_busy_interval() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("candidate-upsert");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     db.record_pump_trade_evidence(&raw_trade()).unwrap();
@@ -158,7 +158,7 @@ async fn candidate_upsert_survives_one_transient_sqlite_busy_interval() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mint_state_insert_survives_one_transient_sqlite_busy_without_replaying_provider_call() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("mint-state-insert");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
     db.record_pump_trade_evidence(&raw_trade()).unwrap();
