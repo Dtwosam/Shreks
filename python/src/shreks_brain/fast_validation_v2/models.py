@@ -230,6 +230,31 @@ class FastChronologicalGeneralizationFoldResult:
             raise ValueError("validation novelty count does not reconcile")
         if self.test_novelty.prediction_count != self.test_row_count:
             raise ValueError("test novelty count does not reconcile")
+        if (
+            self.model.max_training_decision_observed_at_unix_ms
+            + self.model.horizon_ms
+            > self.fold.validation_started_at_unix_ms
+        ):
+            raise ValueError(
+                "training artifact maturity crosses validation boundary"
+            )
+
+        _validate_prediction_population(
+            role="validation",
+            predictions=self.validation_predictions,
+            novelty=self.validation_novelty,
+            model=self.model,
+            started_at_unix_ms=self.fold.validation_started_at_unix_ms,
+            ended_at_unix_ms=self.fold.validation_ended_at_unix_ms,
+        )
+        _validate_prediction_population(
+            role="test",
+            predictions=self.test_predictions,
+            novelty=self.test_novelty,
+            model=self.model,
+            started_at_unix_ms=self.fold.test_started_at_unix_ms,
+            ended_at_unix_ms=self.fold.test_ended_at_unix_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,6 +371,52 @@ def _predictions(name: str, values: object) -> None:
 
 def _identity_sort_key(identity: tuple[object, ...]) -> tuple[object, ...]:
     return (identity[6], identity[2], identity[0], identity[1])
+
+
+def _validate_prediction_population(
+    *,
+    role: str,
+    predictions: tuple[FastForecastPrediction, ...],
+    novelty: FastFutureNoveltySummary,
+    model: FastForecastBaselineArtifact,
+    started_at_unix_ms: int,
+    ended_at_unix_ms: int,
+) -> None:
+    prediction_identities = tuple(
+        value.decision_identity for value in predictions
+    )
+    novelty_identities = tuple(
+        sorted(
+            (
+                *novelty.unseen_mint_identities,
+                *novelty.seen_mint_identities,
+            ),
+            key=_identity_sort_key,
+        )
+    )
+    if novelty_identities != prediction_identities:
+        raise ValueError(
+            f"{role} novelty identities do not reconcile to predictions"
+        )
+
+    for prediction in predictions:
+        if (
+            prediction.model_version != model.model_version
+            or prediction.target is not model.target
+            or prediction.horizon_ms != model.horizon_ms
+        ):
+            raise ValueError(
+                f"{role} prediction metadata contradicts fitted model"
+            )
+        observed_at_unix_ms = prediction.decision_identity[6]
+        if not (
+            started_at_unix_ms
+            <= observed_at_unix_ms
+            < ended_at_unix_ms
+        ):
+            raise ValueError(
+                f"{role} prediction timestamp is outside declared interval"
+            )
 
 
 def _fold_sort_key(fold: FastChronologicalFold) -> tuple[int, int, int, int, str]:
