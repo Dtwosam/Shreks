@@ -1,3 +1,4 @@
+from .engine import run_fast_chronological_generalization
 from .models import (
     FAST_CHRONOLOGICAL_GENERALIZATION_POLICY_VERSION,
     FAST_CHRONOLOGICAL_GENERALIZATION_SCHEMA_NAME,
@@ -19,4 +20,5 @@ __all__ = (
     "FastSignatureQuarantineSummary",
     "FastChronologicalGeneralizationFoldResult",
     "FastChronologicalGeneralizationRun",
+    "run_fast_chronological_generalization",
 )
