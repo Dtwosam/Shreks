@@ -123,6 +123,14 @@ class FastFutureNoveltySummary:
             raise ValueError("seen and unseen mint identities must be disjoint")
         if len(unseen) + len(seen) != self.prediction_count:
             raise ValueError("novelty identity counts do not reconcile")
+        if len({identity[3] for identity in unseen}) != (
+            self.unseen_mint_unique_mint_count
+        ):
+            raise ValueError("unseen mint count does not reconcile")
+        if len({identity[3] for identity in (*unseen, *seen)}) != (
+            self.unique_mint_count
+        ):
+            raise ValueError("unique mint count does not reconcile")
         if (
             self.seen_actor_row_count
             + self.unseen_actor_row_count
