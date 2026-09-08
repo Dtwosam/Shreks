@@ -175,6 +175,7 @@ class ObserverMarketStore:
                      ON s.candidate_id = c.id
                     AND s.observed_at_unix_ms <= ?
                    WHERE c.mint = ?
+                     AND c.discovered_at_unix_ms <= ?
                    GROUP BY
                        c.id,
                        c.mint,
@@ -183,7 +184,7 @@ class ObserverMarketStore:
                        c.discovered_at_unix_ms,
                        c.venue
                    ORDER BY c.id ASC""",
-                (as_of_unix_ms, mint),
+                (as_of_unix_ms, mint, as_of_unix_ms),
             ).fetchall()
         except sqlite3.Error as error:
             raise ObserverMarketReadError(
