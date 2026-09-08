@@ -251,7 +251,7 @@ def test_fold_result_rejects_prediction_metadata_that_contradicts_model() -> Non
 
 def test_fold_result_rejects_prediction_outside_declared_partition_interval() -> None:
     result = _valid_fold_result()
-    first = result.validation_predictions[0]
+    first = result.validation_predictions[-1]
     identity = first.decision_identity
     moved_identity = (
         *identity[:6],
@@ -282,8 +282,8 @@ def test_fold_result_rejects_prediction_outside_declared_partition_interval() ->
         replace(
             result,
             validation_predictions=(
+                *result.validation_predictions[:-1],
                 moved_prediction,
-                *result.validation_predictions[1:],
             ),
             validation_novelty=moved_novelty,
         )
