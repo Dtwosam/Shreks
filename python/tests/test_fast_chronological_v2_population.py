@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from fast_chronological_v2_fixtures import v2_policy, v2_records
@@ -123,24 +125,33 @@ def test_novelty_floor_shortfall_fails_before_model_or_target_code() -> None:
 
 def test_fold_input_order_is_canonical_and_deterministic() -> None:
     base = v2_policy()
-    fold = base.folds[0]
-    second = type(fold)(
-        name="v2-fold-second",
-        training_started_at_unix_ms=fold.training_started_at_unix_ms,
-        training_ended_at_unix_ms=fold.training_ended_at_unix_ms,
-        validation_started_at_unix_ms=fold.validation_ended_at_unix_ms,
-        validation_ended_at_unix_ms=fold.validation_ended_at_unix_ms + 100,
-        test_started_at_unix_ms=fold.test_ended_at_unix_ms,
-        test_ended_at_unix_ms=fold.test_ended_at_unix_ms + 100,
+    late = base.folds[0]
+    early = type(late)(
+        name="v2-fold-early",
+        training_started_at_unix_ms=1_000,
+        training_ended_at_unix_ms=1_300,
+        validation_started_at_unix_ms=1_300,
+        validation_ended_at_unix_ms=1_500,
+        test_started_at_unix_ms=1_500,
+        test_ended_at_unix_ms=1_600,
+    )
+    ordered_policy = replace(base, folds=(early, late))
+    reversed_policy = replace(base, folds=(late, early))
+
+    ordered = prepare_fast_chronological_generalization_populations(
+        v2_records(),
+        ordered_policy,
+    )
+    reversed_result = prepare_fast_chronological_generalization_populations(
+        v2_records(),
+        reversed_policy,
     )
 
-    # This population cannot fill the second fold, so use the single-fold
-    # result as the canonical-order contract exercised by the public helper.
-    first = prepare_fast_chronological_generalization_populations(
-        v2_records(),
-        base,
+    assert ordered == reversed_result
+    assert tuple(value.fold.name for value in ordered) == (
+        "v2-fold-early",
+        "v2-fold",
     )
-    assert first[0].fold == fold
 
 
 def test_giant_mint_actor_connectivity_no_longer_empties_evaluation() -> None:
