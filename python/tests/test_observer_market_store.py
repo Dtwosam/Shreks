@@ -90,6 +90,53 @@ def _insert_candidate(
         connection.close()
 
 
+def _insert_snapshot(
+    path: Path,
+    candidate_id: int,
+    *,
+    observed_at_unix_ms: int,
+    source: str = "dexscreener",
+    venue: str = "pump_swap",
+    base_mint: str = "Mint111",
+    quote_mint: str = "Quote111",
+    pair_address: str = "Pair111",
+    liquidity_usd: float = 5_000.0,
+    volume_h24_usd: float = 2_000.0,
+) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        cursor = connection.execute(
+            """INSERT INTO market_snapshots (
+                   candidate_id,
+                   observed_at_unix_ms,
+                   source,
+                   source_observed_at_unix_ms,
+                   venue,
+                   pair_address,
+                   base_mint,
+                   quote_mint,
+                   liquidity_usd,
+                   volume_h24_usd
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                candidate_id,
+                observed_at_unix_ms,
+                source,
+                observed_at_unix_ms,
+                venue,
+                pair_address,
+                base_mint,
+                quote_mint,
+                liquidity_usd,
+                volume_h24_usd,
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+    finally:
+        connection.close()
+
+
 def test_missing_database_fails_without_creating_file(tmp_path):
     path = tmp_path / "missing.sqlite3"
 
@@ -210,3 +257,108 @@ def test_invalid_query_arguments_fail_before_sql(tmp_path):
         store.resolve_candidate("")
     with pytest.raises(ValueError, match="discovery_source"):
         store.resolve_candidate("Mint111", pair_address=None, discovery_source="")
+
+
+def test_point_in_time_candidate_resolution_ignores_future_snapshot_ownership(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    chain_id = _insert_candidate(
+        path,
+        discovery_source="helius",
+        pair_address="",
+        venue="pump_fun_bonding_curve",
+    )
+    dex_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="",
+        venue="pump_swap",
+    )
+    _insert_snapshot(
+        path,
+        chain_id,
+        observed_at_unix_ms=100,
+    )
+    _insert_snapshot(
+        path,
+        dex_id,
+        observed_at_unix_ms=200,
+    )
+
+    store = ObserverMarketStore(path)
+
+    before_dex_ownership = store.resolve_candidate_at(
+        "Mint111",
+        150,
+        preferred_discovery_source="dexscreener",
+    )
+    after_dex_ownership = store.resolve_candidate_at(
+        "Mint111",
+        250,
+        preferred_discovery_source="dexscreener",
+    )
+
+    assert before_dex_ownership.candidate_id == chain_id
+    assert after_dex_ownership.candidate_id == dex_id
+
+
+def test_point_in_time_candidate_resolution_rejects_multiple_preferred_owners(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    first = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="",
+        venue="pump_swap",
+    )
+    second = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="Pair222",
+        venue="pump_swap",
+    )
+    _insert_snapshot(path, first, observed_at_unix_ms=100)
+    _insert_snapshot(
+        path,
+        second,
+        observed_at_unix_ms=110,
+        pair_address="Pair222",
+    )
+
+    with pytest.raises(ObserverMarketReadError, match="ambiguous"):
+        ObserverMarketStore(path).resolve_candidate_at(
+            "Mint111",
+            200,
+            preferred_discovery_source="dexscreener",
+        )
+
+
+def test_point_in_time_candidate_resolution_prefers_unique_ownerless_source(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    _insert_candidate(
+        path,
+        discovery_source="helius",
+        pair_address="",
+        venue="pump_fun_bonding_curve",
+    )
+    dex_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="",
+        venue="pump_swap",
+    )
+
+    resolved = ObserverMarketStore(path).resolve_candidate_at(
+        "Mint111",
+        200,
+        preferred_discovery_source="dexscreener",
+    )
+
+    assert resolved.candidate_id == dex_id
