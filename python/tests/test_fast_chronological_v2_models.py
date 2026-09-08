@@ -145,3 +145,39 @@ def test_future_novelty_summary_requires_canonical_unique_identities() -> None:
             null_actor_row_count=0,
             novelty_fingerprint_sha256="d" * 64,
         )
+
+
+def test_future_novelty_summary_reconciles_unique_mint_counts() -> None:
+    unseen = (
+        ("sig-u", 0, 1, "mint-u", "quote", "pump_swap", 2_100),
+    )
+    seen = (
+        ("sig-s", 0, 2, "mint-s", "quote", "pump_swap", 2_200),
+    )
+    with pytest.raises(ValueError, match="mint.*reconcile|unique mint"):
+        FastFutureNoveltySummary(
+            partition="validation",
+            prediction_count=2,
+            unique_mint_count=1,
+            unseen_mint_identities=unseen,
+            seen_mint_identities=seen,
+            unseen_mint_unique_mint_count=1,
+            seen_actor_row_count=1,
+            unseen_actor_row_count=1,
+            null_actor_row_count=0,
+            novelty_fingerprint_sha256="e" * 64,
+        )
+
+    with pytest.raises(ValueError, match="unseen.*mint"):
+        FastFutureNoveltySummary(
+            partition="validation",
+            prediction_count=2,
+            unique_mint_count=2,
+            unseen_mint_identities=unseen,
+            seen_mint_identities=seen,
+            unseen_mint_unique_mint_count=2,
+            seen_actor_row_count=1,
+            unseen_actor_row_count=1,
+            null_actor_row_count=0,
+            novelty_fingerprint_sha256="e" * 64,
+        )
