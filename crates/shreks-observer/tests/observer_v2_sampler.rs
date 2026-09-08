@@ -347,6 +347,102 @@ async fn active_pumpswap_priority_samples_dex_without_waiting_for_meteora_broad_
     cleanup_dir(&root);
 }
 
+
+#[tokio::test]
+async fn active_pumpswap_priority_reports_empty_provider_response() {
+    let root = unique_test_dir("active-pumpswap-priority-empty");
+    let db_path = root.join("shreks.db");
+    let discovery = Arc::new(StaticDiscovery::new(vec![discovered(
+        "mint-priority-empty",
+        0,
+    )]));
+    let dex = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-priority-empty",
+                "pair-initial",
+                0,
+                100.0,
+                50_000.0,
+            )]),
+            Ok(Vec::new()),
+        ],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(dex.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let initial = sampler.run_cycle_at(0).await.unwrap();
+    assert_eq!(initial.persisted_snapshot_count, 1);
+
+    insert_test_fast_event(&db_path, 1, "mint-priority-empty", 99_000);
+
+    let priority = sampler.run_cycle_at(100_000).await.unwrap();
+    assert_eq!(priority.priority_candidate_count, 1);
+    assert_eq!(priority.priority_persisted_snapshot_count, 0);
+    assert_eq!(priority.priority_empty_response_count, 1);
+    assert_eq!(priority.priority_provider_failure_count, 0);
+    assert_eq!(dex.call_count(), 2);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn active_pumpswap_priority_reports_provider_failure_separately() {
+    let root = unique_test_dir("active-pumpswap-priority-failure");
+    let db_path = root.join("shreks.db");
+    let discovery = Arc::new(StaticDiscovery::new(vec![discovered(
+        "mint-priority-failure",
+        0,
+    )]));
+    let dex = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-priority-failure",
+                "pair-initial",
+                0,
+                100.0,
+                50_000.0,
+            )]),
+            Err(provider_error(ProviderId::DexScreener)),
+        ],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(dex.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let initial = sampler.run_cycle_at(0).await.unwrap();
+    assert_eq!(initial.persisted_snapshot_count, 1);
+
+    insert_test_fast_event(&db_path, 1, "mint-priority-failure", 99_000);
+
+    let priority = sampler.run_cycle_at(100_000).await.unwrap();
+    assert_eq!(priority.priority_candidate_count, 1);
+    assert_eq!(priority.priority_persisted_snapshot_count, 0);
+    assert_eq!(priority.priority_empty_response_count, 0);
+    assert_eq!(priority.priority_provider_failure_count, 1);
+    assert_eq!(priority.market_provider_failure_count, 1);
+    assert_eq!(dex.call_count(), 2);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
 #[tokio::test]
 async fn broad_sampling_is_bounded_to_one_due_candidate_per_cycle() {
     let root = unique_test_dir("bounded-broad");

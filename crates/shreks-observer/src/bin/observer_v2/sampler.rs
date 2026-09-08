@@ -94,6 +94,8 @@ pub struct SamplerCycleReport {
     pub migration_reanchored_candidate_count: usize,
     pub priority_candidate_count: usize,
     pub priority_persisted_snapshot_count: usize,
+    pub priority_empty_response_count: usize,
+    pub priority_provider_failure_count: usize,
     pub sampled_candidate_count: usize,
     pub persisted_snapshot_count: usize,
     pub market_provider_failure_count: usize,
@@ -448,6 +450,13 @@ impl HighResolutionSampler {
         let result = self.market[index].token_pairs(mint).await;
         match result {
             Ok(provider_snapshots) => {
+                if provider_snapshots.is_empty() {
+                    report.priority_empty_response_count =
+                        report.priority_empty_response_count.saturating_add(1);
+                    eprintln!(
+                        "Observer V2 priority market response empty: provider={provider_id} mint={mint} candidate_id={candidate_id}"
+                    );
+                }
                 self.market[index].consecutive_failures = 0;
                 self.db.upsert_provider_health(
                     provider_id,
@@ -485,8 +494,14 @@ impl HighResolutionSampler {
             Err(error) => {
                 self.market[index].consecutive_failures =
                     self.market[index].consecutive_failures.saturating_add(1);
+                report.priority_provider_failure_count =
+                    report.priority_provider_failure_count.saturating_add(1);
                 report.market_provider_failure_count =
                     report.market_provider_failure_count.saturating_add(1);
+                eprintln!(
+                    "Observer V2 priority market request failed: provider={provider_id} mint={mint} candidate_id={candidate_id} error_kind={:?}",
+                    error.kind
+                );
                 self.record_provider_error(
                     &error,
                     now_unix_ms,
