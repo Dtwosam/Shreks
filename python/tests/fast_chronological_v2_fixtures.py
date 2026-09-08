@@ -21,8 +21,16 @@ from shreks_brain.fast_validation_v2.models import (
     FAST_CHRONOLOGICAL_GENERALIZATION_POLICY_VERSION,
     FastChronologicalGeneralizationPolicy,
 )
+from shreks_brain.research.fast_training_bundle import (
+    FastTrainingBundle,
+    bundle_logical_fingerprint_sha256,
+)
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureRecord,
+    feature_logical_fingerprint_sha256,
+)
+from shreks_brain.research.fast_training_targets import (
+    future_path_logical_fingerprint_sha256,
 )
 
 
@@ -118,3 +126,83 @@ def v2_records(
         )
 
     return tuple(records)
+
+
+def v2_bundle(
+    *,
+    shared_signature: bool = False,
+    giant_entity_component: bool = False,
+    validation_target_shift: float = 0.0,
+    test_target_shift: float = 0.0,
+    incomplete_training_index: int | None = None,
+) -> FastTrainingBundle:
+    base = chronological_bundle(
+        validation_target_shift=validation_target_shift,
+        test_target_shift=test_target_shift,
+        incomplete_training_index=incomplete_training_index,
+    )
+    records = v2_records(
+        shared_signature=shared_signature,
+        giant_entity_component=giant_entity_component,
+    )
+    features = replace(
+        base.features,
+        records=records,
+        logical_fingerprint_sha256=feature_logical_fingerprint_sha256(
+            records
+        ),
+    )
+
+    labels = tuple(
+        replace(
+            label,
+            decision_signature=record.decision_signature,
+            decision_ordinal=record.decision_ordinal,
+            decision_sequence=record.decision_sequence,
+            decision_mint=record.mint,
+            decision_quote_mint=record.quote_mint,
+            decision_venue=record.venue,
+            decision_observed_at_unix_ms=(
+                record.decision_observed_at_unix_ms
+            ),
+            decision_entry_price_quote=(
+                record.decision_executable_entry_price_quote
+            ),
+            decision_entry_total_quote=record.decision_entry_total_quote,
+        )
+        for label, record in zip(
+            base.future_path_labels.labels,
+            records,
+            strict=True,
+        )
+    )
+    future = replace(
+        base.future_path_labels,
+        labels=labels,
+        logical_fingerprint_sha256=(
+            future_path_logical_fingerprint_sha256(labels)
+        ),
+    )
+    provisional = replace(
+        base.manifest,
+        feature_logical_fingerprint_sha256=(
+            features.logical_fingerprint_sha256
+        ),
+        feature_source_jsonl_sha256=features.source_sha256,
+        future_path_logical_fingerprint_sha256=(
+            future.logical_fingerprint_sha256
+        ),
+        bundle_fingerprint_sha256="0" * 64,
+    )
+    manifest = replace(
+        provisional,
+        bundle_fingerprint_sha256=(
+            bundle_logical_fingerprint_sha256(provisional)
+        ),
+    )
+    return replace(
+        base,
+        manifest=manifest,
+        features=features,
+        future_path_labels=future,
+    )
