@@ -43,13 +43,10 @@ _REQUIRED_COLUMNS = {
             "source_observed_at_unix_ms",
             "venue",
             "pair_address",
-            "base_mint",
-            "quote_mint",
             "price_usd",
             "liquidity_usd",
             "volume_m5_usd",
             "volume_h1_usd",
-            "volume_h24_usd",
             "buys_m5",
             "sells_m5",
             "buys_h1",
@@ -60,6 +57,21 @@ _REQUIRED_COLUMNS = {
 }
 
 _MARKET_SELECT = """SELECT
+    id, candidate_id, observed_at_unix_ms, source,
+    source_observed_at_unix_ms, venue, pair_address,
+    price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+    buys_m5, sells_m5, buys_h1, sells_h1, pair_created_at_unix_ms
+FROM market_snapshots"""
+
+_EXACT_MARKET_REQUIRED_COLUMNS = frozenset(
+    {
+        "base_mint",
+        "quote_mint",
+        "volume_h24_usd",
+    }
+)
+
+_EXACT_MARKET_SELECT = """SELECT
     id, candidate_id, observed_at_unix_ms, source,
     source_observed_at_unix_ms, venue, pair_address,
     base_mint, quote_mint,
@@ -241,9 +253,10 @@ class ObserverMarketStore:
         minimum_observed_at = max(0, as_of_unix_ms - max_age_ms)
         connection = self._connect()
         try:
+            self._validate_exact_market_columns(connection)
             self._candidate_by_id(connection, candidate_id)
             row = connection.execute(
-                f"""{_MARKET_SELECT}
+                f"""{_EXACT_MARKET_SELECT}
                     WHERE candidate_id = ?
                       AND source = ?
                       AND venue = ?
@@ -476,6 +489,28 @@ class ObserverMarketStore:
             ) from error
 
     @staticmethod
+    def _validate_exact_market_columns(
+        connection: sqlite3.Connection,
+    ) -> None:
+        try:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(market_snapshots)"
+                ).fetchall()
+            }
+        except sqlite3.Error as error:
+            raise ObserverMarketReadError(
+                f"observer exact-market schema read failed: {error}"
+            ) from error
+        missing = _EXACT_MARKET_REQUIRED_COLUMNS - columns
+        if missing:
+            raise ObserverMarketReadError(
+                "observer database table market_snapshots missing exact-market columns: "
+                + ", ".join(sorted(missing))
+            )
+
+    @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
         try:
             tables = {
@@ -563,9 +598,21 @@ def _snapshot_from_row(row: sqlite3.Row) -> ObserverMarketSnapshot:
             buys_h1=row["buys_h1"],
             sells_h1=row["sells_h1"],
             pair_created_at_unix_ms=row["pair_created_at_unix_ms"],
-            base_mint=row["base_mint"],
-            quote_mint=row["quote_mint"],
-            volume_h24_usd=row["volume_h24_usd"],
+            base_mint=(
+                row["base_mint"]
+                if "base_mint" in row.keys()
+                else None
+            ),
+            quote_mint=(
+                row["quote_mint"]
+                if "quote_mint" in row.keys()
+                else None
+            ),
+            volume_h24_usd=(
+                row["volume_h24_usd"]
+                if "volume_h24_usd" in row.keys()
+                else None
+            ),
         )
     except (TypeError, ValueError) as error:
         raise ObserverMarketReadError(
