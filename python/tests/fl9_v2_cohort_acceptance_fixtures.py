@@ -40,6 +40,7 @@ def source_database(
     drift_session_id: int | None = None,
     reverse_events: bool = False,
 ) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "observer.sqlite3"
     connection = sqlite3.connect(path)
     try:
