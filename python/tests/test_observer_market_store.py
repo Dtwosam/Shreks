@@ -268,12 +268,14 @@ def test_point_in_time_candidate_resolution_ignores_future_snapshot_ownership(
         path,
         discovery_source="helius",
         pair_address="",
+        discovered_at_unix_ms=50,
         venue="pump_fun_bonding_curve",
     )
     dex_id = _insert_candidate(
         path,
         discovery_source="dexscreener",
         pair_address="",
+        discovered_at_unix_ms=60,
         venue="pump_swap",
     )
     _insert_snapshot(
@@ -313,12 +315,14 @@ def test_point_in_time_candidate_resolution_rejects_multiple_preferred_owners(
         path,
         discovery_source="dexscreener",
         pair_address="",
+        discovered_at_unix_ms=50,
         venue="pump_swap",
     )
     second = _insert_candidate(
         path,
         discovery_source="dexscreener",
         pair_address="Pair222",
+        discovered_at_unix_ms=60,
         venue="pump_swap",
     )
     _insert_snapshot(path, first, observed_at_unix_ms=100)
@@ -346,12 +350,14 @@ def test_point_in_time_candidate_resolution_prefers_unique_ownerless_source(
         path,
         discovery_source="helius",
         pair_address="",
+        discovered_at_unix_ms=50,
         venue="pump_fun_bonding_curve",
     )
     dex_id = _insert_candidate(
         path,
         discovery_source="dexscreener",
         pair_address="",
+        discovered_at_unix_ms=60,
         venue="pump_swap",
     )
 
