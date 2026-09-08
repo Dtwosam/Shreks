@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 
 import pytest
 
+from fast_chronological_fixtures import forecast_request
+from fast_chronological_v2_fixtures import v2_bundle, v2_policy
+from shreks_brain.fast_learning import (
+    FastForecastModelFamily,
+    FastForecastTarget,
+)
 from shreks_brain.fast_validation import FastChronologicalFold
+from shreks_brain.fast_validation_v2.engine import (
+    run_fast_chronological_generalization,
+)
 from shreks_brain.fast_validation_v2 import (
     FAST_CHRONOLOGICAL_GENERALIZATION_POLICY_VERSION,
     FAST_CHRONOLOGICAL_GENERALIZATION_SCHEMA_NAME,
@@ -180,4 +189,101 @@ def test_future_novelty_summary_reconciles_unique_mint_counts() -> None:
             unseen_actor_row_count=1,
             null_actor_row_count=0,
             novelty_fingerprint_sha256="e" * 64,
+        )
+
+
+def _valid_fold_result():
+    run = run_fast_chronological_generalization(
+        v2_bundle(),
+        forecast_request(
+            FastForecastModelFamily.MEAN_REGRESSOR,
+            FastForecastTarget.ENDPOINT_RETURN_BPS,
+        ),
+        v2_policy(),
+    )
+    return run.fold_results[0]
+
+
+def test_fold_result_rejects_novelty_identities_not_equal_to_predictions() -> None:
+    result = _valid_fold_result()
+    original = result.validation_novelty
+    unseen = list(original.unseen_mint_identities)
+    seen = list(original.seen_mint_identities)
+
+    source = unseen[0] if unseen else seen[0]
+    changed = (
+        source[0] + "-different",
+        *source[1:],
+    )
+    if unseen:
+        unseen[0] = changed
+    else:
+        seen[0] = changed
+
+    bad_novelty = replace(
+        original,
+        unseen_mint_identities=tuple(unseen),
+        seen_mint_identities=tuple(seen),
+        novelty_fingerprint_sha256="f" * 64,
+    )
+
+    with pytest.raises(ValueError, match="novelty.*prediction|prediction.*novelty"):
+        replace(result, validation_novelty=bad_novelty)
+
+
+def test_fold_result_rejects_prediction_metadata_that_contradicts_model() -> None:
+    result = _valid_fold_result()
+    first = result.validation_predictions[0]
+    bad_prediction = replace(
+        first,
+        model_version=first.model_version + ":wrong",
+    )
+
+    with pytest.raises(ValueError, match="model|prediction"):
+        replace(
+            result,
+            validation_predictions=(
+                bad_prediction,
+                *result.validation_predictions[1:],
+            ),
+        )
+
+
+def test_fold_result_rejects_prediction_outside_declared_partition_interval() -> None:
+    result = _valid_fold_result()
+    first = result.validation_predictions[0]
+    identity = first.decision_identity
+    moved_identity = (
+        *identity[:6],
+        result.fold.test_started_at_unix_ms,
+    )
+    moved_prediction = replace(
+        first,
+        decision_identity=moved_identity,
+    )
+
+    original = result.validation_novelty
+    unseen = tuple(
+        moved_identity if value == identity else value
+        for value in original.unseen_mint_identities
+    )
+    seen = tuple(
+        moved_identity if value == identity else value
+        for value in original.seen_mint_identities
+    )
+    moved_novelty = replace(
+        original,
+        unseen_mint_identities=unseen,
+        seen_mint_identities=seen,
+        novelty_fingerprint_sha256="e" * 64,
+    )
+
+    with pytest.raises(ValueError, match="validation.*interval|timestamp"):
+        replace(
+            result,
+            validation_predictions=(
+                moved_prediction,
+                *result.validation_predictions[1:],
+            ),
+            validation_novelty=moved_novelty,
         )
