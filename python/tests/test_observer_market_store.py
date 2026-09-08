@@ -362,3 +362,101 @@ def test_point_in_time_candidate_resolution_prefers_unique_ownerless_source(
     )
 
     assert resolved.candidate_id == dex_id
+
+
+def test_legacy_e13_schema_remains_supported_for_general_store_reads(tmp_path):
+    path = tmp_path / "legacy.sqlite3"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            _CANDIDATE_SCHEMA
+            + _MARKET_SCHEMA
+                .replace(
+                    "    base_mint TEXT NOT NULL DEFAULT 'Mint111',\n",
+                    "",
+                )
+                .replace(
+                    "    quote_mint TEXT NOT NULL DEFAULT 'Quote111',\n",
+                    "",
+                )
+                .replace(
+                    "    volume_h24_usd REAL,\n",
+                    "",
+                )
+        )
+        cursor = connection.execute(
+            """INSERT INTO token_candidates (
+                   mint, pair_address, discovery_source,
+                   discovered_at_unix_ms, venue
+               ) VALUES ('Mint111', 'Pair111', 'pump', 1000, 'pump_fun')"""
+        )
+        candidate_id = int(cursor.lastrowid)
+        connection.execute(
+            """INSERT INTO market_snapshots (
+                   candidate_id, observed_at_unix_ms, source,
+                   source_observed_at_unix_ms, venue, pair_address,
+                   price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
+                   buys_m5, sells_m5, buys_h1, sells_h1,
+                   pair_created_at_unix_ms
+               ) VALUES (
+                   ?, 1995000, 'dexscreener', 1995000, 'raydium', 'Pair111',
+                   1.0, 5000.0, 1000.0, 5000.0,
+                   1, 1, 10, 10, 500000
+               )""",
+            (candidate_id,),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = ObserverMarketStore(path)
+    candidate = store.resolve_candidate("Mint111")
+    assert candidate.candidate_id == candidate_id
+
+
+def test_exact_market_read_requires_additive_fl9_columns_only_when_called(tmp_path):
+    path = tmp_path / "legacy-exact.sqlite3"
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            _CANDIDATE_SCHEMA
+            + _MARKET_SCHEMA
+                .replace(
+                    "    base_mint TEXT NOT NULL DEFAULT 'Mint111',\n",
+                    "",
+                )
+                .replace(
+                    "    quote_mint TEXT NOT NULL DEFAULT 'Quote111',\n",
+                    "",
+                )
+                .replace(
+                    "    volume_h24_usd REAL,\n",
+                    "",
+                )
+        )
+        cursor = connection.execute(
+            """INSERT INTO token_candidates (
+                   mint, pair_address, discovery_source,
+                   discovered_at_unix_ms, venue
+               ) VALUES ('Mint111', '', 'dexscreener', 100, 'pump_swap')"""
+        )
+        candidate_id = int(cursor.lastrowid)
+        connection.commit()
+    finally:
+        connection.close()
+
+    store = ObserverMarketStore(path)
+
+    with pytest.raises(
+        ObserverMarketReadError,
+        match="exact-market columns.*base_mint.*quote_mint.*volume_h24_usd",
+    ):
+        store.load_current_exact_market(
+            candidate_id,
+            2_000,
+            source="dexscreener",
+            venue="pump_swap",
+            base_mint="Mint111",
+            quote_mint="QuoteSOL",
+            max_age_ms=60_000,
+        )
