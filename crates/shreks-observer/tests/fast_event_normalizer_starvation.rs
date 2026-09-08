@@ -21,13 +21,13 @@ use shreks_storage::{
 const EVENT_SECONDS: i64 = 1_770_000_000;
 const ACCEPTED_MS: i64 = 1_770_000_100_000;
 
-fn unique_test_dir() -> PathBuf {
+fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
     std::env::temp_dir().join(format!(
-        "shreks-fast-event-starvation-{}-{nanos}",
+        "shreks-fast-event-starvation-{label}-{}-{nanos}",
         process::id()
     ))
 }
@@ -142,7 +142,7 @@ fn verify_pumpswap_market(
 
 #[test]
 fn unresolved_oldest_row_does_not_starve_newer_ready_row() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("unresolved-oldest");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
@@ -185,7 +185,7 @@ fn unresolved_oldest_row_does_not_starve_newer_ready_row() {
 
 #[test]
 fn deep_unresolved_frontier_does_not_hide_fresh_ready_trade() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("deep-unresolved-frontier");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
@@ -241,7 +241,7 @@ fn deep_unresolved_frontier_does_not_hide_fresh_ready_trade() {
 
 #[test]
 fn deep_unmapped_pumpswap_frontier_does_not_hide_ready_trade() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("deep-unmapped-pumpswap");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
@@ -296,7 +296,7 @@ fn deep_unmapped_pumpswap_frontier_does_not_hide_ready_trade() {
 
 #[test]
 fn deep_contradictory_pumpswap_market_fails_closed_in_ready_fallback() {
-    let root = unique_test_dir();
+    let root = unique_test_dir("deep-contradictory-pumpswap");
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
 
