@@ -460,3 +460,37 @@ def test_exact_market_read_requires_additive_fl9_columns_only_when_called(tmp_pa
             quote_mint="QuoteSOL",
             max_age_ms=60_000,
         )
+
+
+def test_point_in_time_candidate_resolution_ignores_future_candidate_discovery(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    chain_id = _insert_candidate(
+        path,
+        discovery_source="helius",
+        pair_address="",
+        discovered_at_unix_ms=100,
+        venue="pump_fun_bonding_curve",
+    )
+    _insert_snapshot(
+        path,
+        chain_id,
+        observed_at_unix_ms=120,
+    )
+    _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="",
+        discovered_at_unix_ms=300,
+        venue="pump_swap",
+    )
+
+    resolved = ObserverMarketStore(path).resolve_candidate_at(
+        "Mint111",
+        200,
+        preferred_discovery_source="dexscreener",
+    )
+
+    assert resolved.candidate_id == chain_id
