@@ -109,7 +109,9 @@ def test_v2_member_evidence_enforces_both_scoring_floors() -> None:
         unseen_mint_test_report_fingerprint_sha256="4" * 64,
         unseen_mint_test_scored_observation_count=35_000,
         unseen_mint_test_target_unavailable_count=0,
-        unseen_mint_test_identity_fingerprint_sha256="5" * 64,
+        unseen_mint_test_identity_fingerprint_sha256=(
+            policy.expected_test_unseen_mint_identity_fingerprint_sha256
+        ),
     )
     value = v2.FastFirstChampionV2MemberEvidence(**common)
     assert value.natural_test_scored_observation_count == 40_000
