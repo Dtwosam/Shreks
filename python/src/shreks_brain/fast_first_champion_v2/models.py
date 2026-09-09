@@ -487,6 +487,30 @@ class FastFirstChampionV2EvidenceManifest:
         ):
             _sha256(name, getattr(self, name))
         if (
+            self.cohort_artifact_fingerprint_sha256
+            != _COHORT_ARTIFACT_FINGERPRINT
+        ):
+            raise ValueError(
+                "V2 evidence manifest cohort artifact fingerprint "
+                "does not match the frozen physical cohort"
+            )
+        if (
+            self.accepted_identity_fingerprint_sha256
+            != _ACCEPTED_IDENTITY_FINGERPRINT
+        ):
+            raise ValueError(
+                "V2 evidence manifest accepted identity fingerprint "
+                "does not match the frozen cohort"
+            )
+        if (
+            self.feature_identity_firewall_fingerprint_sha256
+            != _FEATURE_FIREWALL_FINGERPRINT
+        ):
+            raise ValueError(
+                "V2 evidence manifest feature firewall fingerprint "
+                "does not match the frozen policy"
+            )
+        if (
             not isinstance(self.member_evidence, tuple)
             or len(self.member_evidence) != len(_REQUIRED_MEMBERS)
             or not all(
