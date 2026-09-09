@@ -118,7 +118,10 @@ def _cohort_shell():
                 "75cf6dbac938286f508d978a14149cd0"
                 "83ff7a8470c8fce20fca9abbc1faf56b"
             ),
-            test_unseen_mint_identity_fingerprint_sha256="a" * 64,
+            test_unseen_mint_identity_fingerprint_sha256=(
+                FastFirstChampionV2Policy()
+                .expected_test_unseen_mint_identity_fingerprint_sha256
+            ),
         ),
     )
     return value
