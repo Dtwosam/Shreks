@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import tempfile
 
 from shreks_brain.fast_context_hydration import (
@@ -156,45 +157,60 @@ def run_fast_first_champion_v2_host_request(
             "V2 first-champion hydration policy fingerprint mismatch"
         )
 
-    built_cohort, bundle = build_fast_first_champion_v2_bundle(
-        cohort_path=cohort_path,
-        feature_jsonl_path=proof_path / "features.jsonl",
-        sqlite_path=database_path,
-        future_path_label_version=request.future_path_label_version,
-        training_economics_overlay_path=overlay_path,
-        training_execution_cost_policy=(
-            request.training_execution_cost_policy
-        ),
-        counterfactual_base_quantity=float(
-            request.counterfactual_base_quantity
-        ),
-        policy=policy,
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.observer-snapshot-",
+            dir=destination.parent,
+        )
     )
-    if (
-        built_cohort.manifest.artifact_fingerprint_sha256
-        != cohort.manifest.artifact_fingerprint_sha256
-    ):
-        raise ValueError(
-            "V2 bundle builder cohort does not match authenticated cohort"
+    snapshot_database = snapshot_root / "observer.db"
+    try:
+        _snapshot_observer_database(
+            database_path,
+            snapshot_database,
         )
-    if (
-        bundle.features.source_sha256
-        != proof.manifest.feature_jsonl_sha256
-        or bundle.features.logical_fingerprint_sha256
-        != proof.manifest.feature_logical_fingerprint_sha256
-    ):
-        raise ValueError(
-            "V2 training bundle feature source does not match proof workspace"
+        built_cohort, bundle = build_fast_first_champion_v2_bundle(
+            cohort_path=cohort_path,
+            feature_jsonl_path=proof_path / "features.jsonl",
+            sqlite_path=snapshot_database,
+            future_path_label_version=request.future_path_label_version,
+            training_economics_overlay_path=overlay_path,
+            training_execution_cost_policy=(
+                request.training_execution_cost_policy
+            ),
+            counterfactual_base_quantity=float(
+                request.counterfactual_base_quantity
+            ),
+            policy=policy,
         )
+        if (
+            built_cohort.manifest.artifact_fingerprint_sha256
+            != cohort.manifest.artifact_fingerprint_sha256
+        ):
+            raise ValueError(
+                "V2 bundle builder cohort does not match authenticated cohort"
+            )
+        if (
+            bundle.features.source_sha256
+            != proof.manifest.feature_jsonl_sha256
+            or bundle.features.logical_fingerprint_sha256
+            != proof.manifest.feature_logical_fingerprint_sha256
+        ):
+            raise ValueError(
+                "V2 training bundle feature source does not match proof workspace"
+            )
 
-    hydration = hydrate_fast_forecast_evaluation_contexts(
-        bundle=bundle,
-        observer_database_path=database_path,
-        validation_policy=validation_policy,
-        horizon_ms=policy.horizon_ms,
-        hydration_policy=hydration_policy,
-    )
-    contexts = hydration.context_corpus.contexts
+        hydration = hydrate_fast_forecast_evaluation_contexts(
+            bundle=bundle,
+            observer_database_path=snapshot_database,
+            validation_policy=validation_policy,
+            horizon_ms=policy.horizon_ms,
+            hydration_policy=hydration_policy,
+        )
+        contexts = hydration.context_corpus.contexts
+    finally:
+        shutil.rmtree(snapshot_root, ignore_errors=True)
 
     build = build_fast_first_champion_v2(
         cohort=cohort,
@@ -337,6 +353,49 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _snapshot_observer_database(
+    source: Path,
+    destination: Path,
+) -> None:
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(
+            "V2 observer snapshot destination already exists"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    source_uri = source.resolve().as_uri() + "?mode=ro"
+    try:
+        with sqlite3.connect(
+            source_uri,
+            uri=True,
+            timeout=30.0,
+        ) as source_connection:
+            source_connection.execute("PRAGMA query_only = ON")
+            with sqlite3.connect(
+                destination,
+                timeout=30.0,
+            ) as snapshot_connection:
+                source_connection.backup(snapshot_connection)
+                snapshot_connection.execute("PRAGMA journal_mode = DELETE")
+                result = snapshot_connection.execute(
+                    "PRAGMA quick_check"
+                ).fetchall()
+                if result != [("ok",)]:
+                    raise ValueError(
+                        "V2 observer snapshot failed SQLite quick_check"
+                    )
+    except (sqlite3.Error, OSError) as exc:
+        destination.unlink(missing_ok=True)
+        raise ValueError(
+            "unable to create immutable V2 observer SQLite snapshot"
+        ) from exc
+    if destination.is_symlink() or not destination.is_file():
+        destination.unlink(missing_ok=True)
+        raise ValueError(
+            "V2 observer snapshot was not created as a regular file"
+        )
+    destination.chmod(0o600)
 
 
 def _verify_deployed_release_identity(
