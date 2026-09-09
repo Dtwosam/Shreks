@@ -402,7 +402,9 @@ impl ShreksDb {
                 &market.quote_mint,
                 market.venue,
             )?;
-            let lifecycle_events = self.lifecycle_events_for_mint(&market.mint)?;
+            let lifecycle_events = canonical_training_lifecycle_events(
+                self.lifecycle_events_for_mint(&market.mint)?,
+            );
             let mut state = FastMarketState::with_default_windows(market.clone());
             let mut lifecycle_index = 0_usize;
             let mut decision_index = 0_usize;
@@ -604,6 +606,67 @@ impl ShreksDb {
         }
         Ok(decisions)
     }
+}
+
+fn canonical_training_lifecycle_events(
+    mut events: Vec<TokenLifecycleEvent>,
+) -> Vec<TokenLifecycleEvent> {
+    events.sort_by(|left, right| {
+        (
+            left.detected_at_unix_ms,
+            left.kind.as_str(),
+            left.provider.as_str(),
+            left.mint.as_str(),
+            left.quote_mint.as_str(),
+            left.from_venue.as_str(),
+            left.to_venue.as_str(),
+            left.pool_address.as_str(),
+            left.slot,
+            left.occurred_at_unix_ms,
+            left.signature.as_str(),
+        )
+            .cmp(&(
+                right.detected_at_unix_ms,
+                right.kind.as_str(),
+                right.provider.as_str(),
+                right.mint.as_str(),
+                right.quote_mint.as_str(),
+                right.from_venue.as_str(),
+                right.to_venue.as_str(),
+                right.pool_address.as_str(),
+                right.slot,
+                right.occurred_at_unix_ms,
+                right.signature.as_str(),
+            ))
+    });
+
+    let mut canonical = Vec::with_capacity(events.len());
+    for event in events {
+        if canonical
+            .last()
+            .is_some_and(|previous| lifecycle_semantics_match(previous, &event))
+        {
+            continue;
+        }
+        canonical.push(event);
+    }
+    canonical
+}
+
+fn lifecycle_semantics_match(
+    left: &TokenLifecycleEvent,
+    right: &TokenLifecycleEvent,
+) -> bool {
+    left.kind == right.kind
+        && left.provider == right.provider
+        && left.mint == right.mint
+        && left.quote_mint == right.quote_mint
+        && left.from_venue == right.from_venue
+        && left.to_venue == right.to_venue
+        && left.pool_address == right.pool_address
+        && left.slot == right.slot
+        && left.detected_at_unix_ms == right.detected_at_unix_ms
+        && left.occurred_at_unix_ms == right.occurred_at_unix_ms
 }
 
 fn lifecycle_matches_market(event: &TokenLifecycleEvent, market: &FastMarketKey) -> bool {
