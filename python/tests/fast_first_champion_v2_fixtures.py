@@ -14,6 +14,8 @@ from shreks_brain.fast_evaluation import (
     FastForecastEvaluationPolicy,
     FastForecastEvaluationReport,
     FastForecastMetricPopulation,
+)
+from shreks_brain.fast_evaluation.models import (
     fast_forecast_evaluation_report_fingerprint_sha256,
 )
 from shreks_brain.fast_first_champion_v2.champion import (
