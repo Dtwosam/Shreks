@@ -161,7 +161,8 @@ jobs:
           if (( DEPLOY_RC != 0 )); then
             echo "release manager failed; collecting read-only host diagnostics" >&2
             ssh "${SSH_COMMON[@]}" "$DESTINATION" \
-              "printf 'current_release='; readlink -f /opt/shreks/current || true; printf 'candidate_release_present='; if test -d '/opt/shreks/releases/$SOURCE_SHA'; then echo yes; else echo no; fi; systemctl is-active shreks.target || true; systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks.target -p ActiveState -p SubState --no-pager || true; rm -rf '$REMOTE_DIR'" || true
+              "printf 'current_release='; readlink -f /opt/shreks/current || true; printf 'candidate_release_present='; if test -d '/opt/shreks/releases/$SOURCE_SHA'; then echo yes; else echo no; fi; systemctl is-active shreks.target || true; systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks.target -p ActiveState -p SubState --no-pager || true" || true
+            ssh "${SSH_COMMON[@]}" "$DESTINATION" "rm -rf '$REMOTE_DIR'" || true
             exit "$DEPLOY_RC"
           fi
 
