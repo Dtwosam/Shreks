@@ -132,9 +132,18 @@ jobs:
           REMOTE_CHECKSUM="$REMOTE_DIR/shreks-release-$SOURCE_SHA.tar.gz.sha256"
           REMOTE_MANIFEST="$REMOTE_DIR/RELEASE_MANIFEST.json"
 
+          TRANSFER_RC=0
           set +e
-          scp "${SCP_COMMON[@]}" "$ARCHIVE" "$CHECKSUM" "$MANIFEST" "$DESTINATION:$REMOTE_DIR/"
+          scp "${SCP_COMMON[@]}" "$ARCHIVE" "$DESTINATION:$REMOTE_ARCHIVE"
           TRANSFER_RC=$?
+          if (( TRANSFER_RC == 0 )); then
+            scp "${SCP_COMMON[@]}" "$CHECKSUM" "$DESTINATION:$REMOTE_CHECKSUM"
+            TRANSFER_RC=$?
+          fi
+          if (( TRANSFER_RC == 0 )); then
+            scp "${SCP_COMMON[@]}" "$MANIFEST" "$DESTINATION:$REMOTE_MANIFEST"
+            TRANSFER_RC=$?
+          fi
           set -e
           if (( TRANSFER_RC != 0 )); then
             echo "verified release transfer failed; collecting remote staging diagnostics" >&2
