@@ -123,14 +123,14 @@ jobs:
             exit 28
           fi
 
-          REMOTE_DIR="$(ssh "${SSH_COMMON[@]}" "$DESTINATION" "mktemp -d '/var/tmp/shreks-deploy-$SOURCE_SHA.XXXXXX'")"
-          if [[ ! "$REMOTE_DIR" =~ ^/var/tmp/shreks-deploy-$SOURCE_SHA\.[A-Za-z0-9]+$ ]]; then
-            echo "unexpected remote staging directory: $REMOTE_DIR" >&2
+          if [[ ! "$GITHUB_RUN_ID" =~ ^[0-9]+$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
+            echo "unexpected GitHub run identity" >&2
             exit 2
           fi
-          REMOTE_ARCHIVE="$REMOTE_DIR/shreks-release-$SOURCE_SHA.tar.gz"
-          REMOTE_CHECKSUM="$REMOTE_DIR/shreks-release-$SOURCE_SHA.tar.gz.sha256"
-          REMOTE_MANIFEST="$REMOTE_DIR/RELEASE_MANIFEST.json"
+          REMOTE_TOKEN="$SOURCE_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          REMOTE_ARCHIVE="/var/tmp/shreks-release-$REMOTE_TOKEN.tar.gz"
+          REMOTE_CHECKSUM="/var/tmp/shreks-release-$REMOTE_TOKEN.tar.gz.sha256"
+          REMOTE_MANIFEST="/var/tmp/shreks-release-$REMOTE_TOKEN.RELEASE_MANIFEST.json"
 
           TRANSFER_RC=0
           set +e
@@ -148,7 +148,9 @@ jobs:
           if (( TRANSFER_RC != 0 )); then
             echo "verified release transfer failed; collecting remote staging diagnostics" >&2
             ssh "${SSH_COMMON[@]}" "$DESTINATION" \
-              "df -Pk /var/tmp || true; df -Pi /var/tmp || true; ls -ld '$REMOTE_DIR' || true; ls -la '$REMOTE_DIR' || true; rm -rf '$REMOTE_DIR'" || true
+              "df -Pk /var/tmp || true; df -Pi /var/tmp || true; ls -l '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST' 2>/dev/null || true" || true
+            ssh "${SSH_COMMON[@]}" "$DESTINATION" \
+              "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'" || true
             exit "$TRANSFER_RC"
           fi
 
@@ -162,8 +164,10 @@ jobs:
             echo "release manager failed; collecting read-only host diagnostics" >&2
             ssh "${SSH_COMMON[@]}" "$DESTINATION" \
               "printf 'current_release='; readlink -f /opt/shreks/current || true; printf 'candidate_release_present='; if test -d '/opt/shreks/releases/$SOURCE_SHA'; then echo yes; else echo no; fi; systemctl is-active shreks.target || true; systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks.target -p ActiveState -p SubState --no-pager || true" || true
-            ssh "${SSH_COMMON[@]}" "$DESTINATION" "rm -rf '$REMOTE_DIR'" || true
+            ssh "${SSH_COMMON[@]}" "$DESTINATION" \
+              "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'" || true
             exit "$DEPLOY_RC"
           fi
 
-          ssh "${SSH_COMMON[@]}" "$DESTINATION" "rm -rf '$REMOTE_DIR'"
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" \
+            "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
