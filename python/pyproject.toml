@@ -16,6 +16,7 @@ shreks-fast-first-champion-run = "shreks_brain.fast_first_champion_host_run:main
 shreks-fast-context-policy-from-runtime = "shreks_brain.fast_runtime_hydration_policy:main"
 shreks-fast-first-champion-request = "shreks_brain.fast_first_champion_host_request_writer:main"
 shreks-fl9-v2-cohort-acceptance = "shreks_brain.fl9_v2_cohort_acceptance.cli:main"
+shreks-fl9-v2-first-champion = "shreks_brain.fast_first_champion_v2.host_run:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
