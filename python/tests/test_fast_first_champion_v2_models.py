@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
@@ -179,13 +179,22 @@ def test_v2_build_result_binds_unseen_test_identity_to_frozen_cohort() -> None:
     from fast_first_champion_v2_fixtures import synthetic_v2_build_result
 
     build = synthetic_v2_build_result()
-    wrong = tuple(
-        replace(
-            value,
-            unseen_mint_test_identity_fingerprint_sha256="f" * 64,
+    original = build.member_evidence[0]
+    bad = object.__new__(type(original))
+    for field in fields(original):
+        object.__setattr__(
+            bad,
+            field.name,
+            (
+                "f" * 64
+                if field.name
+                == "unseen_mint_test_identity_fingerprint_sha256"
+                else getattr(original, field.name)
+            ),
         )
-        for value in build.member_evidence
-    )
 
-    with pytest.raises(ValueError, match="unseen.*identity|frozen cohort"):
-        replace(build, member_evidence=wrong)
+    with pytest.raises(ValueError, match="unseen.*identity|frozen.*cohort"):
+        replace(
+            build,
+            member_evidence=(bad, *build.member_evidence[1:]),
+        )
