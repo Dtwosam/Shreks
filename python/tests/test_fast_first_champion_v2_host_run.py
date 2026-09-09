@@ -184,6 +184,383 @@ def test_v2_host_request_writer_refuses_overwrite(tmp_path: Path) -> None:
     assert destination.read_bytes() == first
 
 
+def test_v2_data_version_sentinel_detects_external_commit(
+    tmp_path: Path,
+) -> None:
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+
+    database = tmp_path / "observer.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute(
+            "CREATE TABLE sentinel_fixture (value INTEGER NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO sentinel_fixture(value) VALUES (1)"
+        )
+
+    sentinel = host_module._open_database_change_sentinel(database)
+    try:
+        before = host_module._database_data_version(sentinel)
+        with sqlite3.connect(database) as writer:
+            writer.execute(
+                "INSERT INTO sentinel_fixture(value) VALUES (2)"
+            )
+        after = host_module._database_data_version(sentinel)
+    finally:
+        sentinel.close()
+
+    assert after != before
+
+
+def test_v2_database_quiescence_requires_target_and_writers_inactive(
+    monkeypatch,
+) -> None:
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+
+    states = {
+        "shreks.target": "inactive",
+        "shreks-observe.service": "inactive",
+        "shreks-paper-evidence.service": "inactive",
+        "shreks-paper-campaign.service": "inactive",
+    }
+    monkeypatch.setattr(
+        host_module,
+        "_systemd_unit_state",
+        lambda unit: states[unit],
+    )
+    host_module._require_database_quiesced()
+
+    states["shreks-observe.service"] = "active"
+    with pytest.raises(ValueError, match="quiesced|inactive|observe"):
+        host_module._require_database_quiesced()
+
+
+def test_v2_host_run_uses_live_database_only_if_data_version_is_stable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+    from shreks_brain.fast_first_champion_v2.host_run import (
+        run_fast_first_champion_v2_host_request,
+    )
+    from shreks_brain.fast_first_champion_v2.models import (
+        FastFirstChampionV2Policy,
+    )
+
+    policy = FastFirstChampionV2Policy()
+    proof = tmp_path / "proof"
+    proof.mkdir()
+    (proof / "features.jsonl").write_text("{}\n", encoding="utf-8")
+    database = tmp_path / "observer.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE stable_fixture (value INTEGER)")
+    cohort_path = tmp_path / "cohort"
+    cohort_path.mkdir()
+    hydration_path = tmp_path / "hydration.json"
+    hydration_path.write_text("{}\n", encoding="utf-8")
+    overlay_path = tmp_path / "overlay"
+    overlay_path.mkdir()
+    (overlay_path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (overlay_path / "rows.jsonl").write_text("{}\n", encoding="utf-8")
+    destination = tmp_path / "evidence"
+    request = _request(
+        proof_workspace_path=str(proof),
+        observer_database_path=str(database),
+        cohort_artifact_path=str(cohort_path),
+        hydration_policy_path=str(hydration_path),
+        training_economics_overlay_path=str(overlay_path),
+        destination_path=str(destination),
+    )
+    request_path = tmp_path / "request.json"
+    write_fast_first_champion_v2_host_request(request, request_path)
+
+    proof_artifact = SimpleNamespace(
+        manifest=SimpleNamespace(
+            release_source_sha=RELEASE_SHA,
+            feature_jsonl_sha256="6" * 64,
+            feature_logical_fingerprint_sha256="7" * 64,
+        )
+    )
+    cohort = SimpleNamespace(
+        manifest=SimpleNamespace(
+            artifact_fingerprint_sha256=COHORT_FP,
+            accepted_identity_fingerprint_sha256=(
+                policy.expected_accepted_identity_fingerprint_sha256
+            ),
+            minimum_decision_observed_at_unix_ms=(
+                policy.training_started_at_unix_ms
+            ),
+            selection_at_unix_ms=policy.selection_at_unix_ms,
+            horizon_ms=policy.horizon_ms,
+            training_cut_unix_ms=policy.training_ended_at_unix_ms,
+            validation_cut_unix_ms=policy.validation_ended_at_unix_ms,
+            test_end_unix_ms=policy.test_ended_at_unix_ms,
+        )
+    )
+    bundle = SimpleNamespace(
+        features=SimpleNamespace(
+            source_sha256="6" * 64,
+            logical_fingerprint_sha256="7" * 64,
+        ),
+        manifest=SimpleNamespace(bundle_fingerprint_sha256="8" * 64),
+    )
+    hydration = SimpleNamespace(
+        context_corpus=SimpleNamespace(contexts=("ctx",)),
+    )
+    captured = {}
+    sentinel = SimpleNamespace(close=lambda: None)
+    versions = iter((11, 11))
+
+    monkeypatch.setattr(
+        host_module,
+        "_verify_deployed_release_identity",
+        lambda _expected: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_require_database_quiesced",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_open_database_change_sentinel",
+        lambda _path: sentinel,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_database_data_version",
+        lambda _sentinel: next(versions),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_proof_workspace",
+        lambda _path: proof_artifact,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fl9_v2_cohort_acceptance",
+        lambda _path: cohort,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_validate_cohort",
+        lambda _cohort, _policy: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_training_economics_overlay",
+        lambda _path: SimpleNamespace(
+            manifest=SimpleNamespace(
+                manifest_fingerprint_sha256=OVERLAY_FP
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "decode_fast_forecast_context_hydration_policy",
+        lambda _payload: object(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "fast_forecast_context_hydration_policy_fingerprint_sha256",
+        lambda _policy: HYDRATION_FP,
+    )
+
+    def fake_bundle(**kwargs):
+        captured["bundle_database"] = Path(kwargs["sqlite_path"])
+        return cohort, bundle
+
+    def fake_hydrate(**kwargs):
+        captured["hydration_database"] = Path(
+            kwargs["observer_database_path"]
+        )
+        return hydration
+
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2_bundle",
+        fake_bundle,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "hydrate_fast_forecast_evaluation_contexts",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after database phase")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="stop after database phase"):
+        run_fast_first_champion_v2_host_request(request_path)
+
+    assert captured["bundle_database"] == database.resolve()
+    assert captured["hydration_database"] == database.resolve()
+
+
+def test_v2_host_run_rejects_database_change_before_model_scoring(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+    from shreks_brain.fast_first_champion_v2.host_run import (
+        run_fast_first_champion_v2_host_request,
+    )
+
+    proof = tmp_path / "proof"
+    proof.mkdir()
+    (proof / "features.jsonl").write_text("{}\n", encoding="utf-8")
+    database = tmp_path / "observer.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE changing_fixture (value INTEGER)")
+    cohort_path = tmp_path / "cohort"
+    cohort_path.mkdir()
+    hydration_path = tmp_path / "hydration.json"
+    hydration_path.write_text("{}\n", encoding="utf-8")
+    overlay_path = tmp_path / "overlay"
+    overlay_path.mkdir()
+    (overlay_path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (overlay_path / "rows.jsonl").write_text("{}\n", encoding="utf-8")
+    request = _request(
+        proof_workspace_path=str(proof),
+        observer_database_path=str(database),
+        cohort_artifact_path=str(cohort_path),
+        hydration_policy_path=str(hydration_path),
+        training_economics_overlay_path=str(overlay_path),
+        destination_path=str(tmp_path / "evidence"),
+    )
+    request_path = tmp_path / "request.json"
+    write_fast_first_champion_v2_host_request(request, request_path)
+
+    policy = __import__(
+        "shreks_brain.fast_first_champion_v2.models",
+        fromlist=["FastFirstChampionV2Policy"],
+    ).FastFirstChampionV2Policy()
+    proof_artifact = SimpleNamespace(
+        manifest=SimpleNamespace(
+            release_source_sha=RELEASE_SHA,
+            feature_jsonl_sha256="6" * 64,
+            feature_logical_fingerprint_sha256="7" * 64,
+        )
+    )
+    cohort = SimpleNamespace(
+        manifest=SimpleNamespace(
+            artifact_fingerprint_sha256=COHORT_FP,
+            accepted_identity_fingerprint_sha256=(
+                policy.expected_accepted_identity_fingerprint_sha256
+            ),
+            minimum_decision_observed_at_unix_ms=(
+                policy.training_started_at_unix_ms
+            ),
+            selection_at_unix_ms=policy.selection_at_unix_ms,
+            horizon_ms=policy.horizon_ms,
+            training_cut_unix_ms=policy.training_ended_at_unix_ms,
+            validation_cut_unix_ms=policy.validation_ended_at_unix_ms,
+            test_end_unix_ms=policy.test_ended_at_unix_ms,
+        )
+    )
+    bundle = SimpleNamespace(
+        features=SimpleNamespace(
+            source_sha256="6" * 64,
+            logical_fingerprint_sha256="7" * 64,
+        ),
+        manifest=SimpleNamespace(bundle_fingerprint_sha256="8" * 64),
+    )
+    versions = iter((21, 22))
+
+    monkeypatch.setattr(
+        host_module,
+        "_verify_deployed_release_identity",
+        lambda _expected: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_require_database_quiesced",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_open_database_change_sentinel",
+        lambda _path: SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_database_data_version",
+        lambda _sentinel: next(versions),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_proof_workspace",
+        lambda _path: proof_artifact,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fl9_v2_cohort_acceptance",
+        lambda _path: cohort,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_validate_cohort",
+        lambda _cohort, _policy: None,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_training_economics_overlay",
+        lambda _path: SimpleNamespace(
+            manifest=SimpleNamespace(
+                manifest_fingerprint_sha256=OVERLAY_FP
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "decode_fast_forecast_context_hydration_policy",
+        lambda _payload: object(),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "fast_forecast_context_hydration_policy_fingerprint_sha256",
+        lambda _policy: HYDRATION_FP,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2_bundle",
+        lambda **_kwargs: (cohort, bundle),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "hydrate_fast_forecast_evaluation_contexts",
+        lambda **_kwargs: SimpleNamespace(
+            context_corpus=SimpleNamespace(contexts=("ctx",))
+        ),
+    )
+
+    model_started = False
+
+    def forbidden_model(**_kwargs):
+        nonlocal model_started
+        model_started = True
+        raise AssertionError("model scoring must not start")
+
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2",
+        forbidden_model,
+    )
+
+    with pytest.raises(ValueError, match="database.*changed|data version"):
+        run_fast_first_champion_v2_host_request(request_path)
+    assert model_started is False
+
+
 def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
     monkeypatch,
     tmp_path: Path,
@@ -300,6 +677,11 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
     )
     monkeypatch.setattr(
         host_module,
+        "_require_database_quiesced",
+        lambda: events.append("quiesced"),
+    )
+    monkeypatch.setattr(
+        host_module,
         "read_fast_proof_workspace",
         lambda _path: events.append("release") or proof_artifact,
     )
@@ -390,8 +772,10 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "release",
         "cohort",
         "cohort-verify",
+        "quiesced",
         "bundle",
         "hydrate",
+        "quiesced",
         "build",
         "write",
         "read",
@@ -400,9 +784,8 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "read",
     ]
     assert captured["horizon_ms"] == policy.horizon_ms
-    assert captured["bundle_database"] == captured["hydration_database"]
-    assert captured["bundle_database"] != database
-    assert not captured["bundle_database"].exists()
+    assert captured["bundle_database"] == database.resolve()
+    assert captured["hydration_database"] == database.resolve()
     fold = captured["validation_policy"].folds[0]
     assert (
         fold.training_started_at_unix_ms,
