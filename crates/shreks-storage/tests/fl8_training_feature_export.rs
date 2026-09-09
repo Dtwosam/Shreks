@@ -108,6 +108,45 @@ fn label(horizon_ms: u64, endpoint: Option<(&str, i64, f64)>, complete: bool) ->
     }
 }
 
+fn lifecycle_event(
+    signature: &str,
+    pool_address: &str,
+    slot: u64,
+    detected_at_unix_ms: i64,
+) -> TokenLifecycleEvent {
+    TokenLifecycleEvent {
+        kind: LifecycleEventKind::PumpGraduation,
+        provider: ProviderId::Helius,
+        mint: MINT.to_owned(),
+        quote_mint: WSOL.to_owned(),
+        from_venue: VenueId::PumpFunBondingCurve,
+        to_venue: VenueId::PumpSwap,
+        pool_address: pool_address.to_owned(),
+        signature: signature.to_owned(),
+        slot,
+        detected_at_unix_ms,
+        occurred_at_unix_ms: Some(detected_at_unix_ms - 50),
+    }
+}
+
+fn store_lifecycle(
+    db: &ShreksDb,
+    signature: &str,
+    pool_address: &str,
+    slot: u64,
+    detected_at_unix_ms: i64,
+) {
+    db.record_pump_migration_signal(signature, slot, detected_at_unix_ms)
+        .unwrap();
+    let event = lifecycle_event(signature, pool_address, slot, detected_at_unix_ms);
+    db.complete_pump_migration(
+        signature,
+        detected_at_unix_ms + 10,
+        std::slice::from_ref(&event),
+    )
+    .unwrap();
+}
+
 fn seed(root: &Path) -> PathBuf {
     let db_path = root.join("shreks.db");
     let db = ShreksDb::open(&db_path).unwrap();
@@ -229,6 +268,62 @@ fn exporter_is_deterministic_and_jsonl_is_immutable_by_default() {
     assert_eq!(first_manifest.sha256.len(), 64);
 
     assert!(db.write_fast_training_feature_jsonl(FUTURE_PATH_LABEL_VERSION, &first).is_err(), "export must not overwrite an immutable source artifact");
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+
+#[test]
+fn exporter_canonicalizes_same_time_semantic_lifecycle_duplicates_by_signature() {
+    let root = unique_test_dir("lifecycle-semantic-duplicate");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = seed(&root);
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    store_lifecycle(&db, "graduation-z", "pool-same", 888, 900);
+    store_lifecycle(&db, "graduation-a", "pool-same", 888, 900);
+    drop(db);
+
+    let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
+    let rows = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let lifecycle = rows[0]
+        .last_lifecycle_event
+        .as_ref()
+        .expect("same-time semantic duplicate should canonicalize to one lifecycle event");
+    assert_eq!(lifecycle.signature, "graduation-a");
+    assert_eq!(lifecycle.pool_address, "pool-same");
+    assert_eq!(lifecycle.slot, 888);
+    assert_eq!(lifecycle.detected_at_unix_ms, 900);
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn exporter_still_rejects_same_time_substantive_lifecycle_conflicts() {
+    let root = unique_test_dir("lifecycle-substantive-conflict");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = seed(&root);
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    store_lifecycle(&db, "graduation-a", "pool-a", 888, 900);
+    store_lifecycle(&db, "graduation-b", "pool-b", 888, 900);
+    drop(db);
+
+    let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
+    let error = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("fast-lane lifecycle stream has conflicting events at detection time 900"),
+        "substantive same-time lifecycle disagreement must still fail closed: {error}"
+    );
 
     drop(db);
     cleanup_dir(&root);
