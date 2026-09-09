@@ -221,6 +221,18 @@ def read_fast_first_champion_v2_evidence(
         raise ValueError(
             "V2 evidence champion fingerprint does not match manifest"
         )
+    if champion.selection.decided_at_unix_ms != (
+        manifest.selection_at_unix_ms
+    ):
+        raise ValueError(
+            "V2 evidence champion selection timestamp does not match manifest"
+        )
+    if champion.training_bundle_fingerprint_sha256 != (
+        manifest.training_bundle_fingerprint_sha256
+    ):
+        raise ValueError(
+            "V2 evidence champion training bundle does not match manifest"
+        )
 
     natural_reports = []
     unseen_reports = []
@@ -236,6 +248,14 @@ def read_fast_first_champion_v2_evidence(
             evidence,
             natural,
             unseen,
+            training_bundle_fingerprint_sha256=(
+                manifest.training_bundle_fingerprint_sha256
+            ),
+        )
+        _validate_champion_member(
+            champion,
+            evidence,
+            natural,
         )
         natural_reports.append(natural)
         unseen_reports.append(unseen)
@@ -559,6 +579,8 @@ def _validate_report_pair(
     evidence: FastFirstChampionV2MemberEvidence,
     natural,
     unseen,
+    *,
+    training_bundle_fingerprint_sha256: str,
 ) -> None:
     expected = (evidence.target, evidence.model_family, evidence.horizon_ms)
     for label, report, fingerprint, scored, unavailable in (
@@ -591,12 +613,59 @@ def _validate_report_pair(
                 f"V2 {label} TEST report fingerprint mismatch"
             )
         if (
+            report.validation_run_fingerprint_sha256
+            != evidence.generalization_run_fingerprint_sha256
+        ):
+            raise ValueError(
+                f"V2 {label} TEST report generalization run mismatch"
+            )
+        if (
+            report.training_bundle_fingerprint_sha256
+            != training_bundle_fingerprint_sha256
+        ):
+            raise ValueError(
+                f"V2 {label} TEST report training bundle mismatch"
+            )
+        if (
             report.overall.scored_observation_count != scored
             or report.overall.target_unavailable_count != unavailable
         ):
             raise ValueError(
                 f"V2 {label} TEST report counts do not reconcile"
             )
+
+
+def _validate_champion_member(
+    champion,
+    evidence: FastFirstChampionV2MemberEvidence,
+    natural,
+) -> None:
+    try:
+        member = champion.member_for(
+            evidence.target,
+            evidence.horizon_ms,
+        )
+    except KeyError as exc:
+        raise ValueError(
+            "V2 evidence champion is missing a required member"
+        ) from exc
+    if (
+        member.forecast_artifact.artifact_fingerprint_sha256
+        != evidence.runtime_artifact_fingerprint_sha256
+        or member.validation_run_fingerprint_sha256
+        != evidence.generalization_run_fingerprint_sha256
+        or member.test_evaluation_report_fingerprint_sha256
+        != evidence.natural_test_report_fingerprint_sha256
+        or member.test_scored_observation_count
+        != evidence.natural_test_scored_observation_count
+        or member.test_target_unavailable_count
+        != evidence.natural_test_target_unavailable_count
+        or member.test_evaluation_report_fingerprint_sha256
+        != natural.evaluation_report_fingerprint_sha256
+    ):
+        raise ValueError(
+            "V2 champion member does not reconcile to member evidence"
+        )
 
 
 def _validate_evidence_payload(
