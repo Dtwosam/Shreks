@@ -8,6 +8,8 @@ from shreks_brain.fast_champion import (
     FastForecastChampionArtifact,
     FastForecastChampionMember,
     FastForecastChampionSelection,
+)
+from shreks_brain.fast_champion.models import (
     fast_forecast_champion_fingerprint_sha256,
     fast_forecast_champion_member_key,
 )
