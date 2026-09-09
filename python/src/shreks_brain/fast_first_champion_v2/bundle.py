@@ -9,6 +9,10 @@ from shreks_brain.fl9_v2_cohort_acceptance import (
     Fl9V2CohortAcceptanceArtifact,
     read_fl9_v2_cohort_acceptance,
 )
+from shreks_brain.research.counterfactual_source import (
+    CounterfactualSourceProvenance,
+    load_entry_counterfactual_provenance_batch_from_sqlite,
+)
 from shreks_brain.research.counterfactuals import (
     CounterfactualAction,
     ExecutionStatus,
@@ -125,9 +129,31 @@ def build_fast_first_champion_v2_bundle(
         horizon_ms=active_policy.horizon_ms,
         label_version=future_path_label_version,
     )
+    lookup_identities = tuple(
+        (
+            label.decision_signature,
+            label.decision_ordinal,
+            label.horizon_ms,
+            label.label_version,
+        )
+        for label in selected_labels.labels
+    )
+    provenance_by_key = (
+        load_entry_counterfactual_provenance_batch_from_sqlite(
+            sqlite_path,
+            lookup_identities=lookup_identities,
+        )
+    )
+    if set(provenance_by_key) != set(lookup_identities):
+        raise ValueError(
+            "canonical counterfactual provenance population does not "
+            "match the accepted V2 cohort exactly"
+        )
+
     projected_labels, outcome_sets = _project_selected_targets(
         labels=selected_labels.labels,
         overlay_rows=selected_overlay,
+        provenance_by_key=provenance_by_key,
         overlay_manifest_fingerprint_sha256=(
             overlay.manifest.manifest_fingerprint_sha256
         ),
@@ -352,6 +378,10 @@ def _project_selected_targets(
     *,
     labels: tuple[FuturePathTrainingLabel, ...],
     overlay_rows: tuple[FastTrainingEconomicsOverlayRow, ...],
+    provenance_by_key: dict[
+        tuple[str, int, int, int],
+        CounterfactualSourceProvenance,
+    ],
     overlay_manifest_fingerprint_sha256: str,
     execution_cost_policy: FastTrainingExecutionCostPolicy,
     counterfactual_base_quantity: float,
@@ -365,6 +395,19 @@ def _project_selected_targets(
 
     for label, row in zip(labels, overlay_rows, strict=True):
         _validate_overlay_matches_label(row, label)
+        key = (
+            label.decision_signature,
+            label.decision_ordinal,
+            label.horizon_ms,
+            label.label_version,
+        )
+        provenance = provenance_by_key.get(key)
+        if provenance is None:
+            raise ValueError(
+                "canonical counterfactual provenance is missing an "
+                "accepted V2 identity"
+            )
+        _validate_provenance_matches_label(provenance, label)
         context = build_entry_counterfactual_context_from_training_economics(
             row,
             policy=execution_cost_policy,
@@ -413,6 +456,38 @@ def _project_selected_targets(
         )
 
     return tuple(projected), tuple(outcome_sets)
+
+
+def _validate_provenance_matches_label(
+    provenance: CounterfactualSourceProvenance,
+    label: FuturePathTrainingLabel,
+) -> None:
+    if type(provenance) is not CounterfactualSourceProvenance:
+        raise ValueError(
+            "counterfactual provenance must be exact "
+            "CounterfactualSourceProvenance"
+        )
+    if (
+        provenance.decision_signature != label.decision_signature
+        or provenance.decision_ordinal != label.decision_ordinal
+        or provenance.decision_sequence != label.decision_sequence
+        or provenance.decision_observed_at_unix_ms
+        != label.decision_observed_at_unix_ms
+        or provenance.mint != label.decision_mint
+        or provenance.quote_mint != label.decision_quote_mint
+        or provenance.venue != label.decision_venue
+        or provenance.horizon_ms != label.horizon_ms
+        or provenance.future_path_label_version != label.label_version
+        or provenance.completeness != label.completeness
+        or provenance.endpoint_signature != label.endpoint_signature
+        or provenance.endpoint_ordinal != label.endpoint_ordinal
+        or provenance.endpoint_observed_at_unix_ms
+        != label.endpoint_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "canonical counterfactual provenance does not match "
+            "accepted FL4 label"
+        )
 
 
 def _validate_overlay_matches_label(
