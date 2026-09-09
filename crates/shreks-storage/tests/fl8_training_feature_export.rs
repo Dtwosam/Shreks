@@ -7,7 +7,7 @@ use shreks_core::{
     FUTURE_PATH_LABEL_VERSION,
 };
 use shreks_storage::{
-    FastTrainingReserveContext, PumpTradeEvidenceWrite, ShreksDb,
+    EvidenceWriteOutcome, FastTrainingReserveContext, PumpTradeEvidenceWrite, ShreksDb,
     FAST_TRAINING_FEATURE_SCHEMA_NAME, FAST_TRAINING_FEATURE_SCHEMA_VERSION,
 };
 
@@ -71,6 +71,28 @@ fn store_event(db: &ShreksDb, signature: &str, sequence: u64, observed_at: i64, 
     let raw = raw_trade(signature, observed_at - 20, is_buy, 2_000_000, sol_raw, real_token);
     db.record_pump_trade_evidence(&raw).unwrap();
     db.record_fast_event(&event(signature, sequence, observed_at, kind, price, 2.0), observed_at - 20, 6, 9).unwrap();
+}
+
+fn quarantine_pump_trade_conflict(
+    db: &ShreksDb,
+    signature: &str,
+    observed_at: i64,
+    price: f64,
+) {
+    let sol_raw = (2.0 * price * 1_000_000_000.0).round() as u64;
+    let conflict = raw_trade(
+        signature,
+        observed_at,
+        true,
+        2_000_000,
+        sol_raw,
+        9_000_000_000,
+    );
+    assert_eq!(
+        db.record_pump_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
 }
 
 fn decision(signature: &str, sequence: u64, observed_at: i64, price: f64) -> FuturePathDecision {
@@ -273,6 +295,177 @@ fn exporter_is_deterministic_and_jsonl_is_immutable_by_default() {
     cleanup_dir(&root);
 }
 
+
+#[test]
+fn exporter_ignores_conflict_before_required_feature_window() {
+    let root = unique_test_dir("stale-conflict");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    store_event(
+        &db,
+        "ancient-conflict",
+        1,
+        1_000,
+        FastEventKind::Buy,
+        0.040,
+        12_000_000_000,
+    );
+    quarantine_pump_trade_conflict(&db, "ancient-conflict", 1_010, 0.041);
+    store_event(
+        &db,
+        "lookback",
+        2,
+        15_000,
+        FastEventKind::Buy,
+        0.050,
+        11_500_000_000,
+    );
+    store_event(
+        &db,
+        "decision-late",
+        3,
+        20_000,
+        FastEventKind::Buy,
+        0.055,
+        11_000_000_000,
+    );
+
+    let decision = decision("decision-late", 3, 20_000, 0.055);
+    db.record_future_path_label(
+        &decision,
+        FuturePathCoverage::new(30_000, true).unwrap(),
+        &label(250, None, true),
+    )
+    .unwrap();
+    drop(db);
+
+    let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
+    let rows = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let window = rows[0]
+        .windows
+        .iter()
+        .find(|value| value.window_ms == 10_000)
+        .unwrap();
+    assert_eq!(window.buy_count, 2);
+    assert_eq!(window.last_price_quote, Some(0.055));
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn exporter_ignores_conflict_in_irrelevant_gap_between_decision_windows() {
+    let root = unique_test_dir("gap-conflict");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    store_event(
+        &db,
+        "decision-a",
+        1,
+        20_000,
+        FastEventKind::Buy,
+        0.050,
+        12_000_000_000,
+    );
+    store_event(
+        &db,
+        "gap-conflict",
+        2,
+        50_000,
+        FastEventKind::Buy,
+        0.052,
+        11_500_000_000,
+    );
+    quarantine_pump_trade_conflict(&db, "gap-conflict", 50_010, 0.053);
+    store_event(
+        &db,
+        "decision-b",
+        3,
+        100_000,
+        FastEventKind::Buy,
+        0.055,
+        11_000_000_000,
+    );
+
+    for decision in [
+        decision("decision-a", 1, 20_000, 0.050),
+        decision("decision-b", 3, 100_000, 0.055),
+    ] {
+        db.record_future_path_label(
+            &decision,
+            FuturePathCoverage::new(110_000, true).unwrap(),
+            &label(250, None, true),
+        )
+        .unwrap();
+    }
+    drop(db);
+
+    let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
+    let rows = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].decision_signature, "decision-a");
+    assert_eq!(rows[1].decision_signature, "decision-b");
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn exporter_rejects_conflict_inside_required_feature_window() {
+    let root = unique_test_dir("in-window-conflict");
+    fs::create_dir_all(&root).unwrap();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    store_event(
+        &db,
+        "relevant-conflict",
+        1,
+        15_000,
+        FastEventKind::Buy,
+        0.050,
+        12_000_000_000,
+    );
+    quarantine_pump_trade_conflict(&db, "relevant-conflict", 15_010, 0.051);
+    store_event(
+        &db,
+        "decision-after-conflict",
+        2,
+        20_000,
+        FastEventKind::Buy,
+        0.055,
+        11_000_000_000,
+    );
+
+    let decision = decision("decision-after-conflict", 2, 20_000, 0.055);
+    db.record_future_path_label(
+        &decision,
+        FuturePathCoverage::new(30_000, true).unwrap(),
+        &label(250, None, true),
+    )
+    .unwrap();
+    drop(db);
+
+    let db = ShreksDb::open_existing_read_only(&db_path).unwrap();
+    let error = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap_err();
+    let rendered = error.to_string();
+    assert!(rendered.contains("conflict-quarantined"));
+    assert!(rendered.contains("inside observation window [10000, 20000]"));
+
+    drop(db);
+    cleanup_dir(&root);
+}
 
 #[test]
 fn exporter_canonicalizes_same_time_semantic_lifecycle_duplicates_by_signature() {
