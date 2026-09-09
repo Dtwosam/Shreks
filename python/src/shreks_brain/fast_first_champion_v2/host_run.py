@@ -219,7 +219,6 @@ def run_fast_first_champion_v2_host_request(
         )
     )
     staged_destination = staging_root / "evidence"
-    published = False
     try:
         artifact = write_fast_first_champion_v2_evidence(
             build,
@@ -268,7 +267,6 @@ def run_fast_first_champion_v2_host_request(
             )
 
         staged_destination.rename(destination)
-        published = True
         final = read_fast_first_champion_v2_evidence(destination)
         if final.manifest != reopened.manifest:
             raise ValueError(
