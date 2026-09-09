@@ -446,6 +446,7 @@ class Fl9V2CohortAcceptanceManifest:
     policy_version: str
     floor_policy_version: str
     source_session_ids: tuple[int, ...]
+    source_sessions: tuple[Fl9V2CoverageSessionCheckpoint, ...]
     latest_session_id: int
     horizon_ms: int
     minimum_decision_observed_at_unix_ms: int
@@ -471,9 +472,23 @@ class Fl9V2CohortAcceptanceManifest:
     test_row_count: int
     validation_unseen_mint_row_count: int
     validation_unseen_mint_unique_mint_count: int
+    validation_seen_mint_row_count: int
+    validation_seen_mint_unique_mint_count: int
+    validation_seen_actor_row_count: int
+    validation_unseen_actor_row_count: int
+    validation_null_actor_row_count: int
     test_unseen_mint_row_count: int
     test_unseen_mint_unique_mint_count: int
+    test_seen_mint_row_count: int
+    test_seen_mint_unique_mint_count: int
+    test_seen_actor_row_count: int
+    test_unseen_actor_row_count: int
+    test_null_actor_row_count: int
     structural_floor_passed: bool
+    evidence_floor_policy: Fl9V2CohortEvidenceFloorPolicy
+    concentration_summaries: tuple[
+        tuple[str, Fl9V2ConcentrationSummary], ...
+    ]
     tradable_universe_policy_fingerprint_sha256: str
     feature_identity_firewall_fingerprint_sha256: str
     accepted_decisions_file_sha256: str
@@ -483,7 +498,10 @@ class Fl9V2CohortAcceptanceManifest:
     validation_identity_fingerprint_sha256: str
     test_identity_fingerprint_sha256: str
     validation_unseen_mint_identity_fingerprint_sha256: str
+    validation_seen_mint_identity_fingerprint_sha256: str
     test_unseen_mint_identity_fingerprint_sha256: str
+    test_seen_mint_identity_fingerprint_sha256: str
+    signature_quarantine_identity_fingerprint_sha256: str
     assessment_evidence_fingerprint_sha256: str
     artifact_fingerprint_sha256: str
 
@@ -491,13 +509,32 @@ class Fl9V2CohortAcceptanceManifest:
         if self.schema_name != FL9_V2_COHORT_ACCEPTANCE_SCHEMA_NAME:
             raise ValueError("unsupported FL9 V2 cohort acceptance schema")
         if self.schema_version != FL9_V2_COHORT_ACCEPTANCE_SCHEMA_VERSION:
-            raise ValueError("unsupported FL9 V2 cohort acceptance schema version")
+            raise ValueError(
+                "unsupported FL9 V2 cohort acceptance schema version"
+            )
         if self.policy_version != FL9_V2_COHORT_ACCEPTANCE_POLICY_VERSION:
-            raise ValueError("unsupported FL9 V2 cohort acceptance policy")
+            raise ValueError(
+                "unsupported FL9 V2 cohort acceptance policy"
+            )
         if self.floor_policy_version != FL9_V2_COHORT_EVIDENCE_FLOOR_VERSION:
-            raise ValueError("unsupported FL9 V2 cohort evidence floor policy")
+            raise ValueError(
+                "unsupported FL9 V2 cohort evidence floor policy"
+            )
         if self.source_session_ids != tuple(range(115, 123)):
-            raise ValueError("manifest source session IDs contradict frozen policy")
+            raise ValueError(
+                "manifest source session IDs contradict frozen policy"
+            )
+        if self.source_sessions != _SOURCE_SESSIONS:
+            raise ValueError(
+                "manifest source session metadata contradicts frozen policy"
+            )
+        if (
+            tuple(value.session_id for value in self.source_sessions)
+            != self.source_session_ids
+        ):
+            raise ValueError(
+                "manifest source session IDs do not reconcile to metadata"
+            )
         for name in (
             "latest_session_id",
             "horizon_ms",
@@ -523,12 +560,67 @@ class Fl9V2CohortAcceptanceManifest:
             "test_row_count",
             "validation_unseen_mint_row_count",
             "validation_unseen_mint_unique_mint_count",
+            "validation_seen_mint_row_count",
+            "validation_seen_mint_unique_mint_count",
+            "validation_seen_actor_row_count",
+            "validation_unseen_actor_row_count",
+            "validation_null_actor_row_count",
             "test_unseen_mint_row_count",
             "test_unseen_mint_unique_mint_count",
+            "test_seen_mint_row_count",
+            "test_seen_mint_unique_mint_count",
+            "test_seen_actor_row_count",
+            "test_unseen_actor_row_count",
+            "test_null_actor_row_count",
         ):
             _non_negative_int(name, getattr(self, name))
+        if self.latest_session_id < 123:
+            raise ValueError(
+                "manifest latest session does not prove source immutability"
+            )
+        if (
+            self.selection_at_unix_ms - self.horizon_ms
+            != self.test_end_unix_ms
+        ):
+            raise ValueError(
+                "manifest selection/horizon/test-end relationship is invalid"
+            )
         if not isinstance(self.structural_floor_passed, bool):
             raise ValueError("structural_floor_passed must be bool")
+        if (
+            type(self.evidence_floor_policy)
+            is not Fl9V2CohortEvidenceFloorPolicy
+        ):
+            raise ValueError(
+                "evidence_floor_policy must be exact frozen floor policy"
+            )
+        if self.evidence_floor_policy.version != self.floor_policy_version:
+            raise ValueError(
+                "manifest floor policy version does not reconcile"
+            )
+        expected_concentration_keys = (
+            "full_eligible",
+            "raw_training",
+            "raw_validation",
+            "raw_test",
+            "post_signature_training",
+            "post_signature_validation",
+            "post_signature_test",
+            "unseen_mint_validation",
+            "unseen_mint_test",
+        )
+        if (
+            not isinstance(self.concentration_summaries, tuple)
+            or tuple(name for name, _ in self.concentration_summaries)
+            != expected_concentration_keys
+            or not all(
+                type(value) is Fl9V2ConcentrationSummary
+                for _, value in self.concentration_summaries
+            )
+        ):
+            raise ValueError(
+                "manifest concentration summaries do not match required set"
+            )
         for name in (
             "tradable_universe_policy_fingerprint_sha256",
             "feature_identity_firewall_fingerprint_sha256",
@@ -539,7 +631,10 @@ class Fl9V2CohortAcceptanceManifest:
             "validation_identity_fingerprint_sha256",
             "test_identity_fingerprint_sha256",
             "validation_unseen_mint_identity_fingerprint_sha256",
+            "validation_seen_mint_identity_fingerprint_sha256",
             "test_unseen_mint_identity_fingerprint_sha256",
+            "test_seen_mint_identity_fingerprint_sha256",
+            "signature_quarantine_identity_fingerprint_sha256",
             "assessment_evidence_fingerprint_sha256",
             "artifact_fingerprint_sha256",
         ):
@@ -553,7 +648,8 @@ class Fl9V2CohortAcceptanceManifest:
         ):
             raise ValueError("raw partition counts do not reconcile")
         if (
-            self.training_raw_row_count - self.training_quarantined_row_count
+            self.training_raw_row_count
+            - self.training_quarantined_row_count
             != self.training_row_count
             or (
                 self.validation_raw_row_count
@@ -561,11 +657,42 @@ class Fl9V2CohortAcceptanceManifest:
                 != self.validation_row_count
             )
             or (
-                self.test_raw_row_count - self.test_quarantined_row_count
+                self.test_raw_row_count
+                - self.test_quarantined_row_count
                 != self.test_row_count
             )
         ):
             raise ValueError("signature quarantine counts do not reconcile")
+        if (
+            self.validation_unseen_mint_row_count
+            + self.validation_seen_mint_row_count
+            != self.validation_row_count
+        ):
+            raise ValueError(
+                "validation mint novelty counts do not reconcile"
+            )
+        if (
+            self.test_unseen_mint_row_count
+            + self.test_seen_mint_row_count
+            != self.test_row_count
+        ):
+            raise ValueError("TEST mint novelty counts do not reconcile")
+        if (
+            self.validation_seen_actor_row_count
+            + self.validation_unseen_actor_row_count
+            + self.validation_null_actor_row_count
+            != self.validation_row_count
+        ):
+            raise ValueError(
+                "validation actor novelty counts do not reconcile"
+            )
+        if (
+            self.test_seen_actor_row_count
+            + self.test_unseen_actor_row_count
+            + self.test_null_actor_row_count
+            != self.test_row_count
+        ):
+            raise ValueError("TEST actor novelty counts do not reconcile")
 
 
 @dataclass(frozen=True, slots=True)
