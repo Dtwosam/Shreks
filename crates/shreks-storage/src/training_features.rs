@@ -397,11 +397,8 @@ impl ShreksDb {
                 ))
             });
 
-            let events = self.fast_events_for_market_with_reserve_context(
-                &market.mint,
-                &market.quote_mint,
-                market.venue,
-            )?;
+            let events =
+                self.fast_training_feature_events_for_market(&market, &market_decisions)?;
             let lifecycle_events = canonical_training_lifecycle_events(
                 self.lifecycle_events_for_mint(&market.mint)?,
             );
@@ -515,6 +512,29 @@ impl ShreksDb {
         })
     }
 
+    fn fast_training_feature_events_for_market(
+        &self,
+        market: &FastMarketKey,
+        decisions: &[DecisionRow],
+    ) -> Result<Vec<StoredFastEvent>, StorageError> {
+        let mut events = Vec::new();
+        for (from_observed_at_unix_ms, through_observed_at_unix_ms) in
+            training_feature_replay_windows(decisions)?
+        {
+            events.extend(
+                self.fast_events_for_market_observed_window_with_reserve_context(
+                    &market.mint,
+                    &market.quote_mint,
+                    market.venue,
+                    from_observed_at_unix_ms,
+                    through_observed_at_unix_ms,
+                )?,
+            );
+        }
+        events.sort_by_key(|stored| stored.event.sequence);
+        Ok(events)
+    }
+
     fn training_decisions(&self, label_version: u16) -> Result<Vec<DecisionRow>, StorageError> {
         let mut statement = self.connection.prepare(
             r#"SELECT
@@ -606,6 +626,55 @@ impl ShreksDb {
         }
         Ok(decisions)
     }
+}
+
+fn training_feature_replay_windows(
+    decisions: &[DecisionRow],
+) -> Result<Vec<(i64, i64)>, StorageError> {
+    if decisions.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let max_window_ms = DEFAULT_FAST_WINDOWS_MS
+        .iter()
+        .copied()
+        .max()
+        .ok_or_else(|| {
+            StorageError::InvalidData(
+                "training feature replay requires at least one Fast Lane window".to_owned(),
+            )
+        })?;
+    let max_window_ms = i64::try_from(max_window_ms).map_err(|_| {
+        StorageError::InvalidData(
+            "training feature maximum window exceeds i64".to_owned(),
+        )
+    })?;
+
+    let mut windows = decisions
+        .iter()
+        .map(|decision| {
+            (
+                decision
+                    .observed_at_unix_ms
+                    .saturating_sub(max_window_ms)
+                    .max(0),
+                decision.observed_at_unix_ms,
+            )
+        })
+        .collect::<Vec<_>>();
+    windows.sort_unstable();
+
+    let mut merged: Vec<(i64, i64)> = Vec::with_capacity(windows.len());
+    for (from_observed_at_unix_ms, through_observed_at_unix_ms) in windows {
+        if let Some((_, merged_through)) = merged.last_mut() {
+            if from_observed_at_unix_ms <= merged_through.saturating_add(1) {
+                *merged_through = (*merged_through).max(through_observed_at_unix_ms);
+                continue;
+            }
+        }
+        merged.push((from_observed_at_unix_ms, through_observed_at_unix_ms));
+    }
+    Ok(merged)
 }
 
 fn canonical_training_lifecycle_events(
