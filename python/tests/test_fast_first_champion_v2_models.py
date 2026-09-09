@@ -121,3 +121,45 @@ def test_v2_member_evidence_enforces_both_scoring_floors() -> None:
                 "unseen_mint_test_scored_observation_count": 34_999,
             }
         )
+
+
+def test_v2_build_result_reconciles_every_evidence_cross_link() -> None:
+    from fast_first_champion_v2_fixtures import synthetic_v2_build_result
+
+    build = synthetic_v2_build_result()
+    assert len(build.member_evidence) == 5
+    assert build.champion.training_bundle_fingerprint_sha256 == (
+        build.training_bundle_fingerprint_sha256
+    )
+
+    reordered = (
+        build.natural_test_reports[1],
+        build.natural_test_reports[0],
+        *build.natural_test_reports[2:],
+    )
+    with pytest.raises(ValueError, match="canonical|required member order"):
+        replace(build, natural_test_reports=reordered)
+
+    bad_evidence = replace(
+        build.member_evidence[0],
+        natural_test_report_fingerprint_sha256="f" * 64,
+    )
+    with pytest.raises(ValueError, match="member evidence.*reconcile"):
+        replace(
+            build,
+            member_evidence=(bad_evidence, *build.member_evidence[1:]),
+        )
+
+    bad_member = replace(
+        build.champion.members[0],
+        test_evaluation_report_fingerprint_sha256="e" * 64,
+    )
+    bad_champion = replace(
+        build.champion,
+        members=(bad_member, *build.champion.members[1:]),
+    )
+    with pytest.raises(ValueError, match="runtime champion member.*reconcile"):
+        replace(build, champion=bad_champion)
+
+    with pytest.raises(ValueError, match="training bundle fingerprint"):
+        replace(build, training_bundle_fingerprint_sha256="d" * 64)
