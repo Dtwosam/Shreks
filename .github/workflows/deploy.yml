@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: shreks-production-paper-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     environment: production-paper
@@ -108,29 +112,27 @@ jobs:
           REQUIRED_BYTES=$(( $(stat -c '%s' "$ARCHIVE") + $(stat -c '%s' "$CHECKSUM") + $(stat -c '%s' "$MANIFEST") ))
           REQUIRED_KB=$(( (REQUIRED_BYTES + 1023) / 1024 + 1024 ))
 
+          REMOTE_ARCHIVE="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz"
+          REMOTE_CHECKSUM="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz.sha256"
+          REMOTE_MANIFEST="/var/tmp/shreks-release-$SOURCE_SHA.RELEASE_MANIFEST.json"
+
           echo "remote staging preflight"
-          REMOTE_AVAIL_KB="$(ssh "${SSH_COMMON[@]}" "$DESTINATION" "set -e; test -d /var/tmp; test -w /var/tmp; df -Pk /var/tmp | tail -n 1 | awk '{print \$4}'")"
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" \
+            "set -e; test -d /var/tmp; test -w /var/tmp; printf 'var_tmp='; stat -c '%A %U:%G %a' /var/tmp; df -Pk /var/tmp; df -Pi /var/tmp; printf 'stale_exact_release_staging='; ls -l '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST' 2>/dev/null || echo none"
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" \
+            "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
+
+          REMOTE_AVAIL_KB="$(ssh "${SSH_COMMON[@]}" "$DESTINATION" "df -Pk /var/tmp | tail -n 1 | awk '{print \$4}'")"
           if [[ ! "$REMOTE_AVAIL_KB" =~ ^[0-9]+$ ]]; then
             echo "unable to determine available /var/tmp space" >&2
             exit 2
           fi
           echo "required_kb=$REQUIRED_KB"
           echo "remote_available_kb=$REMOTE_AVAIL_KB"
-          ssh "${SSH_COMMON[@]}" "$DESTINATION" \
-            "printf 'var_tmp='; stat -c '%A %U:%G %a' /var/tmp; df -Pk /var/tmp; df -Pi /var/tmp; printf 'legacy_partial='; if test -e '/var/tmp/shreks-release-$SOURCE_SHA.tar.gz'; then ls -l '/var/tmp/shreks-release-$SOURCE_SHA.tar.gz'; else echo none; fi"
           if (( REMOTE_AVAIL_KB < REQUIRED_KB )); then
             echo "insufficient remote /var/tmp space for verified release transfer" >&2
             exit 28
           fi
-
-          if [[ ! "$GITHUB_RUN_ID" =~ ^[0-9]+$ || ! "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]; then
-            echo "unexpected GitHub run identity" >&2
-            exit 2
-          fi
-          REMOTE_TOKEN="$SOURCE_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          REMOTE_ARCHIVE="/var/tmp/shreks-release-$REMOTE_TOKEN.tar.gz"
-          REMOTE_CHECKSUM="/var/tmp/shreks-release-$REMOTE_TOKEN.tar.gz.sha256"
-          REMOTE_MANIFEST="/var/tmp/shreks-release-$REMOTE_TOKEN.RELEASE_MANIFEST.json"
 
           TRANSFER_RC=0
           set +e
