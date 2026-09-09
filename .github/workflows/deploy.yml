@@ -109,7 +109,7 @@ jobs:
           REQUIRED_KB=$(( (REQUIRED_BYTES + 1023) / 1024 + 1024 ))
 
           echo "remote staging preflight"
-          REMOTE_AVAIL_KB="$(ssh "${SSH_COMMON[@]}" "$DESTINATION" "set -e; test -d /var/tmp; test -w /var/tmp; df -Pk /var/tmp | tail -n 1 | awk '{print \\$4}'")"
+          REMOTE_AVAIL_KB="$(ssh "${SSH_COMMON[@]}" "$DESTINATION" "set -e; test -d /var/tmp; test -w /var/tmp; df -Pk /var/tmp | tail -n 1 | awk '{print \$4}'")"
           if [[ ! "$REMOTE_AVAIL_KB" =~ ^[0-9]+$ ]]; then
             echo "unable to determine available /var/tmp space" >&2
             exit 2
