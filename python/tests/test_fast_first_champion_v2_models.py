@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import fields, replace
 
 import pytest
 
@@ -23,6 +23,10 @@ def test_v2_policy_is_exact_and_frozen() -> None:
     assert (
         policy.expected_accepted_identity_fingerprint_sha256
         == "75cf6dbac938286f508d978a14149cd083ff7a8470c8fce20fca9abbc1faf56b"
+    )
+    assert (
+        policy.expected_test_unseen_mint_identity_fingerprint_sha256
+        == "f896c03590a66f4385a01a347039c9dd8a3ab60a4a181e631fa2e838e12ef285"
     )
     assert policy.horizon_ms == 30_000
     assert policy.selection_at_unix_ms == 1_788_902_319_835
@@ -51,6 +55,10 @@ def test_v2_policy_is_exact_and_frozen() -> None:
         ("test_ended_at_unix_ms", 1_788_902_289_836),
         ("minimum_natural_test_scored_observations", 39_999),
         ("minimum_unseen_mint_test_scored_observations", 34_999),
+        (
+            "expected_test_unseen_mint_identity_fingerprint_sha256",
+            "f" * 64,
+        ),
     ),
 )
 def test_v2_policy_changes_require_a_new_version(
@@ -101,7 +109,9 @@ def test_v2_member_evidence_enforces_both_scoring_floors() -> None:
         unseen_mint_test_report_fingerprint_sha256="4" * 64,
         unseen_mint_test_scored_observation_count=35_000,
         unseen_mint_test_target_unavailable_count=0,
-        unseen_mint_test_identity_fingerprint_sha256="5" * 64,
+        unseen_mint_test_identity_fingerprint_sha256=(
+            policy.expected_test_unseen_mint_identity_fingerprint_sha256
+        ),
     )
     value = v2.FastFirstChampionV2MemberEvidence(**common)
     assert value.natural_test_scored_observation_count == 40_000
@@ -163,3 +173,28 @@ def test_v2_build_result_reconciles_every_evidence_cross_link() -> None:
 
     with pytest.raises(ValueError, match="training bundle fingerprint"):
         replace(build, training_bundle_fingerprint_sha256="d" * 64)
+
+
+def test_v2_build_result_binds_unseen_test_identity_to_frozen_cohort() -> None:
+    from fast_first_champion_v2_fixtures import synthetic_v2_build_result
+
+    build = synthetic_v2_build_result()
+    original = build.member_evidence[0]
+    bad = object.__new__(type(original))
+    for field in fields(original):
+        object.__setattr__(
+            bad,
+            field.name,
+            (
+                "f" * 64
+                if field.name
+                == "unseen_mint_test_identity_fingerprint_sha256"
+                else getattr(original, field.name)
+            ),
+        )
+
+    with pytest.raises(ValueError, match="unseen.*identity|frozen.*cohort"):
+        replace(
+            build,
+            member_evidence=(bad, *build.member_evidence[1:]),
+        )

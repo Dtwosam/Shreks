@@ -123,7 +123,7 @@ def synthetic_v2_build_result() -> FastFirstChampionV2BuildResult:
             ),
             unseen_mint_test_target_unavailable_count=0,
             unseen_mint_test_identity_fingerprint_sha256=(
-                f"{index + 40:064x}"
+                policy.expected_test_unseen_mint_identity_fingerprint_sha256
             ),
         )
         for index, (

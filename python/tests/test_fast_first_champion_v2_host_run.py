@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import fields
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -202,7 +203,13 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
     proof.mkdir()
     (proof / "features.jsonl").write_text("{}\n", encoding="utf-8")
     database = tmp_path / "observer.db"
-    database.write_bytes(b"sqlite")
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE snapshot_fixture (value INTEGER NOT NULL)"
+        )
+        connection.execute(
+            "INSERT INTO snapshot_fixture(value) VALUES (1)"
+        )
     cohort_path = tmp_path / "cohort"
     cohort_path.mkdir()
     hydration_path = tmp_path / "hydration.json"
@@ -326,18 +333,26 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "fast_forecast_context_hydration_policy_fingerprint_sha256",
         lambda _policy: HYDRATION_FP,
     )
+    captured = {}
+
+    def fake_bundle(**kwargs):
+        events.append("bundle")
+        captured["bundle_database"] = Path(kwargs["sqlite_path"])
+        return cohort, bundle
+
     monkeypatch.setattr(
         host_module,
         "build_fast_first_champion_v2_bundle",
-        lambda **_kwargs: events.append("bundle") or (cohort, bundle),
+        fake_bundle,
     )
-
-    captured = {}
 
     def fake_hydrate(**kwargs):
         events.append("hydrate")
         captured["validation_policy"] = kwargs["validation_policy"]
         captured["horizon_ms"] = kwargs["horizon_ms"]
+        captured["hydration_database"] = Path(
+            kwargs["observer_database_path"]
+        )
         return hydration_result
 
     monkeypatch.setattr(
@@ -385,6 +400,9 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "read",
     ]
     assert captured["horizon_ms"] == policy.horizon_ms
+    assert captured["bundle_database"] == captured["hydration_database"]
+    assert captured["bundle_database"] != database
+    assert not captured["bundle_database"].exists()
     fold = captured["validation_policy"].folds[0]
     assert (
         fold.training_started_at_unix_ms,
