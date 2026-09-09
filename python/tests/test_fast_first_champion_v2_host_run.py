@@ -244,6 +244,9 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
             accepted_identity_fingerprint_sha256=(
                 policy.expected_accepted_identity_fingerprint_sha256
             ),
+            minimum_decision_observed_at_unix_ms=(
+                policy.training_started_at_unix_ms
+            ),
             selection_at_unix_ms=policy.selection_at_unix_ms,
             horizon_ms=policy.horizon_ms,
             training_cut_unix_ms=policy.training_ended_at_unix_ms,
@@ -364,6 +367,7 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "build",
         "write",
         "read",
+        "release",
         "cohort",
     ]
     assert captured["horizon_ms"] == policy.horizon_ms
