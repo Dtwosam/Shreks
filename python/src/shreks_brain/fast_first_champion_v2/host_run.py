@@ -278,10 +278,6 @@ def run_fast_first_champion_v2_host_request(
     finally:
         if staging_root.exists():
             shutil.rmtree(staging_root, ignore_errors=True)
-        if not published and destination.exists():
-            # The final path is never created by this runner until every
-            # authenticated source has been revalidated.
-            shutil.rmtree(destination, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:
