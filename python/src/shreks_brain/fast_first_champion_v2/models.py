@@ -323,6 +323,129 @@ class FastFirstChampionV2BuildResult:
                     f"{name} must contain the exact required member population"
                 )
 
+        expected_keys = tuple(
+            (target, family, _HORIZON_MS)
+            for target, family in _REQUIRED_MEMBERS
+        )
+        artifact_keys = tuple(
+            (value.target, value.model_family, value.horizon_ms)
+            for value in self.runtime_artifacts
+        )
+        run_keys = tuple(
+            (
+                value.training_request.target,
+                value.training_request.model_family,
+                value.training_request.horizon_ms,
+            )
+            for value in self.generalization_runs
+        )
+        natural_keys = tuple(
+            (value.target, value.model_family, value.horizon_ms)
+            for value in self.natural_test_reports
+        )
+        unseen_keys = tuple(
+            (value.target, value.model_family, value.horizon_ms)
+            for value in self.unseen_mint_test_reports
+        )
+        evidence_keys = tuple(
+            (value.target, value.model_family, value.horizon_ms)
+            for value in self.member_evidence
+        )
+        if (
+            artifact_keys != expected_keys
+            or run_keys != expected_keys
+            or natural_keys != expected_keys
+            or unseen_keys != expected_keys
+            or evidence_keys != expected_keys
+        ):
+            raise ValueError(
+                "V2 build evidence populations are not in canonical "
+                "required member order"
+            )
+
+        if (
+            self.champion.training_bundle_fingerprint_sha256
+            != self.training_bundle_fingerprint_sha256
+        ):
+            raise ValueError(
+                "V2 champion training bundle fingerprint does not match build"
+            )
+        if len(self.champion.members) != count:
+            raise ValueError(
+                "V2 champion member population does not match required members"
+            )
+
+        for artifact, run, natural, unseen, evidence in zip(
+            self.runtime_artifacts,
+            self.generalization_runs,
+            self.natural_test_reports,
+            self.unseen_mint_test_reports,
+            self.member_evidence,
+            strict=True,
+        ):
+            if (
+                artifact.training_bundle_fingerprint_sha256
+                != self.training_bundle_fingerprint_sha256
+                or run.training_bundle_fingerprint_sha256
+                != self.training_bundle_fingerprint_sha256
+                or natural.training_bundle_fingerprint_sha256
+                != self.training_bundle_fingerprint_sha256
+                or unseen.training_bundle_fingerprint_sha256
+                != self.training_bundle_fingerprint_sha256
+            ):
+                raise ValueError(
+                    "V2 member training bundle fingerprints do not reconcile"
+                )
+            if (
+                natural.validation_run_fingerprint_sha256
+                != run.validation_run_fingerprint_sha256
+                or unseen.validation_run_fingerprint_sha256
+                != run.validation_run_fingerprint_sha256
+            ):
+                raise ValueError(
+                    "V2 TEST reports do not bind the exact generalization run"
+                )
+            if (
+                evidence.runtime_artifact_fingerprint_sha256
+                != artifact.artifact_fingerprint_sha256
+                or evidence.generalization_run_fingerprint_sha256
+                != run.validation_run_fingerprint_sha256
+                or evidence.natural_test_report_fingerprint_sha256
+                != natural.evaluation_report_fingerprint_sha256
+                or evidence.unseen_mint_test_report_fingerprint_sha256
+                != unseen.evaluation_report_fingerprint_sha256
+                or evidence.natural_test_scored_observation_count
+                != natural.overall.scored_observation_count
+                or evidence.natural_test_target_unavailable_count
+                != natural.overall.target_unavailable_count
+                or evidence.unseen_mint_test_scored_observation_count
+                != unseen.overall.scored_observation_count
+                or evidence.unseen_mint_test_target_unavailable_count
+                != unseen.overall.target_unavailable_count
+            ):
+                raise ValueError(
+                    "V2 member evidence does not reconcile to build artifacts"
+                )
+            member = self.champion.member_for(
+                artifact.target,
+                artifact.horizon_ms,
+            )
+            if (
+                member.forecast_artifact != artifact
+                or member.validation_run_fingerprint_sha256
+                != run.validation_run_fingerprint_sha256
+                or member.test_evaluation_report_fingerprint_sha256
+                != natural.evaluation_report_fingerprint_sha256
+                or member.test_scored_observation_count
+                != natural.overall.scored_observation_count
+                or member.test_target_unavailable_count
+                != natural.overall.target_unavailable_count
+            ):
+                raise ValueError(
+                    "V2 runtime champion member does not reconcile "
+                    "to natural TEST evidence"
+                )
+
 
 @dataclass(frozen=True, slots=True)
 class FastFirstChampionV2EvidenceManifest:
