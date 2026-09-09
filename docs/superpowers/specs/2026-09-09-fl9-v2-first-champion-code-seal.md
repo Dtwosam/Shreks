@@ -225,8 +225,8 @@ After this docs-only seal lands on `main`:
 5. verify `/opt/shreks/current`, release manifest, service process identity, and service working directories against that SHA;
 6. verify the exact physical cohort artifact still exists and reads back to:
    `bd6875c4d65ee9b2eb67783e7ecfa2332305bf6c3251f5d474e66465fd17d93a`;
-7. create a new canonical V2 host request from authenticated deployed sources;
-8. choose a new immutable V2 first-champion evidence destination;
+7. choose a new immutable V2 first-champion evidence destination;
+8. create a new canonical V2 host request from authenticated deployed sources, binding that destination into the request;
 9. execute:
    `sudo /opt/shreks/current/.venv/bin/shreks-fl9-v2-first-champion <canonical-request-path>`;
 10. read the V2 evidence artifact back with the deployed package;
