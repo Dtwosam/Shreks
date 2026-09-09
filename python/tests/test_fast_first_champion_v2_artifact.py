@@ -2,14 +2,21 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from fast_first_champion_v2_fixtures import synthetic_v2_build_result
 from shreks_brain.fast_champion import read_fast_forecast_champion
+from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
+from shreks_brain.fast_evaluation.models import (
+    fast_forecast_evaluation_report_fingerprint_sha256,
+)
+from shreks_brain.fast_learning import FastForecastModelFamily
 from shreks_brain.fast_first_champion_v2.artifact import (
     _load_json,
     _validate_champion_member,
+    _validate_report_pair,
     read_fast_first_champion_v2_evidence,
     write_fast_first_champion_v2_evidence,
 )
@@ -203,3 +210,71 @@ def test_v2_json_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="duplicate key"):
         _load_json(source)
+
+
+def test_v2_reader_validation_rejects_non_test_report_partition() -> None:
+    build = synthetic_v2_build_result()
+    natural = build.natural_test_reports[0]
+    validation_policy = replace(
+        natural.evaluation_policy,
+        partition=FastForecastEvaluationPartition.VALIDATION,
+    )
+    provisional = replace(
+        natural,
+        evaluation_policy=validation_policy,
+        evaluation_report_fingerprint_sha256="0" * 64,
+    )
+    bad = replace(
+        provisional,
+        evaluation_report_fingerprint_sha256=(
+            fast_forecast_evaluation_report_fingerprint_sha256(provisional)
+        ),
+    )
+    evidence = replace(
+        build.member_evidence[0],
+        natural_test_report_fingerprint_sha256=(
+            bad.evaluation_report_fingerprint_sha256
+        ),
+    )
+
+    with pytest.raises(ValueError, match="TEST.*partition|partition.*TEST"):
+        _validate_report_pair(
+            evidence,
+            bad,
+            build.unseen_mint_test_reports[0],
+            training_bundle_fingerprint_sha256=(
+                build.training_bundle_fingerprint_sha256
+            ),
+        )
+
+
+def test_v2_reader_validation_rejects_champion_model_family_mismatch() -> None:
+    build = synthetic_v2_build_result()
+    evidence = build.member_evidence[0]
+    natural = build.natural_test_reports[0]
+    member = SimpleNamespace(
+        forecast_artifact=SimpleNamespace(
+            artifact_fingerprint_sha256=(
+                evidence.runtime_artifact_fingerprint_sha256
+            ),
+            model_family=FastForecastModelFamily.RIDGE_REGRESSION,
+        ),
+        validation_run_fingerprint_sha256=(
+            evidence.generalization_run_fingerprint_sha256
+        ),
+        test_evaluation_report_fingerprint_sha256=(
+            evidence.natural_test_report_fingerprint_sha256
+        ),
+        test_scored_observation_count=(
+            evidence.natural_test_scored_observation_count
+        ),
+        test_target_unavailable_count=(
+            evidence.natural_test_target_unavailable_count
+        ),
+    )
+    champion = SimpleNamespace(
+        member_for=lambda _target, _horizon: member,
+    )
+
+    with pytest.raises(ValueError, match="model family|model_family"):
+        _validate_champion_member(champion, evidence, natural)
