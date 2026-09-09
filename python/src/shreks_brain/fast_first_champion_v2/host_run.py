@@ -47,6 +47,8 @@ _CONTEXT_POLICY_VERSION = (
     "fl9-v2-first-champion-context-hydration-v1"
 )
 _CONTEXT_FOLD_NAME = "fl9-v2-first-champion-v1"
+_CURRENT_RELEASE_LINK = Path("/opt/shreks/current")
+_RELEASE_MANIFEST_FILE = "RELEASE_MANIFEST.json"
 
 
 def run_fast_first_champion_v2_host_request(
@@ -100,7 +102,13 @@ def run_fast_first_champion_v2_host_request(
             "V2 first-champion evidence destination already exists"
         )
 
-    # Release identity is checked before any cohort/target source is opened.
+    # Release identity is checked before any proof/cohort/target source is
+    # opened. The request SHA must identify the active immutable release and
+    # the Python module executing this command must resolve inside it.
+    _verify_deployed_release_identity(
+        request.expected_release_source_sha
+    )
+
     proof = read_fast_proof_workspace(proof_path)
     if proof.manifest.release_source_sha != request.expected_release_source_sha:
         raise ValueError(
@@ -329,6 +337,75 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     return 0
+
+
+def _verify_deployed_release_identity(
+    expected_source_sha: str,
+) -> Path:
+    current = _CURRENT_RELEASE_LINK
+    if not current.is_symlink():
+        raise ValueError(
+            "V2 first-champion current release link is missing or not a symlink"
+        )
+    try:
+        release = current.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(
+            "V2 first-champion current release link cannot be resolved"
+        ) from exc
+    if not release.is_dir() or release.name != expected_source_sha:
+        raise ValueError(
+            "V2 first-champion deployed release identity mismatch"
+        )
+
+    manifest_path = release / _RELEASE_MANIFEST_FILE
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError(
+            "V2 first-champion deployed release manifest is missing or invalid"
+        )
+    try:
+        manifest = json.loads(
+            manifest_path.read_text(encoding="utf-8"),
+            parse_constant=_reject_release_json_constant,
+            object_pairs_hook=_reject_release_duplicate_keys,
+        )
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(
+            "V2 first-champion deployed release manifest is invalid"
+        ) from exc
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("source_sha") != expected_source_sha
+    ):
+        raise ValueError(
+            "V2 first-champion deployed release manifest source mismatch"
+        )
+
+    module_path = Path(__file__).resolve()
+    try:
+        module_path.relative_to(release)
+    except ValueError as exc:
+        raise ValueError(
+            "V2 first-champion executing package is outside deployed release"
+        ) from exc
+    return release
+
+
+def _reject_release_duplicate_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate release manifest key: {key}")
+        value[key] = item
+    return value
+
+
+def _reject_release_json_constant(value: str) -> None:
+    raise ValueError(
+        f"non-finite release manifest constant forbidden: {value}"
+    )
 
 
 def _frozen_context_validation_policy(
