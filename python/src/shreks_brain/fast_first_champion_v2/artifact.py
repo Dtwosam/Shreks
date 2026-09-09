@@ -13,6 +13,7 @@ from shreks_brain.fast_champion import (
     write_fast_forecast_champion,
 )
 from shreks_brain.fast_evaluation import (
+    FastForecastEvaluationPartition,
     read_fast_forecast_evaluation_report,
     write_fast_forecast_evaluation_report,
 )
@@ -599,6 +600,13 @@ def _validate_report_pair(
             evidence.unseen_mint_test_target_unavailable_count,
         ),
     ):
+        if (
+            report.evaluation_policy.partition
+            is not FastForecastEvaluationPartition.TEST
+        ):
+            raise ValueError(
+                f"V2 {label} TEST report partition must be TEST"
+            )
         actual = (
             report.target,
             report.model_family,
@@ -649,6 +657,10 @@ def _validate_champion_member(
         raise ValueError(
             "V2 evidence champion is missing a required member"
         ) from exc
+    if member.forecast_artifact.model_family is not evidence.model_family:
+        raise ValueError(
+            "V2 champion member model family does not match member evidence"
+        )
     if (
         member.forecast_artifact.artifact_fingerprint_sha256
         != evidence.runtime_artifact_fingerprint_sha256
