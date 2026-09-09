@@ -199,7 +199,7 @@ After this docs-only seal lands on `main`:
 4. deploy the exact sealed release to `production-paper`;
 5. verify physical release/process identity;
 6. run exactly:
-   `shreks-fl9-v2-cohort-acceptance --database /var/lib/shreks/shreks.db --destination <new-immutable-path>`;
+   `sudo /opt/shreks/current/.venv/bin/shreks-fl9-v2-cohort-acceptance --database /var/lib/shreks/shreks.db --destination <new-immutable-path>`;
 7. read the artifact back with the deployed package;
 8. verify exact row counts, subset fingerprints, file hashes, structural-floor PASS, and final artifact fingerprint;
 9. record that physical artifact fingerprint in a separate evidence seal.
