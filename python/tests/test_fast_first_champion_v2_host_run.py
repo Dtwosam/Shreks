@@ -181,3 +181,296 @@ def test_v2_host_request_writer_refuses_overwrite(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError, match="exists|overwrite"):
         write_fast_first_champion_v2_host_request(request, destination)
     assert destination.read_bytes() == first
+
+
+def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+    from shreks_brain.fast_first_champion_v2.host_run import (
+        run_fast_first_champion_v2_host_request,
+    )
+    from shreks_brain.fast_first_champion_v2.models import (
+        FastFirstChampionV2Policy,
+    )
+
+    policy = FastFirstChampionV2Policy()
+    proof = tmp_path / "proof"
+    proof.mkdir()
+    (proof / "features.jsonl").write_text("{}\n", encoding="utf-8")
+    database = tmp_path / "observer.db"
+    database.write_bytes(b"sqlite")
+    cohort_path = tmp_path / "cohort"
+    cohort_path.mkdir()
+    hydration_path = tmp_path / "hydration.json"
+    hydration_path.write_text("{}\n", encoding="utf-8")
+    overlay_path = tmp_path / "overlay"
+    overlay_path.mkdir()
+    (overlay_path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (overlay_path / "rows.jsonl").write_text("{}\n", encoding="utf-8")
+    destination = tmp_path / "evidence"
+
+    request = _request(
+        proof_workspace_path=str(proof),
+        observer_database_path=str(database),
+        cohort_artifact_path=str(cohort_path),
+        hydration_policy_path=str(hydration_path),
+        training_economics_overlay_path=str(overlay_path),
+        destination_path=str(destination),
+    )
+    request_path = tmp_path / "request.json"
+    write_fast_first_champion_v2_host_request(request, request_path)
+
+    events: list[str] = []
+    feature_sha = "6" * 64
+    feature_logical = "7" * 64
+    bundle_fp = "8" * 64
+    champion_fp = "9" * 64
+    evidence_fp = "a" * 64
+
+    proof_artifact = SimpleNamespace(
+        manifest=SimpleNamespace(
+            release_source_sha=RELEASE_SHA,
+            feature_jsonl_sha256=feature_sha,
+            feature_logical_fingerprint_sha256=feature_logical,
+        )
+    )
+    cohort = SimpleNamespace(
+        manifest=SimpleNamespace(
+            artifact_fingerprint_sha256=COHORT_FP,
+            accepted_identity_fingerprint_sha256=(
+                policy.expected_accepted_identity_fingerprint_sha256
+            ),
+            selection_at_unix_ms=policy.selection_at_unix_ms,
+            horizon_ms=policy.horizon_ms,
+            training_cut_unix_ms=policy.training_ended_at_unix_ms,
+            validation_cut_unix_ms=policy.validation_ended_at_unix_ms,
+            test_end_unix_ms=policy.test_ended_at_unix_ms,
+        )
+    )
+    bundle = SimpleNamespace(
+        features=SimpleNamespace(
+            source_sha256=feature_sha,
+            logical_fingerprint_sha256=feature_logical,
+        ),
+        manifest=SimpleNamespace(
+            bundle_fingerprint_sha256=bundle_fp,
+        ),
+    )
+    hydration_result = SimpleNamespace(
+        context_corpus=SimpleNamespace(contexts=("ctx",)),
+    )
+    build = SimpleNamespace(
+        training_bundle_fingerprint_sha256=bundle_fp,
+        champion=SimpleNamespace(
+            champion_fingerprint_sha256=champion_fp,
+        ),
+    )
+    evidence = SimpleNamespace(
+        path=destination,
+        manifest=SimpleNamespace(
+            cohort_artifact_fingerprint_sha256=COHORT_FP,
+            training_bundle_fingerprint_sha256=bundle_fp,
+            champion_fingerprint_sha256=champion_fp,
+            artifact_fingerprint_sha256=evidence_fp,
+        ),
+        champion=build.champion,
+    )
+
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_proof_workspace",
+        lambda _path: events.append("release") or proof_artifact,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fl9_v2_cohort_acceptance",
+        lambda _path: events.append("cohort") or cohort,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "_validate_cohort",
+        lambda _cohort, _policy: events.append("cohort-verify"),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_training_economics_overlay",
+        lambda _path: SimpleNamespace(
+            manifest=SimpleNamespace(
+                manifest_fingerprint_sha256=OVERLAY_FP,
+            )
+        ),
+    )
+    hydration_policy = object()
+    monkeypatch.setattr(
+        host_module,
+        "decode_fast_forecast_context_hydration_policy",
+        lambda _payload: hydration_policy,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "fast_forecast_context_hydration_policy_fingerprint_sha256",
+        lambda _policy: HYDRATION_FP,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2_bundle",
+        lambda **_kwargs: events.append("bundle") or (cohort, bundle),
+    )
+
+    captured = {}
+
+    def fake_hydrate(**kwargs):
+        events.append("hydrate")
+        captured["validation_policy"] = kwargs["validation_policy"]
+        captured["horizon_ms"] = kwargs["horizon_ms"]
+        return hydration_result
+
+    monkeypatch.setattr(
+        host_module,
+        "hydrate_fast_forecast_evaluation_contexts",
+        fake_hydrate,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "build_fast_first_champion_v2",
+        lambda **kwargs: events.append("build") or build,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "write_fast_first_champion_v2_evidence",
+        lambda _build, _destination, policy=None: (
+            events.append("write") or evidence
+        ),
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_first_champion_v2_evidence",
+        lambda _path: events.append("read") or evidence,
+    )
+
+    result = run_fast_first_champion_v2_host_request(request_path)
+
+    assert result == evidence
+    assert events == [
+        "release",
+        "cohort",
+        "cohort-verify",
+        "bundle",
+        "hydrate",
+        "build",
+        "write",
+        "read",
+        "cohort",
+    ]
+    assert captured["horizon_ms"] == policy.horizon_ms
+    fold = captured["validation_policy"].folds[0]
+    assert (
+        fold.training_started_at_unix_ms,
+        fold.training_ended_at_unix_ms,
+        fold.validation_started_at_unix_ms,
+        fold.validation_ended_at_unix_ms,
+        fold.test_started_at_unix_ms,
+        fold.test_ended_at_unix_ms,
+    ) == (
+        policy.training_started_at_unix_ms,
+        policy.training_ended_at_unix_ms,
+        policy.validation_started_at_unix_ms,
+        policy.validation_ended_at_unix_ms,
+        policy.test_started_at_unix_ms,
+        policy.test_ended_at_unix_ms,
+    )
+
+
+def test_v2_host_run_rejects_release_mismatch_before_cohort(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    from types import SimpleNamespace
+
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+    from shreks_brain.fast_first_champion_v2.host_run import (
+        run_fast_first_champion_v2_host_request,
+    )
+
+    proof = tmp_path / "proof"
+    proof.mkdir()
+    database = tmp_path / "observer.db"
+    database.write_bytes(b"sqlite")
+    cohort_path = tmp_path / "cohort"
+    cohort_path.mkdir()
+    hydration_path = tmp_path / "hydration.json"
+    hydration_path.write_text("{}\n", encoding="utf-8")
+    overlay_path = tmp_path / "overlay"
+    overlay_path.mkdir()
+    (overlay_path / "manifest.json").write_text("{}\n", encoding="utf-8")
+    (overlay_path / "rows.jsonl").write_text("{}\n", encoding="utf-8")
+    request = _request(
+        proof_workspace_path=str(proof),
+        observer_database_path=str(database),
+        cohort_artifact_path=str(cohort_path),
+        hydration_policy_path=str(hydration_path),
+        training_economics_overlay_path=str(overlay_path),
+        destination_path=str(tmp_path / "evidence"),
+    )
+    request_path = tmp_path / "request.json"
+    write_fast_first_champion_v2_host_request(request, request_path)
+
+    cohort_read = False
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_proof_workspace",
+        lambda _path: SimpleNamespace(
+            manifest=SimpleNamespace(release_source_sha="f" * 40)
+        ),
+    )
+
+    def forbidden_cohort(_path):
+        nonlocal cohort_read
+        cohort_read = True
+        raise AssertionError("cohort must not be read after release mismatch")
+
+    monkeypatch.setattr(
+        host_module,
+        "read_fl9_v2_cohort_acceptance",
+        forbidden_cohort,
+    )
+
+    with pytest.raises(ValueError, match="release.*mismatch"):
+        run_fast_first_champion_v2_host_request(request_path)
+    assert cohort_read is False
+    assert not (tmp_path / "evidence").exists()
+
+
+def test_v2_host_run_cli_and_authority_surface() -> None:
+    source = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "shreks_brain"
+        / "fast_first_champion_v2"
+        / "host_run.py"
+    ).read_text(encoding="utf-8")
+    for forbidden in (
+        "time.",
+        "_host_wall_clock",
+        "TradeIntent",
+        "RuntimeMode.LIVE",
+        "sign_transaction",
+        "submit_transaction",
+        "promotion",
+        "registry",
+        "paper_executor",
+    ):
+        assert forbidden not in source
+
+    pyproject = (
+        Path(__file__).resolve().parents[1] / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert (
+        'shreks-fl9-v2-first-champion = '
+        '"shreks_brain.fast_first_champion_v2.host_run:main"'
+        in pyproject
+    )
