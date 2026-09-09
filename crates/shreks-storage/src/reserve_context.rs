@@ -60,8 +60,38 @@ impl ShreksDb {
         quote_mint: &str,
         venue: VenueId,
     ) -> Result<Vec<StoredFastEvent>, StorageError> {
-        let mut stored = self.fast_events_for_market(mint, quote_mint, venue)?;
+        let stored = self.fast_events_for_market(mint, quote_mint, venue)?;
+        self.attach_fast_event_reserve_context(stored)
+    }
 
+    /// Replay one canonical market inside one inclusive observation-time
+    /// window with reserve state reconstructed from immutable raw evidence.
+    ///
+    /// This preserves the bounded conflict-quarantine contract from
+    /// `fast_events_for_market_observed_window` while keeping reserve
+    /// reconstruction identical to full-history replay.
+    pub fn fast_events_for_market_observed_window_with_reserve_context(
+        &self,
+        mint: &str,
+        quote_mint: &str,
+        venue: VenueId,
+        from_observed_at_unix_ms: i64,
+        through_observed_at_unix_ms: i64,
+    ) -> Result<Vec<StoredFastEvent>, StorageError> {
+        let stored = self.fast_events_for_market_observed_window(
+            mint,
+            quote_mint,
+            venue,
+            from_observed_at_unix_ms,
+            through_observed_at_unix_ms,
+        )?;
+        self.attach_fast_event_reserve_context(stored)
+    }
+
+    fn attach_fast_event_reserve_context(
+        &self,
+        mut stored: Vec<StoredFastEvent>,
+    ) -> Result<Vec<StoredFastEvent>, StorageError> {
         for row in &mut stored {
             let context = match row.event.market.venue {
                 VenueId::PumpFunBondingCurve => self.pump_reserve_context_for_stored(row)?,
