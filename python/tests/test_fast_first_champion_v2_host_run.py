@@ -272,16 +272,19 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
             champion_fingerprint_sha256=champion_fp,
         ),
     )
-    evidence = SimpleNamespace(
-        path=destination,
-        manifest=SimpleNamespace(
-            cohort_artifact_fingerprint_sha256=COHORT_FP,
-            training_bundle_fingerprint_sha256=bundle_fp,
-            champion_fingerprint_sha256=champion_fp,
-            artifact_fingerprint_sha256=evidence_fp,
-        ),
-        champion=build.champion,
+    evidence_manifest = SimpleNamespace(
+        cohort_artifact_fingerprint_sha256=COHORT_FP,
+        training_bundle_fingerprint_sha256=bundle_fp,
+        champion_fingerprint_sha256=champion_fp,
+        artifact_fingerprint_sha256=evidence_fp,
     )
+
+    def evidence_for(path):
+        return SimpleNamespace(
+            path=Path(path),
+            manifest=evidence_manifest,
+            champion=build.champion,
+        )
 
     monkeypatch.setattr(
         host_module,
@@ -342,22 +345,26 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "build_fast_first_champion_v2",
         lambda **kwargs: events.append("build") or build,
     )
+    def fake_write(_build, output, policy=None):
+        events.append("write")
+        Path(output).mkdir()
+        return evidence_for(output)
+
     monkeypatch.setattr(
         host_module,
         "write_fast_first_champion_v2_evidence",
-        lambda _build, _destination, policy=None: (
-            events.append("write") or evidence
-        ),
+        fake_write,
     )
     monkeypatch.setattr(
         host_module,
         "read_fast_first_champion_v2_evidence",
-        lambda _path: events.append("read") or evidence,
+        lambda path: events.append("read") or evidence_for(path),
     )
 
     result = run_fast_first_champion_v2_host_request(request_path)
 
-    assert result == evidence
+    assert result.path == destination
+    assert result.manifest == evidence_manifest
     assert events == [
         "release",
         "cohort",
@@ -369,6 +376,7 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
         "read",
         "release",
         "cohort",
+        "read",
     ]
     assert captured["horizon_ms"] == policy.horizon_ms
     fold = captured["validation_policy"].folds[0]
