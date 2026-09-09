@@ -421,7 +421,9 @@ def _placeholder_member() -> FastFirstChampionV2MemberEvidence:
             policy.minimum_unseen_mint_test_scored_observations
         ),
         unseen_mint_test_target_unavailable_count=0,
-        unseen_mint_test_identity_fingerprint_sha256="0" * 64,
+        unseen_mint_test_identity_fingerprint_sha256=(
+            policy.expected_test_unseen_mint_identity_fingerprint_sha256
+        ),
     )
 
 
