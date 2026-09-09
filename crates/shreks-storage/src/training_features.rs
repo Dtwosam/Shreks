@@ -654,7 +654,10 @@ fn training_feature_replay_windows(
         .iter()
         .map(|decision| {
             (
-                decision.observed_at_unix_ms.saturating_sub(max_window_ms),
+                decision
+                    .observed_at_unix_ms
+                    .saturating_sub(max_window_ms)
+                    .max(0),
                 decision.observed_at_unix_ms,
             )
         })
