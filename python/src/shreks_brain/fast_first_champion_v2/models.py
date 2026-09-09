@@ -30,6 +30,9 @@ _COHORT_ARTIFACT_FINGERPRINT = (
 _ACCEPTED_IDENTITY_FINGERPRINT = (
     "75cf6dbac938286f508d978a14149cd083ff7a8470c8fce20fca9abbc1faf56b"
 )
+_TEST_UNSEEN_MINT_IDENTITY_FINGERPRINT = (
+    "f896c03590a66f4385a01a347039c9dd8a3ab60a4a181e631fa2e838e12ef285"
+)
 _FEATURE_FIREWALL_VERSION = "fl8.3-feature-identity-firewall-v1"
 _FEATURE_FIREWALL_FINGERPRINT = (
     "e9f1eb72cf3720dbdda523718f3faf61c70a77b1814841b41af651d2cdebcbc0"
@@ -82,6 +85,9 @@ class FastFirstChampionV2Policy:
     expected_accepted_identity_fingerprint_sha256: str = (
         _ACCEPTED_IDENTITY_FINGERPRINT
     )
+    expected_test_unseen_mint_identity_fingerprint_sha256: str = (
+        _TEST_UNSEEN_MINT_IDENTITY_FINGERPRINT
+    )
     generalization_policy_version: str = (
         FAST_CHRONOLOGICAL_GENERALIZATION_POLICY_VERSION
     )
@@ -121,6 +127,7 @@ class FastFirstChampionV2Policy:
             _COHORT_POLICY_VERSION,
             _COHORT_ARTIFACT_FINGERPRINT,
             _ACCEPTED_IDENTITY_FINGERPRINT,
+            _TEST_UNSEEN_MINT_IDENTITY_FINGERPRINT,
             FAST_CHRONOLOGICAL_GENERALIZATION_POLICY_VERSION,
             _FEATURE_FIREWALL_VERSION,
             _FEATURE_FIREWALL_FINGERPRINT,
@@ -145,6 +152,7 @@ class FastFirstChampionV2Policy:
             self.cohort_policy_version,
             self.expected_cohort_artifact_fingerprint_sha256,
             self.expected_accepted_identity_fingerprint_sha256,
+            self.expected_test_unseen_mint_identity_fingerprint_sha256,
             self.generalization_policy_version,
             self.feature_identity_firewall_version,
             self.feature_identity_firewall_fingerprint_sha256,
@@ -213,6 +221,14 @@ class FastFirstChampionV2MemberEvidence:
             )
         if self.horizon_ms != _HORIZON_MS:
             raise ValueError("member evidence horizon must be frozen at 30000 ms")
+        if (
+            self.unseen_mint_test_identity_fingerprint_sha256
+            != _TEST_UNSEEN_MINT_IDENTITY_FINGERPRINT
+        ):
+            raise ValueError(
+                "unseen-mint TEST identity fingerprint does not match "
+                "the frozen physical cohort"
+            )
         for name in (
             "runtime_artifact_fingerprint_sha256",
             "generalization_run_fingerprint_sha256",
