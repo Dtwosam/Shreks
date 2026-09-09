@@ -83,7 +83,9 @@ Rows are collapsed only when every lifecycle semantic field above except signatu
 
 The retained representative is deterministic because signature is the final lexical tie-break.
 
-Any same-time disagreement in kind, provider, mint, quote mint, venues, pool, slot, detection time, or occurrence time remains distinct and therefore still reaches the existing `FastMarketState` fail-closed conflict.
+For lifecycle rows that both map to the same decision market, any same-time disagreement in lifecycle kind, provider, pool, slot, or occurrence time remains distinct and therefore still reaches the existing `FastMarketState` fail-closed conflict.
+
+Rows that do not both map to the same replay market are filtered by the existing `lifecycle_matches_market` gate before state application. This seal therefore makes no broader fail-closed claim for same-time disagreements whose mint, quote mint, or venue mapping causes one row not to belong to the decision market.
 
 This correction does not modify:
 
@@ -116,7 +118,7 @@ Rust failed only the new production-shaped semantic-duplicate regression:
 
 `exporter_canonicalizes_same_time_semantic_lifecycle_duplicates_by_signature`
 
-with the expected same-time lifecycle conflict. The guard proving substantive same-time lifecycle disagreement still fails closed passed.
+with the expected same-time lifecycle conflict. The guard proving substantive same-time lifecycle disagreement for rows mapping to the same replay market still fails closed passed.
 
 GREEN implementation head:
 
