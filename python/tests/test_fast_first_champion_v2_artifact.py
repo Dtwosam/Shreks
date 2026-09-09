@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ import pytest
 from fast_first_champion_v2_fixtures import synthetic_v2_build_result
 from shreks_brain.fast_champion import read_fast_forecast_champion
 from shreks_brain.fast_first_champion_v2.artifact import (
+    _load_json,
+    _validate_champion_member,
     read_fast_first_champion_v2_evidence,
     write_fast_first_champion_v2_evidence,
 )
@@ -154,3 +157,49 @@ def test_existing_runtime_champion_reader_accepts_v2_champion(
     assert champion.champion_fingerprint_sha256 == (
         build.champion.champion_fingerprint_sha256
     )
+
+
+def test_v2_manifest_pins_frozen_authority(tmp_path: Path) -> None:
+    artifact = write_fast_first_champion_v2_evidence(
+        synthetic_v2_build_result(),
+        tmp_path / "authority",
+    )
+
+    with pytest.raises(ValueError, match="frozen physical cohort"):
+        replace(
+            artifact.manifest,
+            cohort_artifact_fingerprint_sha256="f" * 64,
+        )
+    with pytest.raises(ValueError, match="accepted identity fingerprint"):
+        replace(
+            artifact.manifest,
+            accepted_identity_fingerprint_sha256="e" * 64,
+        )
+    with pytest.raises(ValueError, match="feature firewall fingerprint"):
+        replace(
+            artifact.manifest,
+            feature_identity_firewall_fingerprint_sha256="d" * 64,
+        )
+
+
+def test_v2_champion_member_must_reconcile_to_v2_member_evidence() -> None:
+    build = synthetic_v2_build_result()
+    bad = replace(
+        build.member_evidence[0],
+        runtime_artifact_fingerprint_sha256="f" * 64,
+    )
+
+    with pytest.raises(ValueError, match="champion member.*reconcile"):
+        _validate_champion_member(
+            build.champion,
+            bad,
+            build.natural_test_reports[0],
+        )
+
+
+def test_v2_json_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
+    source = tmp_path / "duplicate.json"
+    source.write_text('{"x":1,"x":1}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate key"):
+        _load_json(source)
