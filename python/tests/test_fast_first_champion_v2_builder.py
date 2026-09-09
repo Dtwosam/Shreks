@@ -104,6 +104,18 @@ def _report_shell(
     return value
 
 
+def _cohort_shell():
+    value = object.__new__(Fl9V2CohortAcceptanceArtifact)
+    object.__setattr__(
+        value,
+        "manifest",
+        SimpleNamespace(
+            test_unseen_mint_identity_fingerprint_sha256="a" * 64,
+        ),
+    )
+    return value
+
+
 def _artifact_shell(request, policy, index: int):
     value = object.__new__(FastForecastBaselineArtifact)
     object.__setattr__(value, "target", request.target)
@@ -178,7 +190,7 @@ def test_third_member_floor_failure_prevents_every_runtime_refit(
 ) -> None:
     policy = FastFirstChampionV2Policy()
     bundle = training_bundle()
-    cohort = object.__new__(Fl9V2CohortAcceptanceArtifact)
+    cohort = _cohort_shell()
     _patch_authority_checks(monkeypatch)
 
     run_index = 0
@@ -268,7 +280,7 @@ def test_v2_builder_refits_only_after_all_ten_test_gates_pass(
 ) -> None:
     policy = FastFirstChampionV2Policy()
     bundle = training_bundle()
-    cohort = object.__new__(Fl9V2CohortAcceptanceArtifact)
+    cohort = _cohort_shell()
     _patch_authority_checks(monkeypatch)
 
     events: list[str] = []
