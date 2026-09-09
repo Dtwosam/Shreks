@@ -110,6 +110,14 @@ def _cohort_shell():
         value,
         "manifest",
         SimpleNamespace(
+            artifact_fingerprint_sha256=(
+                "bd6875c4d65ee9b2eb67783e7ecfa233"
+                "2305bf6c3251f5d474e66465fd17d93a"
+            ),
+            accepted_identity_fingerprint_sha256=(
+                "75cf6dbac938286f508d978a14149cd0"
+                "83ff7a8470c8fce20fca9abbc1faf56b"
+            ),
             test_unseen_mint_identity_fingerprint_sha256="a" * 64,
         ),
     )
@@ -272,6 +280,7 @@ def test_third_member_floor_failure_prevents_every_runtime_refit(
         "eval:endpoint_return_bps:natural",
         "eval:endpoint_return_bps:unseen",
         "eval:mae_bps:natural",
+        "eval:mae_bps:unseen",
     ]
 
 
