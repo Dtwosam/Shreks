@@ -422,6 +422,14 @@ class FastFirstChampionV2BuildResult:
                     "V2 TEST reports do not bind the exact generalization run"
                 )
             if (
+                evidence.unseen_mint_test_identity_fingerprint_sha256
+                != _TEST_UNSEEN_MINT_IDENTITY_FINGERPRINT
+            ):
+                raise ValueError(
+                    "V2 unseen-mint TEST identity does not match "
+                    "the frozen physical cohort"
+                )
+            if (
                 evidence.runtime_artifact_fingerprint_sha256
                 != artifact.artifact_fingerprint_sha256
                 or evidence.generalization_run_fingerprint_sha256
