@@ -171,6 +171,20 @@ def test_artifact_round_trips_exact_three_files(tmp_path) -> None:
     assert reread.accepted_decisions == artifact.accepted_decisions
     assert reread.quarantined_decisions == ()
     assert artifact.manifest.structural_floor_passed is True
+    summaries = dict(artifact.manifest.concentration_summaries)
+    assert summaries["full_eligible"].row_count == 3
+    assert (
+        artifact.manifest.validation_seen_mint_identity_fingerprint_sha256
+        == _semantic().validation_seen_mint_identity_fingerprint_sha256
+    )
+    assert (
+        artifact.manifest.test_seen_mint_identity_fingerprint_sha256
+        == _semantic().test_seen_mint_identity_fingerprint_sha256
+    )
+    assert (
+        artifact.manifest.signature_quarantine_identity_fingerprint_sha256
+        == _semantic().signature_quarantine_identity_fingerprint_sha256
+    )
 
 
 def test_artifact_bytes_are_deterministic_and_wall_clock_free(tmp_path, monkeypatch) -> None:
@@ -237,3 +251,17 @@ def test_canonical_json_rejects_raw_json_float_and_duplicate_key() -> None:
         _load_canonical_json('{"x":0.5}\n', label="test")
     with pytest.raises(ValueError, match="duplicate|malformed"):
         _load_canonical_json('{"x":1,"x":1}\n', label="test")
+
+
+def test_reader_rejects_manifest_artifact_fingerprint_tamper(tmp_path) -> None:
+    artifact = _write(tmp_path, "manifest-tamper")
+    manifest = artifact.path / "manifest.json"
+    payload = manifest.read_text(encoding="utf-8")
+    payload = payload.replace(
+        artifact.manifest.artifact_fingerprint_sha256,
+        "f" * 64,
+    )
+    manifest.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifact fingerprint|fingerprint"):
+        read_fl9_v2_cohort_acceptance(artifact.path)
