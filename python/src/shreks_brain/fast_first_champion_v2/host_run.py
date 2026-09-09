@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 
 from shreks_brain.fast_context_hydration import (
@@ -50,6 +51,12 @@ _CONTEXT_POLICY_VERSION = (
 _CONTEXT_FOLD_NAME = "fl9-v2-first-champion-v1"
 _CURRENT_RELEASE_LINK = Path("/opt/shreks/current")
 _RELEASE_MANIFEST_FILE = "RELEASE_MANIFEST.json"
+_DATABASE_QUIESCENCE_UNITS = (
+    "shreks.target",
+    "shreks-observe.service",
+    "shreks-paper-evidence.service",
+    "shreks-paper-campaign.service",
+)
 
 
 def run_fast_first_champion_v2_host_request(
@@ -157,23 +164,15 @@ def run_fast_first_champion_v2_host_request(
             "V2 first-champion hydration policy fingerprint mismatch"
         )
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    snapshot_root = Path(
-        tempfile.mkdtemp(
-            prefix=f".{destination.name}.observer-snapshot-",
-            dir=destination.parent,
-        )
-    )
-    snapshot_database = snapshot_root / "observer.db"
+    _require_database_quiesced()
+    sentinel = _open_database_change_sentinel(database_path)
     try:
-        _snapshot_observer_database(
-            database_path,
-            snapshot_database,
-        )
+        data_version_before = _database_data_version(sentinel)
+
         built_cohort, bundle = build_fast_first_champion_v2_bundle(
             cohort_path=cohort_path,
             feature_jsonl_path=proof_path / "features.jsonl",
-            sqlite_path=snapshot_database,
+            sqlite_path=database_path,
             future_path_label_version=request.future_path_label_version,
             training_economics_overlay_path=overlay_path,
             training_execution_cost_policy=(
@@ -203,14 +202,22 @@ def run_fast_first_champion_v2_host_request(
 
         hydration = hydrate_fast_forecast_evaluation_contexts(
             bundle=bundle,
-            observer_database_path=snapshot_database,
+            observer_database_path=database_path,
             validation_policy=validation_policy,
             horizon_ms=policy.horizon_ms,
             hydration_policy=hydration_policy,
         )
         contexts = hydration.context_corpus.contexts
+
+        _require_database_quiesced()
+        data_version_after = _database_data_version(sentinel)
+        if data_version_after != data_version_before:
+            raise ValueError(
+                "V2 observer database changed during bundle/context "
+                "evidence reads"
+            )
     finally:
-        shutil.rmtree(snapshot_root, ignore_errors=True)
+        sentinel.close()
 
     build = build_fast_first_champion_v2(
         cohort=cohort,
@@ -355,47 +362,95 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def _snapshot_observer_database(
-    source: Path,
-    destination: Path,
-) -> None:
-    if destination.exists() or destination.is_symlink():
-        raise FileExistsError(
-            "V2 observer snapshot destination already exists"
-        )
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    source_uri = source.resolve().as_uri() + "?mode=ro"
+def _systemd_unit_state(unit_name: str) -> str:
     try:
-        with sqlite3.connect(
-            source_uri,
+        result = subprocess.run(
+            ["systemctl", "is-active", unit_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(
+            "unable to verify V2 database quiescence through systemd"
+        ) from exc
+    state = result.stdout.strip()
+    if not state:
+        raise ValueError(
+            f"unable to determine systemd state for {unit_name}"
+        )
+    return state
+
+
+def _require_database_quiesced() -> None:
+    states = {
+        unit_name: _systemd_unit_state(unit_name)
+        for unit_name in _DATABASE_QUIESCENCE_UNITS
+    }
+    not_inactive = {
+        unit_name: state
+        for unit_name, state in states.items()
+        if state != "inactive"
+    }
+    if not_inactive:
+        summary = ", ".join(
+            f"{unit_name}={state}"
+            for unit_name, state in sorted(not_inactive.items())
+        )
+        raise ValueError(
+            "V2 observer database must be quiesced before evidence reads; "
+            f"expected all runtime units inactive: {summary}"
+        )
+
+
+def _open_database_change_sentinel(
+    database_path: Path,
+) -> sqlite3.Connection:
+    if database_path.is_symlink() or not database_path.is_file():
+        raise ValueError(
+            "V2 observer database sentinel requires a regular file"
+        )
+    database_uri = database_path.resolve().as_uri() + "?mode=ro"
+    try:
+        connection = sqlite3.connect(
+            database_uri,
             uri=True,
             timeout=30.0,
-        ) as source_connection:
-            source_connection.execute("PRAGMA query_only = ON")
-            with sqlite3.connect(
-                destination,
-                timeout=30.0,
-            ) as snapshot_connection:
-                source_connection.backup(snapshot_connection)
-                snapshot_connection.execute("PRAGMA journal_mode = DELETE")
-                result = snapshot_connection.execute(
-                    "PRAGMA quick_check"
-                ).fetchall()
-                if result != [("ok",)]:
-                    raise ValueError(
-                        "V2 observer snapshot failed SQLite quick_check"
-                    )
-    except (sqlite3.Error, OSError) as exc:
-        destination.unlink(missing_ok=True)
-        raise ValueError(
-            "unable to create immutable V2 observer SQLite snapshot"
-        ) from exc
-    if destination.is_symlink() or not destination.is_file():
-        destination.unlink(missing_ok=True)
-        raise ValueError(
-            "V2 observer snapshot was not created as a regular file"
+            isolation_level=None,
         )
-    destination.chmod(0o600)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute(
+            "SELECT name FROM sqlite_master ORDER BY name LIMIT 1"
+        ).fetchone()
+        _database_data_version(connection)
+        return connection
+    except sqlite3.Error as exc:
+        raise ValueError(
+            "unable to open V2 observer database change sentinel"
+        ) from exc
+
+
+def _database_data_version(
+    connection: sqlite3.Connection,
+) -> int:
+    try:
+        row = connection.execute("PRAGMA data_version").fetchone()
+    except sqlite3.Error as exc:
+        raise ValueError(
+            "unable to read V2 observer database data version"
+        ) from exc
+    if (
+        row is None
+        or isinstance(row[0], bool)
+        or not isinstance(row[0], int)
+        or row[0] < 0
+    ):
+        raise ValueError(
+            "V2 observer database data version is incompatible"
+        )
+    return int(row[0])
 
 
 def _verify_deployed_release_identity(
