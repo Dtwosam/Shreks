@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
+import tempfile
 
 from shreks_brain.fast_context_hydration import (
     decode_fast_forecast_context_hydration_policy,
@@ -209,47 +211,77 @@ def run_fast_first_champion_v2_host_request(
             "V2 first-champion build bundle fingerprint mismatch"
         )
 
-    artifact = write_fast_first_champion_v2_evidence(
-        build,
-        destination,
-        policy=policy,
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{destination.name}.host-staging-",
+            dir=destination.parent,
+        )
     )
-    reopened = read_fast_first_champion_v2_evidence(destination)
-    _validate_reopened(
-        request=request,
-        policy=policy,
-        cohort=cohort,
-        bundle=bundle,
-        build=build,
-        artifact=artifact,
-        reopened=reopened,
-    )
-
-    if source.read_text(encoding="utf-8") != request_payload:
-        raise ValueError(
-            "V2 first-champion request source changed during execution"
+    staged_destination = staging_root / "evidence"
+    published = False
+    try:
+        artifact = write_fast_first_champion_v2_evidence(
+            build,
+            staged_destination,
+            policy=policy,
         )
-    if hydration_path.read_text(encoding="utf-8") != hydration_payload:
-        raise ValueError(
-            "V2 first-champion hydration source changed during execution"
+        reopened = read_fast_first_champion_v2_evidence(
+            staged_destination
         )
-    proof_after = read_fast_proof_workspace(proof_path)
-    cohort_after = read_fl9_v2_cohort_acceptance(cohort_path)
-    overlay_after = read_fast_training_economics_overlay(overlay_path)
-    if proof_after.manifest != proof.manifest:
-        raise ValueError(
-            "V2 first-champion proof workspace changed during execution"
-        )
-    if cohort_after.manifest != cohort.manifest:
-        raise ValueError(
-            "V2 first-champion cohort artifact changed during execution"
-        )
-    if overlay_after.manifest != overlay.manifest:
-        raise ValueError(
-            "V2 first-champion training economics overlay changed during execution"
+        _validate_reopened(
+            request=request,
+            policy=policy,
+            cohort=cohort,
+            bundle=bundle,
+            build=build,
+            artifact=artifact,
+            reopened=reopened,
         )
 
-    return reopened
+        if source.read_text(encoding="utf-8") != request_payload:
+            raise ValueError(
+                "V2 first-champion request source changed during execution"
+            )
+        if hydration_path.read_text(encoding="utf-8") != hydration_payload:
+            raise ValueError(
+                "V2 first-champion hydration source changed during execution"
+            )
+        proof_after = read_fast_proof_workspace(proof_path)
+        cohort_after = read_fl9_v2_cohort_acceptance(cohort_path)
+        overlay_after = read_fast_training_economics_overlay(overlay_path)
+        if proof_after.manifest != proof.manifest:
+            raise ValueError(
+                "V2 first-champion proof workspace changed during execution"
+            )
+        if cohort_after.manifest != cohort.manifest:
+            raise ValueError(
+                "V2 first-champion cohort artifact changed during execution"
+            )
+        if overlay_after.manifest != overlay.manifest:
+            raise ValueError(
+                "V2 first-champion training economics overlay changed during execution"
+            )
+        if destination.exists() or destination.is_symlink():
+            raise FileExistsError(
+                "V2 first-champion evidence destination appeared during execution"
+            )
+
+        staged_destination.rename(destination)
+        published = True
+        final = read_fast_first_champion_v2_evidence(destination)
+        if final.manifest != reopened.manifest:
+            raise ValueError(
+                "published V2 first-champion evidence changed after atomic move"
+            )
+        return final
+    finally:
+        if staging_root.exists():
+            shutil.rmtree(staging_root, ignore_errors=True)
+        if not published and destination.exists():
+            # The final path is never created by this runner until every
+            # authenticated source has been revalidated.
+            shutil.rmtree(destination, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:
