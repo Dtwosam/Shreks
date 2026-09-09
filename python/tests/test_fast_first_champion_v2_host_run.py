@@ -288,6 +288,11 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
 
     monkeypatch.setattr(
         host_module,
+        "_verify_deployed_release_identity",
+        lambda _expected: events.append("deployed-release"),
+    )
+    monkeypatch.setattr(
+        host_module,
         "read_fast_proof_workspace",
         lambda _path: events.append("release") or proof_artifact,
     )
@@ -366,6 +371,7 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
     assert result.path == destination
     assert result.manifest == evidence_manifest
     assert events == [
+        "deployed-release",
         "release",
         "cohort",
         "cohort-verify",
@@ -431,14 +437,18 @@ def test_v2_host_run_rejects_release_mismatch_before_cohort(
     request_path = tmp_path / "request.json"
     write_fast_first_champion_v2_host_request(request, request_path)
 
+    proof_read = False
     cohort_read = False
-    monkeypatch.setattr(
-        host_module,
-        "read_fast_proof_workspace",
-        lambda _path: SimpleNamespace(
-            manifest=SimpleNamespace(release_source_sha="f" * 40)
-        ),
-    )
+
+    def reject_deployed_release(_expected):
+        raise ValueError("deployed release identity mismatch")
+
+    def forbidden_proof(_path):
+        nonlocal proof_read
+        proof_read = True
+        raise AssertionError(
+            "proof workspace must not be read after release mismatch"
+        )
 
     def forbidden_cohort(_path):
         nonlocal cohort_read
@@ -447,14 +457,77 @@ def test_v2_host_run_rejects_release_mismatch_before_cohort(
 
     monkeypatch.setattr(
         host_module,
+        "_verify_deployed_release_identity",
+        reject_deployed_release,
+    )
+    monkeypatch.setattr(
+        host_module,
+        "read_fast_proof_workspace",
+        forbidden_proof,
+    )
+    monkeypatch.setattr(
+        host_module,
         "read_fl9_v2_cohort_acceptance",
         forbidden_cohort,
     )
 
     with pytest.raises(ValueError, match="release.*mismatch"):
         run_fast_first_champion_v2_host_request(request_path)
+    assert proof_read is False
     assert cohort_read is False
     assert not (tmp_path / "evidence").exists()
+
+
+def test_v2_deployed_release_identity_binds_link_manifest_and_module(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import shreks_brain.fast_first_champion_v2.host_run as host_module
+
+    release = tmp_path / "releases" / RELEASE_SHA
+    module_path = (
+        release
+        / ".venv"
+        / "lib"
+        / "python3.12"
+        / "site-packages"
+        / "shreks_brain"
+        / "fast_first_champion_v2"
+        / "host_run.py"
+    )
+    module_path.parent.mkdir(parents=True)
+    module_path.write_text("# fixture\n", encoding="utf-8")
+    (release / "RELEASE_MANIFEST.json").write_text(
+        json.dumps(
+            {"source_sha": RELEASE_SHA},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    current = tmp_path / "current"
+    current.symlink_to(release, target_is_directory=True)
+
+    monkeypatch.setattr(host_module, "_CURRENT_RELEASE_LINK", current)
+    monkeypatch.setattr(host_module, "__file__", str(module_path))
+
+    assert (
+        host_module._verify_deployed_release_identity(RELEASE_SHA)
+        == release
+    )
+
+    (release / "RELEASE_MANIFEST.json").write_text(
+        json.dumps(
+            {"source_sha": "f" * 40},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="manifest source mismatch"):
+        host_module._verify_deployed_release_identity(RELEASE_SHA)
 
 
 def test_v2_host_run_cli_and_authority_surface() -> None:
