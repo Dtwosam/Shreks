@@ -1538,6 +1538,80 @@ fn conflict_quarantined_pumpswap_source_aborts_overlay() {
 
 
 #[test]
+fn unrelated_quarantined_pumpswap_source_does_not_poison_canonical_economics_row() {
+    let root = unique_test_dir("swap-unrelated-conflict");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let unrelated = store_swap_event(
+        &db,
+        "swap-unrelated-conflict",
+        52,
+        false,
+        1,
+        1_000,
+        10_500_000_000,
+        4_900_000_000,
+        90_000_000,
+        89_550_000,
+        Some(1_000_000_000),
+    );
+    let decision = store_swap_event(
+        &db,
+        "swap-bounded-decision",
+        54,
+        true,
+        2,
+        13_000,
+        10_000_000_000,
+        5_000_000_000,
+        100_000_000,
+        100_500_000,
+        Some(1_000_000_000),
+    );
+    let endpoint = store_swap_event(
+        &db,
+        "swap-bounded-endpoint",
+        56,
+        false,
+        3,
+        13_200,
+        9_500_000_000,
+        5_500_000_000,
+        120_000_000,
+        119_400_000,
+        Some(1_000_000_000),
+    );
+    record_swap_path(&db, &decision, 2, 13_000, Some(&endpoint), Some(13_200), 500);
+
+    let mut conflict = unrelated.clone();
+    conflict.quote_amount_raw += 1;
+    assert_eq!(
+        db.record_pump_swap_trade_evidence_or_quarantine(&conflict)
+            .unwrap(),
+        EvidenceWriteOutcome::QuarantinedConflict
+    );
+
+    let features = db
+        .fast_training_feature_records(FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    let rows = db
+        .fast_training_economics_overlay_rows(
+            &features,
+            FUTURE_PATH_LABEL_VERSION,
+            "2",
+            60_000,
+        )
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, FastTrainingEconomicsStatus::Available);
+    assert_eq!(rows[0].decision_signature, "swap-bounded-decision");
+    assert_eq!(rows[0].endpoint_signature.as_deref(), Some("swap-bounded-endpoint"));
+
+    drop(db);
+    cleanup_dir(&root);
+}
+
+#[test]
 fn nonrepresentable_quantity_fails_closed_before_missing_virtual_reserve_status() {
     let root = unique_test_dir("swap-invalid-quantity-before-reserve");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
