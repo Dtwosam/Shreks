@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -217,28 +218,37 @@ class FastTrainingFeatureDataset:
 
 def read_fast_training_feature_jsonl(path: str | Path) -> FastTrainingFeatureDataset:
     source = Path(path)
-    raw = source.read_bytes()
-    if not raw:
-        raise ValueError("Fast Lane training feature JSONL cannot be empty")
-    rows: list[dict[str, object]] = []
-    for line_number, line in enumerate(raw.splitlines(), start=1):
-        if not line.strip():
-            raise ValueError(f"training feature JSONL line {line_number} is blank")
-        try:
-            value = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ValueError(
-                f"training feature JSONL line {line_number} is invalid JSON"
-            ) from exc
-        if not isinstance(value, dict):
-            raise ValueError("training feature JSONL rows must be JSON objects")
-        rows.append(value)
-    records = _records_from_mappings(tuple(rows))
+    source_digest = hashlib.sha256()
+    records = _records_from_mappings(
+        _iter_feature_mappings(source, source_digest)
+    )
     return FastTrainingFeatureDataset(
         records=records,
         logical_fingerprint_sha256=feature_logical_fingerprint_sha256(records),
-        source_sha256=hashlib.sha256(raw).hexdigest(),
+        source_sha256=source_digest.hexdigest(),
     )
+
+
+def _iter_feature_mappings(
+    source: Path,
+    source_digest: Any,
+) -> Iterator[dict[str, object]]:
+    with source.open("rb") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            source_digest.update(line)
+            if not line.strip():
+                raise ValueError(
+                    f"training feature JSONL line {line_number} is blank"
+                )
+            try:
+                value = json.loads(line)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"training feature JSONL line {line_number} is invalid JSON"
+                ) from exc
+            if not isinstance(value, dict):
+                raise ValueError("training feature JSONL rows must be JSON objects")
+            yield value
 
 
 def feature_logical_fingerprint_sha256(
@@ -246,15 +256,21 @@ def feature_logical_fingerprint_sha256(
 ) -> str:
     if not records:
         raise ValueError("training feature dataset cannot be empty")
-    payload = [_canonicalize(asdict(record)) for record in records]
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, record in enumerate(records):
+        if index:
+            digest.update(b",")
+        encoded = json.dumps(
+            _canonicalize(asdict(record)),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        digest.update(encoded)
+    digest.update(b"]")
+    return digest.hexdigest()
 
 
 def write_fast_training_feature_parquet(
@@ -335,10 +351,8 @@ def read_fast_training_feature_parquet(path: str | Path) -> FastTrainingFeatureD
 
 
 def _records_from_mappings(
-    rows: tuple[dict[str, object], ...],
+    rows: Iterable[dict[str, object]],
 ) -> tuple[FastTrainingFeatureRecord, ...]:
-    if not rows:
-        raise ValueError("training feature dataset cannot be empty")
     records: list[FastTrainingFeatureRecord] = []
     seen: set[tuple[str, int]] = set()
     previous_sort: tuple[object, ...] | None = None
@@ -361,6 +375,8 @@ def _records_from_mappings(
         previous_sort = sort_key
         previous_sequence = record.decision_sequence
         records.append(record)
+    if not records:
+        raise ValueError("training feature dataset cannot be empty")
     return tuple(records)
 
 
