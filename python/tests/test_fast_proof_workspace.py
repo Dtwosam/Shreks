@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import gc
 import hashlib
 import json
 from pathlib import Path
+import weakref
 
 import pytest
 
@@ -22,6 +24,7 @@ from shreks_brain.fast_proof_workspace import (
     prepare_fast_proof_workspace,
     read_fast_proof_workspace,
 )
+from shreks_brain.research.fast_training_features import FastTrainingFeatureDataset
 
 
 SOURCE_SHA = "8fb1576d6d1270e513bbecd01b56ea715e927198"
@@ -157,6 +160,72 @@ def test_prepare_workspace_materializes_exporter_and_seals_feature_evidence(
         "features.jsonl",
         "manifest.json",
     }
+
+
+def test_prepare_workspace_releases_initial_dataset_before_strict_reopen(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"stable-observer-db")
+    toolset, _ = _toolset(tmp_path)
+    monkeypatch.setattr(
+        workspace_module,
+        "materialize_fast_proof_tools",
+        lambda *_args, **_kwargs: toolset,
+    )
+
+    original_feature_reader = workspace_module.read_fast_training_feature_jsonl
+    original_workspace_reader = workspace_module.read_fast_proof_workspace
+    feature_read_count = 0
+    initial_dataset_ref: weakref.ReferenceType[FastTrainingFeatureDataset] | None = None
+
+    class _TrackingDataset(FastTrainingFeatureDataset):
+        pass
+
+    def _tracking_feature_reader(path):
+        nonlocal feature_read_count, initial_dataset_ref
+        dataset = original_feature_reader(path)
+        feature_read_count += 1
+        if feature_read_count == 1:
+            tracked = _TrackingDataset(
+                records=dataset.records,
+                logical_fingerprint_sha256=dataset.logical_fingerprint_sha256,
+                source_sha256=dataset.source_sha256,
+            )
+            initial_dataset_ref = weakref.ref(tracked)
+            return tracked
+        return dataset
+
+    def _checking_workspace_reader(path):
+        gc.collect()
+        assert initial_dataset_ref is not None
+        assert initial_dataset_ref() is None
+        return original_workspace_reader(path)
+
+    monkeypatch.setattr(
+        workspace_module,
+        "read_fast_training_feature_jsonl",
+        _tracking_feature_reader,
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "read_fast_proof_workspace",
+        _checking_workspace_reader,
+    )
+
+    destination = tmp_path / "workspace"
+    artifact = prepare_fast_proof_workspace(
+        database_path=database,
+        destination=destination,
+        tool_root=tmp_path / "proof-tools",
+        expected_source_sha=SOURCE_SHA,
+        expected_platform=PLATFORM,
+        timeout_seconds=30,
+    )
+
+    assert artifact.manifest.row_count == 2
+    assert feature_read_count >= 2
 
 
 def test_workspace_rejects_database_mutation_and_publishes_nothing(
