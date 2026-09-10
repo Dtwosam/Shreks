@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import asdict
+import hashlib
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -8,6 +11,7 @@ import pytest
 from shreks_brain.research.fast_training_features import (
     FAST_TRAINING_FEATURE_SCHEMA_NAME,
     FAST_TRAINING_FEATURE_SCHEMA_VERSION,
+    feature_logical_fingerprint_sha256,
     read_fast_training_feature_jsonl,
 )
 
@@ -102,6 +106,33 @@ def _write(path: Path, rows: list[dict[str, object]], *, pretty: bool = False) -
             handle.write("\n")
 
 
+def _legacy_canonicalize(value: object) -> object:
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("legacy fingerprint rejects non-finite floats")
+        return {"__float_hex__": value.hex()}
+    if isinstance(value, dict):
+        return {
+            key: _legacy_canonicalize(item)
+            for key, item in sorted(value.items())
+        }
+    if isinstance(value, (list, tuple)):
+        return [_legacy_canonicalize(item) for item in value]
+    return value
+
+
+def _legacy_feature_logical_fingerprint(records: tuple[object, ...]) -> str:
+    payload = [_legacy_canonicalize(asdict(record)) for record in records]
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def test_feature_interchange_constants_and_round_trip_are_stable(tmp_path: Path) -> None:
     assert FAST_TRAINING_FEATURE_SCHEMA_NAME == "shreks.fast_lane_training_features"
     assert FAST_TRAINING_FEATURE_SCHEMA_VERSION == 1
@@ -133,6 +164,47 @@ def test_logical_fingerprint_ignores_json_object_formatting(tmp_path: Path) -> N
     second = read_fast_training_feature_jsonl(pretty)
     assert first.logical_fingerprint_sha256 == second.logical_fingerprint_sha256
     assert first.source_sha256 != second.source_sha256
+
+
+def test_feature_reader_does_not_use_whole_file_read_bytes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "features.jsonl"
+    _write(
+        path,
+        [
+            feature_row(signature="a", sequence=2, observed_at=1_100),
+            feature_row(signature="b", sequence=3, observed_at=1_200),
+        ],
+    )
+
+    def _reject_read_bytes(_path: Path) -> bytes:
+        raise AssertionError("feature reader must stream instead of read_bytes")
+
+    monkeypatch.setattr(Path, "read_bytes", _reject_read_bytes)
+
+    dataset = read_fast_training_feature_jsonl(path)
+    assert len(dataset.records) == 2
+    assert tuple(record.decision_sequence for record in dataset.records) == (2, 3)
+
+
+def test_logical_fingerprint_matches_legacy_canonical_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "features.jsonl"
+    _write(
+        path,
+        [
+            feature_row(signature="a", sequence=2, observed_at=1_100),
+            feature_row(signature="b", sequence=3, observed_at=1_200),
+            feature_row(signature="c", sequence=4, observed_at=1_300),
+        ],
+        pretty=True,
+    )
+    dataset = read_fast_training_feature_jsonl(path)
+
+    expected = _legacy_feature_logical_fingerprint(dataset.records)
+    assert feature_logical_fingerprint_sha256(dataset.records) == expected
+    assert dataset.logical_fingerprint_sha256 == expected
 
 
 def test_duplicate_decision_identity_fails_closed(tmp_path: Path) -> None:

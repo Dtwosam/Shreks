@@ -251,13 +251,26 @@ def prepare_fast_proof_workspace(
                 "Fast proof workspace database source changed during export"
             )
 
-        sequences = tuple(
+        feature_logical_fingerprint_sha256 = (
+            features.logical_fingerprint_sha256
+        )
+        row_count = len(features.records)
+        min_decision_sequence = min(
             value.decision_sequence for value in features.records
         )
-        observed = tuple(
+        max_decision_sequence = max(
+            value.decision_sequence for value in features.records
+        )
+        min_decision_observed_at_unix_ms = min(
             value.decision_observed_at_unix_ms
             for value in features.records
         )
+        max_decision_observed_at_unix_ms = max(
+            value.decision_observed_at_unix_ms
+            for value in features.records
+        )
+        del features
+
         material = {
             "schema_name": FAST_PROOF_WORKSPACE_SCHEMA_NAME,
             "schema_version": FAST_PROOF_WORKSPACE_SCHEMA_VERSION,
@@ -271,13 +284,17 @@ def prepare_fast_proof_workspace(
             "observer_database_wal_sha256": before.wal_sha256,
             "feature_jsonl_sha256": feature_sha256,
             "feature_logical_fingerprint_sha256": (
-                features.logical_fingerprint_sha256
+                feature_logical_fingerprint_sha256
             ),
-            "row_count": len(features.records),
-            "min_decision_sequence": min(sequences),
-            "max_decision_sequence": max(sequences),
-            "min_decision_observed_at_unix_ms": min(observed),
-            "max_decision_observed_at_unix_ms": max(observed),
+            "row_count": row_count,
+            "min_decision_sequence": min_decision_sequence,
+            "max_decision_sequence": max_decision_sequence,
+            "min_decision_observed_at_unix_ms": (
+                min_decision_observed_at_unix_ms
+            ),
+            "max_decision_observed_at_unix_ms": (
+                max_decision_observed_at_unix_ms
+            ),
         }
         manifest = FastProofWorkspaceManifest(
             schema_name=material["schema_name"],
@@ -321,6 +338,7 @@ def prepare_fast_proof_workspace(
             raise ValueError(
                 "staged Fast proof workspace did not round-trip"
             )
+        del verified
         if destination_path.exists() or destination_path.is_symlink():
             raise FileExistsError(
                 "proof workspace destination appeared during write"
@@ -420,15 +438,21 @@ def read_fast_proof_workspace(
         raise ValueError(
             "Fast proof workspace feature evidence does not match manifest"
         )
-    sequences = tuple(value.decision_sequence for value in features.records)
-    observed = tuple(
-        value.decision_observed_at_unix_ms for value in features.records
-    )
     if (
-        min(sequences) != manifest.min_decision_sequence
-        or max(sequences) != manifest.max_decision_sequence
-        or min(observed) != manifest.min_decision_observed_at_unix_ms
-        or max(observed) != manifest.max_decision_observed_at_unix_ms
+        min(value.decision_sequence for value in features.records)
+        != manifest.min_decision_sequence
+        or max(value.decision_sequence for value in features.records)
+        != manifest.max_decision_sequence
+        or min(
+            value.decision_observed_at_unix_ms
+            for value in features.records
+        )
+        != manifest.min_decision_observed_at_unix_ms
+        or max(
+            value.decision_observed_at_unix_ms
+            for value in features.records
+        )
+        != manifest.max_decision_observed_at_unix_ms
     ):
         raise ValueError(
             "Fast proof workspace feature bounds do not match manifest"
