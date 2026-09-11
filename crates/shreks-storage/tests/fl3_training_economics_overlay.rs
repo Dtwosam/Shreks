@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use sha2::{Digest, Sha256};
 use shreks_core::{
     project_entry, project_exit, FastEvent, FastEventId, FastEventKind, FastMarketKey,
     FastReserveContext, FuturePathCompleteness, FuturePathCoverage, FuturePathDecision,
@@ -1707,6 +1708,11 @@ fn immutable_overlay_writer_creates_exact_two_file_artifact_and_never_overwrites
 
     assert_eq!(manifest.row_count, 4);
     assert_eq!(manifest.available_row_count, 0);
+    assert_eq!(manifest.future_path_logical_fingerprint_sha256, before_fl4);
+    assert_eq!(
+        manifest.feature_source_jsonl_sha256,
+        format!("{:x}", Sha256::digest(fs::read(&features_path).unwrap()))
+    );
     assert_eq!(
         manifest.status_counts.get("unsupported_venue"),
         Some(&4)
