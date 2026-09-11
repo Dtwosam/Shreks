@@ -27,7 +27,7 @@ from shreks_brain.research.fast_training_economics import (
     FastTrainingEconomicsStatus,
     FastTrainingExecutionCostPolicy,
     build_entry_counterfactual_context_from_training_economics,
-    read_fast_training_economics_overlay,
+    read_fast_training_economics_overlay_for_horizon,
 )
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureDataset,
@@ -101,8 +101,10 @@ def build_fast_first_champion_v2_bundle(
         label_version=future_path_label_version,
     )
 
-    overlay = read_fast_training_economics_overlay(
-        training_economics_overlay_path
+    overlay = read_fast_training_economics_overlay_for_horizon(
+        training_economics_overlay_path,
+        horizon_ms=active_policy.horizon_ms,
+        label_version=future_path_label_version,
     )
     if overlay.manifest.feature_source_jsonl_sha256 != features.source_sha256:
         raise ValueError(

@@ -351,11 +351,9 @@ def test_v2_host_run_uses_live_database_only_if_data_version_is_stable(
     )
     monkeypatch.setattr(
         host_module,
-        "read_fast_training_economics_overlay",
+        "validate_fast_training_economics_overlay",
         lambda _path: SimpleNamespace(
-            manifest=SimpleNamespace(
-                manifest_fingerprint_sha256=OVERLAY_FP
-            )
+            manifest_fingerprint_sha256=OVERLAY_FP
         ),
     )
     monkeypatch.setattr(
@@ -513,11 +511,9 @@ def test_v2_host_run_rejects_database_change_before_model_scoring(
     )
     monkeypatch.setattr(
         host_module,
-        "read_fast_training_economics_overlay",
+        "validate_fast_training_economics_overlay",
         lambda _path: SimpleNamespace(
-            manifest=SimpleNamespace(
-                manifest_fingerprint_sha256=OVERLAY_FP
-            )
+            manifest_fingerprint_sha256=OVERLAY_FP
         ),
     )
     monkeypatch.setattr(
@@ -697,11 +693,9 @@ def test_v2_host_run_uses_frozen_cohort_order_and_no_host_clock(
     )
     monkeypatch.setattr(
         host_module,
-        "read_fast_training_economics_overlay",
+        "validate_fast_training_economics_overlay",
         lambda _path: SimpleNamespace(
-            manifest=SimpleNamespace(
-                manifest_fingerprint_sha256=OVERLAY_FP,
-            )
+            manifest_fingerprint_sha256=OVERLAY_FP,
         ),
     )
     hydration_policy = object()

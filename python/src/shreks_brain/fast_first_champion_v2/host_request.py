@@ -25,7 +25,7 @@ from shreks_brain.research.fast_training_economics import (
     decode_fast_training_execution_cost_policy,
     encode_fast_training_execution_cost_policy,
     fast_training_execution_cost_policy_fingerprint_sha256,
-    read_fast_training_economics_overlay,
+    validate_fast_training_economics_overlay,
 )
 
 from .models import FastFirstChampionV2Policy
@@ -507,8 +507,8 @@ def write_fast_first_champion_v2_host_request_from_sources(
     cost_fingerprint = fast_training_execution_cost_policy_fingerprint_sha256(
         cost_policy
     )
-    overlay = read_fast_training_economics_overlay(overlay_path)
-    overlay_fingerprint = overlay.manifest.manifest_fingerprint_sha256
+    overlay_manifest = validate_fast_training_economics_overlay(overlay_path)
+    overlay_fingerprint = overlay_manifest.manifest_fingerprint_sha256
 
     request = build_fast_first_champion_v2_host_request(
         proof_workspace_path=str(proof_path),
@@ -548,14 +548,14 @@ def write_fast_first_champion_v2_host_request_from_sources(
         )
     proof_after = read_fast_proof_workspace(proof_path)
     cohort_after = read_fl9_v2_cohort_acceptance(cohort_path)
-    overlay_after = read_fast_training_economics_overlay(overlay_path)
+    overlay_after = validate_fast_training_economics_overlay(overlay_path)
     if proof_after.manifest != proof.manifest:
         request_path.unlink(missing_ok=True)
         raise ValueError("proof workspace source changed during request creation")
     if cohort_after.manifest != cohort.manifest:
         request_path.unlink(missing_ok=True)
         raise ValueError("cohort artifact source changed during request creation")
-    if overlay_after.manifest != overlay.manifest:
+    if overlay_after != overlay_manifest:
         request_path.unlink(missing_ok=True)
         raise ValueError(
             "training economics overlay source changed during request creation"

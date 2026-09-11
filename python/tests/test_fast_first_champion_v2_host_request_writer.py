@@ -124,8 +124,8 @@ def _install_authenticated_sources(monkeypatch, *, cohort_fp=COHORT_FP):
     )
     monkeypatch.setattr(
         request_module,
-        "read_fast_training_economics_overlay",
-        lambda _path: overlay,
+        "validate_fast_training_economics_overlay",
+        lambda _path: overlay.manifest,
     )
     monkeypatch.setattr(
         request_module,
