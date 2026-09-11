@@ -1538,6 +1538,19 @@ fn conflict_quarantined_pumpswap_source_aborts_overlay() {
 
 
 #[test]
+fn training_economics_writer_does_not_buffer_complete_feature_or_row_files() {
+    let source = include_str!("../src/training_economics_overlay.rs");
+    assert!(
+        !source.contains("let feature_bytes = fs::read(feature_path)?;"),
+        "training economics writer must stream feature JSONL instead of reading the whole file"
+    );
+    assert!(
+        !source.contains("let mut rows_bytes = Vec::new();"),
+        "training economics writer must stream rows.jsonl instead of buffering the whole artifact"
+    );
+}
+
+#[test]
 fn unrelated_quarantined_pumpswap_source_does_not_poison_canonical_economics_row() {
     let root = unique_test_dir("swap-unrelated-conflict");
     let db = ShreksDb::open(root.join("shreks.db")).unwrap();
