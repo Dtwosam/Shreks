@@ -514,6 +514,20 @@ class FastTrainingEconomicsOverlayDataset:
             raise ValueError("rows must be a non-empty tuple of exact overlay rows")
 
 
+@dataclass(frozen=True, slots=True)
+class FastTrainingEconomicsOverlaySelection:
+    manifest: FastTrainingEconomicsOverlayManifest
+    rows: tuple[FastTrainingEconomicsOverlayRow, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.manifest) is not FastTrainingEconomicsOverlayManifest:
+            raise ValueError("manifest must be an exact training economics manifest")
+        if not isinstance(self.rows, tuple) or not self.rows:
+            raise ValueError("selected rows must be a non-empty tuple")
+        if not all(type(row) is FastTrainingEconomicsOverlayRow for row in self.rows):
+            raise ValueError("selected rows must contain exact overlay rows")
+
+
 _POLICY_KEYS = frozenset(field.name for field in fields(FastTrainingExecutionCostPolicy))
 _MANIFEST_KEYS = frozenset(
     field.name for field in fields(FastTrainingEconomicsOverlayManifest)
@@ -565,6 +579,44 @@ def fast_training_execution_cost_policy_fingerprint_sha256(
 def read_fast_training_economics_overlay(
     path: str | Path,
 ) -> FastTrainingEconomicsOverlayDataset:
+    manifest, rows = _scan_fast_training_economics_overlay(path)
+    return FastTrainingEconomicsOverlayDataset(manifest=manifest, rows=rows)
+
+
+def validate_fast_training_economics_overlay(
+    path: str | Path,
+) -> FastTrainingEconomicsOverlayManifest:
+    manifest, _ = _scan_fast_training_economics_overlay(path, retain_rows=False)
+    return manifest
+
+
+def read_fast_training_economics_overlay_for_horizon(
+    path: str | Path,
+    *,
+    horizon_ms: int,
+    label_version: int,
+) -> FastTrainingEconomicsOverlaySelection:
+    _require_positive_int("horizon_ms", horizon_ms)
+    _require_positive_int("label_version", label_version)
+    manifest, rows = _scan_fast_training_economics_overlay(
+        path,
+        selected_horizon_ms=horizon_ms,
+        selected_label_version=label_version,
+    )
+    if manifest.future_path_label_version != label_version:
+        raise ValueError("training economics selected label version contradicts manifest")
+    if not rows:
+        raise ValueError("training economics overlay has no rows for requested horizon")
+    return FastTrainingEconomicsOverlaySelection(manifest=manifest, rows=rows)
+
+
+def _scan_fast_training_economics_overlay(
+    path: str | Path,
+    *,
+    retain_rows: bool = True,
+    selected_horizon_ms: int | None = None,
+    selected_label_version: int | None = None,
+) -> tuple[FastTrainingEconomicsOverlayManifest, tuple[FastTrainingEconomicsOverlayRow, ...]]:
     source = Path(path)
     if not source.is_dir():
         raise ValueError("training economics overlay path must be an existing directory")
@@ -580,9 +632,7 @@ def read_fast_training_economics_overlay(
     _require_exact_keys(
         manifest_mapping, _MANIFEST_KEYS, "training economics overlay manifest"
     )
-    provided_manifest_fingerprint = manifest_mapping.get(
-        "manifest_fingerprint_sha256"
-    )
+    provided_manifest_fingerprint = manifest_mapping.get("manifest_fingerprint_sha256")
     if not isinstance(provided_manifest_fingerprint, str):
         raise ValueError("training economics manifest fingerprint is incompatible")
     fingerprint_payload = dict(manifest_mapping)
@@ -592,81 +642,108 @@ def read_fast_training_economics_overlay(
     ).hexdigest()
     if provided_manifest_fingerprint != expected_manifest_fingerprint:
         raise ValueError("training economics manifest fingerprint is invalid")
-
     manifest = FastTrainingEconomicsOverlayManifest(**manifest_mapping)
 
-    rows_path = source / _ROWS_FILENAME
-    raw_rows = rows_path.read_bytes()
-    if not raw_rows or not raw_rows.endswith(b"\n"):
-        raise ValueError("training economics rows JSONL must be non-empty and newline terminated")
-    if (
-        hashlib.sha256(raw_rows).hexdigest()
-        != manifest.ordered_row_logical_fingerprint_sha256
-    ):
-        raise ValueError("training economics row fingerprint is invalid")
-
+    row_hasher = hashlib.sha256()
     rows: list[FastTrainingEconomicsOverlayRow] = []
-    seen: set[tuple[object, ...]] = set()
+    decision_sequences: dict[tuple[str, int], int] = {}
+    previous_row_identity: tuple[object, ...] | None = None
     previous_sort: tuple[object, ...] | None = None
-    for line_number, line in enumerate(raw_rows.splitlines(), start=1):
-        if not line.strip():
-            raise ValueError(f"training economics row {line_number} is blank")
-        try:
-            text = line.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise ValueError(
-                f"training economics row {line_number} is not UTF-8"
-            ) from exc
-        mapping = _load_json_object(
-            text, f"training economics overlay row {line_number}"
-        )
-        row = _row_from_mapping(mapping)
-        key = (
-            row.decision_signature,
-            row.decision_ordinal,
-            row.horizon_ms,
-            row.future_path_label_version,
-        )
-        if key in seen:
-            raise ValueError("training economics overlay contains a duplicate row identity")
-        seen.add(key)
-        sort_key = (
-            row.decision_sequence,
-            row.horizon_ms,
-            row.decision_signature,
-            row.decision_ordinal,
-            row.future_path_label_version,
-        )
-        if previous_sort is not None and sort_key < previous_sort:
-            raise ValueError("training economics overlay rows are not in canonical order")
-        previous_sort = sort_key
-        if row.future_path_label_version != manifest.future_path_label_version:
-            raise ValueError("training economics row label version contradicts manifest")
-        if row.counterfactual_base_quantity != manifest.counterfactual_base_quantity:
-            raise ValueError(
-                "training economics row counterfactual quantity contradicts manifest"
-            )
-        rows.append(row)
+    actual_counts: Counter[str] = Counter()
+    row_count = 0
+    min_decision_time: int | None = None
+    max_decision_time: int | None = None
 
-    if len(rows) != manifest.row_count:
+    rows_path = source / _ROWS_FILENAME
+    with rows_path.open("rb") as handle:
+        for line_number, raw_line in enumerate(handle, start=1):
+            if not raw_line.endswith(b"\n"):
+                raise ValueError("training economics rows JSONL must be newline terminated")
+            row_hasher.update(raw_line)
+            payload = raw_line[:-1]
+            if payload.endswith(b"\r"):
+                payload = payload[:-1]
+            if not payload.strip():
+                raise ValueError(f"training economics row {line_number} is blank")
+            try:
+                text = payload.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"training economics row {line_number} is not UTF-8"
+                ) from exc
+            mapping = _load_json_object(
+                text, f"training economics overlay row {line_number}"
+            )
+            row = _row_from_mapping(mapping)
+            key = (
+                row.decision_signature,
+                row.decision_ordinal,
+                row.horizon_ms,
+                row.future_path_label_version,
+            )
+            decision_key = (row.decision_signature, row.decision_ordinal)
+            prior_sequence = decision_sequences.get(decision_key)
+            if prior_sequence is None:
+                decision_sequences[decision_key] = row.decision_sequence
+            elif prior_sequence != row.decision_sequence:
+                raise ValueError(
+                    "training economics overlay decision identity maps to multiple sequences"
+                )
+            if key == previous_row_identity:
+                raise ValueError("training economics overlay contains a duplicate row identity")
+            previous_row_identity = key
+            sort_key = (
+                row.decision_sequence,
+                row.horizon_ms,
+                row.decision_signature,
+                row.decision_ordinal,
+                row.future_path_label_version,
+            )
+            if previous_sort is not None and sort_key < previous_sort:
+                raise ValueError("training economics overlay rows are not in canonical order")
+            previous_sort = sort_key
+            if row.future_path_label_version != manifest.future_path_label_version:
+                raise ValueError("training economics row label version contradicts manifest")
+            if row.counterfactual_base_quantity != manifest.counterfactual_base_quantity:
+                raise ValueError(
+                    "training economics row counterfactual quantity contradicts manifest"
+                )
+            row_count += 1
+            actual_counts[row.status.value] += 1
+            min_decision_time = (
+                row.decision_observed_at_unix_ms
+                if min_decision_time is None
+                else min(min_decision_time, row.decision_observed_at_unix_ms)
+            )
+            max_decision_time = (
+                row.decision_observed_at_unix_ms
+                if max_decision_time is None
+                else max(max_decision_time, row.decision_observed_at_unix_ms)
+            )
+            if retain_rows and (
+                selected_horizon_ms is None
+                or (
+                    row.horizon_ms == selected_horizon_ms
+                    and row.future_path_label_version == selected_label_version
+                )
+            ):
+                rows.append(row)
+
+    if row_count == 0:
+        raise ValueError("training economics rows JSONL must be non-empty")
+    if row_hasher.hexdigest() != manifest.ordered_row_logical_fingerprint_sha256:
+        raise ValueError("training economics row fingerprint is invalid")
+    if row_count != manifest.row_count:
         raise ValueError("training economics row count contradicts manifest")
-    actual_counts = Counter(row.status.value for row in rows)
     if dict(sorted(actual_counts.items())) != manifest.status_counts:
         raise ValueError("training economics status counts contradict rows")
-    if actual_counts.get(FastTrainingEconomicsStatus.AVAILABLE.value, 0) != (
-        manifest.available_row_count
-    ):
+    if actual_counts.get(FastTrainingEconomicsStatus.AVAILABLE.value, 0) != manifest.available_row_count:
         raise ValueError("training economics available row count contradicts rows")
-    decision_times = [row.decision_observed_at_unix_ms for row in rows]
-    if min(decision_times) != manifest.min_decision_observed_at_unix_ms:
+    if min_decision_time != manifest.min_decision_observed_at_unix_ms:
         raise ValueError("training economics minimum decision timestamp contradicts rows")
-    if max(decision_times) != manifest.max_decision_observed_at_unix_ms:
+    if max_decision_time != manifest.max_decision_observed_at_unix_ms:
         raise ValueError("training economics maximum decision timestamp contradicts rows")
-
-    return FastTrainingEconomicsOverlayDataset(
-        manifest=manifest,
-        rows=tuple(rows),
-    )
+    return manifest, tuple(rows)
 
 
 def build_entry_counterfactual_context_from_training_economics(

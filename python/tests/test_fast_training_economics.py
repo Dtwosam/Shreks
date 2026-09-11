@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import fields, replace
+from dataclasses import asdict, fields, replace
 from fractions import Fraction
 import hashlib
 import json
@@ -29,6 +29,8 @@ from shreks_brain.research.fast_training_economics import (
     encode_fast_training_execution_cost_policy,
     fast_training_execution_cost_policy_fingerprint_sha256,
     read_fast_training_economics_overlay,
+    read_fast_training_economics_overlay_for_horizon,
+    validate_fast_training_economics_overlay,
 )
 from shreks_brain.research.fast_training_targets import (
     load_future_path_training_labels_from_sqlite,
@@ -265,6 +267,90 @@ def test_rust_overlay_reader_authenticates_source_fl4_rows_and_manifest(
     with pytest.raises(ValueError, match="manifest.*fingerprint|fingerprint.*manifest"):
         read_fast_training_economics_overlay(tampered_manifest)
 
+
+
+def _write_small_streaming_overlay(tmp_path: Path) -> Path:
+    overlay = tmp_path / "streaming-overlay"
+    overlay.mkdir()
+    rows = (
+        FastTrainingEconomicsOverlayRow(
+            decision_signature="sig-1", decision_ordinal=0, decision_sequence=1,
+            decision_observed_at_unix_ms=1_000, mint="mint-1", quote_mint=WSOL,
+            venue="raydium", horizon_ms=30_000, future_path_label_version=1,
+            counterfactual_base_quantity="2", endpoint_signature=None,
+            endpoint_ordinal=None, endpoint_sequence=None, endpoint_observed_at_unix_ms=None,
+            status=FastTrainingEconomicsStatus.UNSUPPORTED_VENUE,
+            requested_base_quantity_raw=None, entry_reserve=None, exit_reserve=None,
+            entry_projection=None, exit_projection=None, entry_fee=None, exit_fee=None,
+        ),
+        FastTrainingEconomicsOverlayRow(
+            decision_signature="sig-1", decision_ordinal=0, decision_sequence=1,
+            decision_observed_at_unix_ms=1_000, mint="mint-1", quote_mint=WSOL,
+            venue="raydium", horizon_ms=60_000, future_path_label_version=1,
+            counterfactual_base_quantity="2", endpoint_signature=None,
+            endpoint_ordinal=None, endpoint_sequence=None, endpoint_observed_at_unix_ms=None,
+            status=FastTrainingEconomicsStatus.UNSUPPORTED_VENUE,
+            requested_base_quantity_raw=None, entry_reserve=None, exit_reserve=None,
+            entry_projection=None, exit_projection=None, entry_fee=None, exit_fee=None,
+        ),
+    )
+    encoded_rows = b"".join(
+        json.dumps(asdict(row), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode() + b"\n"
+        for row in rows
+    )
+    (overlay / "rows.jsonl").write_bytes(encoded_rows)
+    manifest = {
+        "schema_name": FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME,
+        "schema_version": FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
+        "row_count": 2, "available_row_count": 0,
+        "status_counts": {"unsupported_venue": 2},
+        "feature_source_jsonl_sha256": "a" * 64,
+        "future_path_logical_fingerprint_sha256": "b" * 64,
+        "future_path_label_version": 1, "counterfactual_base_quantity": "2",
+        "pump_swap_fee_maximum_age_ms": 60_000,
+        "min_decision_observed_at_unix_ms": 1_000,
+        "max_decision_observed_at_unix_ms": 1_000,
+        "ordered_row_logical_fingerprint_sha256": hashlib.sha256(encoded_rows).hexdigest(),
+    }
+    manifest["manifest_fingerprint_sha256"] = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode()
+    ).hexdigest()
+    (overlay / "manifest.json").write_text(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+    return overlay
+
+
+def test_streaming_overlay_validation_does_not_use_read_bytes(monkeypatch, tmp_path: Path) -> None:
+    overlay = _write_small_streaming_overlay(tmp_path)
+    original = Path.read_bytes
+
+    def forbidden_read_bytes(self: Path):
+        if self.name == "rows.jsonl":
+            raise AssertionError("streaming economics validation must not read whole rows file")
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+    manifest = validate_fast_training_economics_overlay(overlay)
+    assert manifest.row_count == 2
+
+
+def test_streaming_overlay_horizon_reader_retains_only_requested_rows(monkeypatch, tmp_path: Path) -> None:
+    overlay = _write_small_streaming_overlay(tmp_path)
+    original = Path.read_bytes
+
+    def forbidden_read_bytes(self: Path):
+        if self.name == "rows.jsonl":
+            raise AssertionError("horizon reader must stream rows")
+        return original(self)
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read_bytes)
+    selected = read_fast_training_economics_overlay_for_horizon(
+        overlay, horizon_ms=30_000, label_version=1
+    )
+    assert selected.manifest.row_count == 2
+    assert len(selected.rows) == 1
+    assert selected.rows[0].horizon_ms == 30_000
 
 def test_training_economics_manifest_rejects_legacy_v2_schema() -> None:
     with pytest.raises(ValueError, match="schema version|schema_version|incompatible"):

@@ -22,7 +22,7 @@ from shreks_brain.fl9_v2_cohort_acceptance import (
     read_fl9_v2_cohort_acceptance,
 )
 from shreks_brain.research.fast_training_economics import (
-    read_fast_training_economics_overlay,
+    validate_fast_training_economics_overlay,
 )
 
 from .artifact import (
@@ -138,9 +138,9 @@ def run_fast_first_champion_v2_host_request(
         policy,
     )
 
-    overlay = read_fast_training_economics_overlay(overlay_path)
+    overlay_manifest = validate_fast_training_economics_overlay(overlay_path)
     if (
-        overlay.manifest.manifest_fingerprint_sha256
+        overlay_manifest.manifest_fingerprint_sha256
         != request.expected_training_economics_overlay_manifest_fingerprint_sha256
     ):
         raise ValueError(
@@ -279,7 +279,7 @@ def run_fast_first_champion_v2_host_request(
             )
         proof_after = read_fast_proof_workspace(proof_path)
         cohort_after = read_fl9_v2_cohort_acceptance(cohort_path)
-        overlay_after = read_fast_training_economics_overlay(overlay_path)
+        overlay_after = validate_fast_training_economics_overlay(overlay_path)
         if proof_after.manifest != proof.manifest:
             raise ValueError(
                 "V2 first-champion proof workspace changed during execution"
@@ -288,7 +288,7 @@ def run_fast_first_champion_v2_host_request(
             raise ValueError(
                 "V2 first-champion cohort artifact changed during execution"
             )
-        if overlay_after.manifest != overlay.manifest:
+        if overlay_after != overlay_manifest:
             raise ValueError(
                 "V2 first-champion training economics overlay changed during execution"
             )
