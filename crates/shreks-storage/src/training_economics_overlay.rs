@@ -1,8 +1,8 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions},
-    io::Write,
-    path::{Path, PathBuf},
+    io::{BufRead, BufReader, Write},
+    path::Path,
     process,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -170,8 +170,21 @@ impl ShreksDb {
         let expected_features = self.fast_training_feature_records(label_version)?;
         validate_feature_population(features, &expected_features)?;
 
-        let mut labels =
+        let labels =
             self.training_economics_labels_for_features(&expected_features, label_version)?;
+        self.training_economics_rows_for_labels(
+            labels,
+            counterfactual_base_quantity,
+            pump_swap_fee_maximum_age_ms,
+        )
+    }
+
+    fn training_economics_rows_for_labels(
+        &self,
+        mut labels: Vec<StoredFuturePathLabel>,
+        counterfactual_base_quantity: &str,
+        pump_swap_fee_maximum_age_ms: u64,
+    ) -> Result<Vec<FastTrainingEconomicsOverlayRow>, StorageError> {
         labels.sort_by(|left, right| {
             (
                 left.decision.sequence,
@@ -186,10 +199,8 @@ impl ShreksDb {
                     right.decision.event_id.ordinal,
                 ))
         });
-
         let mut rows = Vec::with_capacity(labels.len());
         let mut seen = BTreeSet::new();
-        let mut replay_cache: Option<(String, String, Vec<StoredFastEvent>)> = None;
         for stored in labels {
             let key = (
                 stored.decision.event_id.signature.clone(),
@@ -229,34 +240,24 @@ impl ShreksDb {
                 )
             })?;
 
-            let replay_cache_requires_reload = replay_cache_requires_reload(
-                &replay_cache,
-                &stored.decision.market.mint,
-                &stored.decision.market.quote_mint,
-            );
-            if replay_cache_requires_reload {
-                let replay = self.fast_events_for_market_with_reserve_context(
-                    &stored.decision.market.mint,
-                    &stored.decision.market.quote_mint,
-                    VenueId::PumpSwap,
-                )?;
-                replay_cache = Some((
-                    stored.decision.market.mint.clone(),
-                    stored.decision.market.quote_mint.clone(),
-                    replay,
-                ));
-            }
-            let replay = replay_cache
-                .as_ref()
-                .map(|(_, _, replay)| replay)
+            let endpoint_observed_at_unix_ms = stored
+                .label
+                .endpoint_observed_at_unix_ms
                 .ok_or_else(|| {
                     StorageError::InvalidData(
-                        "training economics reserve-aware replay cache was unexpectedly empty"
+                        "training economics endpoint identity is missing observation time"
                             .to_owned(),
                     )
                 })?;
+            let replay = self.fast_events_for_market_observed_window_with_reserve_context(
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+                VenueId::PumpSwap,
+                stored.decision.observed_at_unix_ms,
+                endpoint_observed_at_unix_ms,
+            )?;
             let decision_event = find_replay_event(
-                replay,
+                &replay,
                 &stored.decision.event_id.signature,
                 stored.decision.event_id.ordinal,
                 stored.decision.sequence,
@@ -399,15 +400,6 @@ impl ShreksDb {
                 }
             }
 
-            let endpoint_observed_at_unix_ms = stored
-                .label
-                .endpoint_observed_at_unix_ms
-                .ok_or_else(|| {
-                    StorageError::InvalidData(
-                        "training economics endpoint identity is missing observation time"
-                            .to_owned(),
-                    )
-                })?;
             match self.pump_swap_effective_fee_context(
                 &stored.decision.market.mint,
                 &stored.decision.market.quote_mint,
@@ -463,138 +455,254 @@ impl ShreksDb {
         }
         let canonical_quantity = canonical_decimal_quantity(counterfactual_base_quantity)?;
         let feature_path = feature_jsonl.as_ref();
-        let feature_bytes = fs::read(feature_path)?;
-        if feature_bytes.is_empty() {
-            return Err(StorageError::InvalidData(
-                "training economics feature JSONL cannot be empty".to_owned(),
-            ));
-        }
-        let feature_source_jsonl_sha256 = format!("{:x}", Sha256::digest(&feature_bytes));
-        let feature_text = std::str::from_utf8(&feature_bytes).map_err(|error| {
-            StorageError::InvalidData(format!(
-                "training economics feature JSONL must be UTF-8: {error}"
-            ))
-        })?;
-        let mut features = Vec::new();
-        let mut seen_feature_identities = BTreeSet::new();
-        for (index, line) in feature_text.lines().enumerate() {
-            if line.trim().is_empty() {
-                return Err(StorageError::InvalidData(format!(
-                    "training economics feature JSONL line {} is blank",
-                    index + 1
-                )));
-            }
-            let feature = decode_fast_training_feature_record_json(line)?;
-            let identity = feature_identity(&feature);
-            if !seen_feature_identities.insert(identity) {
-                return Err(StorageError::InvalidData(
-                    "training economics feature JSONL contains a duplicate decision identity"
-                        .to_owned(),
-                ));
-            }
-            features.push(feature);
-        }
-        if features.is_empty() {
-            return Err(StorageError::InvalidData(
-                "training economics feature JSONL cannot be empty".to_owned(),
-            ));
-        }
+        let destination = destination.as_ref();
 
-        let rows = self.fast_training_economics_overlay_rows(
-            &features,
-            label_version,
-            &canonical_quantity,
-            pump_swap_fee_maximum_age_ms,
-        )?;
-        if rows.is_empty() {
-            return Err(StorageError::InvalidData(
-                "training economics overlay requires at least one row".to_owned(),
-            ));
-        }
+        write_immutable_overlay_directory(destination, |staging| {
+            let mut feature_reader = BufReader::new(fs::File::open(feature_path)?);
+            let mut feature_hasher = Sha256::new();
+            let mut feature_line = Vec::new();
+            let mut feature_count = 0_u64;
 
-        let future_path_logical_fingerprint_sha256 =
-            self.fast_training_future_path_logical_fingerprint_sha256(label_version)?;
+            let mut expected_statement = self.connection.prepare(
+                r#"SELECT decision_signature,
+                          decision_ordinal,
+                          decision_sequence,
+                          decision_mint,
+                          decision_quote_mint,
+                          decision_venue,
+                          decision_observed_at_unix_ms
+                   FROM fast_future_path_labels
+                   WHERE label_version = ?1
+                   GROUP BY decision_signature,
+                            decision_ordinal,
+                            decision_sequence,
+                            decision_mint,
+                            decision_quote_mint,
+                            decision_venue,
+                            decision_observed_at_unix_ms
+                   ORDER BY decision_sequence ASC,
+                            decision_signature ASC,
+                            decision_ordinal ASC"#,
+            )?;
+            let mut expected_rows = expected_statement.query(params![i64::from(label_version)])?;
 
-        let mut status_counts = BTreeMap::<String, u64>::new();
-        let mut available_row_count = 0_u64;
-        let mut rows_bytes = Vec::new();
-        let mut row_hasher = Sha256::new();
-        for row in &rows {
-            let encoded = canonical_json_bytes(row, "training economics overlay row")?;
-            rows_bytes.extend_from_slice(&encoded);
-            rows_bytes.push(b'\n');
-            row_hasher.update(&encoded);
-            row_hasher.update(b"\n");
-            *status_counts
-                .entry(row.status.as_str().to_owned())
-                .or_insert(0) += 1;
-            if row.status == FastTrainingEconomicsStatus::Available {
-                available_row_count = available_row_count.checked_add(1).ok_or_else(|| {
+            let rows_path = staging.join("rows.jsonl");
+            let mut rows_file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&rows_path)?;
+            let mut row_hasher = Sha256::new();
+            let mut future_path_hasher = Sha256::new();
+            future_path_hasher.update(b"[");
+            let mut future_path_row_count = 0_u64;
+            let mut row_count = 0_u64;
+            let mut available_row_count = 0_u64;
+            let mut status_counts = BTreeMap::<String, u64>::new();
+            let mut min_decision_observed_at_unix_ms: Option<i64> = None;
+            let mut max_decision_observed_at_unix_ms: Option<i64> = None;
+
+            loop {
+                feature_line.clear();
+                let bytes_read = feature_reader.read_until(b'\n', &mut feature_line)?;
+                if bytes_read == 0 {
+                    break;
+                }
+                feature_hasher.update(&feature_line);
+                feature_count = feature_count.checked_add(1).ok_or_else(|| {
                     StorageError::InvalidData(
-                        "training economics available row count overflowed".to_owned(),
+                        "training economics feature row count overflowed".to_owned(),
                     )
                 })?;
+
+                let mut json_line = feature_line.as_slice();
+                if json_line.ends_with(b"\n") {
+                    json_line = &json_line[..json_line.len() - 1];
+                }
+                if json_line.ends_with(b"\r") {
+                    json_line = &json_line[..json_line.len() - 1];
+                }
+                let line = std::str::from_utf8(json_line).map_err(|error| {
+                    StorageError::InvalidData(format!(
+                        "training economics feature JSONL must be UTF-8: {error}"
+                    ))
+                })?;
+                if line.trim().is_empty() {
+                    return Err(StorageError::InvalidData(format!(
+                        "training economics feature JSONL line {feature_count} is blank"
+                    )));
+                }
+                let feature = decode_fast_training_feature_record_json(line)?;
+
+                let expected = expected_rows.next()?.ok_or_else(|| {
+                    StorageError::InvalidData(
+                        "training economics feature/FL4 decision identity mismatch".to_owned(),
+                    )
+                })?;
+                let expected_ordinal = u32::try_from(expected.get::<_, i64>(1)?).map_err(|_| {
+                    StorageError::InvalidData(
+                        "training economics FL4 decision ordinal exceeds u32".to_owned(),
+                    )
+                })?;
+                let expected_sequence = u64::try_from(expected.get::<_, i64>(2)?).map_err(|_| {
+                    StorageError::InvalidData(
+                        "training economics FL4 decision sequence was negative".to_owned(),
+                    )
+                })?;
+                let expected_identity = (
+                    expected.get::<_, String>(0)?,
+                    expected_ordinal,
+                    expected_sequence,
+                    expected.get::<_, String>(3)?,
+                    expected.get::<_, String>(4)?,
+                    expected.get::<_, String>(5)?,
+                    expected.get::<_, i64>(6)?,
+                );
+                if feature_identity(&feature) != expected_identity {
+                    return Err(StorageError::InvalidData(
+                        "training economics feature/FL4 decision identity mismatch".to_owned(),
+                    ));
+                }
+
+                let labels = self.future_path_labels_for_decision(
+                    &feature.decision_signature,
+                    feature.decision_ordinal,
+                    label_version,
+                )?;
+                if labels.is_empty() {
+                    return Err(StorageError::InvalidData(
+                        "training economics overlay requires at least one FL4 label".to_owned(),
+                    ));
+                }
+                for stored in &labels {
+                    if future_path_row_count > 0 {
+                        future_path_hasher.update(b",");
+                    }
+                    let fingerprint_row = future_path_fingerprint_row(stored)?;
+                    let encoded = serde_json::to_vec(&fingerprint_row).map_err(|error| {
+                        StorageError::InvalidData(format!(
+                            "future-path logical fingerprint serialization failed: {error}"
+                        ))
+                    })?;
+                    future_path_hasher.update(&encoded);
+                    future_path_row_count = future_path_row_count.checked_add(1).ok_or_else(|| {
+                        StorageError::InvalidData(
+                            "future-path logical fingerprint row count overflowed".to_owned(),
+                        )
+                    })?;
+                }
+
+                let rows = self.training_economics_rows_for_labels(
+                    labels,
+                    &canonical_quantity,
+                    pump_swap_fee_maximum_age_ms,
+                )?;
+                for row in rows {
+                    let encoded = canonical_json_bytes(&row, "training economics overlay row")?;
+                    rows_file.write_all(&encoded)?;
+                    rows_file.write_all(b"\n")?;
+                    row_hasher.update(&encoded);
+                    row_hasher.update(b"\n");
+                    row_count = row_count.checked_add(1).ok_or_else(|| {
+                        StorageError::InvalidData(
+                            "training economics row count overflowed".to_owned(),
+                        )
+                    })?;
+                    *status_counts
+                        .entry(row.status.as_str().to_owned())
+                        .or_insert(0) += 1;
+                    if row.status == FastTrainingEconomicsStatus::Available {
+                        available_row_count = available_row_count.checked_add(1).ok_or_else(|| {
+                            StorageError::InvalidData(
+                                "training economics available row count overflowed".to_owned(),
+                            )
+                        })?;
+                    }
+                    min_decision_observed_at_unix_ms = Some(
+                        min_decision_observed_at_unix_ms
+                            .map_or(row.decision_observed_at_unix_ms, |current| {
+                                current.min(row.decision_observed_at_unix_ms)
+                            }),
+                    );
+                    max_decision_observed_at_unix_ms = Some(
+                        max_decision_observed_at_unix_ms
+                            .map_or(row.decision_observed_at_unix_ms, |current| {
+                                current.max(row.decision_observed_at_unix_ms)
+                            }),
+                    );
+                }
             }
-        }
 
-        let row_count = u64::try_from(rows.len()).map_err(|_| {
-            StorageError::InvalidData("training economics row count exceeds u64".to_owned())
-        })?;
-        let counted_rows = status_counts.values().try_fold(0_u64, |total, count| {
-            total.checked_add(*count).ok_or_else(|| {
-                StorageError::InvalidData(
-                    "training economics status row count overflowed".to_owned(),
-                )
-            })
-        })?;
-        if counted_rows != row_count {
-            return Err(StorageError::InvalidData(
-                "training economics status counts do not equal row count".to_owned(),
-            ));
-        }
+            if feature_count == 0 {
+                return Err(StorageError::InvalidData(
+                    "training economics feature JSONL cannot be empty".to_owned(),
+                ));
+            }
+            if expected_rows.next()?.is_some() {
+                return Err(StorageError::InvalidData(
+                    "training economics feature/FL4 decision identity mismatch".to_owned(),
+                ));
+            }
+            if row_count == 0 || future_path_row_count == 0 {
+                return Err(StorageError::InvalidData(
+                    "training economics overlay requires at least one row".to_owned(),
+                ));
+            }
+            rows_file.sync_all()?;
 
-        let min_decision_observed_at_unix_ms = rows
-            .iter()
-            .map(|row| row.decision_observed_at_unix_ms)
-            .min()
-            .ok_or_else(|| {
-                StorageError::InvalidData(
-                    "training economics overlay has no minimum decision timestamp".to_owned(),
-                )
+            let counted_rows = status_counts.values().try_fold(0_u64, |total, count| {
+                total.checked_add(*count).ok_or_else(|| {
+                    StorageError::InvalidData(
+                        "training economics status row count overflowed".to_owned(),
+                    )
+                })
             })?;
-        let max_decision_observed_at_unix_ms = rows
-            .iter()
-            .map(|row| row.decision_observed_at_unix_ms)
-            .max()
-            .ok_or_else(|| {
-                StorageError::InvalidData(
-                    "training economics overlay has no maximum decision timestamp".to_owned(),
-                )
-            })?;
+            if counted_rows != row_count {
+                return Err(StorageError::InvalidData(
+                    "training economics status counts do not equal row count".to_owned(),
+                ));
+            }
 
-        let mut manifest = FastTrainingEconomicsOverlayManifest {
-            schema_name: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME.to_owned(),
-            schema_version: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
-            row_count,
-            available_row_count,
-            status_counts,
-            feature_source_jsonl_sha256,
-            future_path_logical_fingerprint_sha256,
-            future_path_label_version: label_version,
-            counterfactual_base_quantity: canonical_quantity,
-            pump_swap_fee_maximum_age_ms,
-            min_decision_observed_at_unix_ms,
-            max_decision_observed_at_unix_ms,
-            ordered_row_logical_fingerprint_sha256: format!("{:x}", row_hasher.finalize()),
-            manifest_fingerprint_sha256: String::new(),
-        };
-        manifest.manifest_fingerprint_sha256 = manifest_fingerprint_sha256(&manifest)?;
-        let mut manifest_bytes =
-            canonical_json_bytes(&manifest, "training economics overlay manifest")?;
-        manifest_bytes.push(b'\n');
-
-        write_immutable_overlay_directory(destination.as_ref(), &rows_bytes, &manifest_bytes)?;
-        Ok(manifest)
+            future_path_hasher.update(b"]");
+            let feature_source_jsonl_sha256 = format!("{:x}", feature_hasher.finalize());
+            let future_path_logical_fingerprint_sha256 =
+                format!("{:x}", future_path_hasher.finalize());
+            let mut manifest = FastTrainingEconomicsOverlayManifest {
+                schema_name: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_NAME.to_owned(),
+                schema_version: FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
+                row_count,
+                available_row_count,
+                status_counts,
+                feature_source_jsonl_sha256,
+                future_path_logical_fingerprint_sha256,
+                future_path_label_version: label_version,
+                counterfactual_base_quantity: canonical_quantity.clone(),
+                pump_swap_fee_maximum_age_ms,
+                min_decision_observed_at_unix_ms: min_decision_observed_at_unix_ms.ok_or_else(
+                    || {
+                        StorageError::InvalidData(
+                            "training economics overlay has no minimum decision timestamp"
+                                .to_owned(),
+                        )
+                    },
+                )?,
+                max_decision_observed_at_unix_ms: max_decision_observed_at_unix_ms.ok_or_else(
+                    || {
+                        StorageError::InvalidData(
+                            "training economics overlay has no maximum decision timestamp"
+                                .to_owned(),
+                        )
+                    },
+                )?,
+                ordered_row_logical_fingerprint_sha256: format!("{:x}", row_hasher.finalize()),
+                manifest_fingerprint_sha256: String::new(),
+            };
+            manifest.manifest_fingerprint_sha256 = manifest_fingerprint_sha256(&manifest)?;
+            let mut manifest_bytes =
+                canonical_json_bytes(&manifest, "training economics overlay manifest")?;
+            manifest_bytes.push(b'\n');
+            write_new_synced_file(&staging.join("manifest.json"), &manifest_bytes)?;
+            Ok(manifest)
+        })
     }
 
     pub fn fast_training_future_path_logical_fingerprint_sha256(
@@ -957,19 +1065,6 @@ fn base_overlay_row(
         exit_projection: None,
         entry_fee: None,
         exit_fee: None,
-    }
-}
-
-fn replay_cache_requires_reload(
-    replay_cache: &Option<(String, String, Vec<StoredFastEvent>)>,
-    mint: &str,
-    quote_mint: &str,
-) -> bool {
-    match replay_cache.as_ref() {
-        Some((cached_mint, cached_quote_mint, _)) => {
-            cached_mint != mint || cached_quote_mint != quote_mint
-        }
-        None => true,
     }
 }
 
@@ -1677,11 +1772,13 @@ pub fn encode_fast_training_economics_overlay_manifest_json(
     })
 }
 
-fn write_immutable_overlay_directory(
+fn write_immutable_overlay_directory<T, F>(
     destination: &Path,
-    rows_bytes: &[u8],
-    manifest_bytes: &[u8],
-) -> Result<(), StorageError> {
+    write_staging: F,
+) -> Result<T, StorageError>
+where
+    F: FnOnce(&Path) -> Result<T, StorageError>,
+{
     if destination.exists() {
         return Err(StorageError::InvalidData(
             "training economics overlay destination already exists".to_owned(),
@@ -1708,16 +1805,15 @@ fn write_immutable_overlay_directory(
     let staging = parent.join(staging_name);
     fs::create_dir(&staging)?;
 
-    let result = (|| -> Result<(), StorageError> {
-        write_new_synced_file(&staging.join("rows.jsonl"), rows_bytes)?;
-        write_new_synced_file(&staging.join("manifest.json"), manifest_bytes)?;
+    let result = (|| {
+        let value = write_staging(&staging)?;
         if destination.exists() {
             return Err(StorageError::InvalidData(
                 "training economics overlay destination already exists".to_owned(),
             ));
         }
         fs::rename(&staging, destination)?;
-        Ok(())
+        Ok(value)
     })();
 
     if result.is_err() {
@@ -1726,7 +1822,7 @@ fn write_immutable_overlay_directory(
     result
 }
 
-fn write_new_synced_file(path: &PathBuf, bytes: &[u8]) -> Result<(), StorageError> {
+fn write_new_synced_file(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1738,17 +1834,7 @@ fn write_new_synced_file(path: &PathBuf, bytes: &[u8]) -> Result<(), StorageErro
 
 #[cfg(test)]
 mod tests {
-    use super::{python_float_hex, replay_cache_requires_reload};
-
-    #[test]
-    fn replay_cache_reuses_only_exact_market_identity() {
-        let cache = Some(("mint-a".to_owned(), "quote-a".to_owned(), Vec::new()));
-
-        assert!(!replay_cache_requires_reload(&cache, "mint-a", "quote-a"));
-        assert!(replay_cache_requires_reload(&cache, "mint-b", "quote-a"));
-        assert!(replay_cache_requires_reload(&cache, "mint-a", "quote-b"));
-        assert!(replay_cache_requires_reload(&None, "mint-a", "quote-a"));
-    }
+    use super::python_float_hex;
 
     #[test]
     fn python_float_hex_matches_python_normal_and_zero_shapes() {
