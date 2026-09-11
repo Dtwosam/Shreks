@@ -106,3 +106,7 @@ The completed economics artifact must not be regenerated merely because the read
 ## Safety boundary
 
 This seal does **not** authorize PAPER promotion or LIVE trading. It does not authorize transaction construction, signing, or submission. It authorizes only deployment of the bounded Python read path and continuation of the existing read-only V2 evidence runbook under fail-closed gates.
+
+## Release trigger correction
+
+The first documentation-seal merge commit `61e482bd74f9c9f1c4c083e6684d2bba0bea2ebf` used a merge-commit subject and was therefore correctly skipped by the automatic release workflow. This follow-up documentation-only seal exists solely to produce the repository-required `seal:` main subject; it changes no implementation semantics or authority.
