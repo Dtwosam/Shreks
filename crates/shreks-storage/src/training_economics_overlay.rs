@@ -189,7 +189,6 @@ impl ShreksDb {
 
         let mut rows = Vec::with_capacity(labels.len());
         let mut seen = BTreeSet::new();
-        let mut replay_cache: Option<(String, String, Vec<StoredFastEvent>)> = None;
         for stored in labels {
             let key = (
                 stored.decision.event_id.signature.clone(),
@@ -229,34 +228,24 @@ impl ShreksDb {
                 )
             })?;
 
-            let replay_cache_requires_reload = replay_cache_requires_reload(
-                &replay_cache,
-                &stored.decision.market.mint,
-                &stored.decision.market.quote_mint,
-            );
-            if replay_cache_requires_reload {
-                let replay = self.fast_events_for_market_with_reserve_context(
-                    &stored.decision.market.mint,
-                    &stored.decision.market.quote_mint,
-                    VenueId::PumpSwap,
-                )?;
-                replay_cache = Some((
-                    stored.decision.market.mint.clone(),
-                    stored.decision.market.quote_mint.clone(),
-                    replay,
-                ));
-            }
-            let replay = replay_cache
-                .as_ref()
-                .map(|(_, _, replay)| replay)
+            let endpoint_observed_at_unix_ms = stored
+                .label
+                .endpoint_observed_at_unix_ms
                 .ok_or_else(|| {
                     StorageError::InvalidData(
-                        "training economics reserve-aware replay cache was unexpectedly empty"
+                        "training economics endpoint identity is missing observation time"
                             .to_owned(),
                     )
                 })?;
+            let replay = self.fast_events_for_market_observed_window_with_reserve_context(
+                &stored.decision.market.mint,
+                &stored.decision.market.quote_mint,
+                VenueId::PumpSwap,
+                stored.decision.observed_at_unix_ms,
+                endpoint_observed_at_unix_ms,
+            )?;
             let decision_event = find_replay_event(
-                replay,
+                &replay,
                 &stored.decision.event_id.signature,
                 stored.decision.event_id.ordinal,
                 stored.decision.sequence,
@@ -399,15 +388,6 @@ impl ShreksDb {
                 }
             }
 
-            let endpoint_observed_at_unix_ms = stored
-                .label
-                .endpoint_observed_at_unix_ms
-                .ok_or_else(|| {
-                    StorageError::InvalidData(
-                        "training economics endpoint identity is missing observation time"
-                            .to_owned(),
-                    )
-                })?;
             match self.pump_swap_effective_fee_context(
                 &stored.decision.market.mint,
                 &stored.decision.market.quote_mint,
