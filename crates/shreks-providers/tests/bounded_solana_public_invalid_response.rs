@@ -12,7 +12,6 @@ use shreks_core::ProviderId;
 use shreks_providers::{
     bounded_pump_realtime::BoundedPumpRealtimeLogStreamConfig,
     bounded_pump_realtime_failover::BoundedPumpRealtimeFailoverStream,
-    ProviderErrorKind,
 };
 use tokio::{net::TcpListener, sync::watch};
 use tokio_tungstenite::{accept_async, tungstenite::Message};
