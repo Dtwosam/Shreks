@@ -1,0 +1,160 @@
+name: Verify production PAPER runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_release_sha:
+        description: Expected active sealed 40-character source commit
+        required: true
+        type: string
+      journal_minutes:
+        description: Read-only journal lookback window in minutes
+        required: true
+        default: "30"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    environment: production-paper
+    runs-on: ubuntu-latest
+    env:
+      EXPECTED_RELEASE_SHA: ${{ inputs.expected_release_sha }}
+      JOURNAL_MINUTES: ${{ inputs.journal_minutes }}
+    steps:
+      - name: Validate verifier inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$JOURNAL_MINUTES" =~ ^[0-9]{1,3}$ ]] || exit 2
+          (( JOURNAL_MINUTES >= 1 && JOURNAL_MINUTES <= 240 )) || exit 2
+
+      - name: Verify runtime and probe historical evidence read-only
+        shell: bash
+        env:
+          SHREKS_DEPLOY_HOST: ${{ secrets.SHREKS_DEPLOY_HOST }}
+          SHREKS_DEPLOY_PORT: ${{ secrets.SHREKS_DEPLOY_PORT }}
+          SHREKS_DEPLOY_USER: ${{ secrets.SHREKS_DEPLOY_USER }}
+          SHREKS_DEPLOY_SSH_KEY: ${{ secrets.SHREKS_DEPLOY_SSH_KEY }}
+          SHREKS_DEPLOY_KNOWN_HOSTS: ${{ secrets.SHREKS_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$SHREKS_DEPLOY_HOST" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || exit 2
+          [[ "$SHREKS_DEPLOY_USER" =~ ^[a-z_][a-z0-9_-]*$ ]] || exit 2
+          [[ "$SHREKS_DEPLOY_PORT" =~ ^[0-9]{1,5}$ ]] || exit 2
+          [[ -n "$SHREKS_DEPLOY_SSH_KEY" && -n "$SHREKS_DEPLOY_KNOWN_HOSTS" ]] || exit 2
+
+          TEMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TEMP_DIR"' EXIT
+          KEY_FILE="$TEMP_DIR/deploy_key"
+          KNOWN_HOSTS_FILE="$TEMP_DIR/known_hosts"
+          umask 077
+          printf '%s\n' "$SHREKS_DEPLOY_SSH_KEY" > "$KEY_FILE"
+          printf '%s\n' "$SHREKS_DEPLOY_KNOWN_HOSTS" > "$KNOWN_HOSTS_FILE"
+          chmod 600 "$KEY_FILE" "$KNOWN_HOSTS_FILE"
+
+          DESTINATION="$SHREKS_DEPLOY_USER@$SHREKS_DEPLOY_HOST"
+          SSH_COMMON=(-i "$KEY_FILE" -p "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes)
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$EXPECTED_RELEASE_SHA' '$JOURNAL_MINUTES'" <<'REMOTE'
+          set -euo pipefail
+          EXPECTED_SHA="$1"
+          JOURNAL_MINUTES="$2"
+          CURRENT="$(readlink -f /opt/shreks/current)"
+          EXPECTED="/opt/shreks/releases/$EXPECTED_SHA"
+          printf 'current_release=%s\nexpected_release=%s\n' "$CURRENT" "$EXPECTED"
+          test "$CURRENT" = "$EXPECTED"
+
+          MANIFEST_SHA="$(python3 - <<'PY'
+          import json
+          with open('/opt/shreks/current/RELEASE_MANIFEST.json', encoding='utf-8') as handle:
+              print(json.load(handle)['source_sha'])
+          PY
+          )"
+          printf 'manifest_source_sha=%s\n' "$MANIFEST_SHA"
+          test "$MANIFEST_SHA" = "$EXPECTED_SHA"
+
+          unexpected_restarts=0
+          for unit in shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service; do
+            echo "--- $unit ---"
+            systemctl show "$unit" -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus -p WorkingDirectory -p ExecStart --no-pager
+            test "$(systemctl show "$unit" -p ActiveState --value)" = active
+            test "$(systemctl show "$unit" -p SubState --value)" = running
+            restarts="$(systemctl show "$unit" -p NRestarts --value)"
+            if [[ ! "$restarts" =~ ^[0-9]+$ ]] || (( restarts != 0 )); then
+              unexpected_restarts=1
+            fi
+            pid="$(systemctl show "$unit" -p MainPID --value)"
+            if [[ "$pid" =~ ^[1-9][0-9]*$ ]]; then
+              if exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null)" && cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null)"; then
+                printf 'resolved_exe=%s\nresolved_cwd=%s\n' "$exe" "$cwd"
+                test "$cwd" = "$EXPECTED"
+              else
+                echo 'process_identity_probe=permission-denied'
+              fi
+            fi
+          done
+          (( unexpected_restarts == 0 ))
+          test "$(systemctl show shreks.target -p ActiveState --value)" = active
+
+          journal_access=available
+          JOURNAL="$(journalctl --since="-${JOURNAL_MINUTES} min" -u shreks-observe.service -u shreks-paper-evidence.service -u shreks-paper-campaign.service --no-pager 2>&1)" || journal_access=denied
+          printf 'journal_access=%s\n' "$journal_access"
+          if [[ "$journal_access" = available ]]; then
+            printf 'observer_invalid_response_lines=%s\n' "$(printf '%s\n' "$JOURNAL" | grep -c 'InvalidResponse' || true)"
+            if printf '%s\n' "$JOURNAL" | grep -Eqi 'DatabaseBusy|database is locked'; then
+              echo 'recent_sqlite_contention_signature=yes'
+              exit 1
+            fi
+            if printf '%s\n' "$JOURNAL" | grep -Eqi 'Main process exited|Failed with result|Scheduled restart job'; then
+              echo 'recent_runtime_restart_signature=yes'
+              exit 1
+            fi
+            echo 'recent_failure_signatures=none'
+          fi
+
+          DB=/var/lib/shreks/shreks.db
+          COHORT=/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2
+          if test -r "$DB" && test -r "$COHORT"; then
+            echo 'historical_evidence_read_access=available'
+            /opt/shreks/current/.venv/bin/python - "$DB" "$COHORT" <<'PY'
+          import sqlite3, sys
+          from shreks_brain.fast_first_champion_v2.models import FastFirstChampionV2Policy
+          from shreks_brain.fl9_v2_cohort_acceptance import read_fl9_v2_cohort_acceptance
+          from shreks_brain.fl9_v2_future_path_backfill import build_backfill_request_document
+
+          db_path, cohort_path = sys.argv[1:]
+          artifact = read_fl9_v2_cohort_acceptance(cohort_path)
+          request = build_backfill_request_document(artifact, policy=FastFirstChampionV2Policy())
+          accepted = {tuple(row.decision_identity) for row in artifact.accepted_decisions}
+          print(f"cohort_decisions={len(request['decisions'])}")
+          print(f"cohort_horizon_ms={request['horizon_ms']}")
+          conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+          conn.execute("PRAGMA query_only = ON")
+          total = conn.execute("SELECT COUNT(*) FROM fast_future_path_labels WHERE label_version = 1").fetchone()[0]
+          horizon = conn.execute("SELECT COUNT(*) FROM fast_future_path_labels WHERE label_version = 1 AND horizon_ms = 30000").fetchone()[0]
+          cohort = complete = incomplete = 0
+          for row in conn.execute("""
+              SELECT decision_signature, decision_ordinal, decision_sequence,
+                     decision_mint, decision_quote_mint, decision_venue,
+                     decision_observed_at_unix_ms, completeness
+              FROM fast_future_path_labels
+              WHERE label_version = 1 AND horizon_ms = 30000
+          """):
+              if tuple(row[:7]) in accepted:
+                  cohort += 1
+                  complete += row[7] == "complete"
+                  incomplete += row[7] == "incomplete"
+          print(f"fl4_label_rows={total}")
+          print(f"fl4_30s_rows={horizon}")
+          print(f"existing_exact_cohort_30s_labels={cohort}")
+          print(f"existing_exact_cohort_complete={complete}")
+          print(f"existing_exact_cohort_incomplete={incomplete}")
+          conn.close()
+          PY
+          else
+            echo 'historical_evidence_read_access=denied'
+          fi
+          REMOTE
