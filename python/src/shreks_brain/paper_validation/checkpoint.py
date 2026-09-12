@@ -8,6 +8,7 @@ import math
 import os
 from pathlib import Path
 import sqlite3
+import time
 from typing import Any
 
 from shreks_brain.decision import DecisionAction
@@ -48,6 +49,8 @@ from .models import (
 
 _CHECKPOINT_SCHEMA_VERSION = "c6-paper-state-v1"
 _TABLE_NAME = "paper_loop_checkpoints"
+_SQLITE_BUSY_MAX_ATTEMPTS = 2
+_SQLITE_BUSY_RETRY_DELAY_SECONDS = 0.25
 
 
 class PaperCheckpointError(ValueError):
@@ -196,64 +199,78 @@ def save_paper_checkpoint(
     record = decode_paper_checkpoint(payload)
     payload_json = payload.decode("utf-8")
 
-    connection = _connect(database_path)
-    try:
-        _require_checkpoint_table(connection)
-        connection.execute("BEGIN IMMEDIATE")
+    for attempt in range(_SQLITE_BUSY_MAX_ATTEMPTS):
+        connection = _connect(database_path)
+        retry_busy = False
+        try:
+            _require_checkpoint_table(connection)
+            connection.execute("BEGIN IMMEDIATE")
 
-        existing = connection.execute(
-            f"""SELECT run_id, sequence, checkpoint_schema_version,
-                       state_as_of_unix_ms, created_at_unix_ms,
-                       payload_sha256, payload_json
-                FROM {_TABLE_NAME}
-                WHERE run_id = ? AND sequence = ?""",
-            (run_id, sequence),
-        ).fetchone()
-        if existing is not None:
-            if _stored_row_matches_record(existing, record, payload_json):
+            existing = connection.execute(
+                f"""SELECT run_id, sequence, checkpoint_schema_version,
+                           state_as_of_unix_ms, created_at_unix_ms,
+                           payload_sha256, payload_json
+                    FROM {_TABLE_NAME}
+                    WHERE run_id = ? AND sequence = ?""",
+                (run_id, sequence),
+            ).fetchone()
+            if existing is not None:
+                if _stored_row_matches_record(existing, record, payload_json):
+                    connection.rollback()
+                    return record
                 connection.rollback()
-                return record
-            connection.rollback()
-            raise PaperCheckpointError(
-                "checkpoint sequence collision with different state or metadata"
-            )
+                raise PaperCheckpointError(
+                    "checkpoint sequence collision with different state or metadata"
+                )
 
-        latest_sequence = connection.execute(
-            f"SELECT MAX(sequence) FROM {_TABLE_NAME} WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()[0]
-        if latest_sequence is not None and sequence < latest_sequence:
-            connection.rollback()
-            raise PaperCheckpointError(
-                "checkpoint sequence must be monotonic for a run"
-            )
+            latest_sequence = connection.execute(
+                f"SELECT MAX(sequence) FROM {_TABLE_NAME} WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            if latest_sequence is not None and sequence < latest_sequence:
+                connection.rollback()
+                raise PaperCheckpointError(
+                    "checkpoint sequence must be monotonic for a run"
+                )
 
-        connection.execute(
-            f"""INSERT INTO {_TABLE_NAME} (
-                    run_id, sequence, checkpoint_schema_version,
-                    state_as_of_unix_ms, created_at_unix_ms,
-                    payload_sha256, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                record.run_id,
-                record.sequence,
-                record.checkpoint_schema_version,
-                record.state_as_of_unix_ms,
-                record.created_at_unix_ms,
-                record.payload_sha256,
-                payload_json,
-            ),
-        )
-        connection.commit()
-        return record
-    except PaperCheckpointError:
-        _rollback_if_needed(connection)
-        raise
-    except sqlite3.Error as error:
-        _rollback_if_needed(connection)
-        raise PaperCheckpointError(f"checkpoint storage error: {error}") from error
-    finally:
-        connection.close()
+            connection.execute(
+                f"""INSERT INTO {_TABLE_NAME} (
+                        run_id, sequence, checkpoint_schema_version,
+                        state_as_of_unix_ms, created_at_unix_ms,
+                        payload_sha256, payload_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    record.run_id,
+                    record.sequence,
+                    record.checkpoint_schema_version,
+                    record.state_as_of_unix_ms,
+                    record.created_at_unix_ms,
+                    record.payload_sha256,
+                    payload_json,
+                ),
+            )
+            connection.commit()
+            return record
+        except PaperCheckpointError:
+            _rollback_if_needed(connection)
+            raise
+        except sqlite3.Error as error:
+            _rollback_if_needed(connection)
+            retry_busy = (
+                _is_sqlite_busy_or_locked(error)
+                and attempt + 1 < _SQLITE_BUSY_MAX_ATTEMPTS
+            )
+            if not retry_busy:
+                raise PaperCheckpointError(
+                    f"checkpoint storage error: {error}"
+                ) from error
+        finally:
+            connection.close()
+
+        if retry_busy:
+            time.sleep(_SQLITE_BUSY_RETRY_DELAY_SECONDS)
+
+    raise PaperCheckpointError("checkpoint storage retry state is invalid")
 
 
 def load_latest_paper_checkpoint(
@@ -472,6 +489,13 @@ def _connect(database_path: str | os.PathLike[str]) -> sqlite3.Connection:
         return sqlite3.connect(Path(database_path))
     except (TypeError, ValueError, sqlite3.Error, OSError) as error:
         raise PaperCheckpointError(f"cannot open checkpoint database: {error}") from error
+
+
+def _is_sqlite_busy_or_locked(error: sqlite3.Error) -> bool:
+    return getattr(error, "sqlite_errorcode", None) in {
+        sqlite3.SQLITE_BUSY,
+        sqlite3.SQLITE_LOCKED,
+    }
 
 
 def _require_checkpoint_table(connection: sqlite3.Connection) -> None:

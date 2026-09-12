@@ -5,6 +5,8 @@ import hashlib
 import json
 import math
 import sqlite3
+import threading
+import time
 
 import pytest
 
@@ -250,6 +252,59 @@ def test_save_requires_rust_owned_migration_table(tmp_path) -> None:
     sqlite3.connect(database).close()
     with pytest.raises(PaperCheckpointError, match="migration"):
         save_paper_checkpoint(database, "run-alpha", 1, _state(), T0 + 300)
+
+
+def test_save_recovers_from_one_transient_sqlite_writer_contention(tmp_path) -> None:
+    database = tmp_path / "paper-busy.db"
+    _migrate(database)
+    blocker = sqlite3.connect(database)
+    blocker.execute("BEGIN IMMEDIATE")
+
+    result: dict[str, object] = {}
+
+    def save() -> None:
+        try:
+            result["record"] = save_paper_checkpoint(
+                database,
+                "run-busy",
+                1,
+                _state(),
+                T0 + 300,
+            )
+        except Exception as error:  # test captures the worker-thread outcome
+            result["error"] = error
+
+    worker = threading.Thread(target=save)
+    worker.start()
+    time.sleep(5.2)
+    blocker.rollback()
+    blocker.close()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert "error" not in result, result.get("error")
+    record = result.get("record")
+    assert record is not None
+    assert record.sequence == 1
+    assert load_latest_paper_checkpoint(database, "run-busy") == record
+
+
+def test_save_persistent_sqlite_writer_contention_remains_fail_closed(tmp_path) -> None:
+    database = tmp_path / "paper-persistent-busy.db"
+    _migrate(database)
+    blocker = sqlite3.connect(database)
+    blocker.execute("BEGIN IMMEDIATE")
+
+    started = time.monotonic()
+    try:
+        with pytest.raises(PaperCheckpointError, match="database is locked"):
+            save_paper_checkpoint(database, "run-busy", 1, _state(), T0 + 300)
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    assert time.monotonic() - started >= 10.0
+    assert load_latest_paper_checkpoint(database, "run-busy") is None
 
 
 def test_save_is_atomic_idempotent_monotonic_and_collision_safe(tmp_path) -> None:
