@@ -44,9 +44,15 @@ pub use fast_baseline_campaign::{
     FastBaselineCampaignInput, FAST_BASELINE_CAMPAIGN_VERSION,
 };
 pub use fast_covered_future_path_population::{
+    decode_fast_cohort_future_path_population_request_json,
+    encode_fast_cohort_future_path_population_report_json,
     encode_fast_covered_future_path_population_report_json,
-    populate_fast_future_path_labels, FastCoveredFuturePathPopulationReport,
-    FastCoveredFuturePathPopulationRequest,
+    populate_fast_future_path_labels, populate_fast_future_path_labels_for_cohort,
+    FastCohortCoverageSessionCheckpoint, FastCohortFuturePathDecisionIdentity,
+    FastCohortFuturePathPopulationReport, FastCohortFuturePathPopulationRequest,
+    FastCoveredFuturePathPopulationReport, FastCoveredFuturePathPopulationRequest,
+    FAST_COHORT_FUTURE_PATH_POPULATION_SCHEMA_NAME,
+    FAST_COHORT_FUTURE_PATH_POPULATION_SCHEMA_VERSION,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_VERSION,
 };

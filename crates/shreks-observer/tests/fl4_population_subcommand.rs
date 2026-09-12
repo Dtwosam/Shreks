@@ -166,3 +166,45 @@ fn population_subcommand_rejects_missing_named_arguments_before_runtime_config()
         "unexpected stderr: {stderr}"
     );
 }
+
+#[test]
+fn cohort_population_subcommand_reads_authenticated_request_file_and_prints_json() {
+    let root = unique_test_dir("cohort-success");
+    let db_path = root.join("shreks.db");
+    let request_path = root.join("request.json");
+    let coverage_session_id = seed_database(&db_path);
+    let request = r#"{"schema_name":"shreks.fl9_v2_future_path_backfill_request","schema_version":1,"cohort_artifact_fingerprint_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","accepted_identity_fingerprint_sha256":"8cd28e7a63d0a75c5fbdf73536a36949a42c637fbb990f7959bed5e3067f766b","horizon_ms":500,"source_sessions":[{"session_id":$SESSION,"provider":"solana_public","process_session_sequence":1,"first_notification_observed_at_unix_ms":900,"last_notification_observed_at_unix_ms":1700,"notification_count":2}],"decisions":[{"signature":"decision-cli","ordinal":0,"sequence":1,"mint":"mint-fl4-cli","quote_mint":"So11111111111111111111111111111111111111112","venue":"pump_fun_bonding_curve","observed_at_unix_ms":1000,"coverage_session_id":$SESSION,"coverage_complete_through_unix_ms":1700}]}"#
+        .replace("$SESSION", &coverage_session_id.to_string());
+    fs::write(&request_path, request).unwrap();
+
+    let output = Command::new(binary())
+        .env_clear()
+        .args([
+            "populate-cohort-future-path-labels",
+            "--database",
+            db_path.to_str().unwrap(),
+            "--request-json",
+            request_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("cohort population subcommand must launch");
+
+    assert!(
+        output.status.success(),
+        "cohort population subcommand failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("stdout must be UTF-8");
+    assert_eq!(stdout.lines().count(), 1, "expected one JSON report: {stdout}");
+    assert!(stdout.contains(r#""schema_name":"shreks.fl9_v2_future_path_backfill_request""#));
+    assert!(stdout.contains(r#""decision_count":1"#));
+    assert!(stdout.contains(r#""inserted_label_count":1"#));
+
+    let db = ShreksDb::open(&db_path).unwrap();
+    let rows = db
+        .future_path_labels_for_decision("decision-cli", 0, FUTURE_PATH_LABEL_VERSION)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+
+    cleanup_dir(&root);
+}

@@ -1,15 +1,20 @@
 use std::{
     ffi::{OsStr, OsString},
+    fs,
     io,
     path::PathBuf,
 };
 
 use shreks_storage::{
+    decode_fast_cohort_future_path_population_request_json,
+    encode_fast_cohort_future_path_population_report_json,
     encode_fast_covered_future_path_population_report_json,
-    populate_fast_future_path_labels, FastCoveredFuturePathPopulationRequest, ShreksDb,
+    populate_fast_future_path_labels, populate_fast_future_path_labels_for_cohort,
+    FastCoveredFuturePathPopulationRequest, ShreksDb,
 };
 
 const COMMAND: &str = "populate-future-path-labels";
+const COHORT_COMMAND: &str = "populate-cohort-future-path-labels";
 
 pub fn run_fast_future_path_population_subcommand_if_requested() -> io::Result<bool> {
     let mut args = std::env::args_os();
@@ -20,25 +25,38 @@ pub fn run_fast_future_path_population_subcommand_if_requested() -> io::Result<b
     let Some(command) = args.next() else {
         return Ok(false);
     };
-    if command != COMMAND {
-        return Ok(false);
+    if command == COMMAND {
+        let parsed = parse_arguments(&mut args, &program)?;
+        let db = ShreksDb::open(&parsed.database)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let request = FastCoveredFuturePathPopulationRequest {
+            coverage_session_id: parsed.coverage_session_id,
+            from_observed_at_unix_ms: parsed.from_observed_at_unix_ms,
+            through_observed_at_unix_ms: parsed.through_observed_at_unix_ms,
+            maximum_decisions: parsed.maximum_decisions,
+        };
+        let report = populate_fast_future_path_labels(&db, &request)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let encoded = encode_fast_covered_future_path_population_report_json(&report)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        println!("{encoded}");
+        return Ok(true);
     }
-
-    let parsed = parse_arguments(&mut args, &program)?;
-    let db = ShreksDb::open(&parsed.database)
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    let request = FastCoveredFuturePathPopulationRequest {
-        coverage_session_id: parsed.coverage_session_id,
-        from_observed_at_unix_ms: parsed.from_observed_at_unix_ms,
-        through_observed_at_unix_ms: parsed.through_observed_at_unix_ms,
-        maximum_decisions: parsed.maximum_decisions,
-    };
-    let report = populate_fast_future_path_labels(&db, &request)
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    let encoded = encode_fast_covered_future_path_population_report_json(&report)
-        .map_err(|error| io::Error::other(error.to_string()))?;
-    println!("{encoded}");
-    Ok(true)
+    if command == COHORT_COMMAND {
+        let parsed = parse_cohort_arguments(&mut args, &program)?;
+        let payload = fs::read_to_string(&parsed.request_json)?;
+        let request = decode_fast_cohort_future_path_population_request_json(&payload)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let db = ShreksDb::open(&parsed.database)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let report = populate_fast_future_path_labels_for_cohort(&db, &request)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        let encoded = encode_fast_cohort_future_path_population_report_json(&report)
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        println!("{encoded}");
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 struct Arguments {
@@ -47,6 +65,46 @@ struct Arguments {
     from_observed_at_unix_ms: i64,
     through_observed_at_unix_ms: i64,
     maximum_decisions: u64,
+}
+
+struct CohortArguments {
+    database: PathBuf,
+    request_json: PathBuf,
+}
+
+fn parse_cohort_arguments(
+    args: &mut impl Iterator<Item = OsString>,
+    program: &OsString,
+) -> io::Result<CohortArguments> {
+    let mut database = None;
+    let mut request_json = None;
+    while let Some(flag) = args.next() {
+        match flag.to_str() {
+            Some("--database") => set_once(
+                &mut database,
+                PathBuf::from(required_value(args, program, "--database")?),
+                "--database",
+                program,
+            )?,
+            Some("--request-json") => set_once(
+                &mut request_json,
+                PathBuf::from(required_value(args, program, "--request-json")?),
+                "--request-json",
+                program,
+            )?,
+            _ => {
+                return Err(io::Error::other(format!(
+                    "unknown {COHORT_COMMAND} argument '{}'; {}",
+                    flag.to_string_lossy(),
+                    cohort_usage(program)
+                )));
+            }
+        }
+    }
+    Ok(CohortArguments {
+        database: database.ok_or_else(|| cohort_missing("--database", program))?,
+        request_json: request_json.ok_or_else(|| cohort_missing("--request-json", program))?,
+    })
 }
 
 fn parse_arguments(
@@ -204,9 +262,20 @@ fn missing(flag: &str, program: &OsString) -> io::Error {
     io::Error::other(format!("missing {flag}; {}", usage(program)))
 }
 
+fn cohort_missing(flag: &str, program: &OsString) -> io::Error {
+    io::Error::other(format!("missing {flag}; {}", cohort_usage(program)))
+}
+
 fn usage(program: &OsString) -> String {
     format!(
         "usage: {} {COMMAND} --database <shreks.db> --coverage-session-id <positive-u64> --from-observed-at-unix-ms <nonnegative-i64> --through-observed-at-unix-ms <nonnegative-i64> --maximum-decisions <positive-u64>",
+        program.to_string_lossy()
+    )
+}
+
+fn cohort_usage(program: &OsString) -> String {
+    format!(
+        "usage: {} {COHORT_COMMAND} --database <shreks.db> --request-json <request.json>",
         program.to_string_lossy()
     )
 }
