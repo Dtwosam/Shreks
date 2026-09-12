@@ -7,6 +7,7 @@ import re
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RELEASE_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "release.yml"
 _DEPLOY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "deploy.yml"
+_VERIFY_PRODUCTION_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "verify-production-paper.yml"
 _BUILD_SCRIPT = _REPO_ROOT / "deploy" / "release" / "build_release.sh"
 _RELEASE_BUNDLE = _REPO_ROOT / "deploy" / "release" / "release_bundle.py"
 _RELEASE_RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
@@ -222,6 +223,57 @@ def test_deploy_workflow_reports_read_only_host_diagnostics_on_release_manager_f
 
     assert "sudo systemctl" not in workflow
     assert "journalctl" not in workflow
+
+
+def test_production_verifier_is_manual_read_only_and_uses_existing_transport_boundary():
+    workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
+
+    assert "workflow_dispatch:" in workflow
+    assert "expected_release_sha:" in workflow
+    assert "environment: production-paper" in workflow
+    assert re.search(r"permissions:\s*\n\s+contents: read", workflow)
+    assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == _DEPLOY_SECRET_NAMES
+
+    for required in (
+        "StrictHostKeyChecking=yes",
+        "UserKnownHostsFile=",
+        "BatchMode=yes",
+        "readlink -f /opt/shreks/current",
+        "RELEASE_MANIFEST.json",
+        "shreks-observe.service",
+        "shreks-paper-evidence.service",
+        "shreks-paper-campaign.service",
+        'systemctl show "$unit"',
+        "NRestarts",
+        "/proc/$pid/exe",
+        "/proc/$pid/cwd",
+        "journalctl",
+        "DatabaseBusy",
+        "database is locked",
+        "InvalidResponse",
+        "/var/lib/shreks/shreks.db",
+        "mode=ro",
+        "PRAGMA query_only = ON",
+        "fast_future_path_labels",
+    ):
+        assert required in workflow
+
+    for forbidden in (
+        "sudo ",
+        "systemctl start",
+        "systemctl stop",
+        "systemctl restart",
+        "systemctl enable",
+        "systemctl disable",
+        "systemctl kill",
+        "shreks-fl9-v2-future-path-backfill",
+        "INSERT ",
+        "UPDATE ",
+        "DELETE ",
+        "LIVE_TRADING",
+    ):
+        assert forbidden not in workflow
+
 
 
 def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account():
