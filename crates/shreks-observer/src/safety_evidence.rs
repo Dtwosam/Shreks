@@ -7,6 +7,8 @@ use shreks_core::{
 use shreks_providers::{ChainDataProvider, DistributionDataProvider, QuoteProvider};
 use shreks_storage::{ShreksDb, StorageError};
 
+use crate::sqlite_busy_retry::{is_storage_sqlite_busy_or_locked, retry_bounded};
+
 /// Caller-supplied, versioned recipe for one bounded read-only safety probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SafetyEvidenceProbe {
@@ -128,7 +130,10 @@ impl SafetyEvidenceCollector {
                     Ok(result)
                         if mint_state_identity_matches(provider_id, candidate_mint, &result) =>
                     {
-                        self.db.insert_mint_state(candidate_id, &result)?;
+                        retry_bounded(
+                            || self.db.insert_mint_state(candidate_id, &result),
+                            is_storage_sqlite_busy_or_locked,
+                        )?;
                         report.mint_states_stored = report.mint_states_stored.saturating_add(1);
                         break;
                     }
@@ -161,7 +166,10 @@ impl SafetyEvidenceCollector {
                     continue;
                 }
 
-                self.db.insert_holder_distribution(candidate_id, &result)?;
+                retry_bounded(
+                    || self.db.insert_holder_distribution(candidate_id, &result),
+                    is_storage_sqlite_busy_or_locked,
+                )?;
                 report.holder_snapshots_stored = report.holder_snapshots_stored.saturating_add(1);
             }
         }
@@ -173,18 +181,28 @@ impl SafetyEvidenceCollector {
                 Ok(result)
                     if quote_identity_matches(provider_id, &probe.exit_quote_request, &result) =>
                 {
-                    self.db.insert_exit_quote_snapshot(
-                        candidate_id,
-                        &probe.probe_policy_version,
-                        &probe.exit_quote_request,
-                        &result,
+                    retry_bounded(
+                        || {
+                            self.db.insert_exit_quote_snapshot(
+                                candidate_id,
+                                &probe.probe_policy_version,
+                                &probe.exit_quote_request,
+                                &result,
+                            )
+                        },
+                        is_storage_sqlite_busy_or_locked,
                     )?;
-                    self.db.insert_paper_quote_snapshot(
-                        candidate_id,
-                        QuotePurpose::Exit,
-                        &probe.probe_policy_version,
-                        &probe.exit_quote_request,
-                        &result,
+                    retry_bounded(
+                        || {
+                            self.db.insert_paper_quote_snapshot(
+                                candidate_id,
+                                QuotePurpose::Exit,
+                                &probe.probe_policy_version,
+                                &probe.exit_quote_request,
+                                &result,
+                            )
+                        },
+                        is_storage_sqlite_busy_or_locked,
                     )?;
                     report.quote_snapshots_stored =
                         report.quote_snapshots_stored.saturating_add(1);
@@ -204,12 +222,17 @@ impl SafetyEvidenceCollector {
             };
             match provider.quote(entry_request).await {
                 Ok(result) if quote_identity_matches(provider_id, entry_request, &result) => {
-                    self.db.insert_paper_quote_snapshot(
-                        candidate_id,
-                        QuotePurpose::Entry,
-                        &probe.probe_policy_version,
-                        entry_request,
-                        &result,
+                    retry_bounded(
+                        || {
+                            self.db.insert_paper_quote_snapshot(
+                                candidate_id,
+                                QuotePurpose::Entry,
+                                &probe.probe_policy_version,
+                                entry_request,
+                                &result,
+                            )
+                        },
+                        is_storage_sqlite_busy_or_locked,
                     )?;
                     report.quote_snapshots_stored =
                         report.quote_snapshots_stored.saturating_add(1);

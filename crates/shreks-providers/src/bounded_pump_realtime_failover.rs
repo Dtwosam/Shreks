@@ -118,22 +118,30 @@ impl BoundedPumpRealtimeFailoverStream {
                     return self.bind_session(index, connection_generation, notification);
                 }
                 Err(error)
-                    if self.configs.len() == 1 && is_public_reconnect_error(&error) =>
+                    if self.configs.len() == 1 && is_public_invalid_response(&error) =>
+                {
+                    // The official public Solana websocket can occasionally
+                    // return malformed post-subscription frames for extended
+                    // bursts. Those frames are never accepted as evidence.
+                    // Rebuild the same authorized public lane and remain
+                    // degraded/reconnecting instead of restarting the whole
+                    // observer process. Health/freshness gates continue to
+                    // prevent stale data from becoming trading authority.
+                    self.public_reconnects = 0;
+                    self.rebuild_stream(self.active_index)?;
+                    sleep(self.public_reconnect_delay).await;
+                }
+                Err(error)
+                    if self.configs.len() == 1 && is_public_retryable_error(&error) =>
                 {
                     self.public_reconnects = self.public_reconnects.saturating_add(1);
                     if self.public_reconnects >= self.max_public_reconnects {
                         return Err(error);
                     }
 
-                    // The raw stream already has its own bounded connection
-                    // retry budget. Production FL1 intentionally configures
-                    // exactly one official public Solana source, so exhausting
-                    // that inner budget must not force an immediate process
-                    // restart when the same endpoint can recover shortly
-                    // afterward. Rebuild only that same public lane from the
-                    // latest verified targets and retry after a bounded delay.
-                    // No paid-provider fallback is authorized, and persistent
-                    // unavailability/corruption still fails closed here.
+                    // Ordinary endpoint unavailability retains the bounded
+                    // outer recovery budget and still fails closed when the
+                    // same public source stays unavailable.
                     self.rebuild_stream(self.active_index)?;
                     sleep(self.public_reconnect_delay).await;
                 }
@@ -245,9 +253,13 @@ fn session_state_error(provider: ProviderId, message: &str) -> ProviderError {
     )
 }
 
-fn is_public_reconnect_error(error: &ProviderError) -> bool {
+fn is_public_invalid_response(error: &ProviderError) -> bool {
     error.provider == ProviderId::SolanaPublic
-        && (error.kind == ProviderErrorKind::InvalidResponse || error.is_retryable())
+        && error.kind == ProviderErrorKind::InvalidResponse
+}
+
+fn is_public_retryable_error(error: &ProviderError) -> bool {
+    error.provider == ProviderId::SolanaPublic && error.is_retryable()
 }
 
 fn with_failover_attempt_trace(mut error: ProviderError, attempts: &[String]) -> ProviderError {

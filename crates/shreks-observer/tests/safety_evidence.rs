@@ -2,8 +2,9 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process,
-    sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    sync::{mpsc, Arc},
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
@@ -183,6 +184,42 @@ async fn explicit_collector_persists_successful_holder_and_quote_evidence_idempo
     assert_eq!(row_count(&db_path, "exit_quote_snapshots"), 1);
     assert_eq!(row_count(&db_path, "paper_quote_snapshots"), 1);
 
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn collector_recovers_from_one_transient_sqlite_writer_contention() {
+    let root = unique_test_dir("transient-busy");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("Mint111")).unwrap();
+    let probe = probe("Mint111");
+
+    let distribution_provider = Arc::new(StaticDistributionProvider {
+        id: ProviderId::Helius,
+        result: Ok(distribution("Mint111", ProviderId::Helius, 1_000)),
+    });
+    let collector = SafetyEvidenceCollector::new(db, vec![distribution_provider], vec![]);
+
+    let (ready_sender, ready_receiver) = mpsc::channel();
+    let blocker_path = db_path.clone();
+    let blocker = thread::spawn(move || {
+        let connection = Connection::open(blocker_path).unwrap();
+        connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        ready_sender.send(()).unwrap();
+        thread::sleep(Duration::from_millis(5_200));
+        connection.execute_batch("ROLLBACK").unwrap();
+    });
+    ready_receiver.recv().unwrap();
+
+    let report = collector
+        .collect_candidate(candidate_id, "Mint111", &probe)
+        .await
+        .expect("one transient SQLite BUSY interval must recover");
+
+    blocker.join().unwrap();
+    assert_eq!(report.holder_snapshots_stored, 1);
+    assert_eq!(row_count(&db_path, "token_holder_distributions"), 1);
     cleanup_dir(&root);
 }
 
