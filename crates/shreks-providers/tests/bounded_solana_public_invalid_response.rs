@@ -113,8 +113,9 @@ async fn solana_public_reconnects_after_one_invalid_post_subscription_frame() {
 }
 
 #[tokio::test]
-async fn solana_public_still_fails_closed_after_bounded_invalid_response_exhaustion() {
-    const ATTEMPTS: usize = 3;
+async fn solana_public_keeps_reconnecting_after_invalid_response_burst_exceeds_old_bound() {
+    const OLD_OUTER_BOUND: u32 = 3;
+    const MALFORMED_CONNECTIONS: usize = 6;
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -122,11 +123,11 @@ async fn solana_public_still_fails_closed_after_bounded_invalid_response_exhaust
     let server_connections = connections.clone();
 
     let server = tokio::spawn(async move {
-        for index in 0..ATTEMPTS {
+        for index in 0..MALFORMED_CONNECTIONS {
             let (tcp, _) = listener
                 .accept()
                 .await
-                .expect("bounded public reconnect attempt");
+                .expect("public reconnect attempt during malformed-response burst");
             let mut socket = accept_async(tcp).await.expect("websocket handshake");
             acknowledge_initial_pump_subscription(&mut socket, 300 + index as u64).await;
             server_connections.fetch_add(1, Ordering::SeqCst);
@@ -135,21 +136,40 @@ async fn solana_public_still_fails_closed_after_bounded_invalid_response_exhaust
                 .await
                 .expect("malformed public frame");
         }
+
+        let (tcp, _) = listener
+            .accept()
+            .await
+            .expect("public lane must reconnect after malformed-response burst");
+        let mut socket = accept_async(tcp).await.expect("recovery websocket handshake");
+        acknowledge_initial_pump_subscription(&mut socket, 999).await;
+        server_connections.fetch_add(1, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(150)).await;
     });
 
     let (_targets_sender, targets_receiver) = watch::channel(Vec::<String>::new());
-    let mut stream = public_failover(address, targets_receiver, ATTEMPTS as u32);
+    let mut stream = public_failover(address, targets_receiver, OLD_OUTER_BOUND);
+    let client = tokio::spawn(async move { stream.next_realtime_notification().await });
 
-    let error = tokio::time::timeout(
-        Duration::from_secs(1),
-        stream.next_realtime_notification(),
-    )
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while connections.load(Ordering::SeqCst) < MALFORMED_CONNECTIONS + 1 {
+            assert!(
+                !client.is_finished(),
+                "malformed public responses must degrade/reconnect without terminating the realtime lane"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
     .await
-    .expect("persistent public invalid responses must fail within a bounded interval")
-    .expect_err("persistent public invalid responses must fail closed");
+    .expect("public lane must reconnect beyond the former outer bound");
 
-    assert_eq!(connections.load(Ordering::SeqCst), ATTEMPTS);
-    assert_eq!(error.provider, ProviderId::SolanaPublic);
-    assert_eq!(error.kind, ProviderErrorKind::InvalidResponse);
+    assert_eq!(connections.load(Ordering::SeqCst), MALFORMED_CONNECTIONS + 1);
+    assert!(
+        !client.is_finished(),
+        "recovered public lane must remain active after malformed-response burst"
+    );
+
+    client.abort();
+    let _ = client.await;
     server.await.unwrap();
 }
