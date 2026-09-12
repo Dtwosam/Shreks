@@ -11,8 +11,10 @@ use shreks_core::{
     DEFAULT_FUTURE_PATH_HORIZONS_MS, FUTURE_PATH_LABEL_VERSION,
 };
 use shreks_storage::{
-    populate_fast_future_path_labels, EvidenceWriteOutcome,
-    FastCoveredFuturePathPopulationRequest, PumpTradeEvidenceWrite, ShreksDb,
+    populate_fast_future_path_labels, populate_fast_future_path_labels_for_cohort, EvidenceWriteOutcome,
+    FastCohortCoverageSessionCheckpoint, FastCohortFuturePathDecisionIdentity,
+    FastCohortFuturePathPopulationRequest, FastCoveredFuturePathPopulationRequest,
+    PumpTradeEvidenceWrite, ShreksDb,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_NAME,
     FAST_COVERED_FUTURE_PATH_POPULATION_SCHEMA_VERSION,
 };
@@ -387,5 +389,112 @@ fn covered_population_rejects_quarantine_inside_required_replay_window() {
         );
     }
 
+    cleanup_dir(&root);
+}
+
+
+fn cohort_test_identity_fingerprint(decisions: &[FastCohortFuturePathDecisionIdentity]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut canonical = decisions.iter().collect::<Vec<_>>();
+    canonical.sort_by(|left, right| {
+        left.observed_at_unix_ms.cmp(&right.observed_at_unix_ms)
+            .then_with(|| left.sequence.cmp(&right.sequence))
+            .then_with(|| left.signature.cmp(&right.signature))
+            .then_with(|| left.ordinal.cmp(&right.ordinal))
+    });
+    let identities = canonical.iter().map(|value| (
+        value.signature.as_str(), value.ordinal, value.sequence, value.mint.as_str(),
+        value.quote_mint.as_str(), value.venue.as_str(), value.observed_at_unix_ms,
+    )).collect::<Vec<_>>();
+    format!("{:x}", Sha256::digest(serde_json::to_vec(&identities).unwrap()))
+}
+
+#[test]
+fn cohort_population_writes_only_exact_identities_and_preserves_incomplete_horizon() {
+    let root = unique_test_dir("cohort-exact");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let (historical_session, _) = historical_coverage(&db);
+
+    seed_event(&db, "selected-a", 1, 1_000, 0.05);
+    seed_event(&db, "unselected", 2, 1_200, 0.055);
+    seed_event(&db, "selected-b", 3, 1_690, 0.06);
+
+    let session = FastCohortCoverageSessionCheckpoint {
+        session_id: historical_session,
+        provider: "solana_public".to_owned(),
+        process_session_sequence: 1,
+        first_notification_observed_at_unix_ms: 900,
+        last_notification_observed_at_unix_ms: 1_700,
+        notification_count: 2,
+    };
+    let mut request = FastCohortFuturePathPopulationRequest {
+        schema_name: "shreks.fl9_v2_future_path_backfill_request".to_owned(),
+        schema_version: 1,
+        cohort_artifact_fingerprint_sha256: "a".repeat(64),
+        accepted_identity_fingerprint_sha256: String::new(),
+        horizon_ms: 500,
+        source_sessions: vec![session],
+        decisions: vec![
+            FastCohortFuturePathDecisionIdentity {
+                signature: "selected-a".to_owned(), ordinal: 0, sequence: 1,
+                mint: MINT.to_owned(), quote_mint: WSOL.to_owned(),
+                venue: "pump_fun_bonding_curve".to_owned(), observed_at_unix_ms: 1_000,
+                coverage_session_id: historical_session, coverage_complete_through_unix_ms: 1_700,
+            },
+            FastCohortFuturePathDecisionIdentity {
+                signature: "selected-b".to_owned(), ordinal: 0, sequence: 3,
+                mint: MINT.to_owned(), quote_mint: WSOL.to_owned(),
+                venue: "pump_fun_bonding_curve".to_owned(), observed_at_unix_ms: 1_690,
+                coverage_session_id: historical_session, coverage_complete_through_unix_ms: 1_700,
+            },
+        ],
+    };
+    request.accepted_identity_fingerprint_sha256 = cohort_test_identity_fingerprint(&request.decisions);
+
+    let report = populate_fast_future_path_labels_for_cohort(&db, &request).unwrap();
+    assert_eq!(report.decision_count, 2);
+    assert_eq!(report.inserted_label_count, 2);
+    assert_eq!(report.complete_label_count, 1);
+    assert_eq!(report.incomplete_label_count, 1);
+
+    assert_eq!(db.future_path_labels_for_decision("selected-a", 0, FUTURE_PATH_LABEL_VERSION).unwrap().len(), 1);
+    assert!(db.future_path_labels_for_decision("unselected", 0, FUTURE_PATH_LABEL_VERSION).unwrap().is_empty());
+    let boundary = db.future_path_labels_for_decision("selected-b", 0, FUTURE_PATH_LABEL_VERSION).unwrap();
+    assert_eq!(boundary.len(), 1);
+    assert_eq!(boundary[0].label.completeness, FuturePathCompleteness::Incomplete);
+
+    let rerun = populate_fast_future_path_labels_for_cohort(&db, &request).unwrap();
+    assert_eq!(rerun.inserted_label_count, 0);
+    assert_eq!(rerun.already_existing_label_count, 2);
+    cleanup_dir(&root);
+}
+
+#[test]
+fn cohort_population_rejects_identity_or_session_drift_without_writing() {
+    let root = unique_test_dir("cohort-drift");
+    let db = ShreksDb::open(root.join("shreks.db")).unwrap();
+    let (historical_session, _) = historical_coverage(&db);
+    seed_event(&db, "selected-a", 1, 1_000, 0.05);
+
+    let mut request = FastCohortFuturePathPopulationRequest {
+        schema_name: "shreks.fl9_v2_future_path_backfill_request".to_owned(),
+        schema_version: 1,
+        cohort_artifact_fingerprint_sha256: "a".repeat(64),
+        accepted_identity_fingerprint_sha256: String::new(),
+        horizon_ms: 500,
+        source_sessions: vec![FastCohortCoverageSessionCheckpoint {
+            session_id: historical_session, provider: "solana_public".to_owned(), process_session_sequence: 1,
+            first_notification_observed_at_unix_ms: 900, last_notification_observed_at_unix_ms: 1_700, notification_count: 2,
+        }],
+        decisions: vec![FastCohortFuturePathDecisionIdentity {
+            signature: "selected-a".to_owned(), ordinal: 0, sequence: 999,
+            mint: MINT.to_owned(), quote_mint: WSOL.to_owned(), venue: "pump_fun_bonding_curve".to_owned(),
+            observed_at_unix_ms: 1_000, coverage_session_id: historical_session, coverage_complete_through_unix_ms: 1_700,
+        }],
+    };
+    request.accepted_identity_fingerprint_sha256 = cohort_test_identity_fingerprint(&request.decisions);
+    let error = populate_fast_future_path_labels_for_cohort(&db, &request).unwrap_err();
+    assert!(error.to_string().contains("identity"));
+    assert!(db.future_path_labels_for_decision("selected-a", 0, FUTURE_PATH_LABEL_VERSION).unwrap().is_empty());
     cleanup_dir(&root);
 }
