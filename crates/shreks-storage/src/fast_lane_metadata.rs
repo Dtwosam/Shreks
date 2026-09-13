@@ -335,9 +335,12 @@ impl ShreksDb {
     }
 
     /// Return the newest currently-normalizable PumpSwap evidence at or before
-    /// one acceptance snapshot. Missing lifecycle mapping remains unresolved;
-    /// contradictory verified mappings remain selected so the normalizer fails
-    /// closed through the existing market resolver.
+    /// one acceptance snapshot. The fresh lane inspects only a fixed newest raw
+    /// frontier before applying readiness and lifecycle checks; older evidence
+    /// remains the responsibility of the durable keyset debt lane. Missing
+    /// lifecycle mapping remains unresolved; contradictory verified mappings
+    /// remain selected so the normalizer fails closed through the existing
+    /// market resolver.
     pub fn recent_normalizable_pump_swap_trade_evidence(
         &self,
         limit: usize,
@@ -349,9 +352,27 @@ impl ShreksDb {
         let limit = i64::try_from(limit).map_err(|_| {
             StorageError::InvalidData("PumpSwap recent-normalizable limit exceeds i64".to_owned())
         })?;
+        let raw_scan_limit = i64::try_from(FAST_LANE_METADATA_RAW_SCAN_LIMIT).map_err(|_| {
+            StorageError::InvalidData(
+                "PumpSwap recent-normalizable raw scan limit exceeds i64".to_owned(),
+            )
+        })?;
 
         let mut statement = self.connection.prepare(
-            r#"WITH distinct_markets AS (
+            r#"WITH recent_pumpswap_rows AS MATERIALIZED (
+                   SELECT
+                       p.provider, p.signature, p.ordinal, p.log_index, p.slot, p.observed_at_unix_ms,
+                       p.pool, p.user, p.is_buy,
+                       p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
+                       p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
+                   FROM pump_swap_trade_evidence AS p
+                   WHERE p.observed_at_unix_ms <= ?3
+                   ORDER BY p.observed_at_unix_ms DESC,
+                            p.signature DESC,
+                            p.log_index DESC
+                   LIMIT ?5
+               ),
+               distinct_markets AS (
                    SELECT DISTINCT pool_address, mint, quote_mint
                    FROM token_lifecycle_events
                    WHERE event_type = 'pump_graduation'
@@ -398,13 +419,12 @@ impl ShreksDb {
                    p.pool, p.user, p.is_buy,
                    p.base_amount_raw, p.quote_amount_raw, p.user_quote_amount_raw,
                    p.timestamp_unix_seconds, p.pool_base_reserves_raw, p.pool_quote_reserves_raw
-               FROM eligible_pools AS eligible
-               JOIN pump_swap_trade_evidence AS p
-                 ON p.pool = eligible.pool_address
+               FROM recent_pumpswap_rows AS p
+               JOIN eligible_pools AS eligible
+                 ON eligible.pool_address = p.pool
                LEFT JOIN fast_events AS f
                  ON f.signature = p.signature AND f.ordinal = p.ordinal
                WHERE f.sequence IS NULL
-                 AND p.observed_at_unix_ms <= ?3
                  AND NOT EXISTS (
                      SELECT 1
                      FROM pump_swap_trade_evidence_conflicts AS conflict
@@ -419,7 +439,13 @@ impl ShreksDb {
 
         let rows = statement
             .query_map(
-                params![SYSTEM_SOL_MINT, WRAPPED_SOL_MINT, as_of_unix_ms, limit],
+                params![
+                    SYSTEM_SOL_MINT,
+                    WRAPPED_SOL_MINT,
+                    as_of_unix_ms,
+                    limit,
+                    raw_scan_limit,
+                ],
                 decode_recent_pump_swap_row,
             )?
             .collect::<Result<Vec<_>, _>>()?;
