@@ -233,9 +233,9 @@ impl ShreksDb {
     }
 
     /// Return the newest currently-normalizable Pump evidence at or before one
-    /// acceptance snapshot. The query is bounded by `limit` and preserves the
-    /// same conflict/economics/verified-decimals fail-closed prerequisites as
-    /// the oldest-ready selector.
+    /// acceptance snapshot. The fresh lane inspects only a fixed newest raw
+    /// frontier before applying readiness checks; older evidence remains the
+    /// responsibility of the durable keyset debt lane.
     pub fn recent_normalizable_pump_trade_evidence(
         &self,
         limit: usize,
@@ -247,9 +247,31 @@ impl ShreksDb {
         let limit = i64::try_from(limit).map_err(|_| {
             StorageError::InvalidData("Pump recent-normalizable limit exceeds i64".to_owned())
         })?;
+        let raw_scan_limit = i64::try_from(FAST_LANE_METADATA_RAW_SCAN_LIMIT).map_err(|_| {
+            StorageError::InvalidData(
+                "Pump recent-normalizable raw scan limit exceeds i64".to_owned(),
+            )
+        })?;
 
         let mut statement = self.connection.prepare(
-            r#"SELECT
+            r#"WITH recent_pump_rows AS MATERIALIZED (
+                   SELECT
+                       p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
+                       p.mint, p.quote_mint, p.user, p.is_buy,
+                       p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
+                       p.timestamp_unix_seconds,
+                       p.virtual_sol_reserves_raw, p.virtual_token_reserves_raw,
+                       p.real_sol_reserves_raw, p.real_token_reserves_raw,
+                       p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
+                       p.ix_name
+                   FROM pump_trade_evidence AS p
+                   WHERE p.observed_at_unix_ms <= ?2
+                   ORDER BY p.observed_at_unix_ms DESC,
+                            p.signature DESC,
+                            p.ordinal DESC
+                   LIMIT ?5
+               )
+               SELECT
                    p.provider, p.signature, p.ordinal, p.slot, p.observed_at_unix_ms,
                    p.mint, p.quote_mint, p.user, p.is_buy,
                    p.token_amount_raw, p.sol_amount_raw, p.quote_amount_raw,
@@ -258,11 +280,10 @@ impl ShreksDb {
                    p.real_sol_reserves_raw, p.real_token_reserves_raw,
                    p.virtual_quote_reserves_raw, p.real_quote_reserves_raw,
                    p.ix_name
-               FROM pump_trade_evidence AS p
+               FROM recent_pump_rows AS p
                LEFT JOIN fast_events AS f
                  ON f.signature = p.signature AND f.ordinal = p.ordinal
                WHERE f.sequence IS NULL
-                 AND p.observed_at_unix_ms <= ?2
                  AND p.token_amount_raw <> '0'
                  AND (
                      (p.quote_mint IN (?3, ?4) AND p.sol_amount_raw <> '0')
@@ -300,7 +321,13 @@ impl ShreksDb {
 
         let rows = statement
             .query_map(
-                params![limit, as_of_unix_ms, SYSTEM_SOL_MINT, WRAPPED_SOL_MINT],
+                params![
+                    limit,
+                    as_of_unix_ms,
+                    SYSTEM_SOL_MINT,
+                    WRAPPED_SOL_MINT,
+                    raw_scan_limit,
+                ],
                 decode_recent_pump_trade_row,
             )?
             .collect::<Result<Vec<_>, _>>()?;
