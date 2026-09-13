@@ -5,11 +5,18 @@ use tokio::task::JoinHandle;
 
 pub async fn finish_realtime_writer_shutdown(
     writer: &mut JoinHandle<Result<usize, ObserverError>>,
-    _drain_timeout: Duration,
+    drain_timeout: Duration,
 ) -> Result<Option<usize>, Box<dyn Error>> {
-    let result = writer.await;
-    let rows = result.map_err(boxed_error)?.map_err(boxed_error)?;
-    Ok(Some(rows))
+    match tokio::time::timeout(drain_timeout, &mut *writer).await {
+        Ok(result) => {
+            let rows = result.map_err(boxed_error)?.map_err(boxed_error)?;
+            Ok(Some(rows))
+        }
+        Err(_) => {
+            writer.abort();
+            Ok(None)
+        }
+    }
 }
 
 fn boxed_error<E>(error: E) -> Box<dyn Error>
