@@ -1,11 +1,11 @@
 use std::{fs, path::PathBuf, process, time::{SystemTime, UNIX_EPOCH}};
 
 use shreks_core::{DiscoveredToken, ProviderId, TokenMintState, VenueId};
-use shreks_providers::pump_quote::SYSTEM_SOL_QUOTE_MINT;
 use shreks_storage::{PumpTradeEvidenceWrite, ShreksDb};
 
 const ACCEPTED_MS: i64 = 1_770_000_100_000;
 const EVENT_SECONDS: i64 = 1_770_000_000;
+const SYSTEM_SOL_QUOTE_MINT: &str = "11111111111111111111111111111111";
 const EXPECTED_RECENT_RAW_FRONTIER: usize = 2_048;
 
 fn unique_test_dir(label: &str) -> PathBuf {
