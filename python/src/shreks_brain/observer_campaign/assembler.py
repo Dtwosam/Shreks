@@ -299,14 +299,23 @@ def assemble_observer_paper_cycle(
 
         entry_quote: PaperQuote | None = None
         exit_quote: PaperQuote | None = None
-        if entry_evidence is not None and token_decimals is not None:
+        reference_price_present = window.current.price_usd is not None
+        if (
+            entry_evidence is not None
+            and token_decimals is not None
+            and (not entry_evidence.route_available or reference_price_present)
+        ):
             entry_quote = build_entry_paper_quote(
                 window,
                 entry_evidence,
                 token_decimals,
                 bundle.quote_asset,
             )
-        if exit_evidence is not None and token_decimals is not None:
+        if (
+            exit_evidence is not None
+            and token_decimals is not None
+            and (not exit_evidence.route_available or reference_price_present)
+        ):
             exit_quote = build_exit_paper_quote(
                 window,
                 exit_evidence,
