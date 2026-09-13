@@ -14,6 +14,8 @@ mod fast_state_benchmark_cli;
 mod realtime_targets;
 #[path = "shreks-observe/realtime_target_publisher.rs"]
 mod realtime_target_publisher;
+#[path = "shreks-observe/realtime_shutdown.rs"]
+mod realtime_shutdown;
 
 #[path = "../fast_event_normalizer.rs"]
 mod fast_event_normalizer;
@@ -33,6 +35,7 @@ use observer_v2::{
     sampler::{HighResolutionSampler, SamplerError, SamplerProvider},
     sampling::SamplingPolicy,
 };
+use realtime_shutdown::finish_realtime_writer_shutdown;
 use realtime_target_publisher::{
     refresh_pumpswap_realtime_targets_now, run_pumpswap_realtime_target_publisher,
     RealtimeTargetPublisherError,
@@ -59,6 +62,7 @@ use tokio::{
 };
 
 const PUMP_REALTIME_CHANNEL_CAPACITY: usize = 4_096;
+const PUMP_REALTIME_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 const FAST_EVENT_NORMALIZER_BATCH_LIMIT: usize = 256;
 const FAST_EVENT_NORMALIZER_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -289,18 +293,27 @@ async fn run_observation_with_realtime(
 
     tokio::select! {
         observation_result = &mut observation => {
-            // Normal observer shutdown closes the producer first, then drains every
-            // realtime envelope already accepted into the bounded channel.
+            // Normal observer shutdown cancels auxiliary producers first, then gives
+            // the writer a bounded chance to drain envelopes already accepted.
             target_publisher.abort();
-            let _ = target_publisher.await;
             forwarder.abort();
-            let _ = forwarder.await;
             normalizer.abort();
-            let _ = normalizer.await;
-            let writer_result = writer.await;
+            let writer_rows = finish_realtime_writer_shutdown(
+                &mut writer,
+                PUMP_REALTIME_SHUTDOWN_DRAIN_TIMEOUT,
+            )
+            .await?;
             let cycles = observation_result?;
-            let rows = writer_result.map_err(boxed_error)?.map_err(boxed_error)?;
-            eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
+            match writer_rows {
+                Some(rows) => {
+                    eprintln!("Shreks Pump realtime writer stopped: new_trade_rows={rows}");
+                }
+                None => {
+                    eprintln!(
+                        "Shreks Pump realtime writer shutdown drain timed out; remaining volatile realtime tail was aborted"
+                    );
+                }
+            }
             Ok(cycles)
         }
         target_publisher_result = &mut target_publisher => {
