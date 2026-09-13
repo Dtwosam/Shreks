@@ -293,8 +293,8 @@ async fn run_observation_with_realtime(
 
     tokio::select! {
         observation_result = &mut observation => {
-            // Normal observer shutdown closes the producer first, then drains every
-            // realtime envelope already accepted into the bounded channel.
+            // Normal observer shutdown cancels auxiliary producers first, then gives
+            // the writer a bounded chance to drain envelopes already accepted.
             target_publisher.abort();
             forwarder.abort();
             normalizer.abort();
