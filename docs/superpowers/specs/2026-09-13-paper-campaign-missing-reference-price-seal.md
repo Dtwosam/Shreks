@@ -18,6 +18,8 @@ e1e0144468aca4fb65a6c7b3936a2ec479034523
 
 PR CI run `34752354217` passed Repository safety, Rust tests, Python tests, and the native ARM64 release build. Python reported `3378 passed, 1 warning`. The exact merged implementation commit passed the same four canonical gates in main CI run `34752493890`.
 
+The final `main` seal commit must retain a `seal:` subject prefix so the repository's verified-release workflow recognizes this exact source as release-authorized.
+
 LIVE remains disabled. No FL4 production labels were changed by this implementation or its verification.
 
 ## Production condition requiring this repair
