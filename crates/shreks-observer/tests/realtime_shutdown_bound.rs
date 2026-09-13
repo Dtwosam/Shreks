@@ -1,5 +1,6 @@
 const OBSERVE_SOURCE: &str = include_str!("../src/bin/shreks-observe.rs");
 
+// Production systemd gives the observer 30 seconds to stop before SIGKILL.
 #[test]
 fn realtime_shutdown_cleanup_has_an_application_deadline() {
     for required in [
