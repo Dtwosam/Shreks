@@ -296,11 +296,8 @@ async fn run_observation_with_realtime(
             // Normal observer shutdown closes the producer first, then drains every
             // realtime envelope already accepted into the bounded channel.
             target_publisher.abort();
-            let _ = target_publisher.await;
             forwarder.abort();
-            let _ = forwarder.await;
             normalizer.abort();
-            let _ = normalizer.await;
             let writer_rows = finish_realtime_writer_shutdown(
                 &mut writer,
                 PUMP_REALTIME_SHUTDOWN_DRAIN_TIMEOUT,
