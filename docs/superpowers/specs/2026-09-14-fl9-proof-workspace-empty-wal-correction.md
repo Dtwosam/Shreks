@@ -1,7 +1,7 @@
 # FL9 Proof Workspace — Empty WAL Source-Seal Correction
 
 **Date:** 2026-09-14  
-**Status:** PR #297 GREEN; MERGE PENDING
+**Status:** SEALED FOR NEW IMMUTABLE RELEASE; PHYSICAL POST-FL4 PROOF NOT YET RE-RUN
 
 ## Production evidence
 
@@ -90,13 +90,9 @@ Additional boundary-test commit:
 It proves absent and empty WAL states normalize identically while non-empty WAL bytes
 remain SHA-bound.
 
-Complete implementation head before this documentation-only status update:
+PR #297 final exact-head CI:
 
-`13fb2b64ce28c79b42e1bc8cb4d0f29eb96f3986`
-
-GREEN CI:
-
-`34836476709`
+`34836830034`
 
 All four required PR gates passed:
 
@@ -105,11 +101,53 @@ All four required PR gates passed:
 - Rust tests;
 - ARM64 release build.
 
+Squash-merged implementation main:
+
+`739652c97a65ce713df919b117f65f768a47df7f`
+
+Exact merged-main CI:
+
+`34837216746`
+
+All four canonical main gates passed again:
+
+- Repository safety;
+- Python tests;
+- Rust tests;
+- ARM64 release build.
+
+## Immutable release authorization
+
+The implementation is now eligible for a follow-up main commit whose subject starts
+with `seal:`. The repository release workflow recognizes that exact sealed source SHA
+only after its push-to-main CI completes successfully, and then builds the immutable
+ARM64 release from that exact SHA.
+
+The release seal changes no runtime implementation beyond the already verified
+`739652c97a65ce713df919b117f65f768a47df7f` tree except this documentary binding.
+
 ## Production boundary
 
-The existing production release remains immutable and must not be patched in place.
-After PR #297 merges and exact-main CI passes, production evidence may proceed only via
-a new immutable ARM64 release and protected deployment.
+The existing production release
+`4fcbaee62ab33431875109edf98d9b0d5c01cbae` remains immutable and must not be patched
+in place or reused for the post-correction proof attempt.
 
-The next physical proof attempt must still use explicit quiescence and a fresh immutable
-workspace destination. No failed pre-correction workspace may be reused.
+After this seal lands on `main`, the next production sequence is strictly:
+
+1. exact sealed-main CI passes all four canonical gates;
+2. automatic immutable ARM64 release for the exact sealed SHA completes and its three
+   release assets verify;
+3. protected deployment installs that exact release;
+4. `/opt/shreks/current`, `RELEASE_MANIFEST.json`, and runtime process identity all bind
+   to the sealed SHA;
+5. PAPER, telemetry, and dashboard database readers are explicitly quiesced;
+6. the database holder gate is empty;
+7. a fresh post-FL4 proof workspace is generated at a new immutable destination;
+8. the workspace must contain exactly `421278` feature rows and pass strict readback;
+9. PAPER runtime is restored and health/restart gates pass.
+
+No failed pre-correction workspace may be reused. Training economics and V2 champion
+scoring remain separate later slices and are not authorized by this seal.
+
+PAPER promotion remains **BLOCKED**.
+LIVE remains **DISABLED**.
