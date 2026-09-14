@@ -26,6 +26,7 @@ FAST_PROOF_WORKSPACE_SCHEMA_VERSION = 1
 
 _FEATURE_FILE = "features.jsonl"
 _MANIFEST_FILE = "manifest.json"
+_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 _ROOT_ENTRIES = frozenset({_FEATURE_FILE, _MANIFEST_FILE})
 _MANIFEST_KEYS = frozenset(
     {
@@ -523,9 +524,14 @@ def _validate_toolset(
 
 def _capture_database(database: Path) -> _DatabaseSnapshot:
     wal = Path(str(database) + "-wal")
+    wal_sha256 = None
+    if wal.is_file():
+        candidate = _sha256_file_stable(wal)
+        if candidate != _EMPTY_SHA256:
+            wal_sha256 = candidate
     return _DatabaseSnapshot(
         database_sha256=_sha256_file_stable(database),
-        wal_sha256=_sha256_file_stable(wal) if wal.is_file() else None,
+        wal_sha256=wal_sha256,
     )
 
 
