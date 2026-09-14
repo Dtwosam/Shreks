@@ -49,7 +49,13 @@ def _feature_payload() -> str:
     )
 
 
-def _toolset(tmp_path: Path, *, mutate_database: bool = False, exit_code: int = 0):
+def _toolset(
+    tmp_path: Path,
+    *,
+    mutate_database: bool = False,
+    create_wal: bytes | None = None,
+    exit_code: int = 0,
+):
     root = tmp_path / "materialized-tools" / SOURCE_SHA
     root.mkdir(parents=True)
     payload = _feature_payload()
@@ -67,6 +73,12 @@ def _toolset(tmp_path: Path, *, mutate_database: bool = False, exit_code: int = 
         + (
             "database.write_bytes(database.read_bytes() + b'mutated')\n"
             if mutate_database
+            else ""
+        )
+        + (
+            "pathlib.Path(str(database) + '-wal').write_bytes("
+            f"{create_wal!r})\n"
+            if create_wal is not None
             else ""
         )
         + f"raise SystemExit({exit_code})\n",
@@ -160,6 +172,37 @@ def test_prepare_workspace_materializes_exporter_and_seals_feature_evidence(
         "features.jsonl",
         "manifest.json",
     }
+
+
+def test_workspace_treats_exporter_created_empty_wal_as_absent(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"stable-observer-db")
+    wal = Path(str(database) + "-wal")
+    assert not wal.exists()
+    toolset, _ = _toolset(tmp_path, create_wal=b"")
+    monkeypatch.setattr(
+        workspace_module,
+        "materialize_fast_proof_tools",
+        lambda *_args, **_kwargs: toolset,
+    )
+    destination = tmp_path / "workspace"
+
+    artifact = prepare_fast_proof_workspace(
+        database_path=database,
+        destination=destination,
+        tool_root=tmp_path / "proof-tools",
+        expected_source_sha=SOURCE_SHA,
+        expected_platform=PLATFORM,
+        timeout_seconds=30,
+    )
+
+    assert wal.is_file()
+    assert wal.stat().st_size == 0
+    assert artifact.manifest.observer_database_wal_sha256 is None
+    assert destination.is_dir()
 
 
 def test_prepare_workspace_releases_initial_dataset_before_strict_reopen(
