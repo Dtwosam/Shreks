@@ -1,7 +1,7 @@
 # FL9 Proof Workspace — Empty WAL Source-Seal Correction
 
 **Date:** 2026-09-14  
-**Status:** IMPLEMENTED ON PR #297; FINAL CI PENDING
+**Status:** PR #297 GREEN; MERGE PENDING
 
 ## Production evidence
 
@@ -89,6 +89,21 @@ Additional boundary-test commit:
 
 It proves absent and empty WAL states normalize identically while non-empty WAL bytes
 remain SHA-bound.
+
+Complete implementation head before this documentation-only status update:
+
+`13fb2b64ce28c79b42e1bc8cb4d0f29eb96f3986`
+
+GREEN CI:
+
+`34836476709`
+
+All four required PR gates passed:
+
+- Repository safety;
+- Python tests;
+- Rust tests;
+- ARM64 release build.
 
 ## Production boundary
 
