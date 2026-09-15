@@ -205,6 +205,154 @@ def load_future_path_training_labels_from_sqlite(
     )
 
 
+def load_future_path_training_labels_for_identities_from_sqlite(
+    path: str | Path,
+    *,
+    future_path_label_version: int,
+    horizon_ms: int,
+    decision_identities: tuple[tuple[object, ...], ...],
+) -> FuturePathTrainingLabelDataset:
+    _require_positive_int("future_path_label_version", future_path_label_version)
+    _require_positive_int("horizon_ms", horizon_ms)
+    if not isinstance(decision_identities, tuple) or not decision_identities:
+        raise ValueError("decision_identities must be a non-empty tuple")
+
+    source = Path(path)
+    if not source.is_file():
+        raise ValueError("future-path training SQLite source must be an existing file")
+
+    uri = f"file:{quote(str(source.resolve()), safe='/')}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        raise ValueError("could not open future-path training SQLite source read-only") from exc
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute(
+            """CREATE TEMP TABLE requested_future_path_identities (
+                   decision_signature TEXT NOT NULL,
+                   decision_ordinal INTEGER NOT NULL,
+                   decision_sequence INTEGER NOT NULL,
+                   decision_mint TEXT NOT NULL,
+                   decision_quote_mint TEXT NOT NULL,
+                   decision_venue TEXT NOT NULL,
+                   decision_observed_at_unix_ms INTEGER NOT NULL,
+                   PRIMARY KEY (
+                       decision_signature,
+                       decision_ordinal,
+                       decision_sequence,
+                       decision_mint,
+                       decision_quote_mint,
+                       decision_venue,
+                       decision_observed_at_unix_ms
+                   )
+               ) WITHOUT ROWID"""
+        )
+        try:
+            connection.executemany(
+                """INSERT INTO requested_future_path_identities VALUES (
+                       ?, ?, ?, ?, ?, ?, ?
+                   )""",
+                (
+                    _validated_decision_identity(identity)
+                    for identity in decision_identities
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("decision_identities contain a duplicate identity") from exc
+
+        rows = connection.execute(
+            """SELECT
+                   l.decision_signature, l.decision_ordinal, l.decision_sequence,
+                   l.decision_mint, l.decision_quote_mint, l.decision_venue,
+                   l.decision_observed_at_unix_ms, l.decision_entry_price_quote,
+                   l.decision_entry_total_quote,
+                   l.coverage_complete_through_unix_ms, l.coverage_contiguous,
+                   l.horizon_ms, l.label_version, l.completeness, l.event_count,
+                   l.no_trade_events, l.endpoint_signature, l.endpoint_ordinal,
+                   l.endpoint_observed_at_unix_ms, l.endpoint_price_quote,
+                   l.endpoint_return_bps, l.mfe_bps, l.mae_bps,
+                   l.time_to_peak_ms, l.time_to_trough_ms, l.reversal_occurred,
+                   l.first_reversal_after_ms, l.min_exit_capacity_base,
+                   l.endpoint_exit_capacity_base, l.route_unavailability_observed,
+                   l.best_cost_adjusted_return_bps,
+                   l.endpoint_cost_adjusted_return_bps,
+                   d.sequence AS canonical_decision_sequence,
+                   d.mint AS canonical_decision_mint,
+                   d.quote_mint AS canonical_decision_quote_mint,
+                   d.venue AS canonical_decision_venue,
+                   d.observed_at_unix_ms AS canonical_decision_observed_at_unix_ms,
+                   d.price_quote AS canonical_decision_price_quote,
+                   e.sequence AS canonical_endpoint_sequence,
+                   e.mint AS canonical_endpoint_mint,
+                   e.quote_mint AS canonical_endpoint_quote_mint,
+                   e.venue AS canonical_endpoint_venue,
+                   e.observed_at_unix_ms AS canonical_endpoint_observed_at_unix_ms,
+                   e.price_quote AS canonical_endpoint_price_quote
+               FROM requested_future_path_identities AS r
+               JOIN fast_future_path_labels AS l
+                 ON l.decision_signature = r.decision_signature
+                AND l.decision_ordinal = r.decision_ordinal
+                AND l.decision_sequence = r.decision_sequence
+                AND l.decision_mint = r.decision_mint
+                AND l.decision_quote_mint = r.decision_quote_mint
+                AND l.decision_venue = r.decision_venue
+                AND l.decision_observed_at_unix_ms = r.decision_observed_at_unix_ms
+               LEFT JOIN fast_events AS d
+                 ON d.signature = l.decision_signature
+                AND d.ordinal = l.decision_ordinal
+               LEFT JOIN fast_events AS e
+                 ON e.signature = l.endpoint_signature
+                AND e.ordinal = l.endpoint_ordinal
+               WHERE l.label_version = ?
+                 AND l.horizon_ms = ?
+               ORDER BY l.decision_sequence ASC, l.horizon_ms ASC,
+                        l.decision_signature ASC, l.decision_ordinal ASC""",
+            (future_path_label_version, horizon_ms),
+        )
+
+        labels: list[FuturePathTrainingLabel] = []
+        previous_key: tuple[object, ...] | None = None
+        previous_sort: tuple[object, ...] | None = None
+        for row in rows:
+            _validate_canonical_sources(connection, row)
+            label = _label_from_row(row, future_path_label_version)
+            key = (
+                label.decision_signature,
+                label.decision_ordinal,
+                label.horizon_ms,
+                label.label_version,
+            )
+            if key == previous_key:
+                raise ValueError("future-path training labels contain a duplicate decision/horizon")
+            previous_key = key
+            sort_key = (
+                label.decision_sequence,
+                label.horizon_ms,
+                label.decision_signature,
+                label.decision_ordinal,
+            )
+            if previous_sort is not None and sort_key < previous_sort:
+                raise ValueError("future-path training labels are not in canonical order")
+            previous_sort = sort_key
+            labels.append(label)
+    except sqlite3.Error as exc:
+        raise ValueError("future-path training SQLite source is incompatible") from exc
+    finally:
+        connection.close()
+
+    if len(labels) != len(decision_identities):
+        raise ValueError(
+            "future-path training labels do not match the requested identity population"
+        )
+    canonical = tuple(labels)
+    return FuturePathTrainingLabelDataset(
+        labels=canonical,
+        logical_fingerprint_sha256=future_path_logical_fingerprint_sha256(canonical),
+        label_version=future_path_label_version,
+    )
+
+
 def future_path_logical_fingerprint_sha256(
     labels: tuple[FuturePathTrainingLabel, ...],
 ) -> str:
@@ -581,6 +729,21 @@ def _canonicalize(value: object) -> object:
     if isinstance(value, (list, tuple)):
         return [_canonicalize(item) for item in value]
     return value
+
+
+def _validated_decision_identity(value: object) -> tuple[object, ...]:
+    if not isinstance(value, tuple) or len(value) != 7:
+        raise ValueError("decision identity must be an exact seven-field tuple")
+    signature, ordinal, sequence, mint, quote_mint, venue, observed_at_unix_ms = value
+    return (
+        _text("decision_signature", signature),
+        _non_negative_int("decision_ordinal", ordinal),
+        _positive_int("decision_sequence", sequence),
+        _text("decision_mint", mint),
+        _text("decision_quote_mint", quote_mint),
+        _text("decision_venue", venue),
+        _non_negative_int("decision_observed_at_unix_ms", observed_at_unix_ms),
+    )
 
 
 def _text(name: str, value: object) -> str:

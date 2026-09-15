@@ -8,6 +8,7 @@ import pytest
 from shreks_brain.research.fast_training_targets import (
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_NAME,
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_VERSION,
+    load_future_path_training_labels_for_identities_from_sqlite,
     load_future_path_training_labels_from_sqlite,
 )
 
@@ -112,6 +113,18 @@ def _seed(connection: sqlite3.Connection) -> None:
     connection.commit()
 
 
+def _identity() -> tuple[object, ...]:
+    return (
+        "decision",
+        0,
+        2,
+        "mint-fl8",
+        WSOL,
+        "pump_fun_bonding_curve",
+        1_100,
+    )
+
+
 def test_target_schema_constants_and_complete_incomplete_semantics(tmp_path: Path) -> None:
     assert FUTURE_PATH_TRAINING_DATASET_SCHEMA_NAME == "shreks.fast_future_path_training_labels"
     assert FUTURE_PATH_TRAINING_DATASET_SCHEMA_VERSION == 1
@@ -145,6 +158,90 @@ def test_loader_is_deterministic_and_orders_by_decision_then_horizon(tmp_path: P
     second = load_future_path_training_labels_from_sqlite(path, future_path_label_version=1)
     assert first == second
     assert [label.horizon_ms for label in first.labels] == [250, 500]
+
+
+def test_bounded_loader_returns_only_requested_identity_and_horizon(tmp_path: Path) -> None:
+    path = tmp_path / "bounded.db"
+    connection = _db(path)
+    _seed(connection)
+    connection.close()
+
+    dataset = load_future_path_training_labels_for_identities_from_sqlite(
+        path,
+        future_path_label_version=1,
+        horizon_ms=250,
+        decision_identities=(_identity(),),
+    )
+
+    assert len(dataset.labels) == 1
+    assert dataset.labels[0].decision_identity == _identity()
+    assert dataset.labels[0].horizon_ms == 250
+    assert dataset.labels[0].label_version == 1
+
+
+def test_bounded_loader_fails_closed_on_missing_or_duplicate_identity(tmp_path: Path) -> None:
+    path = tmp_path / "bounded-invalid.db"
+    connection = _db(path)
+    _seed(connection)
+    connection.close()
+
+    missing = ("missing", *_identity()[1:])
+    with pytest.raises(ValueError, match="missing|population"):
+        load_future_path_training_labels_for_identities_from_sqlite(
+            path,
+            future_path_label_version=1,
+            horizon_ms=250,
+            decision_identities=(missing,),
+        )
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_future_path_training_labels_for_identities_from_sqlite(
+            path,
+            future_path_label_version=1,
+            horizon_ms=250,
+            decision_identities=(_identity(), _identity()),
+        )
+
+
+def test_bounded_loader_fails_closed_on_duplicate_or_mismatched_source(tmp_path: Path) -> None:
+    duplicate_path = tmp_path / "bounded-duplicate.db"
+    connection = _db(duplicate_path)
+    _seed(connection)
+    row = connection.execute(
+        "SELECT * FROM fast_future_path_labels WHERE horizon_ms = 250"
+    ).fetchone()
+    assert row is not None
+    connection.execute(
+        "INSERT INTO fast_future_path_labels VALUES (" + ",".join("?" for _ in row) + ")",
+        row,
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="duplicate"):
+        load_future_path_training_labels_for_identities_from_sqlite(
+            duplicate_path,
+            future_path_label_version=1,
+            horizon_ms=250,
+            decision_identities=(_identity(),),
+        )
+
+    mismatch_path = tmp_path / "bounded-mismatch.db"
+    connection = _db(mismatch_path)
+    _seed(connection)
+    connection.execute(
+        "UPDATE fast_future_path_labels SET decision_entry_price_quote = 9.99 WHERE horizon_ms = 250"
+    )
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(ValueError, match="canonical decision|decision"):
+        load_future_path_training_labels_for_identities_from_sqlite(
+            mismatch_path,
+            future_path_label_version=1,
+            horizon_ms=250,
+            decision_identities=(_identity(),),
+        )
 
 
 def test_canonical_decision_or_endpoint_mismatch_fails_closed(tmp_path: Path) -> None:

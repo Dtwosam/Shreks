@@ -39,7 +39,7 @@ from shreks_brain.research.fast_training_targets import (
     FuturePathTrainingLabel,
     FuturePathTrainingLabelDataset,
     future_path_logical_fingerprint_sha256,
-    load_future_path_training_labels_from_sqlite,
+    load_future_path_training_labels_for_identities_from_sqlite,
 )
 
 from .models import FastFirstChampionV2Policy
@@ -90,9 +90,13 @@ def build_fast_first_champion_v2_bundle(
 
     # Target/economics access begins only after the exact input population has
     # been authenticated and bound to feature identities.
-    future_path = load_future_path_training_labels_from_sqlite(
+    future_path = load_future_path_training_labels_for_identities_from_sqlite(
         sqlite_path,
         future_path_label_version=future_path_label_version,
+        horizon_ms=active_policy.horizon_ms,
+        decision_identities=tuple(
+            value.decision_identity for value in cohort.accepted_decisions
+        ),
     )
     selected_labels = _select_exact_labels(
         cohort.accepted_decisions,
