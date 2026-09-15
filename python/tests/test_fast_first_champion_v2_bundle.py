@@ -201,7 +201,7 @@ def test_wrong_cohort_fails_before_any_target_access(monkeypatch) -> None:
 
     monkeypatch.setattr(
         bundle_module,
-        "load_future_path_training_labels_from_sqlite",
+        "load_future_path_training_labels_for_identities_from_sqlite",
         forbidden_target_access,
     )
 
