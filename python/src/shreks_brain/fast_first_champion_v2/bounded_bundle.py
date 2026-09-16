@@ -7,9 +7,6 @@ from shreks_brain.fast_proof_workspace import FastProofWorkspaceManifest
 from shreks_brain.fl9_v2_cohort_acceptance import (
     Fl9V2CohortAcceptanceArtifact,
 )
-from shreks_brain.research.counterfactual_source import (
-    load_entry_counterfactual_provenance_batch_from_sqlite,
-)
 from shreks_brain.research.fast_training_bundle import (
     FastTrainingBundle,
     build_fast_training_bundle_from_components,
@@ -27,8 +24,11 @@ from .bounded_inputs import (
     read_fast_training_economics_overlay_for_identities,
     read_fast_training_feature_jsonl_for_identities,
 )
+from .bounded_provenance import (
+    iter_entry_counterfactual_provenance_for_labels,
+    project_selected_targets_with_streamed_provenance,
+)
 from .bundle import (
-    _project_selected_targets,
     _require_bundle_matches_cohort,
     _select_exact_labels,
     _validate_cohort,
@@ -104,6 +104,7 @@ def build_fast_first_champion_v2_bundle(
         label_version=future_path_label_version,
         decision_identities=identities,
     )
+    del identities
     if overlay.manifest.feature_source_jsonl_sha256 != features.source_sha256:
         raise ValueError(
             "training economics overlay feature source does not match "
@@ -118,36 +119,26 @@ def build_fast_first_champion_v2_bundle(
             "training economics overlay counterfactual quantity mismatch"
         )
 
-    lookup_identities = tuple(
-        (
-            label.decision_signature,
-            label.decision_ordinal,
-            label.horizon_ms,
-            label.label_version,
-        )
-        for label in selected_labels.labels
-    )
-    provenance_by_key = load_entry_counterfactual_provenance_batch_from_sqlite(
+    provenance_rows = iter_entry_counterfactual_provenance_for_labels(
         sqlite_path,
-        lookup_identities=lookup_identities,
-    )
-    if set(provenance_by_key) != set(lookup_identities):
-        raise ValueError(
-            "canonical counterfactual provenance population does not "
-            "match the accepted V2 cohort exactly"
-        )
-
-    projected_labels, outcome_sets = _project_selected_targets(
         labels=selected_labels.labels,
-        overlay_rows=overlay.rows,
-        provenance_by_key=provenance_by_key,
-        overlay_manifest_fingerprint_sha256=(
-            overlay.manifest.manifest_fingerprint_sha256
-        ),
-        execution_cost_policy=training_execution_cost_policy,
-        counterfactual_base_quantity=float(counterfactual_base_quantity),
     )
-    del provenance_by_key
+    try:
+        projected_labels, outcome_sets = (
+            project_selected_targets_with_streamed_provenance(
+                labels=selected_labels.labels,
+                overlay_rows=overlay.rows,
+                provenance_rows=provenance_rows,
+                overlay_manifest_fingerprint_sha256=(
+                    overlay.manifest.manifest_fingerprint_sha256
+                ),
+                execution_cost_policy=training_execution_cost_policy,
+                counterfactual_base_quantity=float(counterfactual_base_quantity),
+            )
+        )
+    finally:
+        provenance_rows.close()
+    del selected_labels
     del overlay
 
     projected_future_path = FuturePathTrainingLabelDataset(
