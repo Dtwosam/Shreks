@@ -61,12 +61,12 @@ def test_future_path_fingerprint_is_incremental() -> None:
     assert 'digest.update(b"]")' in source
 
 
-def test_v2_host_releases_full_proof_features_before_bundle_build() -> None:
-    source = inspect.getsource(host_module.run_fast_first_champion_v2_host_request)
-    manifest_capture = source.index("proof_manifest = proof.manifest")
-    proof_release = source.index("del proof")
-    bundle_build = source.index("build_fast_first_champion_v2_bundle(")
-    assert manifest_capture < proof_release < bundle_build
+def test_v2_host_never_materializes_full_proof_feature_dataset() -> None:
+    module_source = inspect.getsource(host_module)
+    run_source = inspect.getsource(host_module.run_fast_first_champion_v2_host_request)
+    assert "read_fast_proof_workspace" not in module_source
+    assert "read_fast_proof_workspace_manifest_bounded" in module_source
+    assert "proof_manifest = read_fast_proof_workspace_manifest_bounded(" in run_source
 
 
 def test_v2_host_binds_proof_to_full_feature_source_bytes() -> None:
