@@ -15,6 +15,12 @@ def _bounded_host_module():
     return host_module
 
 
+def _bounded_bundle_module():
+    import shreks_brain.fast_first_champion_v2.bounded_bundle as bundle_module
+
+    return bundle_module
+
+
 def test_v2_uses_cohort_bounded_input_module() -> None:
     inputs_spec = importlib.util.find_spec(
         "shreks_brain.fast_first_champion_v2.bounded_inputs"
@@ -101,3 +107,14 @@ def test_v2_host_binds_proof_to_full_feature_source_bytes() -> None:
         "\n            != proof_manifest.feature_logical_fingerprint_sha256"
         in source
     )
+
+
+def test_v2_provenance_does_not_materialize_full_cohort_batch() -> None:
+    source = inspect.getsource(
+        _bounded_bundle_module().build_fast_first_champion_v2_bundle
+    )
+    assert "load_entry_counterfactual_provenance_batch_from_sqlite" not in source
+    assert "iter_entry_counterfactual_provenance_for_labels" in source
+    assert "provenance_by_key" not in source
+    assert "del selected_labels" in source
+    assert "del overlay" in source
