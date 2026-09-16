@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+from pathlib import Path
 
 import shreks_brain.fast_first_champion_v2.host_request as request_module
 import shreks_brain.research.fast_training_economics as economics_module
@@ -30,6 +31,15 @@ def test_v2_uses_cohort_bounded_input_module() -> None:
 
     host_source = inspect.getsource(_bounded_host_module())
     assert "from .bounded_bundle import" in host_source
+
+    pyproject = (
+        Path(__file__).resolve().parents[1] / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert (
+        'shreks-fl9-v2-first-champion = '
+        '"shreks_brain.fast_first_champion_v2.bounded_host_run:main"'
+        in pyproject
+    )
 
 
 def test_v2_generic_economics_paths_remain_stream_authenticated() -> None:
