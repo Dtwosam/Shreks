@@ -64,7 +64,11 @@ def test_future_path_fingerprint_is_incremental() -> None:
 def test_v2_host_never_materializes_full_proof_feature_dataset() -> None:
     module_source = inspect.getsource(host_module)
     run_source = inspect.getsource(host_module.run_fast_first_champion_v2_host_request)
-    assert "read_fast_proof_workspace" not in module_source
+    assert (
+        "from shreks_brain.fast_proof_workspace import read_fast_proof_workspace"
+        not in module_source
+    )
+    assert "proof = read_fast_proof_workspace(" not in run_source
     assert "read_fast_proof_workspace_manifest_bounded" in module_source
     assert "proof_manifest = read_fast_proof_workspace_manifest_bounded(" in run_source
 
