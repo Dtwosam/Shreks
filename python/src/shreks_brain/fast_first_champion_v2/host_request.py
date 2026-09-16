@@ -28,6 +28,9 @@ from shreks_brain.research.fast_training_economics import (
     validate_fast_training_economics_overlay,
 )
 
+from .hydration_policy import (
+    require_fast_first_champion_v2_hydration_policy_matches_identities,
+)
 from .models import FastFirstChampionV2Policy
 
 
@@ -493,6 +496,13 @@ def write_fast_first_champion_v2_host_request_from_sources(
     hydration_payload = _read_text_stable(hydration_path, "hydration policy")
     hydration_policy = decode_fast_forecast_context_hydration_policy(
         hydration_payload
+    )
+    require_fast_first_champion_v2_hydration_policy_matches_identities(
+        hydration_policy=hydration_policy,
+        accepted_decision_identities=(
+            accepted.decision_identity
+            for accepted in cohort.accepted_decisions
+        ),
     )
     hydration_fingerprint = (
         fast_forecast_context_hydration_policy_fingerprint_sha256(
