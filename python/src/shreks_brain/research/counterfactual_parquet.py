@@ -373,14 +373,22 @@ def _canonical_row_sort_key(row: dict[str, object]) -> tuple[object, ...]:
 def _logical_dataset_fingerprint_sha256(
     rows: tuple[dict[str, object], ...],
 ) -> str:
-    encoded = json.dumps(
-        rows,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, row in enumerate(rows):
+        if index:
+            digest.update(b",")
+        digest.update(
+            json.dumps(
+                row,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    digest.update(b"]")
+    return digest.hexdigest()
 
 
 def _outcome_set_fingerprint_sha256(
