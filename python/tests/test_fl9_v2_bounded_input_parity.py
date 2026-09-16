@@ -10,6 +10,7 @@ from shreks_brain.fast_first_champion_v2.bounded_inputs import (
     read_fast_training_feature_jsonl_for_identities,
 )
 from shreks_brain.fast_proof_workspace import FastProofWorkspaceManifest
+import shreks_brain.research.counterfactual_parquet as counterfactual_module
 from shreks_brain.research.fast_training_features import (
     feature_logical_fingerprint_sha256,
 )
@@ -98,3 +99,21 @@ def test_incremental_future_path_fingerprint_matches_legacy_array_bytes() -> Non
     ).hexdigest()
 
     assert future_path_logical_fingerprint_sha256(labels) == legacy
+
+
+def test_incremental_counterfactual_fingerprint_matches_legacy_array_bytes() -> None:
+    rows = (
+        {"decision_id": "alpha", "score": 1.25, "available": True},
+        {"decision_id": "beta", "score": None, "available": False},
+    )
+    legacy = hashlib.sha256(
+        json.dumps(
+            rows,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert counterfactual_module._logical_dataset_fingerprint_sha256(rows) == legacy
