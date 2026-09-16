@@ -5,6 +5,7 @@ import inspect
 from pathlib import Path
 
 import shreks_brain.fast_first_champion_v2.host_request as request_module
+import shreks_brain.research.counterfactual_parquet as counterfactual_module
 import shreks_brain.research.fast_training_economics as economics_module
 import shreks_brain.research.fast_training_targets as targets_module
 
@@ -83,6 +84,15 @@ def test_future_path_fingerprint_is_incremental() -> None:
     )
     assert "payload = [" not in source
     assert "json.dumps(payload" not in source
+    assert 'digest.update(b"[")' in source
+    assert 'digest.update(b"]")' in source
+
+
+def test_counterfactual_dataset_fingerprint_is_incremental() -> None:
+    source = inspect.getsource(
+        counterfactual_module._logical_dataset_fingerprint_sha256
+    )
+    assert "json.dumps(rows" not in source
     assert 'digest.update(b"[")' in source
     assert 'digest.update(b"]")' in source
 
