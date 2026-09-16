@@ -18,6 +18,7 @@ from shreks_brain.fast_first_champion_v2.host_request import (
 from shreks_brain.research.fast_training_economics import (
     FastTrainingExecutionCostPolicy,
 )
+from test_fast_context_hydration import _policy
 
 
 RELEASE_SHA = "1" * 40
@@ -28,6 +29,7 @@ COHORT_FP = (
 HYDRATION_FP = "2" * 64
 OVERLAY_FP = "3" * 64
 COST_FP = "4" * 64
+WSOL = "So11111111111111111111111111111111111111112"
 
 
 def _evaluation_policy() -> FastForecastEvaluationPolicy:
@@ -93,9 +95,22 @@ def _install_authenticated_sources(monkeypatch, *, cohort_fp=COHORT_FP):
         manifest=SimpleNamespace(
             artifact_fingerprint_sha256=cohort_fp,
             accepted_identity_fingerprint_sha256="5" * 64,
-        )
+        ),
+        accepted_decisions=(
+            SimpleNamespace(
+                decision_identity=(
+                    "signature-1",
+                    0,
+                    1,
+                    "mint-1",
+                    WSOL,
+                    "pump_swap",
+                    1_788_878_663_298,
+                )
+            ),
+        ),
     )
-    hydration_policy = object()
+    hydration_policy = _policy()
     cost_policy = _cost_policy()
     overlay = SimpleNamespace(
         manifest=SimpleNamespace(

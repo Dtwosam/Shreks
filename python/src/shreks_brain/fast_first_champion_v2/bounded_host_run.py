@@ -42,6 +42,9 @@ from .host_run import (
     _validate_reopened,
     _verify_deployed_release_identity,
 )
+from .hydration_policy import (
+    require_fast_first_champion_v2_hydration_policy_matches_identities,
+)
 from .models import FastFirstChampionV2Policy
 
 
@@ -146,6 +149,13 @@ def run_fast_first_champion_v2_host_request(
         raise ValueError(
             "V2 first-champion hydration policy fingerprint mismatch"
         )
+    require_fast_first_champion_v2_hydration_policy_matches_identities(
+        hydration_policy=hydration_policy,
+        accepted_decision_identities=(
+            accepted.decision_identity
+            for accepted in cohort.accepted_decisions
+        ),
+    )
 
     _require_database_quiesced()
     sentinel = _open_database_change_sentinel(database_path)
