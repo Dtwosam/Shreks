@@ -358,15 +358,22 @@ def future_path_logical_fingerprint_sha256(
 ) -> str:
     if not labels:
         raise ValueError("future-path training label dataset cannot be empty")
-    payload = [_canonicalize(asdict(label)) for label in labels]
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    digest = hashlib.sha256()
+    digest.update(b"[")
+    for index, label in enumerate(labels):
+        if index:
+            digest.update(b",")
+        digest.update(
+            json.dumps(
+                _canonicalize(asdict(label)),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+    digest.update(b"]")
+    return digest.hexdigest()
 
 
 def write_future_path_training_parquet(
