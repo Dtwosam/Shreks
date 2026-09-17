@@ -67,6 +67,7 @@ def discover_fl9_v2_runtime_manifests(
             payload=active_payload,
             source_kind="active",
             source_path=active_path,
+            backup_bundle_path=None,
             backup_created_at_unix_ms=None,
             expected_backup_fingerprint=None,
             accepted_decision_identities=identities,
@@ -134,7 +135,8 @@ def discover_fl9_v2_runtime_manifests(
             _evaluate_candidate(
                 payload=payload,
                 source_kind="g8_backup",
-                source_path=bundle_path.resolve(),
+                source_path=campaign_path.resolve(),
+                backup_bundle_path=bundle_path.resolve(),
                 backup_created_at_unix_ms=backup_manifest.created_at_unix_ms,
                 expected_backup_fingerprint=(
                     backup_manifest.campaign_manifest_fingerprint_sha256
@@ -170,6 +172,7 @@ def _evaluate_candidate(
     payload: bytes,
     source_kind: str,
     source_path: Path,
+    backup_bundle_path: Path | None,
     backup_created_at_unix_ms: int | None,
     expected_backup_fingerprint: str | None,
     accepted_decision_identities: tuple[tuple[object, ...], ...],
@@ -220,6 +223,9 @@ def _evaluate_candidate(
     return {
         "source_kind": source_kind,
         "source_path": str(source_path),
+        "backup_bundle_path": (
+            None if backup_bundle_path is None else str(backup_bundle_path)
+        ),
         "backup_created_at_unix_ms": backup_created_at_unix_ms,
         "authentication": "AUTHENTICATED",
         "compatibility": compatibility,
