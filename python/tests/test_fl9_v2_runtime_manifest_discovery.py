@@ -70,6 +70,10 @@ def test_discovery_authenticates_active_manifest_and_accepts_exact_quote_policy(
     assert report["compatible_candidate_count"] == 1
     candidate = report["candidates"][0]
     assert candidate["source_kind"] == "active"
+    assert candidate["source_path"] == str(
+        (tmp_path / "active-paper-campaign.json").resolve()
+    )
+    assert candidate["backup_bundle_path"] is None
     assert candidate["authentication"] == "AUTHENTICATED"
     assert candidate["compatibility"] == "COMPATIBLE"
     assert candidate["regime_quote_asset_mint"] == QUOTE
@@ -120,13 +124,16 @@ def test_discovery_requires_verified_g8_backup_before_consuming_historical_manif
         expected_round_trip_cost_bps=None,
     )
     assert report["status"] == "FOUND_COMPATIBLE"
-    assert any(
-        candidate["source_kind"] == "g8_backup"
-        and candidate["compatibility"] == "COMPATIBLE"
+    historical = next(
+        candidate
         for candidate in report["candidates"]
+        if candidate["source_kind"] == "g8_backup"
+        and candidate["compatibility"] == "COMPATIBLE"
     )
+    campaign = bundle / "artifacts" / "paper-campaign.json"
+    assert historical["source_path"] == str(campaign.resolve())
+    assert historical["backup_bundle_path"] == str(bundle.resolve())
 
-    campaign = next(bundle.glob("artifacts/paper-campaign.json"))
     campaign.write_bytes(campaign.read_bytes() + b"\n")
     with pytest.raises(discovery.RuntimeManifestDiscoveryError, match="backup|verify|checksum"):
         discovery.discover_fl9_v2_runtime_manifests(
