@@ -9,7 +9,11 @@ import sys
 from shreks_brain.backup.models import BackupArtifactRole, BackupManifestError
 from shreks_brain.backup.verify import verify_backup_bundle
 from shreks_brain.fast_context_hydration import (
+    decode_fast_forecast_context_hydration_policy,
     fast_forecast_context_hydration_policy_fingerprint_sha256,
+)
+from shreks_brain.fast_first_champion_v2.host_request import (
+    decode_fast_first_champion_v2_host_request,
 )
 from shreks_brain.fast_first_champion_v2.hydration_policy import (
     require_fast_first_champion_v2_hydration_policy_matches_identities,
@@ -28,10 +32,98 @@ FL9_V2_RUNTIME_MANIFEST_DISCOVERY_SCHEMA_NAME = (
     "shreks.fl9_v2_runtime_manifest_discovery"
 )
 FL9_V2_RUNTIME_MANIFEST_DISCOVERY_SCHEMA_VERSION = 1
+FL9_V2_RUNTIME_MANIFEST_DISCOVERY_REQUEST_AUTHORITY_SCHEMA_VERSION = 2
 
 
 class RuntimeManifestDiscoveryError(RuntimeError):
     """Raised when read-only runtime-manifest discovery cannot be trusted."""
+
+
+def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+    *,
+    cohort_path: str | Path,
+    active_runtime_manifest_path: str | Path,
+    backup_root: str | Path,
+    v2_host_request_authority_path: str | Path,
+) -> dict[str, object]:
+    try:
+        cohort = read_fl9_v2_cohort_acceptance(cohort_path)
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeManifestDiscoveryError(
+            "frozen V2 cohort could not be authenticated"
+        ) from error
+
+    request_input = Path(v2_host_request_authority_path).expanduser()
+    request_payload = _read_regular_file_stable(
+        request_input,
+        label="V2 host request authority",
+    )
+    try:
+        request = decode_fast_first_champion_v2_host_request(
+            request_payload.decode("utf-8")
+        )
+    except (UnicodeDecodeError, TypeError, ValueError) as error:
+        raise RuntimeManifestDiscoveryError(
+            "V2 host request authority authentication failed"
+        ) from error
+
+    if (
+        cohort.manifest.artifact_fingerprint_sha256
+        != request.expected_cohort_artifact_fingerprint_sha256
+    ):
+        raise RuntimeManifestDiscoveryError(
+            "V2 host request authority does not bind the current frozen cohort"
+        )
+
+    policy_input = Path(request.hydration_policy_path).expanduser()
+    policy_payload = _read_regular_file_stable(
+        policy_input,
+        label="request-bound hydration policy",
+    )
+    try:
+        policy = decode_fast_forecast_context_hydration_policy(
+            policy_payload.decode("utf-8")
+        )
+    except (UnicodeDecodeError, TypeError, ValueError) as error:
+        raise RuntimeManifestDiscoveryError(
+            "request-bound hydration policy authentication failed"
+        ) from error
+
+    policy_fingerprint = fast_forecast_context_hydration_policy_fingerprint_sha256(
+        policy
+    )
+    if policy_fingerprint != request.expected_hydration_policy_fingerprint_sha256:
+        raise RuntimeManifestDiscoveryError(
+            "request-bound hydration policy fingerprint mismatch"
+        )
+
+    report = discover_fl9_v2_runtime_manifests(
+        cohort_path=cohort_path,
+        active_runtime_manifest_path=active_runtime_manifest_path,
+        backup_root=backup_root,
+        hydration_policy_version=policy.version,
+        strategy_families=policy.strategy_families,
+        max_exit_quote_age_ms=policy.max_exit_quote_age_ms,
+        execution_cost_policy_version=policy.execution_cost_policy_version,
+        expected_round_trip_cost_bps=policy.expected_round_trip_cost_bps,
+    )
+    report["schema_version"] = (
+        FL9_V2_RUNTIME_MANIFEST_DISCOVERY_REQUEST_AUTHORITY_SCHEMA_VERSION
+    )
+    report["non_manifest_input_authority"] = {
+        "authority_kind": "v2_host_request",
+        "request_path": str(request_input.resolve()),
+        "request_fingerprint_sha256": request.request_fingerprint_sha256,
+        "request_release_source_sha": request.expected_release_source_sha,
+        "hydration_policy_path": str(policy_input.resolve()),
+        "hydration_policy_fingerprint_sha256": policy_fingerprint,
+        "hydration_policy_version": policy.version,
+        "strategy_families": list(policy.strategy_families),
+        "max_exit_quote_age_ms": policy.max_exit_quote_age_ms,
+        "execution_cost_policy_version": policy.execution_cost_policy_version,
+        "expected_round_trip_cost_bps": policy.expected_round_trip_cost_bps,
+    }
+    return report
 
 
 def discover_fl9_v2_runtime_manifests(
@@ -304,37 +396,67 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cohort", required=True)
     parser.add_argument("--active-runtime-manifest", required=True)
     parser.add_argument("--backup-root", required=True)
-    parser.add_argument("--hydration-policy-version", required=True)
+    parser.add_argument("--v2-host-request-authority")
+    parser.add_argument("--hydration-policy-version")
     parser.add_argument(
         "--strategy-family",
         action="append",
-        required=True,
         dest="strategy_families",
     )
-    parser.add_argument("--max-exit-quote-age-ms", type=int, required=True)
-    parser.add_argument("--execution-cost-policy-version", required=True)
-    parser.add_argument("--expected-round-trip-cost-bps", required=True)
+    parser.add_argument("--max-exit-quote-age-ms", type=int)
+    parser.add_argument("--execution-cost-policy-version")
+    parser.add_argument("--expected-round-trip-cost-bps")
     args = parser.parse_args(argv)
 
     try:
-        report = discover_fl9_v2_runtime_manifests(
-            cohort_path=args.cohort,
-            active_runtime_manifest_path=args.active_runtime_manifest,
-            backup_root=args.backup_root,
-            hydration_policy_version=args.hydration_policy_version,
-            strategy_families=tuple(args.strategy_families),
-            max_exit_quote_age_ms=args.max_exit_quote_age_ms,
-            execution_cost_policy_version=args.execution_cost_policy_version,
-            expected_round_trip_cost_bps=_parse_expected_cost(
-                args.expected_round_trip_cost_bps
-            ),
+        explicit_values = (
+            args.hydration_policy_version,
+            args.strategy_families,
+            args.max_exit_quote_age_ms,
+            args.execution_cost_policy_version,
+            args.expected_round_trip_cost_bps,
         )
+        if args.v2_host_request_authority is not None:
+            if any(value is not None for value in explicit_values):
+                raise RuntimeManifestDiscoveryError(
+                    "V2 host request authority cannot be mixed with explicit "
+                    "non-manifest hydration inputs"
+                )
+            report = discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+                cohort_path=args.cohort,
+                active_runtime_manifest_path=args.active_runtime_manifest,
+                backup_root=args.backup_root,
+                v2_host_request_authority_path=args.v2_host_request_authority,
+            )
+        else:
+            if any(value is None for value in explicit_values):
+                raise RuntimeManifestDiscoveryError(
+                    "explicit discovery authority requires hydration policy version, "
+                    "at least one strategy family, max EXIT quote age, execution-cost "
+                    "policy version, and expected round-trip cost"
+                )
+            report = discover_fl9_v2_runtime_manifests(
+                cohort_path=args.cohort,
+                active_runtime_manifest_path=args.active_runtime_manifest,
+                backup_root=args.backup_root,
+                hydration_policy_version=args.hydration_policy_version,
+                strategy_families=tuple(args.strategy_families),
+                max_exit_quote_age_ms=args.max_exit_quote_age_ms,
+                execution_cost_policy_version=args.execution_cost_policy_version,
+                expected_round_trip_cost_bps=_parse_expected_cost(
+                    args.expected_round_trip_cost_bps
+                ),
+            )
     except (RuntimeManifestDiscoveryError, TypeError, ValueError) as error:
         print(
             _canonical_json(
                 {
                     "schema_name": FL9_V2_RUNTIME_MANIFEST_DISCOVERY_SCHEMA_NAME,
-                    "schema_version": FL9_V2_RUNTIME_MANIFEST_DISCOVERY_SCHEMA_VERSION,
+                    "schema_version": (
+                        FL9_V2_RUNTIME_MANIFEST_DISCOVERY_REQUEST_AUTHORITY_SCHEMA_VERSION
+                        if args.v2_host_request_authority is not None
+                        else FL9_V2_RUNTIME_MANIFEST_DISCOVERY_SCHEMA_VERSION
+                    ),
                     "status": "FAILED",
                     "error": str(error),
                 }
