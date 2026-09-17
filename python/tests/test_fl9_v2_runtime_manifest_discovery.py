@@ -7,12 +7,23 @@ from pathlib import Path
 import pytest
 
 from shreks_brain.backup import create_backup_snapshot
+from shreks_brain.fast_context_hydration import (
+    encode_fast_forecast_context_hydration_policy,
+    fast_forecast_context_hydration_policy_fingerprint_sha256,
+)
+from shreks_brain.fast_first_champion_v2.host_request import (
+    encode_fast_first_champion_v2_host_request,
+)
+from shreks_brain.fast_runtime_hydration_policy import (
+    build_fast_forecast_context_hydration_policy_from_runtime_manifest,
+)
 from shreks_brain.observer_campaign.runtime_manifest import (
     build_observer_paper_campaign_runtime_manifest,
     encode_observer_paper_campaign_runtime_manifest,
 )
 import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 
+from test_fast_first_champion_v2_host_run import _request as _v2_request
 from test_fl9_v2_cohort_acceptance_artifact import _write as _write_cohort
 from test_g8_backup_snapshot import _sources as _backup_sources
 from test_observer_campaign_runtime_manifest import _manifest
@@ -60,6 +71,37 @@ def _discover(tmp_path: Path, *, active_manifest=None, backup_root=None):
         execution_cost_policy_version="paper-cost-policy-v1",
         expected_round_trip_cost_bps=None,
     )
+
+
+def _prior_request_authority(tmp_path: Path, cohort_path: Path):
+    prior_policy = build_fast_forecast_context_hydration_policy_from_runtime_manifest(
+        _manifest(),
+        version="approved-v2-hydration-v7",
+        strategy_families=("approved_alpha", "approved_beta"),
+        max_exit_quote_age_ms=4_321,
+        execution_cost_policy_version="approved-cost-v5",
+        expected_round_trip_cost_bps=17.5,
+    )
+    policy_path = tmp_path / "prior-hydration-policy.json"
+    policy_path.write_text(
+        encode_fast_forecast_context_hydration_policy(prior_policy),
+        encoding="utf-8",
+    )
+    policy_fingerprint = fast_forecast_context_hydration_policy_fingerprint_sha256(
+        prior_policy
+    )
+    request = _v2_request(
+        cohort_artifact_path=str(cohort_path),
+        hydration_policy_path=str(policy_path),
+        expected_hydration_policy_fingerprint_sha256=policy_fingerprint,
+        expected_release_source_sha="a" * 40,
+    )
+    request_path = tmp_path / "prior-v2-request.json"
+    request_path.write_text(
+        encode_fast_first_champion_v2_host_request(request),
+        encoding="utf-8",
+    )
+    return request_path, policy_path, request, prior_policy
 
 
 def test_discovery_authenticates_active_manifest_and_accepts_exact_quote_policy(tmp_path: Path) -> None:
@@ -167,6 +209,118 @@ def test_discovery_fails_closed_on_tampered_runtime_manifest(tmp_path: Path) -> 
             max_exit_quote_age_ms=2_000,
             execution_cost_policy_version="paper-cost-policy-v1",
             expected_round_trip_cost_bps=None,
+        )
+
+
+def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request(tmp_path: Path) -> None:
+    cohort = _write_cohort(tmp_path, "cohort")
+    active = tmp_path / "active-paper-campaign.json"
+    active.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(_compatible_manifest())
+    )
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    request_path, policy_path, request, prior_policy = _prior_request_authority(
+        tmp_path,
+        cohort.path,
+    )
+    assert prior_policy.regime_read_policy.quote_asset_mint != QUOTE
+
+    report = discovery.discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+        cohort_path=cohort.path,
+        active_runtime_manifest_path=active,
+        backup_root=backup_root,
+        v2_host_request_authority_path=request_path,
+    )
+
+    assert report["status"] == "FOUND_COMPATIBLE"
+    authority = report["non_manifest_input_authority"]
+    assert authority == {
+        "authority_kind": "v2_host_request",
+        "request_path": str(request_path.resolve()),
+        "request_fingerprint_sha256": request.request_fingerprint_sha256,
+        "request_release_source_sha": request.expected_release_source_sha,
+        "hydration_policy_path": str(policy_path.resolve()),
+        "hydration_policy_fingerprint_sha256": (
+            request.expected_hydration_policy_fingerprint_sha256
+        ),
+        "hydration_policy_version": "approved-v2-hydration-v7",
+        "strategy_families": ["approved_alpha", "approved_beta"],
+        "max_exit_quote_age_ms": 4_321,
+        "execution_cost_policy_version": "approved-cost-v5",
+        "expected_round_trip_cost_bps": 17.5,
+    }
+    candidate = report["candidates"][0]
+    assert candidate["compatibility"] == "COMPATIBLE"
+    assert candidate["regime_quote_asset_mint"] == QUOTE
+    assert candidate["safety_probe_output_mint"] == QUOTE
+
+
+def test_request_authority_fails_closed_when_bound_policy_bytes_do_not_match(tmp_path: Path) -> None:
+    cohort = _write_cohort(tmp_path, "cohort")
+    active = tmp_path / "active-paper-campaign.json"
+    active.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(_compatible_manifest())
+    )
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    request_path, policy_path, _request, _policy = _prior_request_authority(
+        tmp_path,
+        cohort.path,
+    )
+    replacement = build_fast_forecast_context_hydration_policy_from_runtime_manifest(
+        _manifest(),
+        version="different-approved-policy",
+        strategy_families=("approved_alpha", "approved_beta"),
+        max_exit_quote_age_ms=4_321,
+        execution_cost_policy_version="approved-cost-v5",
+        expected_round_trip_cost_bps=17.5,
+    )
+    policy_path.write_text(
+        encode_fast_forecast_context_hydration_policy(replacement),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        discovery.RuntimeManifestDiscoveryError,
+        match="hydration.*fingerprint|policy.*fingerprint|request.*policy",
+    ):
+        discovery.discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+            cohort_path=cohort.path,
+            active_runtime_manifest_path=active,
+            backup_root=backup_root,
+            v2_host_request_authority_path=request_path,
+        )
+
+
+def test_request_authority_fails_closed_on_tampered_request(tmp_path: Path) -> None:
+    cohort = _write_cohort(tmp_path, "cohort")
+    active = tmp_path / "active-paper-campaign.json"
+    active.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(_compatible_manifest())
+    )
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    request_path, _policy_path, _request, _policy = _prior_request_authority(
+        tmp_path,
+        cohort.path,
+    )
+    document = json.loads(request_path.read_text(encoding="utf-8"))
+    document["request"]["reason"] = "tampered authority"
+    request_path.write_text(
+        json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        discovery.RuntimeManifestDiscoveryError,
+        match="request|fingerprint|canonical|authenticate",
+    ):
+        discovery.discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+            cohort_path=cohort.path,
+            active_runtime_manifest_path=active,
+            backup_root=backup_root,
+            v2_host_request_authority_path=request_path,
         )
 
 
