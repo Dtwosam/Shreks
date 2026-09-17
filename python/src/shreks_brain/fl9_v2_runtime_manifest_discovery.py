@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
@@ -39,13 +40,26 @@ class RuntimeManifestDiscoveryError(RuntimeError):
     """Raised when read-only runtime-manifest discovery cannot be trusted."""
 
 
-def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+@dataclass(frozen=True, slots=True)
+class AuthenticatedV2DiscoveryRequestAuthority:
+    request_path: Path
+    request_fingerprint_sha256: str
+    request_release_source_sha: str
+    cohort_artifact_fingerprint_sha256: str
+    hydration_policy_path: Path
+    hydration_policy_fingerprint_sha256: str
+    hydration_policy_version: str
+    strategy_families: tuple[str, ...]
+    max_exit_quote_age_ms: int
+    execution_cost_policy_version: str
+    expected_round_trip_cost_bps: float | int | None
+
+
+def authenticate_fl9_v2_discovery_request_authority(
     *,
     cohort_path: str | Path,
-    active_runtime_manifest_path: str | Path,
-    backup_root: str | Path,
     v2_host_request_authority_path: str | Path,
-) -> dict[str, object]:
+) -> AuthenticatedV2DiscoveryRequestAuthority:
     try:
         cohort = read_fl9_v2_cohort_acceptance(cohort_path)
     except (OSError, TypeError, ValueError) as error:
@@ -97,31 +111,62 @@ def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
             "request-bound hydration policy fingerprint mismatch"
         )
 
+    return AuthenticatedV2DiscoveryRequestAuthority(
+        request_path=request_input.resolve(),
+        request_fingerprint_sha256=request.request_fingerprint_sha256,
+        request_release_source_sha=request.expected_release_source_sha,
+        cohort_artifact_fingerprint_sha256=(
+            request.expected_cohort_artifact_fingerprint_sha256
+        ),
+        hydration_policy_path=policy_input.resolve(),
+        hydration_policy_fingerprint_sha256=policy_fingerprint,
+        hydration_policy_version=policy.version,
+        strategy_families=tuple(policy.strategy_families),
+        max_exit_quote_age_ms=policy.max_exit_quote_age_ms,
+        execution_cost_policy_version=policy.execution_cost_policy_version,
+        expected_round_trip_cost_bps=policy.expected_round_trip_cost_bps,
+    )
+
+
+def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
+    *,
+    cohort_path: str | Path,
+    active_runtime_manifest_path: str | Path,
+    backup_root: str | Path,
+    v2_host_request_authority_path: str | Path,
+) -> dict[str, object]:
+    authority = authenticate_fl9_v2_discovery_request_authority(
+        cohort_path=cohort_path,
+        v2_host_request_authority_path=v2_host_request_authority_path,
+    )
+
     report = discover_fl9_v2_runtime_manifests(
         cohort_path=cohort_path,
         active_runtime_manifest_path=active_runtime_manifest_path,
         backup_root=backup_root,
-        hydration_policy_version=policy.version,
-        strategy_families=policy.strategy_families,
-        max_exit_quote_age_ms=policy.max_exit_quote_age_ms,
-        execution_cost_policy_version=policy.execution_cost_policy_version,
-        expected_round_trip_cost_bps=policy.expected_round_trip_cost_bps,
+        hydration_policy_version=authority.hydration_policy_version,
+        strategy_families=authority.strategy_families,
+        max_exit_quote_age_ms=authority.max_exit_quote_age_ms,
+        execution_cost_policy_version=authority.execution_cost_policy_version,
+        expected_round_trip_cost_bps=authority.expected_round_trip_cost_bps,
     )
     report["schema_version"] = (
         FL9_V2_RUNTIME_MANIFEST_DISCOVERY_REQUEST_AUTHORITY_SCHEMA_VERSION
     )
     report["non_manifest_input_authority"] = {
         "authority_kind": "v2_host_request",
-        "request_path": str(request_input.resolve()),
-        "request_fingerprint_sha256": request.request_fingerprint_sha256,
-        "request_release_source_sha": request.expected_release_source_sha,
-        "hydration_policy_path": str(policy_input.resolve()),
-        "hydration_policy_fingerprint_sha256": policy_fingerprint,
-        "hydration_policy_version": policy.version,
-        "strategy_families": list(policy.strategy_families),
-        "max_exit_quote_age_ms": policy.max_exit_quote_age_ms,
-        "execution_cost_policy_version": policy.execution_cost_policy_version,
-        "expected_round_trip_cost_bps": policy.expected_round_trip_cost_bps,
+        "request_path": str(authority.request_path),
+        "request_fingerprint_sha256": authority.request_fingerprint_sha256,
+        "request_release_source_sha": authority.request_release_source_sha,
+        "hydration_policy_path": str(authority.hydration_policy_path),
+        "hydration_policy_fingerprint_sha256": (
+            authority.hydration_policy_fingerprint_sha256
+        ),
+        "hydration_policy_version": authority.hydration_policy_version,
+        "strategy_families": list(authority.strategy_families),
+        "max_exit_quote_age_ms": authority.max_exit_quote_age_ms,
+        "execution_cost_policy_version": authority.execution_cost_policy_version,
+        "expected_round_trip_cost_bps": authority.expected_round_trip_cost_bps,
     }
     return report
 
