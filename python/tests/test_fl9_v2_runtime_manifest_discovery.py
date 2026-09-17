@@ -95,7 +95,9 @@ def test_discovery_requires_verified_g8_backup_before_consuming_historical_manif
     active = tmp_path / "active-paper-campaign.json"
     active.write_bytes(encode_observer_paper_campaign_runtime_manifest(_manifest()))
 
-    sources, _config, *_payloads = _backup_sources(tmp_path / "backup-source")
+    backup_source = tmp_path / "backup-source"
+    backup_source.mkdir()
+    sources, _config, *_payloads = _backup_sources(backup_source)
     sources.campaign_manifest_path.write_bytes(
         encode_observer_paper_campaign_runtime_manifest(_compatible_manifest())
     )
