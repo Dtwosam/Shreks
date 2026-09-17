@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -102,6 +103,24 @@ def _prior_request_authority(tmp_path: Path, cohort_path: Path):
         encoding="utf-8",
     )
     return request_path, policy_path, request, prior_policy
+
+
+def _bind_synthetic_cohort_to_request_authority(monkeypatch, cohort, request) -> None:
+    frozen = SimpleNamespace(
+        path=cohort.path,
+        manifest=SimpleNamespace(
+            artifact_fingerprint_sha256=(
+                request.expected_cohort_artifact_fingerprint_sha256
+            )
+        ),
+        accepted_decisions=cohort.accepted_decisions,
+        quarantined_decisions=cohort.quarantined_decisions,
+    )
+    monkeypatch.setattr(
+        discovery,
+        "read_fl9_v2_cohort_acceptance",
+        lambda _path: frozen,
+    )
 
 
 def test_discovery_authenticates_active_manifest_and_accepts_exact_quote_policy(tmp_path: Path) -> None:
@@ -212,7 +231,10 @@ def test_discovery_fails_closed_on_tampered_runtime_manifest(tmp_path: Path) -> 
         )
 
 
-def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request(tmp_path: Path) -> None:
+def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     cohort = _write_cohort(tmp_path, "cohort")
     active = tmp_path / "active-paper-campaign.json"
     active.write_bytes(
@@ -224,6 +246,7 @@ def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request
         tmp_path,
         cohort.path,
     )
+    _bind_synthetic_cohort_to_request_authority(monkeypatch, cohort, request)
     assert prior_policy.regime_read_policy.quote_asset_mint != QUOTE
 
     report = discovery.discover_fl9_v2_runtime_manifests_from_v2_request_authority(
@@ -256,7 +279,10 @@ def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request
     assert candidate["safety_probe_output_mint"] == QUOTE
 
 
-def test_request_authority_fails_closed_when_bound_policy_bytes_do_not_match(tmp_path: Path) -> None:
+def test_request_authority_fails_closed_when_bound_policy_bytes_do_not_match(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     cohort = _write_cohort(tmp_path, "cohort")
     active = tmp_path / "active-paper-campaign.json"
     active.write_bytes(
@@ -264,10 +290,11 @@ def test_request_authority_fails_closed_when_bound_policy_bytes_do_not_match(tmp
     )
     backup_root = tmp_path / "backups"
     backup_root.mkdir()
-    request_path, policy_path, _request, _policy = _prior_request_authority(
+    request_path, policy_path, request, _policy = _prior_request_authority(
         tmp_path,
         cohort.path,
     )
+    _bind_synthetic_cohort_to_request_authority(monkeypatch, cohort, request)
     replacement = build_fast_forecast_context_hydration_policy_from_runtime_manifest(
         _manifest(),
         version="different-approved-policy",
