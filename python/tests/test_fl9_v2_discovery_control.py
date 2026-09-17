@@ -31,7 +31,7 @@ def _canonical(value: object) -> str:
 def _release_tree(tmp_path: Path, *, source_sha: str = SOURCE_SHA) -> Path:
     releases = tmp_path / "releases"
     release = releases / source_sha
-    release.mkdir(parents=True)
+    release.mkdir(parents=True, exist_ok=True)
     (release / "RELEASE_MANIFEST.json").write_text(
         _canonical(
             {
@@ -44,7 +44,8 @@ def _release_tree(tmp_path: Path, *, source_sha: str = SOURCE_SHA) -> Path:
         encoding="utf-8",
     )
     current = tmp_path / "current"
-    current.symlink_to(release, target_is_directory=True)
+    if not current.exists() and not current.is_symlink():
+        current.symlink_to(release, target_is_directory=True)
     return current
 
 
@@ -146,7 +147,7 @@ def test_valid_canonical_marker_without_request_authority_returns_trusted_hold_a
         ("future", "future"),
     ],
 )
-def test_untrusted_marker_properties_fail_closed(
+def test_marker_failures_close_and_receipt_only_after_authentication(
     tmp_path: Path,
     mutation: str,
     error_fragment: str,
@@ -166,7 +167,12 @@ def test_untrusted_marker_properties_fail_closed(
     assert len(results) == 1
     assert results[0]["status"] == "FAILED"
     assert error_fragment in str(results[0]["error"]).lower()
-    assert not (tmp_path / "receipts" / "gha-123-1.json").exists()
+    receipt = tmp_path / "receipts" / "gha-123-1.json"
+    if mutation in {"stale", "future"}:
+        assert receipt.is_file()
+        assert stat.S_IMODE(receipt.stat().st_mode) == 0o600
+    else:
+        assert not receipt.exists()
     assert marker.exists()
 
 
