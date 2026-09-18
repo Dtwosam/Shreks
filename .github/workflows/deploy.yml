@@ -7,6 +7,10 @@ on:
         description: Existing immutable release tag shreks-<40-char-sha>
         required: true
         type: string
+  workflow_run:
+    workflows: ["Build sealed Shreks release"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -16,29 +20,103 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment: production-paper
+  resolve:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'workflow_run' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'workflow_run'
+        )
+      }}
     runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.resolve.outputs.source_sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
     env:
-      RELEASE_TAG: ${{ inputs.release_tag }}
-      GH_TOKEN: ${{ github.token }}
+      GITHUB_EVENT_NAME: ${{ github.event_name }}
+      MANUAL_RELEASE_TAG: ${{ inputs.release_tag }}
+      RELEASE_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      RELEASE_RUN_EVENT: ${{ github.event.workflow_run.event }}
+      RELEASE_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      - name: Validate existing release tag
+      - name: Resolve exact immutable release identity
+        id: resolve
         shell: bash
         run: |
           set -euo pipefail
-          if [[ ! "$RELEASE_TAG" =~ ^shreks-[0-9a-f]{40}$ ]]; then
-            echo "release_tag must match shreks-<40 lowercase hex characters>" >&2
-            exit 2
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_run" ]]; then
+            [[ "$RELEASE_RUN_CONCLUSION" == "success" ]] || exit 1
+            [[ "$RELEASE_RUN_EVENT" == "workflow_run" ]] || exit 1
+            SOURCE_SHA="$RELEASE_RUN_HEAD_SHA"
+            [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+            RELEASE_TAG="shreks-$SOURCE_SHA"
+          else
+            RELEASE_TAG="$MANUAL_RELEASE_TAG"
+            [[ "$RELEASE_TAG" =~ ^shreks-[0-9a-f]{40}$ ]] || exit 2
+            SOURCE_SHA="${RELEASE_TAG#shreks-}"
           fi
-          SOURCE_SHA="${RELEASE_TAG#shreks-}"
-          echo "SOURCE_SHA=$SOURCE_SHA" >> "$GITHUB_ENV"
+          printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'release_tag=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: resolve
+    environment: production-paper
+    runs-on: ubuntu-latest
+    env:
+      SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Validate resolved release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$RELEASE_TAG" =~ ^shreks-[0-9a-f]{40}$ ]] || exit 2
+          test "$RELEASE_TAG" = "shreks-$SOURCE_SHA"
 
       - name: Checkout released verifier
         uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.release_tag }}
+          ref: ${{ needs.resolve.outputs.release_tag }}
           fetch-depth: 1
+
+      - name: Verify immutable GitHub release identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_JSON="$RUNNER_TEMP/shreks-release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RELEASE_JSON"
+          python - "$RELEASE_JSON" "$RELEASE_TAG" "$SOURCE_SHA" <<'PY'
+          import json
+          import sys
+
+          path, expected_tag, expected_sha = sys.argv[1:]
+          with open(path, encoding="utf-8") as handle:
+              release = json.load(handle)
+          if release.get("tag_name") != expected_tag:
+              raise SystemExit("release tag mismatch")
+          if release.get("target_commitish") != expected_sha:
+              raise SystemExit("release target_commitish mismatch")
+          if release.get("draft") is not False:
+              raise SystemExit("release draft state is forbidden")
+          if release.get("prerelease") is not False:
+              raise SystemExit("release prerelease state is forbidden")
+          if release.get("immutable") is not True:
+              raise SystemExit("release is not immutable")
+          names = sorted(asset.get("name") for asset in release.get("assets", []))
+          expected = sorted(
+              (
+                  "RELEASE_MANIFEST.json",
+                  f"shreks-release-{expected_sha}.tar.gz",
+                  f"shreks-release-{expected_sha}.tar.gz.sha256",
+              )
+          )
+          if names != expected:
+              raise SystemExit("release asset set mismatch")
+          PY
 
       - name: Download exact release assets
         shell: bash
@@ -173,3 +251,11 @@ jobs:
 
           ssh "${SSH_COMMON[@]}" "$DESTINATION" \
             "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
+
+  verify:
+    needs: [resolve, deploy]
+    uses: ./.github/workflows/verify-production-paper.yml
+    with:
+      expected_release_sha: ${{ needs.resolve.outputs.source_sha }}
+      journal_minutes: "30"
+    secrets: inherit
