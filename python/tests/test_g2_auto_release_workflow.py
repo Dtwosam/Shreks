@@ -58,30 +58,42 @@ def test_release_workflow_auto_releases_only_successful_main_ci_seals():
     assert re.search(r"\bssh\b", workflow, flags=re.IGNORECASE) is None
 
 
-def test_production_deploy_remains_manual_only():
+def test_production_deploy_auto_continues_only_canonical_release_with_manual_fallback():
     workflow = _read(_DEPLOY_WORKFLOW)
 
     assert "workflow_dispatch:" in workflow
-    assert "environment: production-paper" in workflow
     assert "release_tag:" in workflow
+    assert "workflow_run:" in workflow
+    assert re.search(
+        r'workflows:\s*\[\s*["\']Build sealed Shreks release["\']\s*\]',
+        workflow,
+    )
+    assert re.search(r"types:\s*\[\s*completed\s*\]", workflow)
+    assert re.search(r"branches:\s*\[\s*main\s*\]", workflow)
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "github.event.workflow_run.event == 'workflow_run'" in workflow
+    assert "github.event.workflow_run.head_sha" in workflow
 
-    for forbidden_trigger in (
-        "workflow_run:",
-        "workflow_call:",
-        "release:",
-        "push:",
-        "pull_request:",
-    ):
-        assert forbidden_trigger not in workflow
-
-    # Existing release-only and transport-only deployment boundary remains.
+    # Production environment and release-only transport boundary remain.
+    assert "environment: production-paper" in workflow
+    assert "gh api" in workflow
+    assert "immutable" in workflow
+    assert "target_commitish" in workflow
     assert "gh release download" in workflow
     assert "release_bundle.py verify" in workflow
     assert "sudo /usr/local/sbin/shreks-release-manager install" in workflow
     assert "gh release create" not in workflow
 
+    for forbidden_trigger in (
+        "push:",
+        "pull_request:",
+    ):
+        assert forbidden_trigger not in workflow
 
-def test_release_runbook_distinguishes_auto_release_from_manual_deploy():
+
+
+
+def test_release_runbook_documents_auto_release_through_verified_paper_delivery():
     runbook = _read(_RELEASE_RUNBOOK)
 
     for required in (
@@ -93,8 +105,11 @@ def test_release_runbook_distinguishes_auto_release_from_manual_deploy():
         "manual `Build sealed Shreks release`",
         "same exact-SHA, seal, full-test, bundle-verification, and duplicate-tag gates",
         "does **not** contact the VPS",
-        "Production deployment remains a separate manual action",
-        "manual `Deploy verified Shreks release`",
+        "seal merge -> CI -> immutable release -> PAPER deploy -> production verify -> protected FL9 discovery",
+        "target_commitish",
+        "immutable=true",
+        "Manual controls remain available as fallbacks",
+        "manually dispatch `Deploy verified Shreks release`",
         "LIVE TRADING: DISABLED",
     ):
         assert required in runbook

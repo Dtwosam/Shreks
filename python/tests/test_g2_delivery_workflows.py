@@ -134,26 +134,69 @@ def test_release_workflow_does_not_consume_deployment_or_runtime_secrets():
     assert "ssh" not in workflow.lower()
 
 
-def test_deploy_workflow_is_manual_existing_release_only_and_minimum_permission():
+def test_deploy_workflow_supports_manual_and_automatic_sealed_release_delivery():
     workflow = _read(_DEPLOY_WORKFLOW)
 
     assert "workflow_dispatch:" in workflow
     assert "release_tag:" in workflow
     assert "required: true" in workflow
+    assert "workflow_run:" in workflow
+    assert 'workflows: ["Build sealed Shreks release"]' in workflow
+    assert "types: [completed]" in workflow
+    assert "branches: [main]" in workflow
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
+    assert "github.event.workflow_run.event == 'workflow_run'" in workflow
+    assert "github.event.workflow_run.head_sha" in workflow
+    assert "source_sha:" in workflow
     assert "environment: production-paper" in workflow
     assert re.search(r"permissions:\s*\n\s+contents: read", workflow)
     assert "contents: write" not in workflow
     assert "push:" not in workflow
     assert "pull_request:" not in workflow
     assert "^shreks-[0-9a-f]{40}$" in workflow
-    assert "gh release download" in workflow
-    assert 'shreks-release-$SOURCE_SHA.tar.gz' in workflow
-    assert 'shreks-release-$SOURCE_SHA.tar.gz.sha256' in workflow
-    assert "RELEASE_MANIFEST.json" in workflow
-    assert "release_bundle.py verify" in workflow
+
+    for required in (
+        "gh api",
+        "immutable",
+        "target_commitish",
+        "draft",
+        "prerelease",
+        "gh release download",
+        'shreks-release-$SOURCE_SHA.tar.gz',
+        'shreks-release-$SOURCE_SHA.tar.gz.sha256',
+        "RELEASE_MANIFEST.json",
+        "release_bundle.py verify",
+    ):
+        assert required in workflow
+
+    release_check = workflow.index("gh api")
+    host_tokens = [workflow.find(token) for token in ('ssh "', 'scp "') if workflow.find(token) != -1]
+    assert host_tokens
+    assert release_check < min(host_tokens)
+
     assert "gh release create" not in workflow
     assert "cargo build" not in workflow
     assert "pip wheel" not in workflow
+
+
+
+def test_deploy_workflow_chains_reusable_verifier_after_successful_deploy():
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    for required in (
+        "resolve:",
+        "outputs:",
+        "needs: resolve",
+        "needs: [resolve, deploy]",
+        "uses: ./.github/workflows/verify-production-paper.yml",
+        "expected_release_sha:",
+        'journal_minutes: "30"',
+        "secrets: inherit",
+    ):
+        assert required in workflow
+
+    assert "needs.resolve.outputs.source_sha" in workflow
+    assert "needs.resolve.outputs.release_tag" in workflow
 
 
 def test_deploy_workflow_uses_only_transport_secrets_and_strict_host_verification():
@@ -225,11 +268,14 @@ def test_deploy_workflow_reports_read_only_host_diagnostics_on_release_manager_f
     assert "journalctl" not in workflow
 
 
-def test_production_verifier_is_manual_read_only_and_uses_existing_transport_boundary():
+def test_production_verifier_is_manual_and_reusable_read_only_transport_boundary():
     workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
 
     assert "workflow_dispatch:" in workflow
+    assert "workflow_call:" in workflow
     assert "expected_release_sha:" in workflow
+    assert "journal_minutes:" in workflow
+    assert 'default: "30"' in workflow
     assert "environment: production-paper" in workflow
     assert re.search(r"permissions:\s*\n\s+contents: read", workflow)
     assert set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow)) == _DEPLOY_SECRET_NAMES
@@ -288,7 +334,6 @@ def test_production_verifier_is_manual_read_only_and_uses_existing_transport_bou
         "setfacl",
     ):
         assert forbidden not in workflow
-
 
 
 def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account():
@@ -363,3 +408,23 @@ def test_release_runbook_documents_no_admin_shell_fl9_discovery_bridge():
     assert "do not add sudoers" in lower
     assert "do not relax" in lower
     assert "interactive administrator shell" in lower
+
+
+def test_release_runbook_documents_automatic_sealed_release_delivery_chain():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "seal merge -> CI -> immutable release -> PAPER deploy -> production verify -> protected FL9 discovery",
+        "workflow_run.head_sha",
+        "target_commitish",
+        "immutable=true",
+        "production-paper",
+        "Manual controls remain available as fallbacks",
+        "Verify production PAPER runtime",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
+
+    lower = runbook.lower()
+    assert "does not bypass" in lower
+    assert "before host contact" in lower

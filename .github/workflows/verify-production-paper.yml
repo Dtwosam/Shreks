@@ -12,6 +12,15 @@ on:
         required: true
         default: "30"
         type: string
+  workflow_call:
+    inputs:
+      expected_release_sha:
+        required: true
+        type: string
+      journal_minutes:
+        required: false
+        default: "30"
+        type: string
 
 permissions:
   contents: read

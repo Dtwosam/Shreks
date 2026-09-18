@@ -66,7 +66,7 @@ After a `seal:` commit lands on `main`, the normal `CI` workflow runs on that ex
 
 The manual `Build sealed Shreks release` dispatch remains available for an explicit exact sealed SHA and supported native platform. It uses the same exact-SHA, seal, full-test, bundle-verification, and duplicate-tag gates. A manual/automatic race for the same SHA is fail-closed: the existing tag wins and the later attempt refuses to overwrite it.
 
-Automatic release creation does **not** contact the VPS, consume the `production-paper` environment, or trigger deployment. Production deployment remains a separate manual action.
+Automatic release creation still does **not** contact the VPS or consume the `production-paper` environment itself. After that release workflow completes successfully through the canonical sealed-main `workflow_run` path, the separate `Deploy verified Shreks release` workflow now continues automatically. The trust boundary remains separate: deployment independently resolves the exact sealed SHA/tag and verifies the immutable GitHub Release before any host contact.
 
 Release assets are exactly:
 
@@ -104,11 +104,37 @@ This transport adds no provider credential, wallet/signing authority, promotion 
 
 ## Deploy a release
 
-Run the manual `Deploy verified Shreks release` workflow with the existing release tag. The workflow validates the tag, checks out the verifier at that release, downloads the three assets, verifies them before host contact, uses strict pinned host-key checking, copies the assets to `/var/tmp`, and invokes only:
+The normal production PAPER delivery path is now:
+
+```text
+seal merge -> CI -> immutable release -> PAPER deploy -> production verify -> protected FL9 discovery
+```
+
+A successful canonical automatic `Build sealed Shreks release` run triggers `Deploy verified Shreks release`. The deploy workflow accepts that automatic path only when the upstream release run itself came from the sealed-main `workflow_run` path and completed successfully. It derives `shreks-<sha>` from the exact upstream `workflow_run.head_sha`; it never chooses a release by freshness or branch name.
+
+Before host contact, deployment independently loads the GitHub Release through the API and requires all of the following:
+
+- the tag exactly equals `shreks-<sha>`;
+- `target_commitish` exactly equals that 40-character SHA;
+- the release is neither draft nor prerelease;
+- the release reports `immutable=true`;
+- the asset set is exactly the tarball, checksum sidecar, and `RELEASE_MANIFEST.json`.
+
+Only after those checks pass does the workflow download the assets, verify the bundle locally, use strict pinned host-key checking, copy the assets to `/var/tmp`, and invoke only:
 
 ```text
 sudo /usr/local/sbin/shreks-release-manager install <archive> <checksum> <manifest>
 ```
+
+After a successful deployment, the same workflow invokes the reusable `Verify production PAPER runtime` workflow with the exact resolved SHA. Verification retains the `production-paper` environment and existing read-only service/provenance/journal/FL9-discovery checks. A deploy failure prevents verification; a verification or discovery failure fails the delivery chain.
+
+The `production-paper` GitHub Environment remains authoritative. If environment reviewers or branch protections are configured, those intentional gates still apply; the automatic chain does not bypass them.
+
+Manual controls remain available as fallbacks:
+
+- manually dispatch `Deploy verified Shreks release` with an exact existing immutable release tag;
+- manually dispatch `Verify production PAPER runtime` with an exact expected release SHA and bounded journal window;
+- manually deploy an earlier immutable release for rollback.
 
 The current release manager re-verifies the bundle, stages `/opt/shreks/releases/<sha>`, constructs the release-local Python environment at its final SHA path, re-verifies stored payloads, installs systemd unit files, atomically switches `/opt/shreks/current`, starts `shreks.target`, and checks health. A repaired manager additionally stops the runtime services explicitly before switching an existing release and verifies runtime **process identity** against the activated immutable release. The two native services must execute the exact binaries inside that release, and every runtime service must have its working directory rooted at that release. If activation fails after a prior release was active, the repaired manager restores the previous verified release and its previous unit files.
 
