@@ -338,3 +338,28 @@ def test_release_runbook_documents_backward_compatible_sealed_control_plane_reco
 
     assert "/opt/shreks/current/deploy/release/release_manager.py" not in runbook
     assert "/opt/shreks/current/deploy/release/release_bundle.py" not in runbook
+
+
+def test_release_runbook_documents_no_admin_shell_fl9_discovery_bridge():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "/dev/shm/shreks-fl9-v2-discovery",
+        "shreks-telemetry.timer",
+        "journalctl -u shreks-telemetry.service -o cat",
+        "shreks-deploy",
+        "/etc/shreks",
+        "/var/lib/shreks",
+        "FOUND_COMPATIBLE",
+        "HOLD_NO_REQUEST_AUTHORITY",
+        "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
+        "HOLD_NO_COMPATIBLE",
+        "evidence only",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
+
+    lower = runbook.lower()
+    assert "do not add sudoers" in lower
+    assert "do not relax" in lower
+    assert "interactive administrator shell" in lower
