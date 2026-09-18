@@ -13,6 +13,12 @@ from shreks_brain.observer_campaign.runtime_config import (
     load_observer_paper_campaign_runtime_config,
 )
 
+from .fl9_v2_discovery_control import (
+    CONTROL_RESULT_SCHEMA_NAME,
+    CONTROL_RESULT_SCHEMA_VERSION,
+    emit_fl9_v2_discovery_control_result,
+    process_pending_fl9_v2_discovery_requests,
+)
 from .models import TelemetrySnapshot
 from .snapshot import (
     TelemetrySnapshotError,
@@ -199,10 +205,36 @@ def run_telemetry_once(
         raise TelemetryRuntimeConfigError("telemetry snapshot generation failed") from error
 
 
+def _process_discovery_controls_for_preflight() -> None:
+    try:
+        results = process_pending_fl9_v2_discovery_requests()
+    except Exception:
+        emit_fl9_v2_discovery_control_result(
+            {
+                "schema_name": CONTROL_RESULT_SCHEMA_NAME,
+                "schema_version": CONTROL_RESULT_SCHEMA_VERSION,
+                "request_id": None,
+                "expected_release_sha": None,
+                "observed_release_sha": None,
+                "status": "FAILED",
+                "error": {
+                    "code": "CONTROL_PROCESSOR_FAILED",
+                    "message": "discovery control processing failed",
+                },
+            }
+        )
+        return
+
+    for result in results:
+        emit_fl9_v2_discovery_control_result(result)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = tuple(sys.argv[1:] if argv is None else argv)
     if args not in ((), ("--preflight",)):
         return 2
+    if args == ("--preflight",):
+        _process_discovery_controls_for_preflight()
     try:
         config = load_telemetry_runtime_config()
         now_unix_ms = time.time_ns() // 1_000_000
