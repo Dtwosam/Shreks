@@ -158,6 +158,9 @@ def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
         "request_path": str(authority.request_path),
         "request_fingerprint_sha256": authority.request_fingerprint_sha256,
         "request_release_source_sha": authority.request_release_source_sha,
+        "cohort_artifact_fingerprint_sha256": (
+            authority.cohort_artifact_fingerprint_sha256
+        ),
         "hydration_policy_path": str(authority.hydration_policy_path),
         "hydration_policy_fingerprint_sha256": (
             authority.hydration_policy_fingerprint_sha256
