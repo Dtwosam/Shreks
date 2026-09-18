@@ -225,6 +225,28 @@ The transport boundary must remain unchanged. Do not add sudoers entries for FL9
 
 Older deployed releases that do not contain `shreks_brain.telemetry.fl9_v2_discovery_control` report `fl9_v2_discovery_bridge=unavailable` and retain the legacy read-only verification behavior.
 
+### Bind one compatible FL9 V2 discovery authority
+
+When the protected verifier returns a canonical `FOUND_COMPATIBLE` discovery-control result, preserve that exact JSON document as a regular file and bind it before preparing any later proof/request:
+
+```sh
+cd /opt/shreks/current
+
+.venv/bin/shreks-fl9-v2-discovery-authority-bind \
+  --discovery-result '<exact-canonical-discovery-result.json>' \
+  --destination '<new-nonexistent-binding.json>'
+```
+
+If more than one compatible runtime-manifest candidate is present, the binder refuses to choose. Supply the exact selected runtime-manifest fingerprint explicitly:
+
+```sh
+  --runtime-manifest-fingerprint '<exact-64-hex-runtime-manifest-fingerprint>'
+```
+
+The binder requires exact expected/observed release equality, one authenticated request-authority group, authenticated frozen-cohort provenance, and quote identity matching the frozen cohort. It writes one canonical mode-0600 non-overwrite artifact that fingerprints the exact discovery result plus the selected runtime-manifest/hydration authority and source provenance.
+
+The binding is evidence only. It does not authorize model fitting, a V2 scoring retry, champion publication, PAPER promotion, signing/submission, or LIVE trading.
+
 ## Rollback
 
 For rollback, select an earlier GitHub Release tag that was previously sealed and verified, then dispatch `Deploy verified Shreks release` with that earlier tag. The same local verification, strict transport, host verification, staging, and health gates apply to rollback; there is no separate bypass path.
