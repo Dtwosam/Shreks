@@ -156,6 +156,25 @@ def test_deploy_workflow_is_manual_existing_release_only_and_minimum_permission(
     assert "pip wheel" not in workflow
 
 
+def test_deploy_workflow_chains_reusable_verifier_after_successful_deploy():
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    for required in (
+        "resolve:",
+        "outputs:",
+        "needs: resolve",
+        "needs: [resolve, deploy]",
+        "uses: ./.github/workflows/verify-production-paper.yml",
+        "expected_release_sha:",
+        'journal_minutes: "30"',
+        "secrets: inherit",
+    ):
+        assert required in workflow
+
+    assert "needs.resolve.outputs.source_sha" in workflow
+    assert "needs.resolve.outputs.release_tag" in workflow
+
+
 def test_deploy_workflow_uses_only_transport_secrets_and_strict_host_verification():
     workflow = _read(_DEPLOY_WORKFLOW)
     consumed = set(re.findall(r"secrets\.([A-Z0-9_]+)", workflow))
