@@ -109,7 +109,7 @@ def test_release_runbook_documents_auto_release_through_verified_paper_delivery(
         "target_commitish",
         "immutable=true",
         "Manual controls remain available as fallbacks",
-        "manual `Deploy verified Shreks release`",
+        "manually dispatch `Deploy verified Shreks release`",
         "LIVE TRADING: DISABLED",
     ):
         assert required in runbook
