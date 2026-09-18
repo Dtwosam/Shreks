@@ -58,10 +58,14 @@ jobs:
 
           DESTINATION="$SHREKS_DEPLOY_USER@$SHREKS_DEPLOY_HOST"
           SSH_COMMON=(-i "$KEY_FILE" -p "$SHREKS_DEPLOY_PORT" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS_FILE" -o BatchMode=yes)
-          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$EXPECTED_RELEASE_SHA' '$JOURNAL_MINUTES'" <<'REMOTE'
+          DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$DISCOVERY_REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$EXPECTED_RELEASE_SHA' '$JOURNAL_MINUTES' '$DISCOVERY_REQUEST_ID'" <<'REMOTE'
           set -euo pipefail
           EXPECTED_SHA="$1"
           JOURNAL_MINUTES="$2"
+          REQUEST_ID="$3"
+          [[ "$REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
           CURRENT="$(readlink -f /opt/shreks/current)"
           EXPECTED="/opt/shreks/releases/$EXPECTED_SHA"
           printf 'current_release=%s\nexpected_release=%s\n' "$CURRENT" "$EXPECTED"
@@ -157,4 +161,110 @@ jobs:
           else
             echo 'historical_evidence_read_access=denied'
           fi
+
+          if ! /opt/shreks/current/.venv/bin/python -c 'import shreks_brain.telemetry.fl9_v2_discovery_control' >/dev/null 2>&1; then
+            echo 'fl9_v2_discovery_bridge=unavailable'
+            exit 0
+          fi
+
+          systemctl is-active --quiet shreks-telemetry.timer
+          echo 'fl9_v2_discovery_bridge=available'
+
+          DISCOVERY_MARKER="/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.request"
+          DISCOVERY_TMP="${DISCOVERY_MARKER}.tmp"
+          cleanup_discovery() {
+            rm -f "$DISCOVERY_TMP"
+            rm -f "$DISCOVERY_MARKER"
+          }
+          trap cleanup_discovery EXIT
+          test ! -e "$DISCOVERY_MARKER"
+          test ! -e "$DISCOVERY_TMP"
+
+          /opt/shreks/current/.venv/bin/python - "$REQUEST_ID" "$EXPECTED_SHA" "$DISCOVERY_TMP" <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          request_id, expected_sha, output_path = sys.argv[1:]
+          document = {
+              "schema_name": "shreks.fl9_v2_discovery_control_request",
+              "schema_version": 1,
+              "request_id": request_id,
+              "expected_release_sha": expected_sha,
+              "created_at_unix_ms": time.time_ns() // 1_000_000,
+          }
+          payload = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+          fd = os.open(output_path, flags, 0o644)
+          try:
+              os.write(fd, payload.encode("utf-8"))
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          os.chmod(output_path, 0o644)
+          PY
+          mv -- "$DISCOVERY_TMP" "$DISCOVERY_MARKER"
+
+          DISCOVERY_RESULT=''
+          DISCOVERY_DEADLINE="$(( $(date +%s) + 180 ))"
+          while (( $(date +%s) <= DISCOVERY_DEADLINE )); do
+            DISCOVERY_RESULT="$(
+              journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>/dev/null                 | grep -F '"schema_name":"shreks.fl9_v2_discovery_control_result"'                 | grep -F "\"request_id\":\"${REQUEST_ID}\""                 | tail -n 1                 || true
+            )"
+            if [[ -n "$DISCOVERY_RESULT" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ -z "$DISCOVERY_RESULT" ]]; then
+            echo 'fl9_v2_discovery_result=timeout'
+            exit 1
+          fi
+
+          DISCOVERY_STATUS="$(
+            DISCOVERY_RESULT="$DISCOVERY_RESULT" /opt/shreks/current/.venv/bin/python - "$REQUEST_ID" "$EXPECTED_SHA" <<'PY'
+          import json
+          import os
+          import sys
+
+          request_id, expected_sha = sys.argv[1:]
+          try:
+              document = json.loads(os.environ["DISCOVERY_RESULT"])
+          except (KeyError, json.JSONDecodeError) as exc:
+              raise SystemExit("malformed FL9 discovery result") from exc
+          if not isinstance(document, dict):
+              raise SystemExit("FL9 discovery result must be an object")
+          if document.get("schema_name") != "shreks.fl9_v2_discovery_control_result":
+              raise SystemExit("FL9 discovery result schema_name mismatch")
+          if document.get("schema_version") != 1:
+              raise SystemExit("FL9 discovery result schema_version mismatch")
+          if document.get("request_id") != request_id:
+              raise SystemExit("FL9 discovery result request_id mismatch")
+          if document.get("expected_release_sha") != expected_sha:
+              raise SystemExit("FL9 discovery expected release mismatch")
+          if document.get("observed_release_sha") != expected_sha:
+              raise SystemExit("FL9 discovery observed release mismatch")
+          status = document.get("status")
+          allowed = {
+              "HOLD_NO_REQUEST_AUTHORITY",
+              "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
+              "HOLD_NO_COMPATIBLE",
+              "FOUND_COMPATIBLE",
+          }
+          if status not in allowed:
+              raise SystemExit(f"untrusted FL9 discovery status: {status!r}")
+          print(status)
+          PY
+          )"
+          printf 'fl9_v2_discovery_status=%s\n' "$DISCOVERY_STATUS"
+          printf 'fl9_v2_discovery_result=%s\n' "$DISCOVERY_RESULT"
+          rm -f "$DISCOVERY_MARKER"
+          trap - EXIT
           REMOTE

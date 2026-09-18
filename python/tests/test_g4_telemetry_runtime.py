@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from shreks_brain.telemetry import LayerStatus, encode_telemetry_snapshot
+import shreks_brain.telemetry.runtime as telemetry_runtime
 from shreks_brain.telemetry.runtime import (
     TelemetryRuntimeConfigError,
     load_telemetry_runtime_config,
@@ -109,3 +111,111 @@ def test_runtime_timestamp_validation_fails_closed(tmp_path: Path) -> None:
         preflight_telemetry_runtime(config, as_of_unix_ms=-1)
     with pytest.raises(TelemetryRuntimeConfigError):
         run_telemetry_once(config, as_of_unix_ms=-1)
+
+
+def test_main_preflight_processes_discovery_controls_before_config_and_emits_results(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[str] = []
+    result = {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": "gha-123-1",
+        "expected_release_sha": "1" * 40,
+        "observed_release_sha": "1" * 40,
+        "status": "HOLD_NO_REQUEST_AUTHORITY",
+    }
+
+    def process_controls():
+        events.append("control")
+        return (result,)
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "process_pending_fl9_v2_discovery_requests",
+        process_controls,
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "load_telemetry_runtime_config",
+        lambda: events.append("config") or object(),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "preflight_telemetry_runtime",
+        lambda _config, *, as_of_unix_ms: events.append("preflight"),
+    )
+
+    assert telemetry_runtime.main(["--preflight"]) == 0
+    assert events == ["control", "config", "preflight"]
+    output = capsys.readouterr().out.strip()
+    assert json.loads(output) == result
+    assert output == json.dumps(
+        result,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def test_main_preflight_isolates_control_processor_failure_from_normal_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[str] = []
+
+    def fail_controls():
+        events.append("control")
+        raise RuntimeError("sensitive internal detail")
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "process_pending_fl9_v2_discovery_requests",
+        fail_controls,
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "load_telemetry_runtime_config",
+        lambda: events.append("config") or object(),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "preflight_telemetry_runtime",
+        lambda _config, *, as_of_unix_ms: events.append("preflight"),
+    )
+
+    assert telemetry_runtime.main(["--preflight"]) == 0
+    assert events == ["control", "config", "preflight"]
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["schema_name"] == "shreks.fl9_v2_discovery_control_result"
+    assert payload["schema_version"] == 1
+    assert payload["status"] == "FAILED"
+    assert payload["error"]["code"] == "CONTROL_PROCESSOR_FAILED"
+    assert "sensitive internal detail" not in json.dumps(payload)
+
+
+def test_main_snapshot_path_does_not_process_discovery_controls_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "process_pending_fl9_v2_discovery_requests",
+        lambda: pytest.fail("snapshot path must not process discovery controls"),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "load_telemetry_runtime_config",
+        lambda: events.append("config") or object(),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "run_telemetry_once",
+        lambda _config, *, as_of_unix_ms: events.append("snapshot"),
+    )
+
+    assert telemetry_runtime.main([]) == 0
+    assert events == ["config", "snapshot"]

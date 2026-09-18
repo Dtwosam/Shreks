@@ -255,6 +255,16 @@ def test_production_verifier_is_manual_read_only_and_uses_existing_transport_bou
         "mode=ro",
         "PRAGMA query_only = ON",
         "fast_future_path_labels",
+        "/dev/shm/shreks-fl9-v2-discovery.",
+        "shreks.fl9_v2_discovery_control_request",
+        "shreks_brain.telemetry.fl9_v2_discovery_control",
+        "systemctl is-active --quiet shreks-telemetry.timer",
+        "journalctl -u shreks-telemetry.service -o cat",
+        "HOLD_NO_REQUEST_AUTHORITY",
+        "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
+        "HOLD_NO_COMPATIBLE",
+        "FOUND_COMPATIBLE",
+        'rm -f "$DISCOVERY_MARKER"',
     ):
         assert required in workflow
 
@@ -271,6 +281,11 @@ def test_production_verifier_is_manual_read_only_and_uses_existing_transport_bou
         "UPDATE ",
         "DELETE ",
         "LIVE_TRADING",
+        "chmod /etc/shreks",
+        "chmod /var/lib/shreks",
+        "chown /etc/shreks",
+        "chown /var/lib/shreks",
+        "setfacl",
     ):
         assert forbidden not in workflow
 
@@ -323,3 +338,28 @@ def test_release_runbook_documents_backward_compatible_sealed_control_plane_reco
 
     assert "/opt/shreks/current/deploy/release/release_manager.py" not in runbook
     assert "/opt/shreks/current/deploy/release/release_bundle.py" not in runbook
+
+
+def test_release_runbook_documents_no_admin_shell_fl9_discovery_bridge():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "/dev/shm/shreks-fl9-v2-discovery",
+        "shreks-telemetry.timer",
+        "journalctl -u shreks-telemetry.service -o cat",
+        "shreks-deploy",
+        "/etc/shreks",
+        "/var/lib/shreks",
+        "FOUND_COMPATIBLE",
+        "HOLD_NO_REQUEST_AUTHORITY",
+        "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
+        "HOLD_NO_COMPATIBLE",
+        "evidence only",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
+
+    lower = runbook.lower()
+    assert "do not add sudoers" in lower
+    assert "do not relax" in lower
+    assert "interactive administrator shell" in lower

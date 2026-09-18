@@ -196,6 +196,35 @@ The resolved `current` path must end in the same 40-character SHA recorded in `R
 
 The protected paths `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, and `/var/lib/shreks` remain outside release activation and rollback.
 
+### Protected FL9 read-only discovery without an administrator shell
+
+For sealed releases that contain the FL9 V2 telemetry discovery bridge, the existing `Verify production PAPER runtime` workflow performs the protected read-only discovery after the ordinary release, service-health, restart, journal, and historical-read probes. No interactive administrator shell is required.
+
+The verifier still connects only as `shreks-deploy`. It writes one canonical, release-bound request marker owned by that account under:
+
+```text
+/dev/shm/shreks-fl9-v2-discovery.<request-id>.request
+```
+
+The already-installed `shreks-telemetry.timer` invokes `shreks-telemetry.service` as the existing `shreks` runtime identity. During telemetry preflight, release-local code authenticates the marker, the frozen cohort, preserved V2 request/hydration authority, active PAPER runtime manifest, and verified historical backup manifests. It writes only an idempotence receipt under the existing telemetry output tree and emits the sanitized canonical result to the service journal. The GitHub verifier retrieves that result with:
+
+```sh
+journalctl -u shreks-telemetry.service -o cat
+```
+
+The verifier accepts these trusted read-only completion states:
+
+- `FOUND_COMPATIBLE` — at least one authenticated runtime manifest is compatible with the frozen V2 cohort;
+- `HOLD_NO_COMPATIBLE` — authenticated discovery completed but no compatible runtime manifest exists;
+- `HOLD_NO_REQUEST_AUTHORITY` — no preserved authenticated V2 request/hydration authority can supply the sealed non-manifest assumptions;
+- `HOLD_AMBIGUOUS_REQUEST_AUTHORITY` — more than one distinct authenticated authority tuple exists, so the bridge refuses to choose.
+
+Those outcomes are evidence only. `FOUND_COMPATIBLE` does not itself authorize a fresh V2 scoring request, PAPER promotion, signing, submission, or any live-capital action. **LIVE TRADING: DISABLED.**
+
+The transport boundary must remain unchanged. Do not add sudoers entries for FL9 discovery. Do not relax ownership, modes, or ACLs on `/etc/shreks` or `/var/lib/shreks`, and do not grant `shreks-deploy` direct access to protected runtime evidence. The bridge exists specifically so protected discovery can continue without an interactive administrator shell while the deploy account remains unprivileged.
+
+Older deployed releases that do not contain `shreks_brain.telemetry.fl9_v2_discovery_control` report `fl9_v2_discovery_bridge=unavailable` and retain the legacy read-only verification behavior.
+
 ## Rollback
 
 For rollback, select an earlier GitHub Release tag that was previously sealed and verified, then dispatch `Deploy verified Shreks release` with that earlier tag. The same local verification, strict transport, host verification, staging, and health gates apply to rollback; there is no separate bypass path.
