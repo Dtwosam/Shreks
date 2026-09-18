@@ -263,6 +263,9 @@ def test_discovery_can_recover_non_manifest_inputs_from_authenticated_v2_request
         "request_path": str(request_path.resolve()),
         "request_fingerprint_sha256": request.request_fingerprint_sha256,
         "request_release_source_sha": request.expected_release_source_sha,
+        "cohort_artifact_fingerprint_sha256": (
+            request.expected_cohort_artifact_fingerprint_sha256
+        ),
         "hydration_policy_path": str(policy_path.resolve()),
         "hydration_policy_fingerprint_sha256": (
             request.expected_hydration_policy_fingerprint_sha256
