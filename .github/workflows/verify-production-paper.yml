@@ -171,7 +171,7 @@ jobs:
           echo 'fl9_v2_discovery_bridge=available'
 
           DISCOVERY_MARKER="/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.request"
-          DISCOVERY_TMP="${DISCOVERY_MARKER}.tmp.$"
+          DISCOVERY_TMP="${DISCOVERY_MARKER}.tmp"
           cleanup_discovery() {
             rm -f "$DISCOVERY_TMP"
             rm -f "$DISCOVERY_MARKER"
