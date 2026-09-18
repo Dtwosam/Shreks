@@ -408,3 +408,23 @@ def test_release_runbook_documents_no_admin_shell_fl9_discovery_bridge():
     assert "do not add sudoers" in lower
     assert "do not relax" in lower
     assert "interactive administrator shell" in lower
+
+
+def test_release_runbook_documents_automatic_sealed_release_delivery_chain():
+    runbook = _read(_RELEASE_RUNBOOK)
+
+    for required in (
+        "seal merge -> CI -> immutable release -> PAPER deploy -> production verify -> protected FL9 discovery",
+        "workflow_run.head_sha",
+        "target_commitish",
+        "immutable=true",
+        "production-paper",
+        "Manual controls remain available as fallbacks",
+        "Verify production PAPER runtime",
+        "LIVE TRADING: DISABLED",
+    ):
+        assert required in runbook
+
+    lower = runbook.lower()
+    assert "does not bypass" in lower
+    assert "before host contact" in lower
