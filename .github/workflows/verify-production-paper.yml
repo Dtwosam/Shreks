@@ -234,6 +234,30 @@ jobs:
           done
           if [[ -z "$DISCOVERY_RESULT" ]]; then
             echo 'fl9_v2_discovery_result=timeout'
+            echo 'telemetry_timeout_diagnostics=begin'
+            systemctl show shreks-telemetry.timer \
+              -p ActiveState \
+              -p SubState \
+              -p LastTriggerUSec \
+              -p NextElapseUSecRealtime \
+              --no-pager || true
+            systemctl show shreks-telemetry.service \
+              -p ActiveState \
+              -p SubState \
+              -p Result \
+              -p ExecMainCode \
+              -p ExecMainStatus \
+              -p ExecMainStartTimestamp \
+              -p ExecMainExitTimestamp \
+              --no-pager || true
+            if test -e "$DISCOVERY_MARKER"; then
+              echo 'marker_present=yes'
+              stat -c 'marker=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$DISCOVERY_MARKER" || true
+            else
+              echo 'marker_present=no'
+            fi
+            journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>&1 || true
+            echo 'telemetry_timeout_diagnostics=end'
             exit 1
           fi
 
