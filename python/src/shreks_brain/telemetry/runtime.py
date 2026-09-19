@@ -205,7 +205,7 @@ def run_telemetry_once(
         raise TelemetryRuntimeConfigError("telemetry snapshot generation failed") from error
 
 
-def _process_discovery_controls_for_preflight() -> None:
+def _process_discovery_controls() -> None:
     try:
         results = process_pending_fl9_v2_discovery_requests()
     except Exception:
@@ -233,8 +233,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = tuple(sys.argv[1:] if argv is None else argv)
     if args not in ((), ("--preflight",)):
         return 2
-    if args == ("--preflight",):
-        _process_discovery_controls_for_preflight()
+    _process_discovery_controls()
     try:
         config = load_telemetry_runtime_config()
         now_unix_ms = time.time_ns() // 1_000_000
