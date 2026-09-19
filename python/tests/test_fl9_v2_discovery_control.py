@@ -117,6 +117,82 @@ def _process(tmp_path: Path, marker_directory: Path, **kwargs):
     )
 
 
+
+def _request_document(
+    *,
+    request_id: str = "gha-123-1",
+    source_sha: str = SOURCE_SHA,
+    created_at_unix_ms: int = NOW_MS,
+) -> dict[str, object]:
+    return {
+        "schema_name": "shreks.fl9_v2_discovery_control_request",
+        "schema_version": 1,
+        "request_id": request_id,
+        "expected_release_sha": source_sha,
+        "created_at_unix_ms": created_at_unix_ms,
+    }
+
+
+def test_canonical_request_decoder_accepts_exact_schema_and_rejects_pretty_json() -> None:
+    document = _request_document()
+    payload = _canonical(document).encode("utf-8")
+
+    decoded = control.decode_fl9_v2_discovery_control_request(payload)
+
+    assert decoded == document
+    with pytest.raises(control.DiscoveryControlError, match="canonical"):
+        control.decode_fl9_v2_discovery_control_request(
+            (json.dumps(document, indent=2) + "\n").encode("utf-8")
+        )
+
+
+def test_authenticated_request_processor_matches_marker_hold_and_receipt_semantics(
+    tmp_path: Path,
+) -> None:
+    receipt_root = tmp_path / "receipts"
+    request_root = tmp_path / "requests"
+    request_root.mkdir()
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    cohort = tmp_path / "cohort"
+    cohort.write_text("cohort\n", encoding="utf-8")
+    active = tmp_path / "paper-campaign.json"
+    active.write_text("{}\n", encoding="utf-8")
+    current = _release_tree(tmp_path)
+    request = _request_document()
+
+    result = control.process_authenticated_fl9_v2_discovery_request(
+        request,
+        receipt_root=receipt_root,
+        request_search_root=request_root,
+        cohort_path=cohort,
+        active_runtime_manifest_path=active,
+        backup_root=backup_root,
+        current_release_link=current,
+        now_unix_ms=NOW_MS,
+    )
+
+    assert result["schema_name"] == "shreks.fl9_v2_discovery_control_result"
+    assert result["request_id"] == "gha-123-1"
+    assert result["expected_release_sha"] == SOURCE_SHA
+    assert result["observed_release_sha"] == SOURCE_SHA
+    assert result["status"] == "HOLD_NO_REQUEST_AUTHORITY"
+    receipt = receipt_root / "gha-123-1.json"
+    assert receipt.is_file()
+    assert stat.S_IMODE(receipt.stat().st_mode) == 0o600
+
+    replay = control.process_authenticated_fl9_v2_discovery_request(
+        request,
+        receipt_root=receipt_root,
+        request_search_root=request_root,
+        cohort_path=cohort,
+        active_runtime_manifest_path=active,
+        backup_root=backup_root,
+        current_release_link=current,
+        now_unix_ms=NOW_MS,
+    )
+    assert replay == result
+
 def test_valid_canonical_marker_without_request_authority_returns_trusted_hold_and_receipt(
     tmp_path: Path,
 ) -> None:
