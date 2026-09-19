@@ -336,6 +336,47 @@ def test_production_verifier_is_manual_and_reusable_read_only_transport_boundary
         assert forbidden not in workflow
 
 
+def test_production_verifier_reports_read_only_telemetry_diagnostics_on_discovery_timeout():
+    workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
+
+    timeout_index = workflow.index("fl9_v2_discovery_result=timeout")
+    exit_index = workflow.index("exit 1", timeout_index)
+    diagnostics = workflow[timeout_index:exit_index]
+
+    for required in (
+        "telemetry_timeout_diagnostics=begin",
+        "systemctl show shreks-telemetry.timer",
+        "-p ActiveState",
+        "-p SubState",
+        "-p LastTriggerUSec",
+        "-p NextElapseUSecRealtime",
+        "systemctl show shreks-telemetry.service",
+        "-p Result",
+        "-p ExecMainCode",
+        "-p ExecMainStatus",
+        "-p ExecMainStartTimestamp",
+        "-p ExecMainExitTimestamp",
+        "marker_present=",
+        "stat -c",
+        "journalctl -u shreks-telemetry.service -o cat",
+        "telemetry_timeout_diagnostics=end",
+    ):
+        assert required in diagnostics
+
+    for forbidden in (
+        "sudo ",
+        "systemctl start",
+        "systemctl restart",
+        "systemctl reset-failed",
+        "systemctl enable",
+        "systemctl disable",
+        "chmod ",
+        "chown ",
+        "setfacl",
+    ):
+        assert forbidden not in diagnostics
+
+
 def test_release_runbook_bootstraps_root_owned_manager_and_narrow_deploy_account():
     runbook = _read(_RELEASE_RUNBOOK)
 
