@@ -196,15 +196,28 @@ def test_main_preflight_isolates_control_processor_failure_from_normal_preflight
     assert "sensitive internal detail" not in json.dumps(payload)
 
 
-def test_main_snapshot_path_does_not_process_discovery_controls_twice(
+def test_main_snapshot_path_processes_discovery_controls_before_config_and_emits_results(
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     events: list[str] = []
+    result = {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": "gha-456-1",
+        "expected_release_sha": "2" * 40,
+        "observed_release_sha": "2" * 40,
+        "status": "HOLD_NO_REQUEST_AUTHORITY",
+    }
+
+    def process_controls():
+        events.append("control")
+        return (result,)
 
     monkeypatch.setattr(
         telemetry_runtime,
         "process_pending_fl9_v2_discovery_requests",
-        lambda: pytest.fail("snapshot path must not process discovery controls"),
+        process_controls,
     )
     monkeypatch.setattr(
         telemetry_runtime,
@@ -218,4 +231,42 @@ def test_main_snapshot_path_does_not_process_discovery_controls_twice(
     )
 
     assert telemetry_runtime.main([]) == 0
-    assert events == ["config", "snapshot"]
+    assert events == ["control", "config", "snapshot"]
+    output = capsys.readouterr().out.strip()
+    assert json.loads(output) == result
+
+
+def test_main_snapshot_path_isolates_control_processor_failure_from_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[str] = []
+
+    def fail_controls():
+        events.append("control")
+        raise RuntimeError("sensitive snapshot control detail")
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "process_pending_fl9_v2_discovery_requests",
+        fail_controls,
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "load_telemetry_runtime_config",
+        lambda: events.append("config") or object(),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "run_telemetry_once",
+        lambda _config, *, as_of_unix_ms: events.append("snapshot"),
+    )
+
+    assert telemetry_runtime.main([]) == 0
+    assert events == ["control", "config", "snapshot"]
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["schema_name"] == "shreks.fl9_v2_discovery_control_result"
+    assert payload["schema_version"] == 1
+    assert payload["status"] == "FAILED"
+    assert payload["error"]["code"] == "CONTROL_PROCESSOR_FAILED"
+    assert "sensitive snapshot control detail" not in json.dumps(payload)
