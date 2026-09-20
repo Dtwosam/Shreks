@@ -154,6 +154,10 @@ Before publication it:
 4. sets mode 0755;
 5. fsyncs again.
 
+Immediately before publication, the installer re-resolves `/opt/shreks/current` and requires it still identifies the same explicit release SHA.
+
+The destination parent must be a real directory owned by the expected root identity and must not be group- or world-writable.
+
 Publication uses a same-filesystem hard-link operation to the final path.
 
 Hard-link creation fails if the destination already exists, giving no-overwrite semantics without a replace race.

@@ -239,6 +239,8 @@ The installer independently requires all of the following before it publishes an
 - the wheel contains exactly one unencrypted `shreks_brain/_sealed_deploy_control/paper_manifest_manager.py` member;
 - that member has the expected manager executable shape.
 
+Immediately before publication, the installer rechecks that `/opt/shreks/current` still identifies the same explicit release. The destination parent must be a real root-owned directory and must not be group- or world-writable.
+
 For a first installation, the helper is published at:
 
 ```text

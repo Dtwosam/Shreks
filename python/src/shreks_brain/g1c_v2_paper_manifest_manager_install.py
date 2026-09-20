@@ -128,6 +128,15 @@ def install_release_bound_paper_manifest_manager(
             destination=paths.destination,
         )
 
+    current_before_publish = _require_current_release(
+        paths.current_link,
+        expected_sha,
+    )
+    if current_before_publish != release_dir:
+        raise PaperManifestManagerInstallError(
+            "current release changed before helper publication"
+        )
+
     _publish_no_replace(paths.destination, manager_payload)
     _require_installed_destination(
         paths.destination,
@@ -468,7 +477,14 @@ def _publish_no_replace(destination: Path, payload: bytes) -> None:
         raise PaperManifestManagerInstallError(
             "PAPER manifest manager destination parent is unavailable"
         ) from error
-    if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(parent_metadata.st_mode):
+    parent_mode = stat.S_IMODE(parent_metadata.st_mode)
+    if (
+        stat.S_ISLNK(parent_metadata.st_mode)
+        or not stat.S_ISDIR(parent_metadata.st_mode)
+        or parent_metadata.st_uid != _DESTINATION_UID
+        or parent_metadata.st_gid != _DESTINATION_GID
+        or parent_mode & 0o022
+    ):
         raise PaperManifestManagerInstallError(
             "PAPER manifest manager destination parent is unsafe"
         )

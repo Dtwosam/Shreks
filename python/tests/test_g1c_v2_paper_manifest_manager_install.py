@@ -245,6 +245,22 @@ def test_non_root_installation_is_rejected_before_release_or_destination_access(
         )
 
 
+def test_world_writable_destination_parent_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _release_layout(tmp_path, monkeypatch)
+    setup["destination"].parent.chmod(0o777)
+
+    with pytest.raises(
+        installer.PaperManifestManagerInstallError,
+        match="destination parent is unsafe",
+    ):
+        _install(setup)
+
+    assert not setup["destination"].exists()
+
+
 def test_installer_authority_firewall_and_release_local_cli_contract() -> None:
     source = (
         _REPO_ROOT
