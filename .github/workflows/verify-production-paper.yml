@@ -232,6 +232,7 @@ jobs:
           mv -- "$DISCOVERY_TMP" "$DISCOVERY_MARKER"
 
           DISCOVERY_RESULT=''
+          DISCOVERY_RESULT_SOURCE=''
           DISCOVERY_DEADLINE="$(( $(date +%s) + 180 ))"
           while (( $(date +%s) <= DISCOVERY_DEADLINE )); do
             if test -e "$DISCOVERY_RESULT_FILE"; then
@@ -303,11 +304,17 @@ jobs:
           print(text, end="")
           PY
               )"
+              if [[ -n "$DISCOVERY_RESULT" ]]; then
+                DISCOVERY_RESULT_SOURCE=exchange
+              fi
             fi
             if [[ -z "$DISCOVERY_RESULT" ]]; then
               DISCOVERY_RESULT="$(
                 journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>/dev/null                 | grep -F '"schema_name":"shreks.fl9_v2_discovery_control_result"'                 | grep -F "\"request_id\":\"${REQUEST_ID}\""                 | tail -n 1                 || true
               )"
+              if [[ -n "$DISCOVERY_RESULT" ]]; then
+                DISCOVERY_RESULT_SOURCE=journal
+              fi
             fi
             if [[ -n "$DISCOVERY_RESULT" ]]; then
               break
@@ -355,10 +362,11 @@ jobs:
             exit 1
           fi
 
-          DISCOVERY_STATUS="$(
+          DISCOVERY_VALIDATION="$(
             DISCOVERY_RESULT="$DISCOVERY_RESULT" /opt/shreks/current/.venv/bin/python - "$REQUEST_ID" "$EXPECTED_SHA" <<'PY'
           import json
           import os
+          import re
           import sys
 
           request_id, expected_sha = sys.argv[1:]
@@ -378,18 +386,51 @@ jobs:
               raise SystemExit("FL9 discovery expected release mismatch")
           if document.get("observed_release_sha") != expected_sha:
               raise SystemExit("FL9 discovery observed release mismatch")
+
           status = document.get("status")
-          allowed = {
-              "HOLD_NO_REQUEST_AUTHORITY",
-              "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
-              "HOLD_NO_COMPATIBLE",
-              "FOUND_COMPATIBLE",
-          }
-          if status not in allowed:
-              raise SystemExit(f"untrusted FL9 discovery status: {status!r}")
-          print(status)
+          if status == "FAILED":
+              failure_code = document.get("error_code")
+              failure_message = document.get("error")
+              if failure_code is None and isinstance(failure_message, dict):
+                  if set(failure_message) != {"code", "message"}:
+                      raise SystemExit("FL9 discovery nested failure shape is invalid")
+                  failure_code = failure_message.get("code")
+                  if failure_code != "CONTROL_RESULT_PUBLISH_FAILED":
+                      raise SystemExit("FL9 discovery nested failure code is untrusted")
+                  failure_message = failure_message.get("message")
+              if not isinstance(failure_code, str) or re.fullmatch(r"[A-Z0-9_]{1,64}", failure_code) is None:
+                  raise SystemExit("FL9 discovery failure code is invalid")
+              if not isinstance(failure_message, str):
+                  raise SystemExit("FL9 discovery failure message is invalid")
+              failure_message = " ".join(failure_message.split())[:240]
+              if not failure_message:
+                  raise SystemExit("FL9 discovery failure message is empty")
+              print("FAILED")
+              print(failure_code)
+              print(failure_message)
+          else:
+              allowed = {
+                  "HOLD_NO_REQUEST_AUTHORITY",
+                  "HOLD_AMBIGUOUS_REQUEST_AUTHORITY",
+                  "HOLD_NO_COMPATIBLE",
+                  "FOUND_COMPATIBLE",
+              }
+              if status not in allowed:
+                  raise SystemExit(f"untrusted FL9 discovery status: {status!r}")
+              print(status)
           PY
           )"
+          mapfile -t DISCOVERY_VALIDATION_LINES <<< "$DISCOVERY_VALIDATION"
+          DISCOVERY_STATUS="${DISCOVERY_VALIDATION_LINES[0]:-}"
+          if [[ "$DISCOVERY_STATUS" == "FAILED" ]]; then
+            printf 'fl9_v2_discovery_result_source=%s\n' "$DISCOVERY_RESULT_SOURCE"
+            printf 'fl9_v2_discovery_failure_code=%s\n' "${DISCOVERY_VALIDATION_LINES[1]:-UNKNOWN}"
+            printf 'fl9_v2_discovery_failure_message=%s\n' "${DISCOVERY_VALIDATION_LINES[2]:-unavailable}"
+            cleanup_discovery
+            trap - EXIT
+            exit 1
+          fi
+          printf 'fl9_v2_discovery_result_source=%s\n' "$DISCOVERY_RESULT_SOURCE"
           printf 'fl9_v2_discovery_status=%s\n' "$DISCOVERY_STATUS"
           printf 'fl9_v2_discovery_result=%s\n' "$DISCOVERY_RESULT"
           cleanup_discovery
