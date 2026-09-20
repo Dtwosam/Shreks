@@ -19,6 +19,8 @@ from shreks_brain.fast_runtime_hydration_policy import (
     build_fast_forecast_context_hydration_policy_from_runtime_manifest,
 )
 from shreks_brain.observer_campaign.runtime_manifest import (
+    OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION,
+    OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2,
     OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
     ObserverPaperQuoteUsdValuationMode,
     ObserverPaperQuoteUsdValuationPolicy,
@@ -162,6 +164,12 @@ def test_discovery_authenticates_active_manifest_and_accepts_exact_quote_policy(
     assert candidate["regime_quote_asset_mint"] == QUOTE
     assert candidate["safety_probe_output_mint"] == QUOTE
     assert candidate["quote_asset_decimals"] == 9
+    assert (
+        candidate["runtime_manifest_schema_version"]
+        == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
+    )
+    assert candidate["quote_usd_valuation_mode"] == "manifest_fixed"
+    assert candidate["legacy_g1c_runtime_support"] == "SUPPORTED"
 
 
 def test_discovery_authenticates_v2_dynamic_manifest_as_compatible_candidate(
@@ -179,6 +187,15 @@ def test_discovery_authenticates_v2_dynamic_manifest_as_compatible_candidate(
     assert candidate["compatibility"] == "COMPATIBLE"
     assert candidate["quote_asset_mint"] == QUOTE
     assert candidate["quote_asset_decimals"] == 9
+    assert (
+        candidate["runtime_manifest_schema_version"]
+        == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
+    )
+    assert candidate["quote_usd_valuation_mode"] == "exact_market_ratio"
+    assert (
+        candidate["legacy_g1c_runtime_support"]
+        == "BLOCKED_V2_QUOTE_USD_VALUATION"
+    )
 
 
 def test_discovery_rejects_authenticated_quote_mismatch_without_rewriting(tmp_path: Path) -> None:
