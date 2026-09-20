@@ -39,10 +39,36 @@ from .models import (
 OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION = (
     "g1c-paper-campaign-runtime-manifest-v1"
 )
+OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2 = (
+    "g1c-paper-campaign-runtime-manifest-v2"
+)
+OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION = (
+    "g1c-paper-quote-usd-valuation-v1"
+)
 
 
 class ObserverPaperCampaignRuntimeManifestError(ValueError):
     """Raised when a G1C PAPER runtime manifest cannot be trusted exactly."""
+
+
+class ObserverPaperQuoteUsdValuationMode(Enum):
+    EXACT_MARKET_RATIO = "exact_market_ratio"
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverPaperQuoteUsdValuationPolicy:
+    version: str
+    mode: ObserverPaperQuoteUsdValuationMode
+
+    def __post_init__(self) -> None:
+        if self.version != OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION:
+            raise ObserverPaperCampaignRuntimeManifestError(
+                "unsupported quote USD valuation policy version"
+            )
+        if type(self.mode) is not ObserverPaperQuoteUsdValuationMode:
+            raise ObserverPaperCampaignRuntimeManifestError(
+                "quote USD valuation mode must be exact"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,12 +83,37 @@ class ObserverPaperCampaignRuntimeManifest:
     recent_performance: RecentStrategyPerformance | None
     global_risk_halt: bool
     manifest_fingerprint_sha256: str
+    quote_usd_valuation_policy: ObserverPaperQuoteUsdValuationPolicy | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION:
+        if self.schema_version not in (
+            OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION,
+            OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2,
+        ):
             raise ObserverPaperCampaignRuntimeManifestError(
                 "unsupported paper campaign runtime manifest schema version"
             )
+        if (
+            self.schema_version
+            == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
+        ):
+            if self.quote_usd_valuation_policy is not None:
+                raise ObserverPaperCampaignRuntimeManifestError(
+                    "legacy v1 manifest must not carry quote USD valuation policy"
+                )
+        else:
+            if (
+                type(self.quote_usd_valuation_policy)
+                is not ObserverPaperQuoteUsdValuationPolicy
+            ):
+                raise ObserverPaperCampaignRuntimeManifestError(
+                    "v2 manifest requires exact quote USD valuation policy"
+                )
+            if self.policy_bundle.quote_asset.usd_per_token != 1.0:
+                raise ObserverPaperCampaignRuntimeManifestError(
+                    "v2 dynamic valuation requires quote_asset.usd_per_token "
+                    "to remain the non-authoritative 1.0 compatibility sentinel"
+                )
         _require_non_empty_string("paper_run_id", self.paper_run_id)
         _require_exact_type("candidate", self.candidate, RegistryCandidate)
         _require_exact_type("initial_state", self.initial_state, PaperLoopState)
@@ -127,6 +178,7 @@ _DATACLASS_TYPES = (
     ObserverPaperRiskEnvironment,
     ObserverPaperCampaignSelectionPolicy,
     RecentStrategyPerformance,
+    ObserverPaperQuoteUsdValuationPolicy,
 )
 _DATACLASS_BY_NAME = {item.__name__: item for item in _DATACLASS_TYPES}
 _DATACLASS_NAME_BY_TYPE = {item: item.__name__ for item in _DATACLASS_TYPES}
@@ -134,11 +186,12 @@ _DATACLASS_NAME_BY_TYPE = {item: item.__name__ for item in _DATACLASS_TYPES}
 _ENUM_TYPES = (
     RegistryStatus,
     ObserverPaperQuotePurpose,
+    ObserverPaperQuoteUsdValuationMode,
 )
 _ENUM_BY_NAME = {item.__name__: item for item in _ENUM_TYPES}
 _ENUM_NAME_BY_TYPE = {item: item.__name__ for item in _ENUM_TYPES}
 
-_TOP_LEVEL_FIELDS = {
+_TOP_LEVEL_FIELDS_V1 = {
     "schema_version",
     "paper_run_id",
     "candidate",
@@ -150,6 +203,7 @@ _TOP_LEVEL_FIELDS = {
     "global_risk_halt",
     "manifest_fingerprint_sha256",
 }
+_TOP_LEVEL_FIELDS_V2 = _TOP_LEVEL_FIELDS_V1 | {"quote_usd_valuation_policy"}
 
 
 def build_observer_paper_campaign_runtime_manifest(
@@ -174,6 +228,35 @@ def build_observer_paper_campaign_runtime_manifest(
         recent_performance=recent_performance,
         global_risk_halt=global_risk_halt,
         manifest_fingerprint_sha256="0" * 64,
+    )
+    fingerprint = _manifest_fingerprint(draft)
+    return replace(draft, manifest_fingerprint_sha256=fingerprint)
+
+
+def build_observer_paper_campaign_runtime_manifest_v2(
+    *,
+    paper_run_id: str,
+    candidate: RegistryCandidate,
+    initial_state: PaperLoopState,
+    policy_bundle: ObserverFreshLaunchPolicyBundle,
+    risk_environment: ObserverPaperRiskEnvironment,
+    selection_policy: ObserverPaperCampaignSelectionPolicy,
+    recent_performance: RecentStrategyPerformance | None,
+    global_risk_halt: bool,
+    quote_usd_valuation_policy: ObserverPaperQuoteUsdValuationPolicy,
+) -> ObserverPaperCampaignRuntimeManifest:
+    draft = ObserverPaperCampaignRuntimeManifest(
+        schema_version=OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2,
+        paper_run_id=paper_run_id,
+        candidate=candidate,
+        initial_state=initial_state,
+        policy_bundle=policy_bundle,
+        risk_environment=risk_environment,
+        selection_policy=selection_policy,
+        recent_performance=recent_performance,
+        global_risk_halt=global_risk_halt,
+        manifest_fingerprint_sha256="0" * 64,
+        quote_usd_valuation_policy=quote_usd_valuation_policy,
     )
     fingerprint = _manifest_fingerprint(draft)
     return replace(draft, manifest_fingerprint_sha256=fingerprint)
@@ -204,9 +287,21 @@ def decode_observer_paper_campaign_runtime_manifest(
         raise ObserverPaperCampaignRuntimeManifestError(
             "runtime manifest is not valid UTF-8 JSON"
         ) from error
-    document = _exact_dict(value, _TOP_LEVEL_FIELDS, "runtime manifest")
+    if not isinstance(value, dict):
+        raise ObserverPaperCampaignRuntimeManifestError(
+            "runtime manifest must be a JSON object"
+        )
+    schema_version = _string(value.get("schema_version"), "schema_version")
+    if schema_version == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION:
+        expected_fields = _TOP_LEVEL_FIELDS_V1
+    elif schema_version == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2:
+        expected_fields = _TOP_LEVEL_FIELDS_V2
+    else:
+        raise ObserverPaperCampaignRuntimeManifestError(
+            "unsupported paper campaign runtime manifest schema version"
+        )
+    document = _exact_dict(value, expected_fields, "runtime manifest")
 
-    schema_version = _string(document["schema_version"], "schema_version")
     paper_run_id = _string(document["paper_run_id"], "paper_run_id")
     candidate = _decode_exact_type(
         document["candidate"], RegistryCandidate, "candidate"
@@ -242,6 +337,16 @@ def decode_observer_paper_campaign_runtime_manifest(
         )
     )
     global_risk_halt = _bool(document["global_risk_halt"], "global_risk_halt")
+    quote_usd_valuation_policy = (
+        None
+        if schema_version
+        == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
+        else _decode_exact_type(
+            document["quote_usd_valuation_policy"],
+            ObserverPaperQuoteUsdValuationPolicy,
+            "quote_usd_valuation_policy",
+        )
+    )
     fingerprint = _string(
         document["manifest_fingerprint_sha256"],
         "manifest_fingerprint_sha256",
@@ -259,6 +364,7 @@ def decode_observer_paper_campaign_runtime_manifest(
             recent_performance=recent_performance,
             global_risk_halt=global_risk_halt,
             manifest_fingerprint_sha256=fingerprint,
+            quote_usd_valuation_policy=quote_usd_valuation_policy,
         )
     except ObserverPaperCampaignRuntimeManifestError:
         raise
@@ -315,6 +421,13 @@ def _manifest_document(
         "recent_performance": _encode_value(manifest.recent_performance),
         "global_risk_halt": manifest.global_risk_halt,
     }
+    if (
+        manifest.schema_version
+        == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
+    ):
+        result["quote_usd_valuation_policy"] = _encode_value(
+            manifest.quote_usd_valuation_policy
+        )
     if include_fingerprint:
         result["manifest_fingerprint_sha256"] = manifest.manifest_fingerprint_sha256
     return result
