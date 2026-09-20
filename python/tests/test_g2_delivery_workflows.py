@@ -336,6 +336,40 @@ def test_production_verifier_is_manual_and_reusable_read_only_transport_boundary
         assert forbidden not in workflow
 
 
+def test_production_verifier_prefers_trusted_shared_memory_result_exchange():
+    workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
+
+    for required in (
+        'DISCOVERY_RESULT_DIR="/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.result.d"',
+        'DISCOVERY_RESULT_FILE="$DISCOVERY_RESULT_DIR/result.json"',
+        'install -d -m 0733 "$DISCOVERY_RESULT_DIR"',
+        'SHREKS_UID="$(id -u shreks)"',
+        "O_NOFOLLOW",
+        "lstat",
+        "st_uid",
+        "0o644",
+        "canonical FL9 discovery result",
+        "journalctl -u shreks-telemetry.service -o cat",
+        'rm -f "$DISCOVERY_RESULT_FILE"',
+        'rmdir "$DISCOVERY_RESULT_DIR"',
+    ):
+        assert required in workflow
+
+    result_poll = workflow.index('DISCOVERY_RESULT_FILE="$DISCOVERY_RESULT_DIR/result.json"')
+    journal_poll = workflow.index("journalctl -u shreks-telemetry.service -o cat", result_poll)
+    assert result_poll < journal_poll
+
+    for forbidden in (
+        "chmod /etc/shreks",
+        "chmod /var/lib/shreks",
+        "chown /etc/shreks",
+        "chown /var/lib/shreks",
+        "setfacl",
+        "sudo ",
+    ):
+        assert forbidden not in workflow[result_poll:journal_poll]
+
+
 def test_production_verifier_reports_read_only_telemetry_diagnostics_on_discovery_timeout():
     workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
 
