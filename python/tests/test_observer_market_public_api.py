@@ -15,6 +15,7 @@ _EXPECTED_PUBLIC_API = (
     "ObserverMarketReadPolicy",
     "ObserverCandidateIdentity",
     "ObserverMarketSnapshot",
+    "ObserverQuoteAssetUsdEvidence",
     "ObservedMarketWindow",
     "ObserverMarketReadError",
     "ObserverMarketStore",
@@ -63,6 +64,7 @@ def test_store_public_methods_are_read_only_evidence_operations():
     assert public_methods == {
         "load_current_exact_market",
         "load_window",
+        "quote_asset_usd_evidence",
         "resolve_candidate",
         "resolve_candidate_at",
     }
