@@ -143,3 +143,24 @@ fn operator_runbook_exposes_restart_reboot_health_and_fail_closed_recovery_evide
         assert!(README.contains(required), "missing G3 recovery instruction: {required}");
     }
 }
+
+
+#[test]
+fn paper_campaign_startup_runs_only_the_discovery_preflight_with_elevated_identity() {
+    let privileged =
+        "ExecStartPre=+/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.fl9_v2_privileged_discovery_preflight";
+    assert!(CAMPAIGN_SERVICE.contains(privileged));
+    assert!(CAMPAIGN_SERVICE.contains("User=shreks"));
+    assert!(CAMPAIGN_SERVICE.contains("Group=shreks"));
+    assert!(!CAMPAIGN_SERVICE.contains(
+        "ExecStart=+/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime"
+    ));
+
+    let privileged_index = CAMPAIGN_SERVICE.find(privileged).unwrap();
+    let ordinary_preflight_index = CAMPAIGN_SERVICE
+        .find(
+            "ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime --preflight",
+        )
+        .unwrap();
+    assert!(privileged_index < ordinary_preflight_index);
+}
