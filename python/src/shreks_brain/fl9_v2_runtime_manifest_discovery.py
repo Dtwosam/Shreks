@@ -153,25 +153,68 @@ def discover_fl9_v2_runtime_manifests_from_v2_request_authority(
     report["schema_version"] = (
         FL9_V2_RUNTIME_MANIFEST_DISCOVERY_REQUEST_AUTHORITY_SCHEMA_VERSION
     )
-    report["non_manifest_input_authority"] = {
-        "authority_kind": "v2_host_request",
-        "request_path": str(authority.request_path),
-        "request_fingerprint_sha256": authority.request_fingerprint_sha256,
-        "request_release_source_sha": authority.request_release_source_sha,
-        "cohort_artifact_fingerprint_sha256": (
-            authority.cohort_artifact_fingerprint_sha256
-        ),
-        "hydration_policy_path": str(authority.hydration_policy_path),
-        "hydration_policy_fingerprint_sha256": (
-            authority.hydration_policy_fingerprint_sha256
-        ),
-        "hydration_policy_version": authority.hydration_policy_version,
-        "strategy_families": list(authority.strategy_families),
-        "max_exit_quote_age_ms": authority.max_exit_quote_age_ms,
-        "execution_cost_policy_version": authority.execution_cost_policy_version,
-        "expected_round_trip_cost_bps": authority.expected_round_trip_cost_bps,
-    }
+    report["non_manifest_input_authority"] = _authority_document(authority)
     return report
+
+
+
+def assess_fl9_v2_runtime_manifest_candidate_from_v2_request_authority(
+    *,
+    cohort_path: str | Path,
+    runtime_manifest_path: str | Path,
+    v2_host_request_authority_path: str | Path,
+) -> dict[str, object]:
+    authority = authenticate_fl9_v2_discovery_request_authority(
+        cohort_path=cohort_path,
+        v2_host_request_authority_path=v2_host_request_authority_path,
+    )
+
+    try:
+        cohort = read_fl9_v2_cohort_acceptance(cohort_path)
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeManifestDiscoveryError(
+            "frozen V2 cohort could not be authenticated"
+        ) from error
+    if (
+        cohort.manifest.artifact_fingerprint_sha256
+        != authority.cohort_artifact_fingerprint_sha256
+    ):
+        raise RuntimeManifestDiscoveryError(
+            "frozen V2 cohort changed after request authority authentication"
+        )
+
+    identities = tuple(
+        tuple(row.decision_identity) for row in cohort.accepted_decisions
+    )
+    cohort_quote_mint = _single_cohort_quote_mint(identities)
+
+    candidate_input = Path(runtime_manifest_path).expanduser()
+    payload = _read_regular_file_stable(
+        candidate_input,
+        label="runtime manifest candidate",
+    )
+    candidate_path = candidate_input.resolve()
+
+    candidate = _evaluate_candidate(
+        payload=payload,
+        source_kind="candidate",
+        source_path=candidate_path,
+        backup_bundle_path=None,
+        backup_created_at_unix_ms=None,
+        expected_backup_fingerprint=None,
+        accepted_decision_identities=identities,
+        hydration_policy_version=authority.hydration_policy_version,
+        strategy_families=authority.strategy_families,
+        max_exit_quote_age_ms=authority.max_exit_quote_age_ms,
+        execution_cost_policy_version=authority.execution_cost_policy_version,
+        expected_round_trip_cost_bps=authority.expected_round_trip_cost_bps,
+    )
+    return {
+        "status": candidate["compatibility"],
+        "cohort_quote_mint": cohort_quote_mint,
+        "candidate": candidate,
+        "non_manifest_input_authority": _authority_document(authority),
+    }
 
 
 def discover_fl9_v2_runtime_manifests(
@@ -381,6 +424,34 @@ def _evaluate_candidate(
         "quote_asset_mint": bundle.quote_asset.mint,
         "quote_asset_decimals": bundle.quote_asset.decimals,
         "quote_provider": bundle.entry_quote_identity.provider,
+    }
+
+
+
+def _authority_document(
+    authority: AuthenticatedV2DiscoveryRequestAuthority,
+) -> dict[str, object]:
+    if type(authority) is not AuthenticatedV2DiscoveryRequestAuthority:
+        raise RuntimeManifestDiscoveryError(
+            "request authority must be authenticated exactly"
+        )
+    return {
+        "authority_kind": "v2_host_request",
+        "request_path": str(authority.request_path),
+        "request_fingerprint_sha256": authority.request_fingerprint_sha256,
+        "request_release_source_sha": authority.request_release_source_sha,
+        "cohort_artifact_fingerprint_sha256": (
+            authority.cohort_artifact_fingerprint_sha256
+        ),
+        "hydration_policy_path": str(authority.hydration_policy_path),
+        "hydration_policy_fingerprint_sha256": (
+            authority.hydration_policy_fingerprint_sha256
+        ),
+        "hydration_policy_version": authority.hydration_policy_version,
+        "strategy_families": list(authority.strategy_families),
+        "max_exit_quote_age_ms": authority.max_exit_quote_age_ms,
+        "execution_cost_policy_version": authority.execution_cost_policy_version,
+        "expected_round_trip_cost_bps": authority.expected_round_trip_cost_bps,
     }
 
 
