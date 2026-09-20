@@ -10,8 +10,13 @@ from shreks_brain.observer_campaign.coordinator import (
 )
 from shreks_brain.observer_campaign.runtime_manifest import (
     OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION,
+    OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2,
+    OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+    ObserverPaperQuoteUsdValuationMode,
+    ObserverPaperQuoteUsdValuationPolicy,
     ObserverPaperCampaignRuntimeManifestError,
     build_observer_paper_campaign_runtime_manifest,
+    build_observer_paper_campaign_runtime_manifest_v2,
     decode_observer_paper_campaign_runtime_manifest,
     encode_observer_paper_campaign_runtime_manifest,
 )
@@ -184,3 +189,100 @@ def test_manifest_rejects_invalid_registry_candidate_fingerprint() -> None:
             recent_performance=None,
             global_risk_halt=False,
         )
+
+
+def _manifest_v2():
+    source = _manifest()
+    return build_observer_paper_campaign_runtime_manifest_v2(
+        paper_run_id=source.paper_run_id,
+        candidate=source.candidate,
+        initial_state=source.initial_state,
+        policy_bundle=source.policy_bundle,
+        risk_environment=source.risk_environment,
+        selection_policy=source.selection_policy,
+        recent_performance=source.recent_performance,
+        global_risk_halt=source.global_risk_halt,
+        quote_usd_valuation_policy=ObserverPaperQuoteUsdValuationPolicy(
+            version=OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+            mode=ObserverPaperQuoteUsdValuationMode.EXACT_MARKET_RATIO,
+        ),
+    )
+
+
+def test_v1_manifest_bytes_remain_legacy_exact_without_quote_valuation_field() -> None:
+    encoded = encode_observer_paper_campaign_runtime_manifest(_manifest())
+    document = json.loads(encoded)
+
+    assert document["schema_version"] == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
+    assert "quote_usd_valuation_policy" not in document
+    assert decode_observer_paper_campaign_runtime_manifest(encoded) == _manifest()
+
+
+def test_v2_manifest_round_trip_is_canonical_fingerprinted_and_explicitly_dynamic() -> None:
+    manifest = _manifest_v2()
+
+    encoded = encode_observer_paper_campaign_runtime_manifest(manifest)
+    document = json.loads(encoded)
+    decoded = decode_observer_paper_campaign_runtime_manifest(encoded)
+
+    assert manifest.schema_version == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
+    assert document["schema_version"] == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
+    assert set(document) == {
+        "schema_version",
+        "paper_run_id",
+        "candidate",
+        "initial_state_checkpoint",
+        "policy_bundle",
+        "risk_environment",
+        "selection_policy",
+        "recent_performance",
+        "global_risk_halt",
+        "quote_usd_valuation_policy",
+        "manifest_fingerprint_sha256",
+    }
+    assert decoded == manifest
+    assert decoded.quote_usd_valuation_policy is not None
+    assert (
+        decoded.quote_usd_valuation_policy.mode
+        is ObserverPaperQuoteUsdValuationMode.EXACT_MARKET_RATIO
+    )
+    assert encode_observer_paper_campaign_runtime_manifest(decoded) == encoded
+
+
+def test_v2_manifest_requires_exact_dynamic_policy_and_legacy_usd_sentinel() -> None:
+    source = _manifest()
+    bad_bundle = replace(
+        source.policy_bundle,
+        quote_asset=replace(
+            source.policy_bundle.quote_asset,
+            usd_per_token=165.0,
+        ),
+    )
+    with pytest.raises(
+        ObserverPaperCampaignRuntimeManifestError,
+        match="sentinel|usd_per_token|valuation",
+    ):
+        build_observer_paper_campaign_runtime_manifest_v2(
+            paper_run_id=source.paper_run_id,
+            candidate=source.candidate,
+            initial_state=source.initial_state,
+            policy_bundle=bad_bundle,
+            risk_environment=source.risk_environment,
+            selection_policy=source.selection_policy,
+            recent_performance=source.recent_performance,
+            global_risk_halt=source.global_risk_halt,
+            quote_usd_valuation_policy=ObserverPaperQuoteUsdValuationPolicy(
+                version=OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+                mode=ObserverPaperQuoteUsdValuationMode.EXACT_MARKET_RATIO,
+            ),
+        )
+
+    encoded = encode_observer_paper_campaign_runtime_manifest(_manifest_v2())
+    document = json.loads(encoded)
+    document.pop("quote_usd_valuation_policy")
+    raw = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    with pytest.raises(
+        ObserverPaperCampaignRuntimeManifestError,
+        match="field|valuation",
+    ):
+        decode_observer_paper_campaign_runtime_manifest(raw)

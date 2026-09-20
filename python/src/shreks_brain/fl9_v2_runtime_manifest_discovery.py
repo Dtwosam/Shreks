@@ -403,6 +403,17 @@ def _evaluate_candidate(
         compatibility = "REJECTED_QUOTE_POLICY"
 
     bundle = manifest.policy_bundle
+    valuation_policy = manifest.quote_usd_valuation_policy
+    quote_usd_valuation_mode = (
+        "manifest_fixed"
+        if valuation_policy is None
+        else valuation_policy.mode.value
+    )
+    legacy_g1c_runtime_support = (
+        "SUPPORTED"
+        if valuation_policy is None
+        else "BLOCKED_V2_QUOTE_USD_VALUATION"
+    )
     return {
         "source_kind": source_kind,
         "source_path": str(source_path),
@@ -416,6 +427,9 @@ def _evaluate_candidate(
         "runtime_manifest_fingerprint_sha256": (
             manifest.manifest_fingerprint_sha256
         ),
+        "runtime_manifest_schema_version": manifest.schema_version,
+        "quote_usd_valuation_mode": quote_usd_valuation_mode,
+        "legacy_g1c_runtime_support": legacy_g1c_runtime_support,
         "hydration_policy_fingerprint_sha256": (
             fast_forecast_context_hydration_policy_fingerprint_sha256(policy)
         ),
