@@ -308,9 +308,8 @@ def test_main_rejects_unknown_arguments_before_loading_runtime_config(monkeypatc
     assert output.out == ""
 
 
-def test_bootstrap_authenticates_but_refuses_non_executable_v2_manifest(
+def test_authenticated_v2_manifest_bootstraps_and_executes_dynamic_paper_cycle(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     config = _runtime_config(tmp_path, max_cycles=1)
     source = _manifest()
@@ -332,22 +331,24 @@ def test_bootstrap_authenticates_but_refuses_non_executable_v2_manifest(
         encode_observer_paper_campaign_runtime_manifest(manifest_v2)
     )
 
-    monkeypatch.setattr(
-        runtime_module,
-        "ObserverPaperCampaignCoordinatorRunner",
-        lambda *_args, **_kwargs: pytest.fail(
-            "v2 must be rejected before constructing a legacy PAPER runner"
-        ),
-    )
-
-    with pytest.raises(
-        ObserverPaperCampaignRuntimeError,
-        match="v2|not executable|valuation",
-    ):
-        bootstrap_observer_paper_campaign_runtime(config)
-
+    bootstrap = bootstrap_observer_paper_campaign_runtime(config)
+    assert bootstrap.manifest == manifest_v2
+    assert type(bootstrap.runner) is ObserverPaperCampaignCoordinatorRunner
     assert load_latest_paper_checkpoint(
         config.observer_database_path,
         RUN_ID,
     ) is None
-    assert not config.evidence_path.exists()
+
+    completed = run_observer_paper_campaign_runtime(
+        config,
+        clock_unix_ms=lambda: AS_OF,
+        status_sink=lambda _line: None,
+    )
+
+    assert completed == 1
+    checkpoint = load_latest_paper_checkpoint(
+        config.observer_database_path,
+        RUN_ID,
+    )
+    assert checkpoint is not None
+    assert checkpoint.sequence == 1
