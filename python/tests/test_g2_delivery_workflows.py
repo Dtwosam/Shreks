@@ -272,8 +272,6 @@ def test_deploy_workflow_pre_stages_release_bound_protected_discovery_control() 
     workflow = _read(_DEPLOY_WORKFLOW)
 
     for required in (
-        "discovery_request_id:",
-        "steps.deploy_host.outputs.discovery_request_id",
         'DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"',
         'REMOTE_DISCOVERY_REQUEST="/var/tmp/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.request"',
         'REMOTE_DISCOVERY_RESULT_DIR="/dev/shm/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.result.d"',
@@ -282,9 +280,16 @@ def test_deploy_workflow_pre_stages_release_bound_protected_discovery_control() 
         'install -d -m 0733 "$RESULT_DIR"',
         "O_NOFOLLOW",
         'sudo /usr/local/sbin/shreks-release-manager install',
-        'discovery_request_id: ${{ needs.deploy.outputs.discovery_request_id }}',
+        'discovery_request_id: gha-${{ github.run_id }}-${{ github.run_attempt }}',
     ):
         assert required in workflow
+
+    for forbidden in (
+        "steps.deploy_host.outputs.discovery_request_id",
+        "needs.deploy.outputs.discovery_request_id",
+        'printf \'discovery_request_id=%s\\n\' "$DISCOVERY_REQUEST_ID" >> "$GITHUB_OUTPUT"',
+    ):
+        assert forbidden not in workflow
 
     stage_index = workflow.index("shreks.fl9_v2_discovery_control_request")
     manager_index = workflow.index(
@@ -301,6 +306,16 @@ def test_deploy_workflow_pre_stages_release_bound_protected_discovery_control() 
         "cat /etc/shreks",
     ):
         assert forbidden not in workflow
+
+
+def test_deploy_reusable_verifier_binding_does_not_depend_on_job_output_transport() -> None:
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    assert 'DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"' in workflow
+    assert 'discovery_request_id: gha-${{ github.run_id }}-${{ github.run_attempt }}' in workflow
+    assert "steps.deploy_host.outputs.discovery_request_id" not in workflow
+    assert "needs.deploy.outputs.discovery_request_id" not in workflow
+    assert 'printf \'discovery_request_id=%s\\n\' "$DISCOVERY_REQUEST_ID" >> "$GITHUB_OUTPUT"' not in workflow
 
 
 def test_production_verifier_can_reuse_exact_pre_staged_discovery_exchange() -> None:
