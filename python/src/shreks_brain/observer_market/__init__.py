@@ -4,6 +4,7 @@ from .models import (
     ObserverCandidateIdentity,
     ObserverMarketReadPolicy,
     ObserverMarketSnapshot,
+    ObserverQuoteAssetUsdEvidence,
 )
 from .store import (
     ObserverMarketReadError,
@@ -16,6 +17,7 @@ __all__ = (
     "ObserverMarketReadPolicy",
     "ObserverCandidateIdentity",
     "ObserverMarketSnapshot",
+    "ObserverQuoteAssetUsdEvidence",
     "ObservedMarketWindow",
     "ObserverMarketReadError",
     "ObserverMarketStore",
