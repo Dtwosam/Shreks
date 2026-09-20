@@ -191,7 +191,7 @@ def _seed(path) -> None:
                 volume_h1_usd, volume_h24_usd, buys_m5, sells_m5, buys_h1, sells_h1,
                 pair_created_at_unix_ms)
                VALUES (?, 1, ?, 'dexscreener', ?, 'pump_fun', 'PairRunner',
-                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 50000)""",
+                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 50000)""",
             (
                 row_id,
                 observed_at,
