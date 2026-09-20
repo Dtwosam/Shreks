@@ -598,3 +598,35 @@ def test_result_exchange_rejects_symlink_directory_and_never_overwrites(
             expected_exchange_owner_uid=os.getuid(),
         )
     assert output.read_text(encoding="utf-8") == "forged\n"
+
+
+def test_single_discovery_request_can_run_without_persistent_receipt(
+    tmp_path: Path,
+) -> None:
+    exchange = tmp_path / "exchange"
+    exchange.mkdir()
+    marker = _marker(exchange)
+    request_root = tmp_path / "requests"
+    request_root.mkdir()
+    backup_root = tmp_path / "backups"
+    backup_root.mkdir()
+    cohort = tmp_path / "cohort"
+    cohort.write_text("cohort\n", encoding="utf-8")
+    active = tmp_path / "paper-campaign.json"
+    active.write_text("{}\n", encoding="utf-8")
+    current = _release_tree(tmp_path)
+
+    result = control.process_fl9_v2_discovery_request(
+        marker,
+        receipt_root=None,
+        request_search_root=request_root,
+        cohort_path=cohort,
+        active_runtime_manifest_path=active,
+        backup_root=backup_root,
+        current_release_link=current,
+        expected_owner_uid=os.getuid(),
+        now_unix_ms=NOW_MS,
+    )
+
+    assert result["status"] == "HOLD_NO_REQUEST_AUTHORITY"
+    assert not (tmp_path / "receipts").exists()
