@@ -194,6 +194,7 @@ def test_runtime_quote_evidence_rejects_invalid_purpose_without_guessing(
     else:
         raise AssertionError("invalid quote purpose must fail closed")
 
+
 def test_runtime_quote_evidence_rejects_noncanonical_uppercase_purpose(
     tmp_path: Path,
 ) -> None:
