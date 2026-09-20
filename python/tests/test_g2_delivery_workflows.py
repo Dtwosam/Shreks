@@ -358,6 +358,10 @@ def test_production_verifier_reports_read_only_telemetry_diagnostics_on_discover
         "-p ExecMainExitTimestamp",
         "marker_present=",
         "stat -c",
+        "marker_directory_lstat=",
+        "marker_directory_resolved=",
+        "readlink -f /dev/shm",
+        "stat -Lc",
         "journalctl -u shreks-telemetry.service -o cat",
         "telemetry_timeout_diagnostics=end",
     ):
