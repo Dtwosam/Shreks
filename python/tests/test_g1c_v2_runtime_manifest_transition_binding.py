@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 from pathlib import Path
 import stat
@@ -186,14 +185,11 @@ def test_binding_rejects_authenticated_v2_manifest_not_exactly_authored_from_sou
         paper_run_id=candidate.paper_run_id,
         candidate=candidate.candidate,
         initial_state=candidate.initial_state,
-        policy_bundle=replace(
-            candidate.policy_bundle,
-            setup_name=f"{candidate.policy_bundle.setup_name}-drift",
-        ),
+        policy_bundle=candidate.policy_bundle,
         risk_environment=candidate.risk_environment,
         selection_policy=candidate.selection_policy,
         recent_performance=candidate.recent_performance,
-        global_risk_halt=candidate.global_risk_halt,
+        global_risk_halt=not candidate.global_risk_halt,
         quote_usd_valuation_policy=candidate.quote_usd_valuation_policy,
     )
     candidate_path.write_bytes(
