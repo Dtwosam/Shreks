@@ -1,6 +1,6 @@
 # G2 verified GitHub-to-VPS release delivery
 
-This runbook bootstraps and operates the Phase G2 PAPER deployment path. GitHub is the release and deployment control plane; the dedicated Linux VPS remains the runtime. The deployment path never creates, copies, reads, edits, or deletes `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, or `/var/lib/shreks`.
+This runbook bootstraps and operates the Phase G2 PAPER deployment path. GitHub is the release and deployment control plane; the dedicated Linux VPS remains the runtime. The deployment transport path never creates, copies, reads, edits, or deletes `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, or `/var/lib/shreks`; sealed runtime preflights may read protected evidence only through the explicit read-only authority described below.
 
 **LIVE TRADING: DISABLED.**
 
@@ -224,15 +224,36 @@ The protected paths `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`,
 
 ### Protected FL9 read-only discovery without an administrator shell
 
-For sealed releases that contain the FL9 V2 telemetry discovery bridge, the existing `Verify production PAPER runtime` workflow performs the protected read-only discovery after the ordinary release, service-health, restart, journal, and historical-read probes. No interactive administrator shell is required.
+For sealed releases that contain the protected pre-deploy FL9 bridge, the automatic deployment path stages one canonical release-bound discovery request immediately before release activation:
 
-The verifier still connects only as `shreks-deploy`. It writes one canonical, release-bound request marker owned by that account under:
+```text
+/var/tmp/shreks-fl9-v2-discovery.<request-id>.request
+/dev/shm/shreks-fl9-v2-discovery.<request-id>.result.d
+```
+
+Both paths are created as the unprivileged `shreks-deploy` account. The request is mode `0644`, the result exchange is mode `0733`, and the request contains only the fixed discovery schema, bounded request ID, exact expected sealed release SHA, and creation timestamp. It contains no arbitrary command, protected path, policy value, credential, wallet material, or trading instruction.
+
+During activation, the release-managed `shreks-paper-campaign.service` invokes exactly one startup-only privileged helper before its ordinary campaign preflight:
+
+```text
+ExecStartPre=-+/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.fl9_v2_predeploy_discovery
+```
+
+That helper is release-local. It uses the already-authenticated FL9 discovery code to read the protected frozen cohort, preserved V2 request/hydration authority, active PAPER runtime manifest, and verified historical backup manifests. It does not write telemetry receipts while privileged and does not mutate protected evidence.
+
+After the terminal discovery result is constructed in memory, the helper permanently clears supplementary groups and drops to the existing `shreks` UID/GID before publishing `result.json` into the deploy-owned result exchange. The existing verifier still requires the published result file to be a real mode-`0644` file owned by `shreks`, stable across no-follow reads, canonical JSON, and exactly bound to the request ID and expected/observed release SHA. A root-owned result is not trusted.
+
+The leading `-` on the helper command keeps read-only discovery failure isolated from PAPER availability. Missing, malformed, or untrusted discovery output therefore fails production verification rather than preventing the PAPER campaign from starting.
+
+After activation, deployment removes only its `/var/tmp` request and passes the exact request ID into the reusable `Verify production PAPER runtime` workflow. The verifier reuses the already-created `/dev/shm` exchange, performs the ordinary release/service/restart/journal checks, validates the result, and cleans up that exact exchange.
+
+Manual verifier dispatch without a pre-staged request ID retains the prior telemetry fallback. In that path the verifier writes:
 
 ```text
 /dev/shm/shreks-fl9-v2-discovery.<request-id>.request
 ```
 
-The already-installed `shreks-telemetry.timer` invokes `shreks-telemetry.service` as the existing `shreks` runtime identity. During telemetry preflight, release-local code authenticates the marker, the frozen cohort, preserved V2 request/hydration authority, active PAPER runtime manifest, and verified historical backup manifests. It writes only an idempotence receipt under the existing telemetry output tree and emits the sanitized canonical result to the service journal. The GitHub verifier retrieves that result with:
+and the already-installed `shreks-telemetry.timer` invokes `shreks-telemetry.service` as the unprivileged `shreks` identity. The verifier may still retrieve the matching fallback result with:
 
 ```sh
 journalctl -u shreks-telemetry.service -o cat
@@ -247,7 +268,7 @@ The verifier accepts these trusted read-only completion states:
 
 Those outcomes are evidence only. `FOUND_COMPATIBLE` does not itself authorize a fresh V2 scoring request, PAPER promotion, signing, submission, or any live-capital action. **LIVE TRADING: DISABLED.**
 
-The transport boundary must remain unchanged. Do not add sudoers entries for FL9 discovery. Do not relax ownership, modes, or ACLs on `/etc/shreks` or `/var/lib/shreks`, and do not grant `shreks-deploy` direct access to protected runtime evidence. The bridge exists specifically so protected discovery can continue without an interactive administrator shell while the deploy account remains unprivileged.
+The transport boundary remains narrow. Do not add sudoers entries for FL9 discovery. Do not relax ownership, modes, or ACLs on `/etc/shreks` or `/var/lib/shreks`, and do not grant `shreks-deploy` direct access to protected runtime evidence. The privileged read is confined to one release-local startup preflight and result publication occurs only after irreversible drop to `shreks`. No interactive administrator shell is required.
 
 Older deployed releases that do not contain `shreks_brain.telemetry.fl9_v2_discovery_control` report `fl9_v2_discovery_bridge=unavailable` and retain the legacy read-only verification behavior.
 
