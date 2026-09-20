@@ -250,6 +250,12 @@ jobs:
               -p ExecMainStartTimestamp \
               -p ExecMainExitTimestamp \
               --no-pager || true
+            printf 'marker_directory_lstat=%s\n' "$(
+              stat -c 'type=%F mode=%a owner_uid=%u owner_gid=%g' /dev/shm 2>/dev/null                 || printf 'unavailable'
+            )"
+            MARKER_DIRECTORY_RESOLVED="$(readlink -f /dev/shm 2>/dev/null || true)"
+            printf 'marker_directory_resolved=%s\n' "${MARKER_DIRECTORY_RESOLVED:-unavailable}"
+            stat -Lc 'marker_directory_target=type=%F mode=%a owner_uid=%u owner_gid=%g' /dev/shm 2>/dev/null || true
             if test -e "$DISCOVERY_MARKER"; then
               echo 'marker_present=yes'
               stat -c 'marker=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$DISCOVERY_MARKER" || true

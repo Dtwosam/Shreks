@@ -192,6 +192,65 @@ def test_symlink_marker_is_rejected_without_following_target(tmp_path: Path) -> 
     assert target.read_text(encoding="utf-8") == "do-not-follow\n"
 
 
+def test_trusted_symlink_marker_directory_is_processed(tmp_path: Path) -> None:
+    shared = tmp_path / "shared-shm"
+    shared.mkdir()
+    shared.chmod(0o1777)
+    alias = tmp_path / "dev-shm"
+    alias.symlink_to(shared, target_is_directory=True)
+    _marker(shared)
+
+    results = _process(
+        tmp_path,
+        alias,
+        expected_marker_directory_owner_uid=os.getuid(),
+    )
+
+    assert len(results) == 1
+    assert results[0]["status"] == "HOLD_NO_REQUEST_AUTHORITY"
+    assert results[0]["request_id"] == "gha-123-1"
+
+
+@pytest.mark.parametrize("mode", [0o777, 0o755, 0o1770])
+def test_symlink_marker_directory_requires_trusted_sticky_world_writable_target(
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    shared = tmp_path / "shared-shm"
+    shared.mkdir()
+    shared.chmod(mode)
+    alias = tmp_path / "dev-shm"
+    alias.symlink_to(shared, target_is_directory=True)
+    _marker(shared)
+
+    results = _process(
+        tmp_path,
+        alias,
+        expected_marker_directory_owner_uid=os.getuid(),
+    )
+
+    assert results == ()
+
+
+def test_symlink_marker_directory_requires_trusted_symlink_owner(
+    tmp_path: Path,
+) -> None:
+    shared = tmp_path / "shared-shm"
+    shared.mkdir()
+    shared.chmod(0o1777)
+    alias = tmp_path / "dev-shm"
+    alias.symlink_to(shared, target_is_directory=True)
+    _marker(shared)
+
+    results = _process(
+        tmp_path,
+        alias,
+        expected_marker_directory_owner_uid=os.getuid() + 1,
+    )
+
+    assert results == ()
+
+
 def test_release_binding_requires_current_link_and_manifest_source_sha(tmp_path: Path) -> None:
     markers = tmp_path / "markers"
     _marker(markers, source_sha="3" * 40)
