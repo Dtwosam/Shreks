@@ -109,17 +109,21 @@ class ObserverPaperCampaignRuntimeManifest:
                 raise ObserverPaperCampaignRuntimeManifestError(
                     "v2 manifest requires exact quote USD valuation policy"
                 )
-            if self.policy_bundle.quote_asset.usd_per_token != 1.0:
-                raise ObserverPaperCampaignRuntimeManifestError(
-                    "v2 dynamic valuation requires quote_asset.usd_per_token "
-                    "to remain the non-authoritative 1.0 compatibility sentinel"
-                )
         _require_non_empty_string("paper_run_id", self.paper_run_id)
         _require_exact_type("candidate", self.candidate, RegistryCandidate)
         _require_exact_type("initial_state", self.initial_state, PaperLoopState)
         _require_exact_type(
             "policy_bundle", self.policy_bundle, ObserverFreshLaunchPolicyBundle
         )
+        if (
+            self.schema_version
+            == OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
+            and self.policy_bundle.quote_asset.usd_per_token != 1.0
+        ):
+            raise ObserverPaperCampaignRuntimeManifestError(
+                "v2 dynamic valuation requires quote_asset.usd_per_token "
+                "to remain the non-authoritative 1.0 compatibility sentinel"
+            )
         _require_exact_type(
             "risk_environment",
             self.risk_environment,
