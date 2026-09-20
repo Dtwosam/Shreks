@@ -21,15 +21,16 @@ sudo useradd --create-home --shell /bin/bash shreks-deploy
 sudo install -d -o shreks-deploy -g shreks-deploy -m 0700 /home/shreks-deploy/.ssh
 ```
 
-Install the G2 verifier, release manager, and PAPER manifest manager from the exact sealed source checkout. All three files are root-owned and are not writable by the deploy account:
+Install the G2 verifier and release manager from the exact sealed source checkout. Both files are root-owned and are not writable by the deploy account:
 
 ```sh
 sudo install -o root -g root -m 0755 deploy/release/release_bundle.py /usr/local/sbin/release_bundle.py
 sudo install -o root -g root -m 0755 deploy/release/release_manager.py /usr/local/sbin/shreks-release-manager
-sudo install -o root -g root -m 0755 deploy/release/paper_manifest_manager.py /usr/local/sbin/shreks-paper-manifest-manager
-sudo chown root:root /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager /usr/local/sbin/shreks-paper-manifest-manager
-sudo chmod 0755 /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager /usr/local/sbin/shreks-paper-manifest-manager
+sudo chown root:root /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager
+sudo chmod 0755 /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager
 ```
+
+The PAPER manifest manager is deliberately not installed by this bootstrap or by the deployment account. Existing hosts install that helper later from an exact immutable release using the dedicated release-bound procedure below.
 
 Install the deployment public key into `/home/shreks-deploy/.ssh/authorized_keys`, owned by `shreks-deploy:shreks-deploy` with mode `0600`. The corresponding private deploy SSH key is stored only in the GitHub `production-paper` environment as `SHREKS_DEPLOY_SSH_KEY`.
 
@@ -144,7 +145,7 @@ The current release manager re-verifies the bundle, stages `/opt/shreks/releases
 
 The root-owned `/usr/local/sbin` verifier and manager are intentionally outside the unprivileged deploy account's write authority. If a verified release contains a deployment-manager fix that must replace an older bootstrapped manager, perform this bounded recovery from a trusted administrator session only after verifying that `/opt/shreks/current` and its `RELEASE_MANIFEST.json` identify the intended immutable release.
 
-The sealed control scripts are transported inside the release's manifest-hashed wheel. Extract only the three fixed members from that verified wheel into a private temporary directory, install them root-owned, then reconcile the already-selected immutable release:
+The release verifier and release manager are transported inside the release's manifest-hashed wheel. Extract only those two fixed recovery members from that verified wheel into a private temporary directory, install them root-owned, then reconcile the already-selected immutable release:
 
 ```sh
 set -euo pipefail
@@ -183,7 +184,6 @@ out = Path(sys.argv[2])
 members = {
     "release_bundle.py": "shreks_brain/_sealed_deploy_control/release_bundle.py",
     "release_manager.py": "shreks_brain/_sealed_deploy_control/release_manager.py",
-    "paper_manifest_manager.py": "shreks_brain/_sealed_deploy_control/paper_manifest_manager.py",
 }
 with zipfile.ZipFile(wheel) as archive:
     for output_name, member in members.items():
@@ -200,9 +200,6 @@ sudo install -o root -g root -m 0755 \
 sudo install -o root -g root -m 0755 \
   "$CONTROL_TMP/release_manager.py" \
   /usr/local/sbin/shreks-release-manager
-sudo install -o root -g root -m 0755 \
-  "$CONTROL_TMP/paper_manifest_manager.py" \
-  /usr/local/sbin/shreks-paper-manifest-manager
 
 sudo /usr/local/sbin/shreks-release-manager activate-existing "$CURRENT_SHA"
 ```
@@ -210,6 +207,59 @@ sudo /usr/local/sbin/shreks-release-manager activate-existing "$CURRENT_SHA"
 `activate-existing` re-verifies the stored release before activation. Even when `/opt/shreks/current` already points to that same SHA, the repaired manager reconciles the runtime by explicitly stopping the three Shreks services, stopping `shreks.target`, reinstalling the release's unit files, reloading systemd, starting the target, checking unit health, and verifying process identity. A stale process from a previous release therefore cannot be reported as a successful activation.
 
 This recovery updates only the root-owned deployment-control scripts and runtime activation state. It does not read or modify `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, `/var/lib/shreks`, wallet/signing material, PAPER/LIVE authority, or any trading credential. Do not widen the deploy account's sudoers rule merely to avoid this administrator boundary.
+
+## Install the sealed PAPER manifest manager helper
+
+Installing the root-owned PAPER manifest manager is a separate trusted-administrator maintenance action. It is not part of normal GitHub deployment, is not delegated to `shreks-deploy`, and does not authorize a runtime-manifest rotation.
+
+Use this path only after an immutable release containing the installer is active and production verification has succeeded. Resolve the active release once, bind the command to that exact SHA, and invoke the installer from that exact release virtualenv:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install" "$CURRENT_SHA"
+```
+
+The installer independently requires all of the following before it publishes anything:
+
+- effective uid 0;
+- `/opt/shreks/current` is still a symlink to the explicit expected release SHA;
+- the installer itself is executing from that exact release virtualenv;
+- the current release has a canonical `g2-release-manifest-v1` manifest with the same source SHA;
+- the manifest contains exactly one Shreks wheel record;
+- the wheel is a regular non-symlink file whose exact size and SHA-256 match the release manifest;
+- the wheel contains exactly one unencrypted `shreks_brain/_sealed_deploy_control/paper_manifest_manager.py` member;
+- that member has the expected manager executable shape.
+
+For a first installation, the helper is published at:
+
+```text
+/usr/local/sbin/shreks-paper-manifest-manager
+```
+
+with root ownership and mode `0755`. Publication uses no-overwrite semantics. The installer does not replace a different existing helper. If the destination already contains the exact sealed bytes with exact root ownership and mode, the command is idempotent and reports `ALREADY_INSTALLED`; any byte or metadata mismatch fails closed for administrator investigation.
+
+A successful canonical receipt binds the installation to:
+
+- current release source SHA;
+- exact manifest-hashed wheel relative path and SHA-256;
+- exact sealed wheel-member path;
+- installed manager SHA-256;
+- destination path and metadata.
+
+The receipt grants only exact helper installation authority. It records manifest rotation as `NOT_GRANTED`, scoring as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
+
+This installer does not stop or restart any Shreks service. It does not read or modify `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, `/var/lib/shreks`, systemd units, G7 state, SQLite/E11 state, wallets, signing material, or transaction paths.
+
+Do not add the installer or `shreks-paper-manifest-manager` to the `shreks-deploy` sudoers rule. A later production manifest rotation remains a separate explicitly authorized administrator action.
 
 ## Manual protected PAPER manifest rotation
 
