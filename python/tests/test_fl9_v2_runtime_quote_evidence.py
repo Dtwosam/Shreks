@@ -50,7 +50,7 @@ def _insert(
     quote_mint: str,
     quoted_at_unix_ms: int,
 ) -> None:
-    if purpose == "ENTRY":
+    if purpose == "entry":
         input_mint, output_mint = quote_mint, candidate_mint
     else:
         input_mint, output_mint = candidate_mint, quote_mint
@@ -92,7 +92,7 @@ def test_recent_paper_quote_evidence_reports_one_quote_asset_without_mutation(
     _insert(
         path,
         row_id=1,
-        purpose="ENTRY",
+        purpose="entry",
         candidate_mint="MintA",
         quote_mint=WSOL,
         quoted_at_unix_ms=1000,
@@ -100,7 +100,7 @@ def test_recent_paper_quote_evidence_reports_one_quote_asset_without_mutation(
     _insert(
         path,
         row_id=2,
-        purpose="EXIT",
+        purpose="exit",
         candidate_mint="MintB",
         quote_mint=WSOL,
         quoted_at_unix_ms=2000,
@@ -132,7 +132,7 @@ def test_recent_paper_quote_evidence_reports_ambiguous_assets(
     _insert(
         path,
         row_id=1,
-        purpose="ENTRY",
+        purpose="entry",
         candidate_mint="MintA",
         quote_mint=USDC,
         quoted_at_unix_ms=1000,
@@ -140,7 +140,7 @@ def test_recent_paper_quote_evidence_reports_ambiguous_assets(
     _insert(
         path,
         row_id=2,
-        purpose="EXIT",
+        purpose="exit",
         candidate_mint="MintB",
         quote_mint=WSOL,
         quoted_at_unix_ms=2000,
@@ -193,3 +193,25 @@ def test_runtime_quote_evidence_rejects_invalid_purpose_without_guessing(
         assert "purpose" in str(error).lower()
     else:
         raise AssertionError("invalid quote purpose must fail closed")
+
+
+def test_runtime_quote_evidence_rejects_noncanonical_uppercase_purpose(
+    tmp_path: Path,
+) -> None:
+    module = _module()
+    path = _database(tmp_path)
+    _insert(
+        path,
+        row_id=1,
+        purpose="ENTRY",
+        candidate_mint="MintA",
+        quote_mint=WSOL,
+        quoted_at_unix_ms=1000,
+    )
+
+    try:
+        module.read_fl9_v2_runtime_quote_evidence(path, sample_limit=128)
+    except module.RuntimeQuoteEvidenceError as error:
+        assert "purpose" in str(error).lower()
+    else:
+        raise AssertionError("noncanonical uppercase purpose must fail closed")
