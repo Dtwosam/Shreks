@@ -402,3 +402,108 @@ def test_receipt_replay_is_idempotent_and_does_not_rescan_history(
 
     assert first == second
     assert calls == {"authenticate": 1, "discover": 1}
+
+
+def _result_exchange_directory(marker_directory: Path, request_id: str = "gha-123-1") -> Path:
+    path = marker_directory / f"shreks-fl9-v2-discovery.{request_id}.result.d"
+    path.mkdir(parents=True, exist_ok=False)
+    path.chmod(0o733)
+    return path
+
+
+def _hold_result(request_id: str = "gha-123-1") -> dict[str, object]:
+    return {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": request_id,
+        "expected_release_sha": SOURCE_SHA,
+        "observed_release_sha": SOURCE_SHA,
+        "status": "HOLD_NO_REQUEST_AUTHORITY",
+    }
+
+
+def test_result_exchange_publishes_canonical_atomic_read_only_file(tmp_path: Path) -> None:
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    exchange = _result_exchange_directory(markers)
+    result = _hold_result()
+
+    published = control.publish_fl9_v2_discovery_control_result(
+        result,
+        marker_directory=markers,
+        expected_exchange_owner_uid=os.getuid(),
+    )
+
+    assert published is True
+    output = exchange / "result.json"
+    assert output.is_file()
+    assert not output.is_symlink()
+    assert stat.S_IMODE(output.stat().st_mode) == 0o644
+    assert output.stat().st_uid == os.getuid()
+    assert output.read_text(encoding="utf-8") == _canonical(result)
+    assert not tuple(exchange.glob("result.json.tmp.*"))
+
+
+def test_result_exchange_is_optional_when_directory_is_absent(tmp_path: Path) -> None:
+    markers = tmp_path / "markers"
+    markers.mkdir()
+
+    assert (
+        control.publish_fl9_v2_discovery_control_result(
+            _hold_result(),
+            marker_directory=markers,
+            expected_exchange_owner_uid=os.getuid(),
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o755, 0o777])
+def test_result_exchange_requires_exact_deploy_owned_0733_directory(
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    exchange = _result_exchange_directory(markers)
+    exchange.chmod(mode)
+
+    with pytest.raises(control.DiscoveryControlError, match="exchange"):
+        control.publish_fl9_v2_discovery_control_result(
+            _hold_result(),
+            marker_directory=markers,
+            expected_exchange_owner_uid=os.getuid(),
+        )
+
+
+def test_result_exchange_rejects_symlink_directory_and_never_overwrites(
+    tmp_path: Path,
+) -> None:
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    real = tmp_path / "real-exchange"
+    real.mkdir()
+    real.chmod(0o733)
+    alias = markers / "shreks-fl9-v2-discovery.gha-123-1.result.d"
+    alias.symlink_to(real, target_is_directory=True)
+
+    with pytest.raises(control.DiscoveryControlError, match="exchange"):
+        control.publish_fl9_v2_discovery_control_result(
+            _hold_result(),
+            marker_directory=markers,
+            expected_exchange_owner_uid=os.getuid(),
+        )
+
+    alias.unlink()
+    exchange = _result_exchange_directory(markers)
+    output = exchange / "result.json"
+    output.write_text("forged\n", encoding="utf-8")
+    output.chmod(0o644)
+
+    with pytest.raises(control.DiscoveryControlError, match="result"):
+        control.publish_fl9_v2_discovery_control_result(
+            _hold_result(),
+            marker_directory=markers,
+            expected_exchange_owner_uid=os.getuid(),
+        )
+    assert output.read_text(encoding="utf-8") == "forged\n"

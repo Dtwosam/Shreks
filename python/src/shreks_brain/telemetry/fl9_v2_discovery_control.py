@@ -25,6 +25,11 @@ CONTROL_RESULT_SCHEMA_NAME: Final = "shreks.fl9_v2_discovery_control_result"
 CONTROL_RESULT_SCHEMA_VERSION: Final = 1
 _MARKER_PREFIX: Final = "shreks-fl9-v2-discovery."
 _MARKER_SUFFIX: Final = ".request"
+_RESULT_EXCHANGE_SUFFIX: Final = ".result.d"
+_RESULT_FILENAME: Final = "result.json"
+_RESULT_EXCHANGE_MODE: Final = 0o733
+_RESULT_FILE_MODE: Final = 0o644
+_MAX_RESULT_BYTES: Final = 1_048_576
 _REQUEST_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 _SOURCE_SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _MAX_MARKER_BYTES: Final = 4096
@@ -164,6 +169,163 @@ def emit_fl9_v2_discovery_control_result(
 ) -> None:
     target = sys.stdout if stream is None else stream
     print(encode_fl9_v2_discovery_control_result(result), file=target)
+
+
+def publish_fl9_v2_discovery_control_result(
+    result: dict[str, object],
+    *,
+    marker_directory: Path = Path("/dev/shm"),
+    expected_exchange_owner_uid: int | None = None,
+) -> bool:
+    request_id = result.get("request_id")
+    if not isinstance(request_id, str) or _REQUEST_ID_RE.fullmatch(request_id) is None:
+        return False
+    exchange_owner_uid = (
+        pwd.getpwnam("shreks-deploy").pw_uid
+        if expected_exchange_owner_uid is None
+        else expected_exchange_owner_uid
+    )
+    if (
+        isinstance(exchange_owner_uid, bool)
+        or not isinstance(exchange_owner_uid, int)
+        or exchange_owner_uid < 0
+    ):
+        raise ValueError("expected_exchange_owner_uid must be a non-negative integer")
+
+    exchange = (
+        Path(marker_directory)
+        / f"{_MARKER_PREFIX}{request_id}{_RESULT_EXCHANGE_SUFFIX}"
+    )
+    try:
+        metadata = exchange.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise DiscoveryControlError("result exchange directory could not be inspected") from error
+
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise DiscoveryControlError("result exchange must be a real directory")
+    if metadata.st_uid != exchange_owner_uid:
+        raise DiscoveryControlError("result exchange owner is not shreks-deploy")
+    if stat.S_IMODE(metadata.st_mode) != _RESULT_EXCHANGE_MODE:
+        raise DiscoveryControlError("result exchange mode must be 0733")
+
+    payload = (encode_fl9_v2_discovery_control_result(result) + "\n").encode("utf-8")
+    if len(payload) > _MAX_RESULT_BYTES:
+        raise DiscoveryControlError("discovery result exceeds exchange size bound")
+
+    destination = exchange / _RESULT_FILENAME
+    if destination.exists() or destination.is_symlink():
+        existing = _read_exchange_result(
+            destination,
+            expected_owner_uid=os.getuid(),
+        )
+        if existing != payload:
+            raise DiscoveryControlError("existing result conflicts with discovery result")
+        return True
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(destination, flags, 0o600)
+    except OSError as error:
+        raise DiscoveryControlError("discovery result could not be created safely") from error
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(fd, payload[offset:])
+            if written <= 0:
+                raise OSError("short write")
+            offset += written
+        os.fsync(fd)
+        os.fchmod(fd, _RESULT_FILE_MODE)
+        os.fsync(fd)
+    except OSError as error:
+        try:
+            os.close(fd)
+        finally:
+            try:
+                destination.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise DiscoveryControlError("discovery result could not be published safely") from error
+    else:
+        os.close(fd)
+
+    published = _read_exchange_result(
+        destination,
+        expected_owner_uid=os.getuid(),
+    )
+    if published != payload:
+        raise DiscoveryControlError("published discovery result verification failed")
+    return True
+
+
+def _read_exchange_result(path: Path, *, expected_owner_uid: int) -> bytes:
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise DiscoveryControlError("result file could not be inspected") from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise DiscoveryControlError("result file must be a regular file")
+    if before.st_uid != expected_owner_uid:
+        raise DiscoveryControlError("result file owner is untrusted")
+    if stat.S_IMODE(before.st_mode) != _RESULT_FILE_MODE:
+        raise DiscoveryControlError("result file mode must be 0644")
+    if before.st_size < 2 or before.st_size > _MAX_RESULT_BYTES:
+        raise DiscoveryControlError("result file size is outside the allowed bound")
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+    except OSError as error:
+        raise DiscoveryControlError("result file could not be opened safely") from error
+    try:
+        opened = os.fstat(fd)
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(fd, min(65_536, _MAX_RESULT_BYTES + 1 - total))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > _MAX_RESULT_BYTES:
+                raise DiscoveryControlError("result file exceeds the allowed bound")
+        after = os.fstat(fd)
+    except OSError as error:
+        raise DiscoveryControlError("result file could not be read safely") from error
+    finally:
+        os.close(fd)
+
+    identity_before = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    identity_opened = (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+    )
+    identity_after = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    )
+    if identity_before != identity_opened or identity_opened != identity_after:
+        raise DiscoveryControlError("result file changed while being read")
+    if opened.st_uid != expected_owner_uid:
+        raise DiscoveryControlError("result file owner changed while being read")
+    if stat.S_IMODE(opened.st_mode) != _RESULT_FILE_MODE:
+        raise DiscoveryControlError("result file mode changed while being read")
+    return b"".join(chunks)
 
 
 def _process_one_marker(
