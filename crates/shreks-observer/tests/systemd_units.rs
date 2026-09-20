@@ -58,6 +58,14 @@ fn paper_evidence_service_runs_daemon_under_non_root_bounded_supervision() {
 fn paper_campaign_service_preflights_recovery_before_sealed_runtime() {
     assert_common_service_contract(CAMPAIGN_SERVICE);
     assert!(CAMPAIGN_SERVICE.contains(
+        "ExecStartPre=-+/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.fl9_v2_predeploy_discovery"
+    ));
+    assert_eq!(
+        CAMPAIGN_SERVICE.matches("ExecStartPre=-+").count(),
+        1,
+        "only the bounded FL9 predeploy discovery helper may bypass User=shreks"
+    );
+    assert!(CAMPAIGN_SERVICE.contains(
         "ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime --preflight"
     ));
     assert!(CAMPAIGN_SERVICE.contains(

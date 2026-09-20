@@ -138,6 +138,19 @@ def test_valid_canonical_marker_without_request_authority_returns_trusted_hold_a
     assert marker.is_file()
 
 
+def test_privileged_predeploy_processing_can_defer_receipt_persistence(
+    tmp_path: Path,
+) -> None:
+    markers = tmp_path / "markers"
+    _marker(markers)
+
+    results = _process(tmp_path, markers, persist_receipts=False)
+
+    assert len(results) == 1
+    assert results[0]["status"] == "HOLD_NO_REQUEST_AUTHORITY"
+    assert not (tmp_path / "receipts" / "gha-123-1.json").exists()
+
+
 @pytest.mark.parametrize(
     ("mutation", "error_fragment"),
     [

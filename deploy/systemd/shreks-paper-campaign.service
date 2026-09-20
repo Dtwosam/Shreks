@@ -17,6 +17,7 @@ Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/bin/test -d /var/lib/shreks
 ExecStartPre=/usr/bin/test -w /var/lib/shreks
 ExecStartPre=/usr/bin/test -r /var/lib/shreks/risk/operator-control.json
+ExecStartPre=-+/opt/shreks/current/.venv/bin/python -m shreks_brain.telemetry.fl9_v2_predeploy_discovery
 ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime --preflight
 ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.observer_campaign.runtime
 Restart=on-failure
