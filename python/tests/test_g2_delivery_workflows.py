@@ -370,6 +370,43 @@ def test_production_verifier_prefers_trusted_shared_memory_result_exchange():
         assert forbidden not in workflow[result_poll:journal_poll]
 
 
+def test_production_verifier_reports_sanitized_terminal_discovery_failure():
+    workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
+
+    for required in (
+        "DISCOVERY_RESULT_SOURCE=''",
+        "DISCOVERY_RESULT_SOURCE=exchange",
+        "DISCOVERY_RESULT_SOURCE=journal",
+        "fl9_v2_discovery_result_source=%s",
+        'if status == "FAILED":',
+        "error_code",
+        "CONTROL_RESULT_PUBLISH_FAILED",
+        "fl9_v2_discovery_failure_code=%s",
+        "fl9_v2_discovery_failure_message=%s",
+        "DISCOVERY_VALIDATION_LINES",
+        'if [[ "$DISCOVERY_STATUS" == "FAILED" ]]',
+    ):
+        assert required in workflow
+
+    failure_branch = workflow.index('if [[ "$DISCOVERY_STATUS" == "FAILED" ]]')
+    terminal_exit = workflow.index("exit 1", failure_branch)
+    diagnostic = workflow[failure_branch:terminal_exit]
+
+    assert "cleanup_discovery" in diagnostic
+    assert "fl9_v2_discovery_result=%s" not in diagnostic
+    for forbidden in (
+        "sudo ",
+        "cat /etc/shreks",
+        "cat /var/lib/shreks",
+        "systemctl restart",
+        "systemctl start",
+        "chmod ",
+        "chown ",
+        "setfacl",
+    ):
+        assert forbidden not in diagnostic
+
+
 def test_production_verifier_reports_read_only_telemetry_diagnostics_on_discovery_timeout():
     workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
 
