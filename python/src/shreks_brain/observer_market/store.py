@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
 import sqlite3
@@ -20,6 +21,7 @@ from .models import (
     ObserverCandidateIdentity,
     ObserverMarketReadPolicy,
     ObserverMarketSnapshot,
+    ObserverQuoteAssetUsdEvidence,
 )
 
 
@@ -67,6 +69,7 @@ _EXACT_MARKET_REQUIRED_COLUMNS = frozenset(
     {
         "base_mint",
         "quote_mint",
+        "price_native",
         "volume_h24_usd",
     }
 )
@@ -74,7 +77,7 @@ _EXACT_MARKET_REQUIRED_COLUMNS = frozenset(
 _EXACT_MARKET_SELECT = """SELECT
     id, candidate_id, observed_at_unix_ms, source,
     source_observed_at_unix_ms, venue, pair_address,
-    base_mint, quote_mint,
+    base_mint, quote_mint, price_native,
     price_usd, liquidity_usd, volume_m5_usd, volume_h1_usd,
     volume_h24_usd,
     buys_m5, sells_m5, buys_h1, sells_h1, pair_created_at_unix_ms
@@ -303,6 +306,78 @@ class ObserverMarketStore:
                 "observer exact-market attribution mismatch"
             )
         return snapshot
+
+
+    def quote_asset_usd_evidence(
+        self,
+        candidate_id: int,
+        as_of_unix_ms: int,
+        *,
+        source: str,
+        venue: str,
+        base_mint: str,
+        quote_mint: str,
+        max_age_ms: int,
+    ) -> ObserverQuoteAssetUsdEvidence:
+        """Derive one quote-token USD rate from one exact persisted market row."""
+        snapshot = self.load_current_exact_market(
+            candidate_id,
+            as_of_unix_ms,
+            source=source,
+            venue=venue,
+            base_mint=base_mint,
+            quote_mint=quote_mint,
+            max_age_ms=max_age_ms,
+        )
+
+        raw_native = snapshot.price_native
+        if raw_native is None:
+            raise ObserverMarketReadError(
+                "exact market is missing native quote price evidence"
+            )
+        try:
+            native_price = Decimal(raw_native)
+        except InvalidOperation as error:
+            raise ObserverMarketReadError(
+                "exact market native quote price is malformed"
+            ) from error
+        if not native_price.is_finite() or native_price <= 0:
+            raise ObserverMarketReadError(
+                "exact market native quote price must be positive and finite"
+            )
+
+        usd_price = snapshot.price_usd
+        if usd_price is None or usd_price <= 0:
+            raise ObserverMarketReadError(
+                "exact market USD price must be positive and finite"
+            )
+        try:
+            quote_asset_usd_per_token = float(
+                Decimal(str(usd_price)) / native_price
+            )
+        except (InvalidOperation, OverflowError, ValueError) as error:
+            raise ObserverMarketReadError(
+                "quote asset USD rate could not be derived safely"
+            ) from error
+
+        try:
+            return ObserverQuoteAssetUsdEvidence(
+                market_row_id=snapshot.row_id,
+                candidate_id=snapshot.candidate_id,
+                observed_at_unix_ms=snapshot.observed_at_unix_ms,
+                source=snapshot.source,
+                venue=snapshot.venue,
+                pair_address=snapshot.pair_address,
+                base_mint=base_mint,
+                quote_mint=quote_mint,
+                base_price_quote=raw_native,
+                base_price_usd=float(usd_price),
+                quote_asset_usd_per_token=quote_asset_usd_per_token,
+            )
+        except (TypeError, ValueError) as error:
+            raise ObserverMarketReadError(
+                f"quote asset USD evidence is invalid: {error}"
+            ) from error
 
     def load_window(
         self,
@@ -607,6 +682,11 @@ def _snapshot_from_row(row: sqlite3.Row) -> ObserverMarketSnapshot:
             quote_mint=(
                 row["quote_mint"]
                 if "quote_mint" in row.keys()
+                else None
+            ),
+            price_native=(
+                row["price_native"]
+                if "price_native" in row.keys()
                 else None
             ),
             volume_h24_usd=(
