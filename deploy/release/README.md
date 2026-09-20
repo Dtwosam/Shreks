@@ -21,13 +21,14 @@ sudo useradd --create-home --shell /bin/bash shreks-deploy
 sudo install -d -o shreks-deploy -g shreks-deploy -m 0700 /home/shreks-deploy/.ssh
 ```
 
-Install the G2 verifier and manager from the exact sealed G2 source checkout. Both files are root-owned and are not writable by the deploy account:
+Install the G2 verifier, release manager, and PAPER manifest manager from the exact sealed source checkout. All three files are root-owned and are not writable by the deploy account:
 
 ```sh
 sudo install -o root -g root -m 0755 deploy/release/release_bundle.py /usr/local/sbin/release_bundle.py
 sudo install -o root -g root -m 0755 deploy/release/release_manager.py /usr/local/sbin/shreks-release-manager
-sudo chown root:root /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager
-sudo chmod 0755 /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager
+sudo install -o root -g root -m 0755 deploy/release/paper_manifest_manager.py /usr/local/sbin/shreks-paper-manifest-manager
+sudo chown root:root /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager /usr/local/sbin/shreks-paper-manifest-manager
+sudo chmod 0755 /usr/local/sbin/release_bundle.py /usr/local/sbin/shreks-release-manager /usr/local/sbin/shreks-paper-manifest-manager
 ```
 
 Install the deployment public key into `/home/shreks-deploy/.ssh/authorized_keys`, owned by `shreks-deploy:shreks-deploy` with mode `0600`. The corresponding private deploy SSH key is stored only in the GitHub `production-paper` environment as `SHREKS_DEPLOY_SSH_KEY`.
@@ -76,11 +77,12 @@ shreks-release-<sha>.tar.gz.sha256
 RELEASE_MANIFEST.json
 ```
 
-The top-level release payload intentionally keeps the historical G2 allowlist so an already-installed older root verifier can stage the first release that repairs deployment activation. The exact sealed `deploy/release/release_bundle.py` and `deploy/release/release_manager.py` bytes are embedded inside the already-allowlisted Shreks wheel as:
+The top-level release payload intentionally keeps the historical G2 allowlist so an already-installed older root verifier can stage the first release that repairs deployment activation. The exact sealed deployment-control bytes for `release_bundle.py`, `release_manager.py`, and `paper_manifest_manager.py` are embedded inside the already-allowlisted Shreks wheel as:
 
 ```text
 shreks_brain/_sealed_deploy_control/release_bundle.py
 shreks_brain/_sealed_deploy_control/release_manager.py
+shreks_brain/_sealed_deploy_control/paper_manifest_manager.py
 ```
 
 The wheel itself is a manifest-hashed release payload. During release construction, `build_release.sh` opens the completed wheel and verifies those two members are byte-for-byte identical to the exact sealed checkout before the wheel enters the release bundle. This transports the one-time root control-plane repair without changing the top-level manifest schema or making old verified releases unverifiable.
@@ -142,7 +144,7 @@ The current release manager re-verifies the bundle, stages `/opt/shreks/releases
 
 The root-owned `/usr/local/sbin` verifier and manager are intentionally outside the unprivileged deploy account's write authority. If a verified release contains a deployment-manager fix that must replace an older bootstrapped manager, perform this bounded recovery from a trusted administrator session only after verifying that `/opt/shreks/current` and its `RELEASE_MANIFEST.json` identify the intended immutable release.
 
-The sealed control scripts are transported inside the release's manifest-hashed wheel. Extract only the two fixed members from that verified wheel into a private temporary directory, install them root-owned, then reconcile the already-selected immutable release:
+The sealed control scripts are transported inside the release's manifest-hashed wheel. Extract only the three fixed members from that verified wheel into a private temporary directory, install them root-owned, then reconcile the already-selected immutable release:
 
 ```sh
 set -euo pipefail
@@ -181,6 +183,7 @@ out = Path(sys.argv[2])
 members = {
     "release_bundle.py": "shreks_brain/_sealed_deploy_control/release_bundle.py",
     "release_manager.py": "shreks_brain/_sealed_deploy_control/release_manager.py",
+    "paper_manifest_manager.py": "shreks_brain/_sealed_deploy_control/paper_manifest_manager.py",
 }
 with zipfile.ZipFile(wheel) as archive:
     for output_name, member in members.items():
@@ -197,6 +200,9 @@ sudo install -o root -g root -m 0755 \
 sudo install -o root -g root -m 0755 \
   "$CONTROL_TMP/release_manager.py" \
   /usr/local/sbin/shreks-release-manager
+sudo install -o root -g root -m 0755 \
+  "$CONTROL_TMP/paper_manifest_manager.py" \
+  /usr/local/sbin/shreks-paper-manifest-manager
 
 sudo /usr/local/sbin/shreks-release-manager activate-existing "$CURRENT_SHA"
 ```
@@ -204,6 +210,42 @@ sudo /usr/local/sbin/shreks-release-manager activate-existing "$CURRENT_SHA"
 `activate-existing` re-verifies the stored release before activation. Even when `/opt/shreks/current` already points to that same SHA, the repaired manager reconciles the runtime by explicitly stopping the three Shreks services, stopping `shreks.target`, reinstalling the release's unit files, reloading systemd, starting the target, checking unit health, and verifying process identity. A stale process from a previous release therefore cannot be reported as a successful activation.
 
 This recovery updates only the root-owned deployment-control scripts and runtime activation state. It does not read or modify `/etc/shreks/shreks.env`, `/etc/shreks/paper-campaign.json`, `/var/lib/shreks`, wallet/signing material, PAPER/LIVE authority, or any trading credential. Do not widen the deploy account's sudoers rule merely to avoid this administrator boundary.
+
+## Manual protected PAPER manifest rotation
+
+A runtime-manifest v2 candidate is not installed by the normal GitHub deploy chain. The deployment account keeps exactly the release-install sudo rule above and receives no passwordless authority for `shreks-paper-manifest-manager`.
+
+After an exact sealed release containing the manifest manager is active, a trusted administrator may explicitly authorize one protected PAPER rotation. The candidate and transition binding must already have been created by the sealed G1C v2 authoring/binding path. Record the exact binding fingerprint and exact current release SHA before invoking the manager.
+
+Stage the two immutable inputs as regular non-symlink files, then run:
+
+```sh
+sudo /usr/local/sbin/shreks-paper-manifest-manager rotate \
+  /var/tmp/shreks-paper-candidate.json \
+  /var/tmp/shreks-paper-transition-binding.json \
+  <64-character-binding-fingerprint> \
+  <40-character-current-release-sha>
+```
+
+The manager independently requires the current protected v1 manifest bytes and fingerprint to match the binding, requires the candidate v2 bytes and fingerprint to match the binding, verifies the explicit binding fingerprint and current release identity, and requires the configured production DB/E11/manifest/G7 paths in `/etc/shreks/shreks.env` to match the protected paths it will use.
+
+The manager then:
+
+1. stops only `shreks-paper-campaign.service`, leaving observer and paper-evidence collection running;
+2. creates private `0700` rollback evidence under `/var/lib/shreks/manifest-rotations/<binding-fingerprint>/`;
+3. copies the exact authenticated source manifest, candidate manifest, and transition binding into that evidence directory with mode `0600`;
+4. preflights that private candidate copy against the real operational SQLite database, E11 ledger, and G7 operator-control state without executing a PAPER cycle;
+5. atomically replaces only `/etc/shreks/paper-campaign.json`, preserving the source file's owner, group, and `0640` mode;
+6. preflights the protected active path again before startup;
+7. starts the campaign through its ordinary systemd unit so all existing `ExecStartPre` gates still run;
+8. requires the campaign service to be active and its process identity to come from the exact expected immutable release;
+9. writes an immutable activation receipt.
+
+If any candidate preflight, replacement, startup, health, identity, or byte-verification step fails after campaign quiesce, the manager restores the exact source manifest, preflights it, starts the source campaign again, verifies source bytes and process health, and writes a rollback receipt when the evidence directory exists. It does not delete any candidate-run checkpoint or E11 rows that may already have been written; preserving evidence is safer than fabricating rollback history.
+
+This command is manifest rotation authority only. It does not modify the SQLite database, E11 evidence, G7 control state, scoring evidence, champion state, wallet/signing material, transaction submission paths, PAPER promotion state, or LIVE authority. The rotation receipt records scoring authority as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
+
+Do not add this manager to `/etc/sudoers.d/shreks-release-manager` and do not expose it through the automatic GitHub deployment workflow. Runtime-manifest rotation remains an explicit administrator maintenance action.
 
 ## Provenance and health checks
 

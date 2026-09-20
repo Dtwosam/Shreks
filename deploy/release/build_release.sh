@@ -63,6 +63,7 @@ printf '%s\n' '"""Sealed deployment-control payload; not a runtime API."""' \
   > "$CONTROL_PACKAGE/__init__.py"
 cp deploy/release/release_manager.py "$CONTROL_PACKAGE/release_manager.py"
 cp deploy/release/release_bundle.py "$CONTROL_PACKAGE/release_bundle.py"
+cp deploy/release/paper_manifest_manager.py "$CONTROL_PACKAGE/paper_manifest_manager.py"
 
 PYTHONPATH=python/src python - "$SOURCE_SHA" "$PLATFORM" "$FAST_TOOLS_PACKAGE" <<'PY'
 from pathlib import Path
@@ -109,6 +110,9 @@ expected = {
     ).read_bytes(),
     "shreks_brain/_sealed_deploy_control/release_bundle.py": Path(
         "deploy/release/release_bundle.py"
+    ).read_bytes(),
+    "shreks_brain/_sealed_deploy_control/paper_manifest_manager.py": Path(
+        "deploy/release/paper_manifest_manager.py"
     ).read_bytes(),
 }
 with zipfile.ZipFile(wheel) as archive:
