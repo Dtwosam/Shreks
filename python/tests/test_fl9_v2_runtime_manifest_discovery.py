@@ -19,7 +19,11 @@ from shreks_brain.fast_runtime_hydration_policy import (
     build_fast_forecast_context_hydration_policy_from_runtime_manifest,
 )
 from shreks_brain.observer_campaign.runtime_manifest import (
+    OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+    ObserverPaperQuoteUsdValuationMode,
+    ObserverPaperQuoteUsdValuationPolicy,
     build_observer_paper_campaign_runtime_manifest,
+    build_observer_paper_campaign_runtime_manifest_v2,
     encode_observer_paper_campaign_runtime_manifest,
 )
 import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
@@ -52,6 +56,24 @@ def _compatible_manifest():
         selection_policy=source.selection_policy,
         recent_performance=source.recent_performance,
         global_risk_halt=source.global_risk_halt,
+    )
+
+
+def _compatible_v2_manifest():
+    source = _compatible_manifest()
+    return build_observer_paper_campaign_runtime_manifest_v2(
+        paper_run_id=source.paper_run_id,
+        candidate=source.candidate,
+        initial_state=source.initial_state,
+        policy_bundle=source.policy_bundle,
+        risk_environment=source.risk_environment,
+        selection_policy=source.selection_policy,
+        recent_performance=source.recent_performance,
+        global_risk_halt=source.global_risk_halt,
+        quote_usd_valuation_policy=ObserverPaperQuoteUsdValuationPolicy(
+            version=OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+            mode=ObserverPaperQuoteUsdValuationMode.EXACT_MARKET_RATIO,
+        ),
     )
 
 
@@ -139,6 +161,23 @@ def test_discovery_authenticates_active_manifest_and_accepts_exact_quote_policy(
     assert candidate["compatibility"] == "COMPATIBLE"
     assert candidate["regime_quote_asset_mint"] == QUOTE
     assert candidate["safety_probe_output_mint"] == QUOTE
+    assert candidate["quote_asset_decimals"] == 9
+
+
+def test_discovery_authenticates_v2_dynamic_manifest_as_compatible_candidate(
+    tmp_path: Path,
+) -> None:
+    report = _discover(
+        tmp_path,
+        active_manifest=_compatible_v2_manifest(),
+    )
+
+    assert report["status"] == "FOUND_COMPATIBLE"
+    assert report["compatible_candidate_count"] == 1
+    candidate = report["candidates"][0]
+    assert candidate["authentication"] == "AUTHENTICATED"
+    assert candidate["compatibility"] == "COMPATIBLE"
+    assert candidate["quote_asset_mint"] == QUOTE
     assert candidate["quote_asset_decimals"] == 9
 
 
