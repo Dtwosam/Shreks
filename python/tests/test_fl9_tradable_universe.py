@@ -34,6 +34,7 @@ CREATE TABLE market_snapshots (
     pair_address TEXT NOT NULL DEFAULT '',
     base_mint TEXT NOT NULL,
     quote_mint TEXT NOT NULL,
+    price_native TEXT,
     price_usd REAL,
     liquidity_usd REAL,
     volume_m5_usd REAL,
