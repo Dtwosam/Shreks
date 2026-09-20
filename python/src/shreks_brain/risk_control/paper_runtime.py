@@ -77,6 +77,7 @@ class ControlledObserverPaperCampaignCoordinatorRunner(
             self._policy_bundle,
             self._risk_environment,
             self._selection_policy,
+            quote_usd_valuation_mode=self._quote_usd_valuation_mode,
             recent_performance=self._recent_performance,
             global_risk_halt=self._global_risk_halt,
         )
