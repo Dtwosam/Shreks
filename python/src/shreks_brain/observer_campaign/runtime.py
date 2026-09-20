@@ -28,7 +28,6 @@ from .runtime_config import (
     load_observer_paper_campaign_runtime_config,
 )
 from .runtime_manifest import (
-    OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION,
     ObserverPaperCampaignRuntimeManifest,
     ObserverPaperCampaignRuntimeManifestError,
     decode_observer_paper_campaign_runtime_manifest,
@@ -85,15 +84,6 @@ def bootstrap_observer_paper_campaign_runtime(
             "campaign manifest validation failed"
         ) from error
 
-    if (
-        manifest.schema_version
-        != OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
-    ):
-        raise ObserverPaperCampaignRuntimeError(
-            "authenticated PAPER runtime manifest v2 is not executable by "
-            "the legacy G1C runtime until quote USD valuation is integrated"
-        )
-
     try:
         runner = ObserverPaperCampaignCoordinatorRunner(
             config.observer_database_path,
@@ -104,6 +94,9 @@ def bootstrap_observer_paper_campaign_runtime(
             manifest.policy_bundle,
             manifest.risk_environment,
             manifest.selection_policy,
+            quote_usd_valuation_mode=_manifest_quote_usd_valuation_mode(
+                manifest
+            ),
             recent_performance=manifest.recent_performance,
             global_risk_halt=manifest.global_risk_halt,
         )
@@ -219,11 +212,25 @@ def _controlled_runner(
         manifest.policy_bundle,
         manifest.risk_environment,
         manifest.selection_policy,
+        quote_usd_valuation_mode=_manifest_quote_usd_valuation_mode(
+            manifest
+        ),
         recent_performance=manifest.recent_performance,
         global_risk_halt=manifest.global_risk_halt,
         operator_entry_halt_active=halt_new_entries,
         operator_kill_switch_active=kill_switch_active,
     )
+
+
+def _manifest_quote_usd_valuation_mode(
+    manifest: ObserverPaperCampaignRuntimeManifest,
+) -> str | None:
+    if type(manifest) is not ObserverPaperCampaignRuntimeManifest:
+        raise ObserverPaperCampaignRuntimeError(
+            "manifest must be an exact ObserverPaperCampaignRuntimeManifest"
+        )
+    policy = manifest.quote_usd_valuation_policy
+    return None if policy is None else policy.mode.value
 
 
 def main(argv: list[str] | None = None) -> int:
