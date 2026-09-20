@@ -52,6 +52,7 @@ from .models import (
     ObserverRegimeReadPolicy,
 )
 from .quote_valuation import (
+    OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_EXACT_MARKET_RATIO,
     OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED,
     resolve_observer_paper_quote_usd_evidence,
     validate_observer_paper_quote_usd_valuation_mode,
@@ -243,7 +244,7 @@ class ObserverPaperCycleAudit:
                 _require_sha256(name, value)
         if self.quote_usd_valuation_mode not in (
             OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED,
-            "exact_market_ratio",
+            OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_EXACT_MARKET_RATIO,
         ):
             raise ValueError("unsupported quote USD valuation mode")
         if self.quote_usd_valuation_market_row_id is not None:
