@@ -51,6 +51,11 @@ from .models import (
     ObserverPaperRiskEnvironment,
     ObserverRegimeReadPolicy,
 )
+from .quote_valuation import (
+    OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED,
+    resolve_observer_paper_quote_usd_evidence,
+    validate_observer_paper_quote_usd_valuation_mode,
+)
 from .quotes import build_entry_paper_quote, build_exit_paper_quote
 from .risk_context import build_observer_risk_context
 from .store import ObserverCampaignStore
@@ -193,6 +198,11 @@ class ObserverPaperCycleAudit:
     entry_quote_evidence_fingerprint: str | None
     exit_quote_evidence_fingerprint: str | None
     paper_cycle_fingerprint: str
+    quote_usd_valuation_mode: str = (
+        OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED
+    )
+    quote_usd_valuation_market_row_id: int | None = None
+    quote_usd_valuation_evidence_fingerprint: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != OBSERVER_PAPER_CYCLE_AUDIT_SCHEMA_VERSION:
@@ -231,6 +241,37 @@ class ObserverPaperCycleAudit:
             value = getattr(self, name)
             if value is not None:
                 _require_sha256(name, value)
+        if self.quote_usd_valuation_mode not in (
+            OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED,
+            "exact_market_ratio",
+        ):
+            raise ValueError("unsupported quote USD valuation mode")
+        if self.quote_usd_valuation_market_row_id is not None:
+            _require_positive_int(
+                "quote_usd_valuation_market_row_id",
+                self.quote_usd_valuation_market_row_id,
+            )
+        if self.quote_usd_valuation_evidence_fingerprint is not None:
+            _require_sha256(
+                "quote_usd_valuation_evidence_fingerprint",
+                self.quote_usd_valuation_evidence_fingerprint,
+            )
+        if (
+            self.quote_usd_valuation_market_row_id is None
+        ) != (
+            self.quote_usd_valuation_evidence_fingerprint is None
+        ):
+            raise ValueError(
+                "quote USD valuation row and evidence fingerprint must co-exist"
+            )
+        if (
+            self.quote_usd_valuation_mode
+            == OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED
+            and self.quote_usd_valuation_market_row_id is not None
+        ):
+            raise ValueError(
+                "manifest-fixed valuation must not carry dynamic evidence"
+            )
 
 
 def assemble_observer_paper_cycle(
@@ -240,6 +281,7 @@ def assemble_observer_paper_cycle(
     bundle: ObserverFreshLaunchPolicyBundle,
     environment: ObserverPaperRiskEnvironment,
     *,
+    quote_usd_valuation_mode: str | None = None,
     recent_performance: RecentStrategyPerformance | None = None,
     global_risk_halt: bool,
 ) -> tuple[PaperCycleInput, ObserverPaperCycleAudit]:
@@ -264,6 +306,14 @@ def assemble_observer_paper_cycle(
         raise ObserverPaperAssemblyError(
             "assembly timestamp cannot precede current paper-loop state"
         )
+    try:
+        canonical_quote_usd_valuation_mode = (
+            validate_observer_paper_quote_usd_valuation_mode(
+                quote_usd_valuation_mode
+            )
+        )
+    except ValueError as error:
+        raise ObserverPaperAssemblyError(str(error)) from error
 
     try:
         market_store = ObserverMarketStore(database_path)
@@ -299,7 +349,33 @@ def assemble_observer_paper_cycle(
 
         entry_quote: PaperQuote | None = None
         exit_quote: PaperQuote | None = None
+        quote_usd_valuation_evidence = None
+        quote_asset_usd_per_token: float | None = None
         reference_price_present = window.current.price_usd is not None
+        route_economics_required = (
+            token_decimals is not None
+            and reference_price_present
+            and any(
+                evidence is not None and evidence.route_available
+                for evidence in (entry_evidence, exit_evidence)
+            )
+        )
+        if (
+            canonical_quote_usd_valuation_mode is not None
+            and route_economics_required
+        ):
+            quote_usd_valuation_evidence = (
+                resolve_observer_paper_quote_usd_evidence(
+                    market_store,
+                    window,
+                    bundle.quote_asset,
+                    mode=canonical_quote_usd_valuation_mode,
+                    max_age_ms=bundle.market_read_policy.max_current_age_ms,
+                )
+            )
+            quote_asset_usd_per_token = (
+                quote_usd_valuation_evidence.quote_asset_usd_per_token
+            )
         if (
             entry_evidence is not None
             and token_decimals is not None
@@ -310,6 +386,7 @@ def assemble_observer_paper_cycle(
                 entry_evidence,
                 token_decimals,
                 bundle.quote_asset,
+                quote_asset_usd_per_token=quote_asset_usd_per_token,
             )
         if (
             exit_evidence is not None
@@ -321,6 +398,7 @@ def assemble_observer_paper_cycle(
                 exit_evidence,
                 token_decimals,
                 bundle.quote_asset,
+                quote_asset_usd_per_token=quote_asset_usd_per_token,
             )
 
         safety_inputs = build_safety_inputs(
@@ -426,6 +504,26 @@ def assemble_observer_paper_cycle(
             exit_observations=exit_observations,
             quotes=quotes,
         )
+        quote_usd_valuation_mode_label = (
+            OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_MANIFEST_FIXED
+            if canonical_quote_usd_valuation_mode is None
+            else canonical_quote_usd_valuation_mode
+        )
+        paper_cycle_fingerprint = (
+            _fingerprint(cycle)
+            if canonical_quote_usd_valuation_mode is None
+            else _fingerprint(
+                {
+                    "cycle": cycle,
+                    "quote_usd_valuation_mode": (
+                        canonical_quote_usd_valuation_mode
+                    ),
+                    "quote_usd_valuation_evidence": (
+                        quote_usd_valuation_evidence
+                    ),
+                }
+            )
+        )
         audit = ObserverPaperCycleAudit(
             schema_version=OBSERVER_PAPER_CYCLE_AUDIT_SCHEMA_VERSION,
             candidate_id=candidate_id,
@@ -451,7 +549,18 @@ def assemble_observer_paper_cycle(
             exit_quote_evidence_fingerprint=(
                 None if exit_evidence is None else _fingerprint(exit_evidence)
             ),
-            paper_cycle_fingerprint=_fingerprint(cycle),
+            paper_cycle_fingerprint=paper_cycle_fingerprint,
+            quote_usd_valuation_mode=quote_usd_valuation_mode_label,
+            quote_usd_valuation_market_row_id=(
+                None
+                if quote_usd_valuation_evidence is None
+                else quote_usd_valuation_evidence.market_row_id
+            ),
+            quote_usd_valuation_evidence_fingerprint=(
+                None
+                if quote_usd_valuation_evidence is None
+                else _fingerprint(quote_usd_valuation_evidence)
+            ),
         )
         return cycle, audit
     except ObserverPaperAssemblyError:
