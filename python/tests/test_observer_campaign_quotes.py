@@ -267,3 +267,37 @@ def test_quote_asset_name_has_no_special_semantics():
     quote = build_entry_paper_quote(_window(), evidence, 9, asset)
     assert math.isclose(quote.execution_price_usd, 7.0)
     assert math.isclose(quote.quoted_notional_usd, 7.0)
+
+
+def test_explicit_dynamic_quote_usd_rate_overrides_legacy_manifest_sentinel() -> None:
+    entry = build_entry_paper_quote(
+        _window(),
+        _entry_evidence(),
+        token_decimals=9,
+        quote_asset=_asset(usd_per_token=1.0),
+        quote_asset_usd_per_token=160.0,
+    )
+    exit_ = build_exit_paper_quote(
+        _window(),
+        _exit_evidence(),
+        token_decimals=9,
+        quote_asset=_asset(usd_per_token=1.0),
+        quote_asset_usd_per_token=160.0,
+    )
+
+    assert entry.execution_price_usd == 320.0
+    assert entry.quoted_notional_usd == 320.0
+    assert exit_.execution_price_usd == 384.0
+    assert exit_.quoted_notional_usd == 1.0
+
+
+@pytest.mark.parametrize("value", (0.0, -1.0, math.inf, math.nan))
+def test_explicit_dynamic_quote_usd_rate_must_be_positive_and_finite(value: float) -> None:
+    with pytest.raises(ObserverPaperQuoteError, match="USD|rate|positive|finite"):
+        build_entry_paper_quote(
+            _window(),
+            _entry_evidence(),
+            token_decimals=9,
+            quote_asset=_asset(usd_per_token=1.0),
+            quote_asset_usd_per_token=value,
+        )
