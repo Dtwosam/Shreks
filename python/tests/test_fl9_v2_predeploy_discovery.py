@@ -137,3 +137,116 @@ def test_privileged_predeploy_helper_reports_failure_without_exposing_exception(
     captured = capsys.readouterr()
     assert "sensitive protected path detail" not in captured.out
     assert "sensitive protected path detail" not in captured.err
+
+
+@pytest.mark.skipif(not _MODULE_PATH.exists(), reason="intentional RED: helper not implemented")
+def test_hold_no_compatible_is_enriched_with_read_only_runtime_quote_evidence_before_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = importlib.import_module(
+        "shreks_brain.telemetry.fl9_v2_predeploy_discovery"
+    )
+    events: list[object] = []
+    result = {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": "gha-123-1",
+        "expected_release_sha": "1" * 40,
+        "observed_release_sha": "1" * 40,
+        "status": "HOLD_NO_COMPATIBLE",
+        "discovery_report": {
+            "cohort_quote_mint": "So11111111111111111111111111111111111111112",
+            "candidates": [
+                {
+                    "quote_asset_mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+                }
+            ],
+        },
+    }
+    diagnostic = {
+        "schema_name": "shreks.fl9_v2_runtime_quote_evidence",
+        "schema_version": 1,
+        "status": "ONE_QUOTE_ASSET",
+        "sample_limit": 128,
+        "sampled_row_count": 7,
+        "quote_assets": [
+            {
+                "mint": "So11111111111111111111111111111111111111112",
+                "row_count": 7,
+                "latest_quoted_at_unix_ms": 123456,
+            }
+        ],
+    }
+
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        helper,
+        "process_pending_fl9_v2_discovery_requests",
+        lambda **_kwargs: (result,),
+    )
+    monkeypatch.setattr(
+        helper,
+        "read_fl9_v2_runtime_quote_evidence",
+        lambda path, *, sample_limit: (
+            events.append(("diagnostic", Path(path), sample_limit)) or diagnostic
+        ),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_drop_to_runtime_identity",
+        lambda: events.append("drop"),
+    )
+
+    published: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        helper,
+        "publish_fl9_v2_discovery_control_result",
+        lambda value, **_kwargs: published.append(value) or True,
+    )
+
+    assert helper.run_predeploy_discovery() == 0
+    assert events == [
+        ("diagnostic", Path("/var/lib/shreks/shreks.db"), 128),
+        "drop",
+    ]
+    assert published[0]["status"] == "HOLD_NO_COMPATIBLE"
+    assert published[0]["runtime_quote_evidence_diagnostic"] == diagnostic
+
+
+@pytest.mark.skipif(not _MODULE_PATH.exists(), reason="intentional RED: helper not implemented")
+def test_non_hold_discovery_result_does_not_consult_runtime_quote_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = importlib.import_module(
+        "shreks_brain.telemetry.fl9_v2_predeploy_discovery"
+    )
+    result = {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": "gha-123-1",
+        "expected_release_sha": "1" * 40,
+        "observed_release_sha": "1" * 40,
+        "status": "FOUND_COMPATIBLE",
+    }
+
+    monkeypatch.setattr(helper.os, "geteuid", lambda: 0)
+    monkeypatch.setattr(
+        helper,
+        "process_pending_fl9_v2_discovery_requests",
+        lambda **_kwargs: (result,),
+    )
+    monkeypatch.setattr(
+        helper,
+        "read_fl9_v2_runtime_quote_evidence",
+        lambda *_args, **_kwargs: pytest.fail(
+            "compatible discovery must not need runtime quote diagnostics"
+        ),
+    )
+    monkeypatch.setattr(helper, "_drop_to_runtime_identity", lambda: None)
+    monkeypatch.setattr(
+        helper,
+        "publish_fl9_v2_discovery_control_result",
+        lambda value, **_kwargs: value == result,
+    )
+
+    assert helper.run_predeploy_discovery() == 0
