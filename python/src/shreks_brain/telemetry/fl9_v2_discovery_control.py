@@ -633,23 +633,36 @@ def _enumerate_authority_candidates(root: Path) -> tuple[Path, ...]:
     if root.is_symlink() or not root.is_dir():
         raise DiscoveryControlError("historical request search root is not a real directory")
     candidates: set[Path] = set()
+
     root_candidate = root / _AUTHORITY_FILENAME
-    if root_candidate.exists() or root_candidate.is_symlink():
+    try:
+        root_candidate.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise DiscoveryControlError(
+            "historical request search root candidate could not be inspected"
+        ) from error
+    else:
         candidates.add(root_candidate)
 
     try:
-        top_level = tuple(
-            sorted(
-                path
-                for path in root.iterdir()
-                if path.name.startswith("fl9-v2-")
-                and not path.name.startswith(".")
-                and path.is_dir()
-                and not path.is_symlink()
-            )
-        )
+        top_level_entries = tuple(sorted(root.iterdir()))
     except OSError as error:
-        raise DiscoveryControlError("historical request search root could not be listed") from error
+        raise DiscoveryControlError(
+            "historical request search root could not be listed"
+        ) from error
+
+    top_level: list[Path] = []
+    for path in top_level_entries:
+        if not path.name.startswith("fl9-v2-") or path.name.startswith("."):
+            continue
+        try:
+            metadata = path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISDIR(metadata.st_mode):
+            top_level.append(path)
 
     frontier: list[tuple[Path, int]] = [(path, 1) for path in top_level]
     visited = 0
@@ -657,29 +670,39 @@ def _enumerate_authority_candidates(root: Path) -> tuple[Path, ...]:
         directory, depth = frontier.pop(0)
         visited += 1
         if visited > _MAX_AUTHORITY_DIRECTORIES:
-            raise DiscoveryControlError("historical request search exceeded directory bound")
+            raise DiscoveryControlError(
+                "historical request search exceeded directory bound"
+            )
+
         candidate = directory / _AUTHORITY_FILENAME
-        if candidate.exists() or candidate.is_symlink():
+        try:
+            candidate.lstat()
+        except OSError:
+            pass
+        else:
             candidates.add(candidate)
             if len(candidates) > _MAX_AUTHORITY_CANDIDATES:
-                raise DiscoveryControlError("historical request search exceeded candidate bound")
+                raise DiscoveryControlError(
+                    "historical request search exceeded candidate bound"
+                )
+
         if depth >= _MAX_AUTHORITY_SEARCH_DEPTH:
             continue
         try:
-            children = tuple(
-                sorted(
-                    child
-                    for child in directory.iterdir()
-                    if not child.name.startswith(".")
-                    and child.is_dir()
-                    and not child.is_symlink()
-                )
-            )
-        except OSError as error:
-            raise DiscoveryControlError("historical request directory could not be listed") from error
-        frontier.extend((child, depth + 1) for child in children)
-    return tuple(sorted(candidates))
+            entries = tuple(sorted(directory.iterdir()))
+        except OSError:
+            continue
 
+        for child in entries:
+            if child.name.startswith("."):
+                continue
+            try:
+                metadata = child.lstat()
+            except OSError:
+                continue
+            if stat.S_ISDIR(metadata.st_mode):
+                frontier.append((child, depth + 1))
+    return tuple(sorted(candidates))
 
 def _authority_group_fingerprint(
     authority: AuthenticatedV2DiscoveryRequestAuthority,

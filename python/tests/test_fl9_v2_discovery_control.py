@@ -309,6 +309,84 @@ def test_bounded_authority_enumeration_uses_only_root_and_fl9_v2_children(
     assert "os.walk(" not in source
 
 
+def test_unreadable_historical_subtree_is_skipped_while_readable_authority_is_used(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    markers = tmp_path / "markers"
+    _marker(markers)
+    requests = tmp_path / "requests"
+    requests.mkdir()
+
+    protected = requests / "fl9-v2-protected"
+    protected.mkdir()
+    protected_request = protected / "v2-first-champion-request.json"
+    protected_request.write_text("protected\n", encoding="utf-8")
+
+    readable = requests / "fl9-v2-readable"
+    readable.mkdir()
+    readable_request = readable / "v2-first-champion-request.json"
+    readable_request.write_text("readable\n", encoding="utf-8")
+
+    seen: list[Path] = []
+
+    def authenticate(*, cohort_path, v2_host_request_authority_path):
+        path = Path(v2_host_request_authority_path)
+        seen.append(path.resolve())
+        return _authority(path)
+
+    monkeypatch.setattr(
+        control,
+        "authenticate_fl9_v2_discovery_request_authority",
+        authenticate,
+    )
+    monkeypatch.setattr(
+        control,
+        "discover_fl9_v2_runtime_manifests_from_v2_request_authority",
+        lambda **_kwargs: {
+            "status": "FOUND_COMPATIBLE",
+            "compatible_candidate_count": 1,
+            "candidates": [],
+        },
+    )
+
+    protected.chmod(0)
+    try:
+        results = _process(tmp_path, markers)
+    finally:
+        protected.chmod(0o700)
+
+    assert results[0]["status"] == "FOUND_COMPATIBLE"
+    assert seen == [readable_request.resolve()]
+
+
+def test_only_unreadable_historical_subtree_returns_trusted_no_authority_hold(
+    tmp_path: Path,
+) -> None:
+    markers = tmp_path / "markers"
+    _marker(markers)
+    requests = tmp_path / "requests"
+    requests.mkdir()
+
+    protected = requests / "fl9-v2-protected"
+    protected.mkdir()
+    (protected / "v2-first-champion-request.json").write_text(
+        "protected\n",
+        encoding="utf-8",
+    )
+
+    protected.chmod(0)
+    try:
+        results = _process(tmp_path, markers)
+    finally:
+        protected.chmod(0o700)
+
+    assert results[0]["status"] == "HOLD_NO_REQUEST_AUTHORITY"
+    assert results[0]["request_candidate_count"] == 0
+    assert results[0]["authenticated_authority_count"] == 0
+    assert results[0]["rejected_authority_count"] == 0
+
+
 def test_distinct_authenticated_authority_groups_hold_ambiguous_without_discovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
