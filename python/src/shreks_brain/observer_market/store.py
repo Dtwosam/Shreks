@@ -318,8 +318,15 @@ class ObserverMarketStore:
         base_mint: str,
         quote_mint: str,
         max_age_ms: int,
+        expected_market_row_id: int | None = None,
     ) -> ObserverQuoteAssetUsdEvidence:
         """Derive one quote-token USD rate from one exact persisted market row."""
+        if expected_market_row_id is not None:
+            _require_positive_int(
+                "expected_market_row_id",
+                expected_market_row_id,
+            )
+
         snapshot = self.load_current_exact_market(
             candidate_id,
             as_of_unix_ms,
@@ -329,6 +336,13 @@ class ObserverMarketStore:
             quote_mint=quote_mint,
             max_age_ms=max_age_ms,
         )
+        if (
+            expected_market_row_id is not None
+            and snapshot.row_id != expected_market_row_id
+        ):
+            raise ObserverMarketReadError(
+                "quote asset USD evidence does not match expected market row"
+            )
 
         raw_native = snapshot.price_native
         if raw_native is None:
