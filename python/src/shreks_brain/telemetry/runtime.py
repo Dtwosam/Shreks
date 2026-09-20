@@ -18,6 +18,7 @@ from .fl9_v2_discovery_control import (
     CONTROL_RESULT_SCHEMA_VERSION,
     emit_fl9_v2_discovery_control_result,
     process_pending_fl9_v2_discovery_requests,
+    publish_fl9_v2_discovery_control_result,
 )
 from .models import TelemetrySnapshot
 from .snapshot import (
@@ -226,7 +227,23 @@ def _process_discovery_controls() -> None:
         return
 
     for result in results:
-        emit_fl9_v2_discovery_control_result(result)
+        emitted = result
+        try:
+            publish_fl9_v2_discovery_control_result(result)
+        except Exception:
+            emitted = {
+                "schema_name": CONTROL_RESULT_SCHEMA_NAME,
+                "schema_version": CONTROL_RESULT_SCHEMA_VERSION,
+                "request_id": result.get("request_id"),
+                "expected_release_sha": result.get("expected_release_sha"),
+                "observed_release_sha": result.get("observed_release_sha"),
+                "status": "FAILED",
+                "error": {
+                    "code": "CONTROL_RESULT_PUBLISH_FAILED",
+                    "message": "discovery control result publication failed",
+                },
+            }
+        emit_fl9_v2_discovery_control_result(emitted)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
