@@ -138,6 +138,11 @@ def test_main_preflight_processes_discovery_controls_before_config_and_emits_res
     )
     monkeypatch.setattr(
         telemetry_runtime,
+        "publish_fl9_v2_discovery_control_result",
+        lambda value: events.append("publish") or (value == result),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
         "load_telemetry_runtime_config",
         lambda: events.append("config") or object(),
     )
@@ -148,7 +153,7 @@ def test_main_preflight_processes_discovery_controls_before_config_and_emits_res
     )
 
     assert telemetry_runtime.main(["--preflight"]) == 0
-    assert events == ["control", "config", "preflight"]
+    assert events == ["control", "publish", "config", "preflight"]
     output = capsys.readouterr().out.strip()
     assert json.loads(output) == result
     assert output == json.dumps(
@@ -221,6 +226,11 @@ def test_main_snapshot_path_processes_discovery_controls_before_config_and_emits
     )
     monkeypatch.setattr(
         telemetry_runtime,
+        "publish_fl9_v2_discovery_control_result",
+        lambda value: events.append("publish") or (value == result),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
         "load_telemetry_runtime_config",
         lambda: events.append("config") or object(),
     )
@@ -231,7 +241,7 @@ def test_main_snapshot_path_processes_discovery_controls_before_config_and_emits
     )
 
     assert telemetry_runtime.main([]) == 0
-    assert events == ["control", "config", "snapshot"]
+    assert events == ["control", "publish", "config", "snapshot"]
     output = capsys.readouterr().out.strip()
     assert json.loads(output) == result
 
@@ -270,3 +280,53 @@ def test_main_snapshot_path_isolates_control_processor_failure_from_snapshot(
     assert payload["status"] == "FAILED"
     assert payload["error"]["code"] == "CONTROL_PROCESSOR_FAILED"
     assert "sensitive snapshot control detail" not in json.dumps(payload)
+
+
+def test_main_isolates_result_exchange_publish_failure_and_continues_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    events: list[str] = []
+    result = {
+        "schema_name": "shreks.fl9_v2_discovery_control_result",
+        "schema_version": 1,
+        "request_id": "gha-789-1",
+        "expected_release_sha": "3" * 40,
+        "observed_release_sha": "3" * 40,
+        "status": "HOLD_NO_REQUEST_AUTHORITY",
+    }
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "process_pending_fl9_v2_discovery_requests",
+        lambda: events.append("control") or (result,),
+    )
+
+    def fail_publish(_result):
+        events.append("publish")
+        raise RuntimeError("sensitive exchange detail")
+
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "publish_fl9_v2_discovery_control_result",
+        fail_publish,
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "load_telemetry_runtime_config",
+        lambda: events.append("config") or object(),
+    )
+    monkeypatch.setattr(
+        telemetry_runtime,
+        "run_telemetry_once",
+        lambda _config, *, as_of_unix_ms: events.append("snapshot"),
+    )
+
+    assert telemetry_runtime.main([]) == 0
+    assert events == ["control", "publish", "config", "snapshot"]
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["schema_name"] == "shreks.fl9_v2_discovery_control_result"
+    assert payload["request_id"] == "gha-789-1"
+    assert payload["status"] == "FAILED"
+    assert payload["error"]["code"] == "CONTROL_RESULT_PUBLISH_FAILED"
+    assert "sensitive exchange detail" not in json.dumps(payload)
