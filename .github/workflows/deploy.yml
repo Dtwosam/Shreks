@@ -64,8 +64,6 @@ jobs:
     needs: resolve
     environment: production-paper
     runs-on: ubuntu-latest
-    outputs:
-      discovery_request_id: ${{ steps.deploy_host.outputs.discovery_request_id }}
     env:
       SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
@@ -146,7 +144,6 @@ jobs:
             --manifest "dist/deploy/RELEASE_MANIFEST.json"
 
       - name: Transfer verified assets and invoke host release manager
-        id: deploy_host
         shell: bash
         env:
           SHREKS_DEPLOY_HOST: ${{ secrets.SHREKS_DEPLOY_HOST }}
@@ -198,7 +195,6 @@ jobs:
           REMOTE_MANIFEST="/var/tmp/shreks-release-$SOURCE_SHA.RELEASE_MANIFEST.json"
           DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           [[ "$DISCOVERY_REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
-          printf 'discovery_request_id=%s\n' "$DISCOVERY_REQUEST_ID" >> "$GITHUB_OUTPUT"
           REMOTE_DISCOVERY_REQUEST="/var/tmp/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.request"
           REMOTE_DISCOVERY_RESULT_DIR="/dev/shm/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.result.d"
           REMOTE_DISCOVERY_RESULT_FILE="$REMOTE_DISCOVERY_RESULT_DIR/result.json"
@@ -329,5 +325,5 @@ jobs:
     with:
       expected_release_sha: ${{ needs.resolve.outputs.source_sha }}
       journal_minutes: "30"
-      discovery_request_id: ${{ needs.deploy.outputs.discovery_request_id }}
+      discovery_request_id: gha-${{ github.run_id }}-${{ github.run_attempt }}
     secrets: inherit
