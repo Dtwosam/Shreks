@@ -22,6 +22,8 @@ def build_entry_paper_quote(
     evidence: ObserverPaperQuoteEvidence,
     token_decimals: int,
     quote_asset: ObserverPaperQuoteAsset,
+    *,
+    quote_asset_usd_per_token: float | None = None,
 ) -> PaperQuote:
     _validate_common(window, evidence, token_decimals, quote_asset)
     identity = evidence.identity
@@ -39,7 +41,10 @@ def build_entry_paper_quote(
     quote_input_usd = _raw_to_value(
         identity.input_amount,
         quote_asset.decimals,
-        quote_asset.usd_per_token,
+        _quote_asset_usd_rate(
+            quote_asset,
+            quote_asset_usd_per_token,
+        ),
         "entry quote input",
     )
     token_quantity = _raw_quantity(
@@ -69,6 +74,8 @@ def build_exit_paper_quote(
     evidence: ObserverPaperQuoteEvidence,
     token_decimals: int,
     quote_asset: ObserverPaperQuoteAsset,
+    *,
+    quote_asset_usd_per_token: float | None = None,
 ) -> PaperQuote:
     _validate_common(window, evidence, token_decimals, quote_asset)
     identity = evidence.identity
@@ -93,7 +100,10 @@ def build_exit_paper_quote(
     quote_output_usd = _raw_to_value(
         evidence.output_amount,
         quote_asset.decimals,
-        quote_asset.usd_per_token,
+        _quote_asset_usd_rate(
+            quote_asset,
+            quote_asset_usd_per_token,
+        ),
         "exit quote output",
     )
     execution_price = quote_output_usd / token_quantity
@@ -170,6 +180,27 @@ def _raw_quantity(raw_amount: int, decimals: int, name: str) -> float:
     if not math.isfinite(converted) or converted < 0:
         raise ObserverPaperQuoteError(f"{name} must be finite and non-negative")
     return converted
+
+
+def _quote_asset_usd_rate(
+    quote_asset: ObserverPaperQuoteAsset,
+    explicit_rate: float | None,
+) -> float:
+    if explicit_rate is None:
+        return quote_asset.usd_per_token
+    if (
+        isinstance(explicit_rate, bool)
+        or not isinstance(explicit_rate, (int, float))
+    ):
+        raise ObserverPaperQuoteError(
+            "explicit quote asset USD rate must be positive and finite"
+        )
+    parsed = float(explicit_rate)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ObserverPaperQuoteError(
+            "explicit quote asset USD rate must be positive and finite"
+        )
+    return parsed
 
 
 def _raw_to_value(

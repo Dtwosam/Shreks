@@ -229,3 +229,45 @@ def test_quote_asset_usd_evidence_keeps_exact_market_identity_fail_closed(
             quote_mint=WSOL,
             max_age_ms=60_000,
         )
+
+
+def test_quote_asset_usd_evidence_can_be_bound_to_exact_cycle_market_row(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "observer.sqlite3"
+    candidate_id = _database(path)
+    older_row_id = _snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=AS_OF - 1_000,
+    )
+    current_row_id = _snapshot(
+        path,
+        candidate_id,
+        observed_at_unix_ms=AS_OF - 500,
+    )
+
+    store = ObserverMarketStore(path)
+    evidence = store.quote_asset_usd_evidence(
+        candidate_id,
+        AS_OF,
+        source="dexscreener",
+        venue="pump_swap",
+        base_mint=TOKEN,
+        quote_mint=WSOL,
+        max_age_ms=60_000,
+        expected_market_row_id=current_row_id,
+    )
+    assert evidence.market_row_id == current_row_id
+
+    with pytest.raises(ObserverMarketReadError, match="row|market"):
+        store.quote_asset_usd_evidence(
+            candidate_id,
+            AS_OF,
+            source="dexscreener",
+            venue="pump_swap",
+            base_mint=TOKEN,
+            quote_mint=WSOL,
+            max_age_ms=60_000,
+            expected_market_row_id=older_row_id,
+        )

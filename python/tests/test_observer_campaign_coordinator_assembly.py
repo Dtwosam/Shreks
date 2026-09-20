@@ -38,16 +38,20 @@ def _seed_two_candidates(path) -> None:
     connection.execute(
         """INSERT INTO market_snapshots
            (id, candidate_id, observed_at_unix_ms, source, source_observed_at_unix_ms,
-            venue, pair_address, price_usd, liquidity_usd, volume_m5_usd,
-            volume_h1_usd, buys_m5, sells_m5, buys_h1, sells_h1,
+            venue, pair_address, base_mint, quote_mint, price_native,
+            price_usd, liquidity_usd, volume_m5_usd,
+            volume_h1_usd, volume_h24_usd, buys_m5, sells_m5, buys_h1, sells_h1,
             pair_created_at_unix_ms)
            SELECT id + 100, 2, observed_at_unix_ms - 500, source,
                   source_observed_at_unix_ms - 500, venue, 'PairRunner222',
+                  ?, quote_mint, price_native,
                   price_usd, liquidity_usd * 8.0, volume_m5_usd * 6.0,
-                  volume_h1_usd * 4.0, buys_m5 * 2, 1, buys_h1 * 2, 10,
+                  volume_h1_usd * 4.0, volume_h24_usd * 4.0,
+                  buys_m5 * 2, 1, buys_h1 * 2, 10,
                   pair_created_at_unix_ms
            FROM market_snapshots
-           WHERE candidate_id = 1"""
+           WHERE candidate_id = 1""",
+        (SECOND_MINT,),
     )
     connection.execute(
         """INSERT INTO token_mint_states

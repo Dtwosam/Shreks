@@ -25,6 +25,7 @@ from .assembler import (
     assemble_observer_paper_cycle,
 )
 from .models import ObserverPaperRiskEnvironment
+from .quote_valuation import validate_observer_paper_quote_usd_valuation_mode
 
 
 OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION = (
@@ -438,6 +439,7 @@ def assemble_observer_paper_campaign_cycle(
     environment: ObserverPaperRiskEnvironment,
     selection_policy: ObserverPaperCampaignSelectionPolicy,
     *,
+    quote_usd_valuation_mode: str | None = None,
     recent_performance: RecentStrategyPerformance | None = None,
     global_risk_halt: bool,
 ) -> tuple[PaperCycleInput, ObserverPaperCampaignCycleAudit]:
@@ -462,6 +464,14 @@ def assemble_observer_paper_campaign_cycle(
         )
     if type(global_risk_halt) is not bool:
         raise ObserverCampaignCoordinatorError("global_risk_halt must be a boolean")
+    try:
+        canonical_quote_usd_valuation_mode = (
+            validate_observer_paper_quote_usd_valuation_mode(
+                quote_usd_valuation_mode
+            )
+        )
+    except ValueError as error:
+        raise ObserverCampaignCoordinatorError(str(error)) from error
 
     store = ObserverCampaignCandidateStore(database_path)
     required_mints = tuple(
@@ -502,6 +512,9 @@ def assemble_observer_paper_campaign_cycle(
                 as_of_unix_ms,
                 candidate_bundle,
                 environment,
+                quote_usd_valuation_mode=(
+                    canonical_quote_usd_valuation_mode
+                ),
                 recent_performance=recent_performance,
                 global_risk_halt=global_risk_halt,
             )
@@ -795,6 +808,7 @@ class ObserverPaperCampaignCoordinatorRunner:
         risk_environment: ObserverPaperRiskEnvironment,
         selection_policy: ObserverPaperCampaignSelectionPolicy,
         *,
+        quote_usd_valuation_mode: str | None = None,
         recent_performance: RecentStrategyPerformance | None = None,
         global_risk_halt: bool,
     ) -> None:
@@ -825,6 +839,14 @@ class ObserverPaperCampaignCoordinatorRunner:
             )
         if type(global_risk_halt) is not bool:
             raise ObserverCampaignCoordinatorError("global_risk_halt must be a boolean")
+        try:
+            canonical_quote_usd_valuation_mode = (
+                validate_observer_paper_quote_usd_valuation_mode(
+                    quote_usd_valuation_mode
+                )
+            )
+        except ValueError as error:
+            raise ObserverCampaignCoordinatorError(str(error)) from error
         if candidate.strategy_version != policy_bundle.fresh_launch_policy.version:
             raise ObserverCampaignCoordinatorError(
                 "registry candidate strategy attribution does not match Fresh Launch policy"
@@ -846,6 +868,7 @@ class ObserverPaperCampaignCoordinatorRunner:
         self._policy_bundle = policy_bundle
         self._risk_environment = risk_environment
         self._selection_policy = selection_policy
+        self._quote_usd_valuation_mode = canonical_quote_usd_valuation_mode
         self._recent_performance = recent_performance
         self._global_risk_halt = global_risk_halt
         self._evidence_store = PaperEvaluationEvidenceStore(self._evidence_path)
@@ -886,6 +909,7 @@ class ObserverPaperCampaignCoordinatorRunner:
             self._policy_bundle,
             self._risk_environment,
             self._selection_policy,
+            quote_usd_valuation_mode=self._quote_usd_valuation_mode,
             recent_performance=self._recent_performance,
             global_risk_halt=self._global_risk_halt,
         )
