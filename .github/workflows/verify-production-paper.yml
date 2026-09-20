@@ -179,15 +179,25 @@ jobs:
           systemctl is-active --quiet shreks-telemetry.timer
           echo 'fl9_v2_discovery_bridge=available'
 
+          SHREKS_UID="$(id -u shreks)"
+          [[ "$SHREKS_UID" =~ ^[0-9]+$ ]] || exit 2
           DISCOVERY_MARKER="/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.request"
           DISCOVERY_TMP="${DISCOVERY_MARKER}.tmp"
+          DISCOVERY_RESULT_DIR="/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.result.d"
+          DISCOVERY_RESULT_FILE="$DISCOVERY_RESULT_DIR/result.json"
           cleanup_discovery() {
             rm -f "$DISCOVERY_TMP"
             rm -f "$DISCOVERY_MARKER"
+            rm -f "$DISCOVERY_RESULT_FILE"
+            rmdir "$DISCOVERY_RESULT_DIR" 2>/dev/null || true
           }
           trap cleanup_discovery EXIT
           test ! -e "$DISCOVERY_MARKER"
           test ! -e "$DISCOVERY_TMP"
+          test ! -e "$DISCOVERY_RESULT_DIR"
+          install -d -m 0733 "$DISCOVERY_RESULT_DIR"
+          test "$(stat -c %u "$DISCOVERY_RESULT_DIR")" = "$(id -u)"
+          test "$(stat -c %a "$DISCOVERY_RESULT_DIR")" = 733
 
           /opt/shreks/current/.venv/bin/python - "$REQUEST_ID" "$EXPECTED_SHA" "$DISCOVERY_TMP" <<'PY'
           import json
@@ -224,9 +234,81 @@ jobs:
           DISCOVERY_RESULT=''
           DISCOVERY_DEADLINE="$(( $(date +%s) + 180 ))"
           while (( $(date +%s) <= DISCOVERY_DEADLINE )); do
-            DISCOVERY_RESULT="$(
-              journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>/dev/null                 | grep -F '"schema_name":"shreks.fl9_v2_discovery_control_result"'                 | grep -F "\"request_id\":\"${REQUEST_ID}\""                 | tail -n 1                 || true
-            )"
+            if test -e "$DISCOVERY_RESULT_FILE"; then
+              DISCOVERY_RESULT="$(
+                /opt/shreks/current/.venv/bin/python - "$DISCOVERY_RESULT_FILE" "$SHREKS_UID" <<'PY' 2>/dev/null || true
+          import json
+          import os
+          import stat
+          import sys
+
+          path, expected_uid_raw = sys.argv[1:]
+          expected_uid = int(expected_uid_raw)
+          try:
+              before = os.lstat(path)
+          except OSError:
+              raise SystemExit(3)
+          if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+              raise SystemExit("FL9 discovery result must be a regular file")
+          if before.st_uid != expected_uid:
+              raise SystemExit("FL9 discovery result owner mismatch")
+          if stat.S_IMODE(before.st_mode) != 0o644:
+              raise SystemExit(3)
+          if before.st_size < 2 or before.st_size > 1_048_576:
+              raise SystemExit("FL9 discovery result size is outside the allowed bound")
+
+          flags = os.O_RDONLY
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          fd = os.open(path, flags)
+          try:
+              opened = os.fstat(fd)
+              chunks = []
+              total = 0
+              while True:
+                  chunk = os.read(fd, min(65536, 1_048_577 - total))
+                  if not chunk:
+                      break
+                  chunks.append(chunk)
+                  total += len(chunk)
+                  if total > 1_048_576:
+                      raise SystemExit("FL9 discovery result exceeds the allowed bound")
+              after = os.fstat(fd)
+          finally:
+              os.close(fd)
+
+          identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+          identity_opened = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+          identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+          if identity_before != identity_opened or identity_opened != identity_after:
+              raise SystemExit("FL9 discovery result changed while being read")
+          if opened.st_uid != expected_uid or stat.S_IMODE(opened.st_mode) != 0o644:
+              raise SystemExit("FL9 discovery result identity changed while being read")
+
+          payload = b"".join(chunks)
+          try:
+              text = payload.decode("utf-8")
+              document = json.loads(text)
+          except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+              raise SystemExit("malformed FL9 discovery result") from exc
+          canonical = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          if text != canonical:
+              raise SystemExit("result is not a canonical FL9 discovery result")
+          print(text, end="")
+          PY
+              )"
+            fi
+            if [[ -z "$DISCOVERY_RESULT" ]]; then
+              DISCOVERY_RESULT="$(
+                journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>/dev/null                 | grep -F '"schema_name":"shreks.fl9_v2_discovery_control_result"'                 | grep -F "\"request_id\":\"${REQUEST_ID}\""                 | tail -n 1                 || true
+              )"
+            fi
             if [[ -n "$DISCOVERY_RESULT" ]]; then
               break
             fi
@@ -261,6 +343,12 @@ jobs:
               stat -c 'marker=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$DISCOVERY_MARKER" || true
             else
               echo 'marker_present=no'
+            fi
+            if test -d "$DISCOVERY_RESULT_DIR"; then
+              stat -c 'result_exchange=%n mode=%a owner_uid=%u owner_gid=%g' "$DISCOVERY_RESULT_DIR" || true
+            fi
+            if test -e "$DISCOVERY_RESULT_FILE"; then
+              stat -c 'result_file=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$DISCOVERY_RESULT_FILE" || true
             fi
             journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>&1 || true
             echo 'telemetry_timeout_diagnostics=end'
@@ -304,6 +392,6 @@ jobs:
           )"
           printf 'fl9_v2_discovery_status=%s\n' "$DISCOVERY_STATUS"
           printf 'fl9_v2_discovery_result=%s\n' "$DISCOVERY_RESULT"
-          rm -f "$DISCOVERY_MARKER"
+          cleanup_discovery
           trap - EXIT
           REMOTE
