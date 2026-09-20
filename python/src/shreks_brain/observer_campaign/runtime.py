@@ -28,6 +28,7 @@ from .runtime_config import (
     load_observer_paper_campaign_runtime_config,
 )
 from .runtime_manifest import (
+    OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION,
     ObserverPaperCampaignRuntimeManifest,
     ObserverPaperCampaignRuntimeManifestError,
     decode_observer_paper_campaign_runtime_manifest,
@@ -83,6 +84,15 @@ def bootstrap_observer_paper_campaign_runtime(
         raise ObserverPaperCampaignRuntimeError(
             "campaign manifest validation failed"
         ) from error
+
+    if (
+        manifest.schema_version
+        != OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION
+    ):
+        raise ObserverPaperCampaignRuntimeError(
+            "authenticated PAPER runtime manifest v2 is not executable by "
+            "the legacy G1C runtime until quote USD valuation is integrated"
+        )
 
     try:
         runner = ObserverPaperCampaignCoordinatorRunner(
