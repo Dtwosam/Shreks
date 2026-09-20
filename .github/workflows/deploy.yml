@@ -64,6 +64,8 @@ jobs:
     needs: resolve
     environment: production-paper
     runs-on: ubuntu-latest
+    outputs:
+      discovery_request_id: ${{ steps.deploy_host.outputs.discovery_request_id }}
     env:
       SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
       RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
@@ -144,6 +146,7 @@ jobs:
             --manifest "dist/deploy/RELEASE_MANIFEST.json"
 
       - name: Transfer verified assets and invoke host release manager
+        id: deploy_host
         shell: bash
         env:
           SHREKS_DEPLOY_HOST: ${{ secrets.SHREKS_DEPLOY_HOST }}
@@ -193,6 +196,12 @@ jobs:
           REMOTE_ARCHIVE="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz"
           REMOTE_CHECKSUM="/var/tmp/shreks-release-$SOURCE_SHA.tar.gz.sha256"
           REMOTE_MANIFEST="/var/tmp/shreks-release-$SOURCE_SHA.RELEASE_MANIFEST.json"
+          DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          [[ "$DISCOVERY_REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
+          printf 'discovery_request_id=%s\n' "$DISCOVERY_REQUEST_ID" >> "$GITHUB_OUTPUT"
+          REMOTE_DISCOVERY_REQUEST="/var/tmp/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.request"
+          REMOTE_DISCOVERY_RESULT_DIR="/dev/shm/shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.result.d"
+          REMOTE_DISCOVERY_RESULT_FILE="$REMOTE_DISCOVERY_RESULT_DIR/result.json"
 
           echo "remote staging preflight"
           ssh "${SSH_COMMON[@]}" "$DESTINATION" \
@@ -234,6 +243,68 @@ jobs:
             exit "$TRANSFER_RC"
           fi
 
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$SOURCE_SHA' '$DISCOVERY_REQUEST_ID' '$REMOTE_DISCOVERY_REQUEST' '$REMOTE_DISCOVERY_RESULT_DIR'" <<'REMOTE_DISCOVERY'
+          set -euo pipefail
+          SOURCE_SHA="$1"
+          REQUEST_ID="$2"
+          REQUEST_PATH="$3"
+          RESULT_DIR="$4"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+          [[ "$REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
+          test "$REQUEST_PATH" = "/var/tmp/shreks-fl9-v2-discovery.${REQUEST_ID}.request"
+          test "$RESULT_DIR" = "/dev/shm/shreks-fl9-v2-discovery.${REQUEST_ID}.result.d"
+
+          find /var/tmp -maxdepth 1 -type f -user "$(id -u)" \
+            -name 'shreks-fl9-v2-discovery.gha-*.request' -delete
+          rm -f "$RESULT_DIR/result.json"
+          rmdir "$RESULT_DIR" 2>/dev/null || true
+          install -d -m 0733 "$RESULT_DIR"
+          test "$(stat -c %u "$RESULT_DIR")" = "$(id -u)"
+          test "$(stat -c %a "$RESULT_DIR")" = 733
+
+          python3 - "$REQUEST_ID" "$SOURCE_SHA" "$REQUEST_PATH" <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          request_id, expected_sha, output_path = sys.argv[1:]
+          document = {
+              "schema_name": "shreks.fl9_v2_discovery_control_request",
+              "schema_version": 1,
+              "request_id": request_id,
+              "expected_release_sha": expected_sha,
+              "created_at_unix_ms": time.time_ns() // 1_000_000,
+          }
+          payload = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          fd = os.open(output_path, flags, 0o644)
+          try:
+              offset = 0
+              encoded = payload.encode("utf-8")
+              while offset < len(encoded):
+                  written = os.write(fd, encoded[offset:])
+                  if written <= 0:
+                      raise OSError("short write")
+                  offset += written
+              os.fsync(fd)
+              os.fchmod(fd, 0o644)
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          PY
+          test "$(stat -c %u "$REQUEST_PATH")" = "$(id -u)"
+          test "$(stat -c %a "$REQUEST_PATH")" = 644
+          REMOTE_DISCOVERY
+
           set +e
           ssh "${SSH_COMMON[@]}" "$DESTINATION" \
             "sudo /usr/local/sbin/shreks-release-manager install '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
@@ -245,12 +316,12 @@ jobs:
             ssh "${SSH_COMMON[@]}" "$DESTINATION" \
               "printf 'current_release='; readlink -f /opt/shreks/current || true; printf 'candidate_release_present='; if test -d '/opt/shreks/releases/$SOURCE_SHA'; then echo yes; else echo no; fi; systemctl is-active shreks.target || true; systemctl show shreks-observe.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-evidence.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks-paper-campaign.service -p ActiveState -p SubState -p NRestarts -p MainPID -p ExecMainStatus --no-pager || true; systemctl show shreks.target -p ActiveState -p SubState --no-pager || true" || true
             ssh "${SSH_COMMON[@]}" "$DESTINATION" \
-              "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'" || true
+              "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST' '$REMOTE_DISCOVERY_REQUEST' '$REMOTE_DISCOVERY_RESULT_FILE'; rmdir '$REMOTE_DISCOVERY_RESULT_DIR' 2>/dev/null || true" || true
             exit "$DEPLOY_RC"
           fi
 
           ssh "${SSH_COMMON[@]}" "$DESTINATION" \
-            "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST'"
+            "rm -f '$REMOTE_ARCHIVE' '$REMOTE_CHECKSUM' '$REMOTE_MANIFEST' '$REMOTE_DISCOVERY_REQUEST'"
 
   verify:
     needs: [resolve, deploy]
@@ -258,4 +329,5 @@ jobs:
     with:
       expected_release_sha: ${{ needs.resolve.outputs.source_sha }}
       journal_minutes: "30"
+      discovery_request_id: ${{ needs.deploy.outputs.discovery_request_id }}
     secrets: inherit
