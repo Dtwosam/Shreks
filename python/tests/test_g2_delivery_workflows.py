@@ -595,3 +595,56 @@ def test_release_runbook_documents_automatic_sealed_release_delivery_chain():
     lower = runbook.lower()
     assert "does not bypass" in lower
     assert "before host contact" in lower
+
+
+def test_deploy_workflow_prestages_nested_release_bound_protected_discovery() -> None:
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    for required in (
+        "DISCOVERY_REQUEST_ID=deploy-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}",
+        "shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.result.d",
+        "shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.request",
+        '"schema_name": "shreks.fl9_v2_discovery_control_request"',
+        '"schema_version": 1',
+        '"expected_release_sha": expected_sha',
+        "install -d -m 0733",
+        "stat -c %u",
+        "stat -c %a",
+        "id -u shreks",
+        "protected discovery result was not published during release activation",
+    ):
+        assert required in workflow
+
+    stage_index = workflow.index(
+        "shreks-fl9-v2-discovery.${DISCOVERY_REQUEST_ID}.result.d"
+    )
+    install_index = workflow.index(
+        "sudo /usr/local/sbin/shreks-release-manager install"
+    )
+    assert stage_index < install_index
+
+
+def test_reusable_verifier_reuses_prestaged_protected_discovery_exchange() -> None:
+    workflow = _read(_VERIFY_PRODUCTION_WORKFLOW)
+
+    for required in (
+        "discovery_request_id:",
+        "DISCOVERY_REQUEST_ID_INPUT",
+        "PRESTAGED_DISCOVERY=1",
+        "PRESTAGED_DISCOVERY=0",
+        "shreks-fl9-v2-discovery.${REQUEST_ID}.result.d",
+        "shreks-fl9-v2-discovery.${REQUEST_ID}.request",
+        "prestaged_discovery_marker=available",
+        "prestaged_discovery_result=available",
+    ):
+        assert required in workflow
+
+    assert 'if [[ "$PRESTAGED_DISCOVERY" == 0 ]]' in workflow
+    assert "journalctl -u shreks-telemetry.service -o cat" in workflow
+
+
+def test_deploy_passes_exact_prestaged_discovery_request_to_reusable_verifier() -> None:
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    assert "discovery_request_id:" in workflow
+    assert "deploy-${{ github.run_id }}-${{ github.run_attempt }}" in workflow
