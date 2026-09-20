@@ -27,6 +27,9 @@ from shreks_brain.setups import FreshLaunchPolicy
 
 from .assembler import ObserverFreshLaunchPolicyBundle
 from .coordinator import ObserverPaperCampaignSelectionPolicy
+from .quote_valuation import (
+    OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_EXACT_MARKET_RATIO,
+)
 from .models import (
     ObserverPaperQuoteAsset,
     ObserverPaperQuoteIdentity,
@@ -52,7 +55,9 @@ class ObserverPaperCampaignRuntimeManifestError(ValueError):
 
 
 class ObserverPaperQuoteUsdValuationMode(Enum):
-    EXACT_MARKET_RATIO = "exact_market_ratio"
+    EXACT_MARKET_RATIO = (
+        OBSERVER_PAPER_QUOTE_USD_VALUATION_MODE_EXACT_MARKET_RATIO
+    )
 
 
 @dataclass(frozen=True, slots=True)
