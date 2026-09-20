@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 import math
 
 
@@ -65,6 +66,7 @@ class ObserverMarketSnapshot:
     base_mint: str | None = None
     quote_mint: str | None = None
     volume_h24_usd: float | None = None
+    price_native: str | None = None
 
     def __post_init__(self) -> None:
         _require_positive_int("row_id", self.row_id)
@@ -84,6 +86,10 @@ class ObserverMarketSnapshot:
         _require_non_empty_string("venue", self.venue)
         _require_string("pair_address", self.pair_address)
         _require_optional_non_negative_finite("price_usd", self.price_usd)
+        _require_optional_non_negative_decimal_string(
+            "price_native",
+            self.price_native,
+        )
         _require_optional_non_negative_finite("liquidity_usd", self.liquidity_usd)
         _require_optional_non_negative_finite("volume_m5_usd", self.volume_m5_usd)
         _require_optional_non_negative_finite("volume_h1_usd", self.volume_h1_usd)
@@ -104,6 +110,43 @@ class ObserverMarketSnapshot:
             raise ValueError(
                 "pair_created_at_unix_ms cannot be later than observed_at_unix_ms"
             )
+
+
+@dataclass(frozen=True, slots=True)
+class ObserverQuoteAssetUsdEvidence:
+    market_row_id: int
+    candidate_id: int
+    observed_at_unix_ms: int
+    source: str
+    venue: str
+    pair_address: str
+    base_mint: str
+    quote_mint: str
+    base_price_quote: str
+    base_price_usd: float
+    quote_asset_usd_per_token: float
+
+    def __post_init__(self) -> None:
+        _require_positive_int("market_row_id", self.market_row_id)
+        _require_positive_int("candidate_id", self.candidate_id)
+        _require_non_negative_int(
+            "observed_at_unix_ms",
+            self.observed_at_unix_ms,
+        )
+        _require_non_empty_string("source", self.source)
+        _require_non_empty_string("venue", self.venue)
+        _require_string("pair_address", self.pair_address)
+        _require_non_empty_string("base_mint", self.base_mint)
+        _require_non_empty_string("quote_mint", self.quote_mint)
+        _require_positive_decimal_string(
+            "base_price_quote",
+            self.base_price_quote,
+        )
+        _require_positive_finite("base_price_usd", self.base_price_usd)
+        _require_positive_finite(
+            "quote_asset_usd_per_token",
+            self.quote_asset_usd_per_token,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +239,43 @@ def _require_non_empty_string(name: str, value: str) -> None:
         raise ValueError(f"{name} must be a non-empty string")
 
 
+
+def _require_positive_decimal_string(name: str, value: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} must be a positive finite decimal string")
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{name} must be a positive finite decimal string"
+        ) from error
+    if not parsed.is_finite() or parsed <= 0:
+        raise ValueError(f"{name} must be a positive finite decimal string")
+
+
+def _require_optional_non_negative_decimal_string(
+    name: str,
+    value: str | None,
+) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{name} must be a non-negative finite decimal string or None"
+        )
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as error:
+        raise ValueError(
+            f"{name} must be a non-negative finite decimal string or None"
+        ) from error
+    if not parsed.is_finite() or parsed < 0:
+        raise ValueError(
+            f"{name} must be a non-negative finite decimal string or None"
+        )
+
+
+
 def _require_optional_non_empty_string(name: str, value: str | None) -> None:
     if value is None:
         return
@@ -225,6 +305,13 @@ def _require_optional_non_negative_finite(name: str, value: float | None) -> Non
         raise ValueError(f"{name} must be a finite non-negative number")
     if not math.isfinite(value) or value < 0:
         raise ValueError(f"{name} must be a finite non-negative number")
+
+
+def _require_positive_finite(name: str, value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{name} must be a finite positive number")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
 
 
 def _require_optional_positive_finite(name: str, value: float | None) -> None:
