@@ -43,6 +43,37 @@ class DiscoveryControlError(RuntimeError):
     """Raised when an FL9 V2 discovery control request cannot be trusted."""
 
 
+def _resolve_marker_directory(
+    path: Path,
+    *,
+    expected_owner_uid: int,
+) -> Path | None:
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return None
+
+    if stat.S_ISDIR(metadata.st_mode):
+        return path
+    if not stat.S_ISLNK(metadata.st_mode):
+        return None
+    if metadata.st_uid != expected_owner_uid:
+        return None
+
+    try:
+        resolved = path.resolve(strict=True)
+        target = resolved.stat()
+    except OSError:
+        return None
+    if not stat.S_ISDIR(target.st_mode):
+        return None
+    if target.st_uid != expected_owner_uid:
+        return None
+    if stat.S_IMODE(target.st_mode) != 0o1777:
+        return None
+    return resolved
+
+
 def process_pending_fl9_v2_discovery_requests(
     *,
     marker_directory: Path = Path("/dev/shm"),
@@ -55,6 +86,7 @@ def process_pending_fl9_v2_discovery_requests(
     backup_root: Path = Path("/var/lib/shreks/backups"),
     current_release_link: Path = Path("/opt/shreks/current"),
     expected_owner_uid: int | None = None,
+    expected_marker_directory_owner_uid: int = 0,
     now_unix_ms: int | None = None,
     max_requests: int = 8,
 ) -> tuple[dict[str, object], ...]:
@@ -65,12 +97,21 @@ def process_pending_fl9_v2_discovery_requests(
         if expected_owner_uid is None
         else expected_owner_uid
     )
+    if (
+        isinstance(expected_marker_directory_owner_uid, bool)
+        or not isinstance(expected_marker_directory_owner_uid, int)
+        or expected_marker_directory_owner_uid < 0
+    ):
+        raise ValueError("expected_marker_directory_owner_uid must be a non-negative integer")
     now_ms = int(time.time() * 1000) if now_unix_ms is None else now_unix_ms
     if isinstance(now_ms, bool) or not isinstance(now_ms, int) or now_ms < 0:
         raise ValueError("now_unix_ms must be a non-negative integer")
 
-    directory = Path(marker_directory)
-    if directory.is_symlink() or not directory.is_dir():
+    directory = _resolve_marker_directory(
+        Path(marker_directory),
+        expected_owner_uid=expected_marker_directory_owner_uid,
+    )
+    if directory is None:
         return ()
     try:
         marker_paths = tuple(
