@@ -94,9 +94,12 @@ def process_pending_fl9_v2_discovery_requests(
     expected_marker_directory_owner_uid: int = 0,
     now_unix_ms: int | None = None,
     max_requests: int = 8,
+    persist_receipts: bool = True,
 ) -> tuple[dict[str, object], ...]:
     if max_requests < 1:
         raise ValueError("max_requests must be positive")
+    if not isinstance(persist_receipts, bool):
+        raise ValueError("persist_receipts must be a bool")
     owner_uid = (
         pwd.getpwnam("shreks-deploy").pw_uid
         if expected_owner_uid is None
@@ -143,7 +146,7 @@ def process_pending_fl9_v2_discovery_requests(
             expected_owner_uid=owner_uid,
             now_unix_ms=now_ms,
         )
-        if may_persist:
+        if may_persist and persist_receipts:
             try:
                 _write_receipt_once(Path(receipt_root), result)
             except DiscoveryControlError as error:
