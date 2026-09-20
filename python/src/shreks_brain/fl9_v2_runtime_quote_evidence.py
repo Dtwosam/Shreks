@@ -4,6 +4,8 @@ from pathlib import Path
 import sqlite3
 from typing import Final
 
+from shreks_brain.observer_campaign.models import ObserverPaperQuotePurpose
+
 
 RUNTIME_QUOTE_EVIDENCE_SCHEMA_NAME: Final = "shreks.fl9_v2_runtime_quote_evidence"
 RUNTIME_QUOTE_EVIDENCE_SCHEMA_VERSION: Final = 1
@@ -17,7 +19,8 @@ _REQUIRED_COLUMNS: Final = frozenset(
         "quoted_at_unix_ms",
     }
 )
-_ALLOWED_PURPOSES: Final = frozenset({"ENTRY", "EXIT"})
+_ALLOWED_PURPOSES: Final = frozenset(purpose.value for purpose in ObserverPaperQuotePurpose)
+_ENTRY_PURPOSE: Final = ObserverPaperQuotePurpose.ENTRY.value
 
 
 class RuntimeQuoteEvidenceError(ValueError):
@@ -103,7 +106,7 @@ def read_fl9_v2_runtime_quote_evidence(
                 "paper quote evidence purpose is invalid"
             )
 
-        quote_mint = row["input_mint"] if purpose == "ENTRY" else row["output_mint"]
+        quote_mint = row["input_mint"] if purpose == _ENTRY_PURPOSE else row["output_mint"]
         if not isinstance(quote_mint, str) or not quote_mint.strip():
             raise RuntimeQuoteEvidenceError(
                 "paper quote evidence quote mint is invalid"
