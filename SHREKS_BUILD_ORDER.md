@@ -585,15 +585,17 @@ Never claim a phase complete without exact verification evidence.
 
 The currently deployed and production-verified sealed release is:
 
-`c2f829f8e4679e0134d9d725b4e2d526874187b1`
+`86a3033aea5e26ff127f3b64c8c9dbc1fcd40652`
 
 For that exact SHA:
 
-- sealed-main CI completed successfully;
-- the immutable GitHub release was built successfully;
-- protected PAPER deployment completed successfully;
-- production verification completed successfully;
-- the canonical PAPER manifest-manager status evidence artifact was uploaded.
+- sealed-main CI `35627976689` completed successfully;
+- immutable release build `35628219677` completed successfully;
+- protected PAPER deploy/verify `35628807240` completed successfully;
+- production verification proved the install-planner console script and Python module are physically present inside the exact immutable release;
+- production verification still reported `paper_manifest_manager_status=ABSENT`;
+- the canonical PAPER manifest-manager status evidence artifact was uploaded;
+- protected FL9 discovery still reported `HOLD_NO_COMPATIBLE`.
 
 ### Protected PAPER manifest-manager state
 
@@ -620,7 +622,7 @@ The repository already contains and has separately sealed the narrow G1C v2 capa
 - rotation-readiness proof;
 - trusted-administrator read-only first-install planner.
 
-The first-install planner is present in the exact deployed release, but automatic planner execution and automatic helper installation remain forbidden.
+The first-install planner is present and release-proven in the exact deployed release. Automatic planner execution and automatic helper installation remain forbidden.
 
 ### Current FL9 discovery state
 
