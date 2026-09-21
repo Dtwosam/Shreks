@@ -407,8 +407,9 @@ def test_readiness_rejects_service_lifecycle_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    services = ServiceRunner(drift_after_first_snapshot=True)
+    services = ServiceRunner()
     setup = _setup(tmp_path, monkeypatch, service_runner=services)
+    services.drift_after_first_snapshot = True
     services.calls.clear()
 
     with pytest.raises(
