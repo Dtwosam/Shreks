@@ -16,6 +16,7 @@ from shreks_brain import g1c_v2_paper_manifest_manager_installation_proof as pro
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANAGER_SOURCE = _REPO_ROOT / "deploy" / "release" / "paper_manifest_manager.py"
 _RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
+_VERIFY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "verify-production-paper.yml"
 _PYPROJECT = _REPO_ROOT / "python" / "pyproject.toml"
 RELEASE_SHA = "e" * 40
 WHEEL_RELATIVE_PATH = "wheelhouse/shreks_brain-0.1.0-py3-none-any.whl"
