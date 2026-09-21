@@ -16,6 +16,7 @@ from test_g1c_v2_paper_manifest_manager_installation_proof import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
+_VERIFY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "verify-production-paper.yml"
 _PYPROJECT = _REPO_ROOT / "python" / "pyproject.toml"
 
 
@@ -258,3 +259,19 @@ def test_install_plan_authority_firewall_and_operator_contract() -> None:
     assert "READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY" in runbook
     assert "does not create the evidence directory" in runbook
     assert "does not execute the installer" in runbook
+
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+    assert (
+        'INSTALL_PLANNER="/opt/shreks/current/.venv/bin/'
+        'shreks-g1c-v2-paper-manifest-manager-install-plan"'
+    ) in workflow
+    assert 'test -f "$INSTALL_PLANNER"' in workflow
+    assert 'test ! -L "$INSTALL_PLANNER"' in workflow
+    assert 'test -x "$INSTALL_PLANNER"' in workflow
+    assert 'readlink -f "$INSTALL_PLANNER"' in workflow
+    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install_plan as planner" in workflow
+    assert 'paper_manifest_manager_install_planner=present' in workflow
+    assert 'paper_manifest_manager_install_planner_path=%s' in workflow
+    assert 'paper_manifest_manager_install_planner_module=%s' in workflow
+    assert 'shreks-g1c-v2-paper-manifest-manager-install-plan "$EXPECTED_SHA"' not in workflow
+    assert '"$INSTALL_PLANNER" "$EXPECTED_SHA"' not in workflow
