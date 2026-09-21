@@ -22,6 +22,7 @@ shreks-fl9-v2-runtime-manifest-candidate-assessment = "shreks_brain.fl9_v2_runti
 shreks-g1c-v2-runtime-manifest-candidate-author = "shreks_brain.g1c_v2_runtime_manifest_candidate_authoring:main"
 shreks-g1c-v2-runtime-manifest-transition-bind = "shreks_brain.g1c_v2_runtime_manifest_transition_binding:main"
 shreks-g1c-v2-paper-manifest-manager-install = "shreks_brain.g1c_v2_paper_manifest_manager_install:main"
+shreks-g1c-v2-paper-manifest-manager-install-proof = "shreks_brain.g1c_v2_paper_manifest_manager_installation_proof:main"
 shreks-fl9-v2-discovery-authority-bind = "shreks_brain.fl9_v2_discovery_authority_binding:main"
 # Legacy module remains sealed for helper/unit-test compatibility; production
 # execution is routed through the cohort-bounded runner below.
