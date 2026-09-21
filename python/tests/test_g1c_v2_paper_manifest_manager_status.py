@@ -198,7 +198,7 @@ def test_status_rejects_release_wheel_drift(
 
     with pytest.raises(
         status.PaperManifestManagerStatusError,
-        match="release material could not be authenticated",
+        match="release wheel hash does not match release manifest",
     ):
         _inspect(setup)
 
