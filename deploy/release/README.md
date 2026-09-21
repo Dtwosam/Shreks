@@ -328,6 +328,69 @@ A successful `installation-proof.json` records `PROVEN_EXACT_RELEASE_BOUND_HELPE
 
 If the proof fails, do not treat helper installation as accepted and do not proceed to runtime-manifest rotation. Investigate the drift first.
 
+## Prove protected PAPER manifest rotation readiness
+
+After the root helper has been installed with a successful `installation-proof.json`, use the release-local readiness proof before requesting any separate production manifest-rotation authority.
+
+This proof is deliberately non-mutating with respect to protected runtime state. It does not stop or start services, does not invoke `shreks-paper-manifest-manager`, and does not replace the active campaign manifest. It creates only a private temporary candidate copy for the existing PAPER preflight and removes that copy when the command exits.
+
+Stage the exact canonical v2 candidate and exact transition binding as regular non-symlink files. Preserve the installation proof from the helper-install ceremony, then run:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+BINDING_FINGERPRINT="<64-character-binding-fingerprint>"
+CANDIDATE="/var/tmp/shreks-paper-candidate.json"
+BINDING="/var/tmp/shreks-paper-transition-binding.json"
+INSTALL_PROOF="/root/shreks-paper-manifest-manager-install-$CURRENT_SHA/installation-proof.json"
+READINESS_DIR="/root/shreks-paper-manifest-rotation-readiness-$CURRENT_SHA"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$READINESS_DIR"
+
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-rotation-readiness"     "$2" "$3" "$4" "$5" "$6"     > "$7/rotation-readiness.json"
+' sh   "$CURRENT_RELEASE"   "$CANDIDATE"   "$BINDING"   "$INSTALL_PROOF"   "$BINDING_FINGERPRINT"   "$CURRENT_SHA"   "$READINESS_DIR"
+```
+
+The readiness proof fails closed unless all of the following are true:
+
+- the current immutable release and manifest-hashed Shreks wheel authenticate to the explicit release SHA;
+- the installed `/usr/local/sbin/shreks-paper-manifest-manager` bytes and root-owned `0755` metadata exactly match the sealed manager member in that release;
+- the supplied helper `installation-proof.json` is canonical, fingerprint-valid, `VERIFIED`, and bound to the same release, wheel, manager, destination, and narrow authority fields;
+- `/etc/sudoers.d/shreks-release-manager` still has the same exact narrow release-manager rule and SHA-256 recorded by the installation proof;
+- `/etc/shreks/shreks.env` still binds the protected DB, E11, campaign-manifest, and G7 paths expected by the rotation manager;
+- the active source manifest is canonical v1 with mode `0640`;
+- the staged candidate is canonical v2;
+- the exact transition-binding fingerprint equals the explicit operator value and all source/candidate identities match the binding;
+- G7 operator-control state is valid and stable during the proof;
+- observer, PAPER evidence, and PAPER campaign services are healthy and do not change lifecycle identity during the proof;
+- the exact authenticated candidate bytes pass the existing PAPER runtime preflight from a private temporary copy;
+- release/helper/sudoers/env/source/candidate/binding/G7/service observations remain stable through the end of the proof.
+
+A successful `rotation-readiness.json` has:
+
+```text
+status=READY_EVIDENCE_ONLY
+candidate_preflight_status=PASSED
+runtime_env_contract=MATCHED
+service_lifecycle_unchanged=true
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+`READY_EVIDENCE_ONLY` does not authorize rotation. It is evidence for a later, separately explicit production-rotation authority decision. The rotation manager independently rechecks the source, candidate, binding fingerprint, active release, runtime environment, and G7 state at invocation time.
+
 ## Manual protected PAPER manifest rotation
 
 A runtime-manifest v2 candidate is not installed by the normal GitHub deploy chain. The deployment account keeps exactly the release-install sudo rule above and receives no passwordless authority for `shreks-paper-manifest-manager`.
