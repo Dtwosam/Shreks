@@ -299,6 +299,58 @@ status.json.sha256
 
 into a GitHub Actions artifact named `paper-manifest-manager-status-<release-sha>-<run-attempt>`. The raw verifier transcript, SSH material, journal output, and protected runtime evidence are not uploaded. The SHA-256 sidecar binds the exact canonical `status.json` bytes. Artifact publication occurs only after the full production verifier succeeds, so it is durable verification evidence rather than a replacement for the root helper-installation proof.
 
+## Plan the trusted-admin helper installation ceremony read-only
+
+Before creating any root-private ceremony directory or invoking the installer, a trusted administrator may run the release-local planner:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-plan" \
+  "$CURRENT_SHA"
+```
+
+The planner is root-only because it reuses the sealed installation-proof preflight against the protected campaign manifest, narrow deployment sudoers, and read-only `systemctl show` service observations.
+
+It fails closed unless:
+
+- `/opt/shreks/current` is the exact explicit immutable release;
+- the release manifest, manifest-hashed Shreks wheel, and sealed manager member authenticate;
+- helper status is exactly `ABSENT`;
+- the derived root-private evidence directory does not already exist;
+- the protected campaign manifest remains valid mode `0640`;
+- deployment sudoers still contain only the exact sealed release-manager command;
+- observer, PAPER evidence, and PAPER campaign services are healthy;
+- helper status remains byte-for-byte identical through the read-only preflight.
+
+A successful plan reports:
+
+```text
+status=READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY
+planning_authority=READ_ONLY
+installation_authority=NOT_EXERCISED
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The canonical plan binds the exact release/wheel/manager identity, the preflight snapshot fingerprint, campaign/sudoers hashes, service observations, the derived root-private evidence directory, and four exact ordered steps:
+
+```text
+create evidence directory
+  -> installation-proof prepare
+  -> exact release-bound helper installer
+  -> installation-proof verify
+```
+
+Each executable step is represented as an argv array using the exact current release virtualenv Python plus an explicit module name. Output evidence paths are explicit.
+
+The plan is advisory evidence only. It does not create the evidence directory, does not write proof files, does not execute the installer, and does not verify a post-install state. The embedded preflight snapshot is not a substitute for `installation-proof-pre.json`; the real `prepare` step must run again immediately before the installer.
+
+If helper status is already anything other than `ABSENT`, do not use the first-install plan to repair or replace it. Investigate through the separately sealed status/proof paths instead.
+
 ## Prepare and verify the helper-installation proof
 
 The release-bound installer intentionally has no service-management or protected-campaign mutation code. For a production installation, preserve an independent before/after proof around that already-authorized installer action.
