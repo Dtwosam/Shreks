@@ -151,6 +151,7 @@ def _setup(
     *,
     service_runner: ServiceRunner | None = None,
 ):
+    (tmp_path / "inputs").mkdir()
     (
         source,
         source_path,
