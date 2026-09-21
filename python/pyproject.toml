@@ -20,7 +20,7 @@ shreks-fl9-v2-future-path-backfill = "shreks_brain.fl9_v2_future_path_backfill:m
 shreks-fl9-v2-runtime-manifest-discovery = "shreks_brain.fl9_v2_runtime_manifest_discovery:main"
 shreks-fl9-v2-runtime-manifest-candidate-assessment = "shreks_brain.fl9_v2_runtime_manifest_candidate_assessment:main"
 shreks-g1c-v2-runtime-manifest-candidate-author = "shreks_brain.g1c_v2_runtime_manifest_candidate_authoring:main"
-shreks-g1c-v2-runtime-manifest-candidate-authority-bind = "shreks_brain.g1c_v2_runtime_manifest_candidate_authority:main"
+shreks-g1c-v2-runtime-manifest-candidate-authority-bind = "shreks_brain.g1c_v2_runtime_manifest_candidate_authority:main"\nshreks-g1c-v2-entry-sizing-proposal = "shreks_brain.g1c_v2_entry_sizing_proposal:main"
 shreks-g1c-v2-runtime-manifest-transition-bind = "shreks_brain.g1c_v2_runtime_manifest_transition_binding:main"
 shreks-g1c-v2-paper-manifest-manager-install = "shreks_brain.g1c_v2_paper_manifest_manager_install:main"
 shreks-g1c-v2-paper-manifest-manager-install-proof = "shreks_brain.g1c_v2_paper_manifest_manager_installation_proof:main"
