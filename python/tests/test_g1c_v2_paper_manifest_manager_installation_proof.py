@@ -333,10 +333,62 @@ def test_installation_proof_authority_firewall_and_operator_contract() -> None:
         'shreks-g1c-v2-paper-manifest-manager-install-proof"'
     ) in workflow
     for variable in ("INSTALLER", "INSTALL_PROOF"):
-        assert f'test -f " + variable + '"' in workflow
-        assert f'test ! -L " + variable + '"' in workflow
-        assert f'test -x " + variable + '"' in workflow
-        assert f'readlink -f " + variable + '"' in workflow
+        assert f'test -f "    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
+    assert (
+        "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
+        "as installation_proof"
+    ) in workflow
+    assert 'paper_manifest_manager_installer=present' in workflow
+    assert 'paper_manifest_manager_installation_proof=present' in workflow
+    assert 'paper_manifest_manager_installer_path=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_path=%s' in workflow
+    assert 'paper_manifest_manager_installer_module=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_module=%s' in workflow
+    assert 'exec "$INSTALLER"' not in workflow
+    assert 'exec "$INSTALL_PROOF"' not in workflow
+ + variable + '"' in workflow
+        assert f'test ! -L "    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
+    assert (
+        "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
+        "as installation_proof"
+    ) in workflow
+    assert 'paper_manifest_manager_installer=present' in workflow
+    assert 'paper_manifest_manager_installation_proof=present' in workflow
+    assert 'paper_manifest_manager_installer_path=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_path=%s' in workflow
+    assert 'paper_manifest_manager_installer_module=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_module=%s' in workflow
+    assert 'exec "$INSTALLER"' not in workflow
+    assert 'exec "$INSTALL_PROOF"' not in workflow
+ + variable + '"' in workflow
+        assert f'test -x "    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
+    assert (
+        "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
+        "as installation_proof"
+    ) in workflow
+    assert 'paper_manifest_manager_installer=present' in workflow
+    assert 'paper_manifest_manager_installation_proof=present' in workflow
+    assert 'paper_manifest_manager_installer_path=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_path=%s' in workflow
+    assert 'paper_manifest_manager_installer_module=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_module=%s' in workflow
+    assert 'exec "$INSTALLER"' not in workflow
+    assert 'exec "$INSTALL_PROOF"' not in workflow
+ + variable + '"' in workflow
+        assert f'readlink -f "    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
+    assert (
+        "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
+        "as installation_proof"
+    ) in workflow
+    assert 'paper_manifest_manager_installer=present' in workflow
+    assert 'paper_manifest_manager_installation_proof=present' in workflow
+    assert 'paper_manifest_manager_installer_path=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_path=%s' in workflow
+    assert 'paper_manifest_manager_installer_module=%s' in workflow
+    assert 'paper_manifest_manager_installation_proof_module=%s' in workflow
+    assert 'exec "$INSTALLER"' not in workflow
+    assert 'exec "$INSTALL_PROOF"' not in workflow
+ + variable + '"' in workflow
     assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
     assert (
         "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
