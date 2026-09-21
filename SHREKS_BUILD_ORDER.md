@@ -579,45 +579,74 @@ Never claim a phase complete without exact verification evidence.
 
 ---
 
-# 6. CURRENT POSITION — 2026-08-28
+# 6. CURRENT POSITION — 2026-09-21
 
-### Canonical architecture
+### Canonical production release
 
-The Fast Lane Source of Truth was merged to `main` in commit:
+The currently deployed and production-verified sealed release is:
 
-`ef47e803a0f896961ce9ae519bee765322ec996f`
+`c2f829f8e4679e0134d9d725b4e2d526874187b1`
 
-Its branch CI and merged-main CI are GREEN across:
+For that exact SHA:
 
-- Rust,
-- Python,
-- repository safety,
-- native ARM64 release build.
+- sealed-main CI completed successfully;
+- the immutable GitHub release was built successfully;
+- protected PAPER deployment completed successfully;
+- production verification completed successfully;
+- the canonical PAPER manifest-manager status evidence artifact was uploaded.
 
-### Preserved production evidence
+### Protected PAPER manifest-manager state
 
-The canonical-pair selector correction was physically accepted on the VPS at release:
+Production currently reports:
 
-`330ace280067905b6502ba3846f73b2b461be125`
+```text
+paper_manifest_manager_status=ABSENT
+installation_authority=NOT_EXERCISED
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
 
-The verified-Pump-market-evidence fix is merged and GitHub-sealed at:
+This is an expected physical gate, not a missing code path.
 
-`29f6dd9b747e053569d14d54a2f346b46ed103ac`
+The repository already contains and has separately sealed the narrow G1C v2 capabilities required around this gate:
 
-Do **not** claim physical VPS acceptance of that newer seal until separate host evidence proves it.
+- protected PAPER manifest rotation manager;
+- exact release-bound helper installer;
+- helper installation proof;
+- read-only helper status observation;
+- helper-status evidence artifact preservation;
+- rotation-readiness proof;
+- trusted-administrator read-only first-install planner.
 
-### Active next build
+The first-install planner is present in the exact deployed release, but automatic planner execution and automatic helper installation remain forbidden.
 
-**Begin FL0, then FL1/FL2.**
+### Current FL9 discovery state
 
-The first implementation target should be the smallest deterministic foundation required by everything else:
+Protected FL9 discovery remains read-only and currently reports:
 
-1. inspect/map existing Pump swap/event capabilities and observer/storage interfaces,
-2. define the versioned Fast Lane event/state boundary,
-3. implement deterministic `FastMarketState`/rolling-window behavior under RED→GREEN tests,
-4. only then wire real production event ingestion into it.
+```text
+HOLD_NO_COMPATIBLE
+```
 
-Do not begin learned models, live execution, or strategy optimization before the event/state/economics/label foundations exist.
+The active PAPER runtime authority is still the incompatible v1 quote-policy path, so no v2 scoring retry or promotion is authorized.
+
+### Active next gate
+
+The next mandatory progression is physical trusted-administrator evidence on the production host, not additional automatic deployment authority:
+
+1. run the sealed read-only first-install planner against the exact current release;
+2. require `READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY`;
+3. execute the already-authorized narrow ceremony:
+   `installation-proof prepare -> exact release-bound helper installer -> installation-proof verify`;
+4. require canonical `VERIFIED` installation proof for the exact current release;
+5. run the already-sealed evidence-only rotation-readiness proof;
+6. only after that physical evidence exists, make a separate explicit decision about authorizing production v2 manifest rotation.
+
+Do not skip directly to production manifest rotation, v2 scoring, model fitting, PAPER promotion, signing/submission, or LIVE.
+
+Do not add an automatic helper-install workflow or widen deployment sudoers to bypass the trusted-administrator gate.
 
 ---
 
