@@ -88,7 +88,8 @@ jobs:
             DISCOVERY_REQUEST_ID="gha-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           fi
           [[ "$DISCOVERY_REQUEST_ID" =~ ^gha-[0-9]+-[0-9]+$ ]] || exit 2
-          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$EXPECTED_RELEASE_SHA' '$JOURNAL_MINUTES' '$DISCOVERY_REQUEST_ID' '$DISCOVERY_PRESTAGED'" <<'REMOTE'
+          VERIFY_LOG="$RUNNER_TEMP/shreks-production-paper-verification.log"
+          ssh "${SSH_COMMON[@]}" "$DESTINATION" "bash -s -- '$EXPECTED_RELEASE_SHA' '$JOURNAL_MINUTES' '$DISCOVERY_REQUEST_ID' '$DISCOVERY_PRESTAGED'" <<'REMOTE' | tee "$VERIFY_LOG"
           set -euo pipefail
           EXPECTED_SHA="$1"
           JOURNAL_MINUTES="$2"
@@ -510,3 +511,78 @@ jobs:
           cleanup_discovery
           trap - EXIT
           REMOTE
+
+          STATUS_EVIDENCE_DIR="$RUNNER_TEMP/paper-manifest-manager-status-evidence"
+          install -d -m 0700 "$STATUS_EVIDENCE_DIR"
+          STATUS_JSON="$STATUS_EVIDENCE_DIR/status.json"
+          python3 - "$VERIFY_LOG" "$STATUS_JSON" "$EXPECTED_RELEASE_SHA" <<'PY'
+          import json
+          from pathlib import Path
+          import sys
+
+          log_path, output_path, expected_sha = sys.argv[1:]
+          prefix = "paper_manifest_manager_status_json="
+          lines = [
+              line[len(prefix):]
+              for line in Path(log_path).read_text(encoding="utf-8").splitlines()
+              if line.startswith(prefix)
+          ]
+          if len(lines) != 1:
+              raise SystemExit("expected exactly one helper status evidence line")
+
+          raw = lines[0]
+          try:
+              document = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              raise SystemExit("helper status evidence is not valid JSON") from exc
+          if not isinstance(document, dict):
+              raise SystemExit("helper status evidence must be an object")
+
+          canonical = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          if raw + "\n" != canonical:
+              raise SystemExit("helper status evidence is not canonical JSON")
+
+          allowed = {
+              "ABSENT",
+              "MATCHED_CURRENT_RELEASE",
+              "PRESENT_DIFFERENT_BYTES",
+              "PRESENT_METADATA_MISMATCH",
+              "PRESENT_UNSAFE_TYPE",
+          }
+          expected = {
+              "schema_name": "shreks.g1c_v2_paper_manifest_manager_status",
+              "schema_version": 1,
+              "release_source_sha": expected_sha,
+              "observation_authority": "READ_ONLY",
+              "installation_authority": "NOT_EXERCISED",
+              "manifest_rotation_authority": "NOT_GRANTED",
+              "scoring_authority": "NOT_GRANTED",
+              "paper_promotion_authority": "BLOCKED",
+              "live_authority": "DISABLED",
+          }
+          for key, value in expected.items():
+              if document.get(key) != value:
+                  raise SystemExit(f"helper status evidence mismatch: {key}")
+          if document.get("status") not in allowed:
+              raise SystemExit("helper status evidence status is unsupported")
+
+          Path(output_path).write_text(canonical, encoding="utf-8")
+          PY
+          chmod 0600 "$STATUS_JSON"
+          STATUS_SHA256="$(sha256sum "$STATUS_JSON" | awk '{print $1}')"
+          printf '%s  status.json\n' "$STATUS_SHA256" > "$STATUS_EVIDENCE_DIR/status.json.sha256"
+          chmod 0600 "$STATUS_EVIDENCE_DIR/status.json.sha256"
+          printf 'paper_manifest_manager_status_evidence_sha256=%s\n' "$STATUS_SHA256"
+
+      - name: Upload PAPER manifest manager status evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: paper-manifest-manager-status-${{ inputs.expected_release_sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/paper-manifest-manager-status-evidence
+          if-no-files-found: error

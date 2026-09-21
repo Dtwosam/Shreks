@@ -290,6 +290,15 @@ Normal production verification prints both the canonical status JSON and the com
 
 Every result records observation authority as `READ_ONLY`, installation authority as `NOT_EXERCISED`, manifest rotation as `NOT_GRANTED`, scoring as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
 
+After the complete production verifier succeeds, the runner extracts exactly one already-validated canonical helper-status line from its SSH transcript, revalidates the schema, exact release SHA, observational status set, and all non-authority fields locally, and writes only:
+
+```text
+status.json
+status.json.sha256
+```
+
+into a GitHub Actions artifact named `paper-manifest-manager-status-<release-sha>-<run-attempt>`. The raw verifier transcript, SSH material, journal output, and protected runtime evidence are not uploaded. The SHA-256 sidecar binds the exact canonical `status.json` bytes. Artifact publication occurs only after the full production verifier succeeds, so it is durable verification evidence rather than a replacement for the root helper-installation proof.
+
 ## Prepare and verify the helper-installation proof
 
 The release-bound installer intentionally has no service-management or protected-campaign mutation code. For a production installation, preserve an independent before/after proof around that already-authorized installer action.
