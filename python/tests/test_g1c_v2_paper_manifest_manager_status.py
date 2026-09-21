@@ -242,3 +242,15 @@ def test_status_authority_firewall_and_production_verifier_contract() -> None:
     assert "shreks-g1c-v2-paper-manifest-manager-status" in workflow
     assert "paper_manifest_manager_status=" in workflow
     assert "paper_manifest_manager_status_json=" in workflow
+    assert 'VERIFY_LOG="$RUNNER_TEMP/shreks-production-paper-verification.log"' in workflow
+    assert "expected exactly one helper status evidence line" in workflow
+    assert "helper status evidence mismatch: {key}" in workflow
+    assert "paper-manifest-manager-status-evidence" in workflow
+    assert "status.json.sha256" in workflow
+    assert "paper_manifest_manager_status_evidence_sha256=" in workflow
+    assert "uses: actions/upload-artifact@v7" in workflow
+    assert (
+        "name: paper-manifest-manager-status-"
+        "${{ inputs.expected_release_sha }}-${{ github.run_attempt }}"
+    ) in workflow
+    assert "if-no-files-found: error" in workflow
