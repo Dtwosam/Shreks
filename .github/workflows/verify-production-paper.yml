@@ -120,6 +120,35 @@ jobs:
           printf 'manifest_source_sha=%s\n' "$MANIFEST_SHA"
           test "$MANIFEST_SHA" = "$EXPECTED_SHA"
 
+          CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
+          test -f "$CANDIDATE_AUTHORITY"
+          test ! -L "$CANDIDATE_AUTHORITY"
+          test -x "$CANDIDATE_AUTHORITY"
+          CANDIDATE_AUTHORITY_RESOLVED="$(readlink -f "$CANDIDATE_AUTHORITY")"
+          test "$CANDIDATE_AUTHORITY_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
+          CANDIDATE_AUTHORITY_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_runtime_manifest_candidate_authority as candidate_authority
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(candidate_authority.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "candidate authority module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$CANDIDATE_AUTHORITY_MODULE"
+          printf 'g1c_v2_candidate_authority=present\n'
+          printf 'g1c_v2_candidate_authority_path=%s\n' "$CANDIDATE_AUTHORITY_RESOLVED"
+          printf 'g1c_v2_candidate_authority_module=%s\n' "$CANDIDATE_AUTHORITY_MODULE"
+
           INSTALL_PLANNER="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-plan"
           test -f "$INSTALL_PLANNER"
           test ! -L "$INSTALL_PLANNER"
