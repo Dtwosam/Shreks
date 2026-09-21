@@ -120,6 +120,35 @@ jobs:
           printf 'manifest_source_sha=%s\n' "$MANIFEST_SHA"
           test "$MANIFEST_SHA" = "$EXPECTED_SHA"
 
+          INSTALL_PLANNER="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-plan"
+          test -f "$INSTALL_PLANNER"
+          test ! -L "$INSTALL_PLANNER"
+          test -x "$INSTALL_PLANNER"
+          INSTALL_PLANNER_RESOLVED="$(readlink -f "$INSTALL_PLANNER")"
+          test "$INSTALL_PLANNER_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-plan"
+          INSTALL_PLANNER_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_paper_manifest_manager_install_plan as planner
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(planner.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "install planner module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$INSTALL_PLANNER_MODULE"
+          printf 'paper_manifest_manager_install_planner=present\n'
+          printf 'paper_manifest_manager_install_planner_path=%s\n' "$INSTALL_PLANNER_RESOLVED"
+          printf 'paper_manifest_manager_install_planner_module=%s\n' "$INSTALL_PLANNER_MODULE"
+
           PAPER_MANIFEST_MANAGER_STATUS_JSON="$(
             /opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status "$EXPECTED_SHA"
           )"
