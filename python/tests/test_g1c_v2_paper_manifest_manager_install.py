@@ -172,7 +172,9 @@ def test_tampered_release_wheel_is_rejected_before_destination_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     setup = _release_layout(tmp_path, monkeypatch)
-    setup["wheel_path"].write_bytes(setup["wheel_path"].read_bytes() + b"tamper")
+    wheel_payload = bytearray(setup["wheel_path"].read_bytes())
+    wheel_payload[-1] ^= 0x01
+    setup["wheel_path"].write_bytes(wheel_payload)
 
     with pytest.raises(
         installer.PaperManifestManagerInstallError,
