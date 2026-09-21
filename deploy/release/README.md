@@ -263,6 +263,71 @@ This installer does not stop or restart any Shreks service. It does not read or 
 
 Do not add the installer or `shreks-paper-manifest-manager` to the `shreks-deploy` sudoers rule. A later production manifest rotation remains a separate explicitly authorized administrator action.
 
+## Prepare and verify the helper-installation proof
+
+The release-bound installer intentionally has no service-management or protected-campaign mutation code. For a production installation, preserve an independent before/after proof around that already-authorized installer action.
+
+Use this procedure only after a release containing the proof CLI has itself been sealed, deployed, and verified. The proof CLI requires root because it reads the protected campaign manifest and root-owned deployment sudoers, but it does not install the helper, does not invoke the manifest manager, and does not call any service lifecycle command. Its only systemd command is read-only `systemctl show`.
+
+Create a root-private evidence directory and capture the exact pre-install state:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+PROOF_DIR="/root/shreks-paper-manifest-manager-install-$CURRENT_SHA"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$PROOF_DIR"
+
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-proof"     prepare "$2" > "$3/installation-proof-pre.json"
+' sh "$CURRENT_RELEASE" "$CURRENT_SHA" "$PROOF_DIR"
+```
+
+The pre-install snapshot is canonical JSON. It authenticates the exact current release and manifest-hashed wheel, fingerprints the sealed manager member, hashes the protected campaign manifest, requires the deployment sudoers file to contain only the sealed release-manager command, and records the three PAPER runtime services' active/sub states, restart counters, MainPIDs, exit status, and active-enter monotonic timestamps.
+
+Run the already-sealed installer and preserve its canonical receipt:
+
+```sh
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install"     "$2" > "$3/installer-receipt.json"
+' sh "$CURRENT_RELEASE" "$CURRENT_SHA" "$PROOF_DIR"
+```
+
+Then verify the post-install state:
+
+```sh
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-proof"     verify "$2"     "$3/installation-proof-pre.json"     "$3/installer-receipt.json"     > "$3/installation-proof.json"
+' sh "$CURRENT_RELEASE" "$CURRENT_SHA" "$PROOF_DIR"
+```
+
+The verifier fails closed unless all of the following remain true:
+
+- `/opt/shreks/current` still identifies the exact expected immutable release;
+- the canonical release manifest and manifest-hashed Shreks wheel still authenticate;
+- the installer receipt is canonical and binds the same release, wheel, manager digest, destination, metadata, and narrow authority fields;
+- `/usr/local/sbin/shreks-paper-manifest-manager` is a regular non-symlink file with exact sealed bytes, uid 0, gid 0, and mode `0755`;
+- the protected PAPER campaign manifest is byte-for-byte and metadata-identical to the pre-install snapshot;
+- `/etc/sudoers.d/shreks-release-manager` is unchanged and still contains only the exact release-manager deployment command;
+- observer, PAPER evidence, and PAPER campaign service lifecycle observations are exactly unchanged.
+
+A successful `installation-proof.json` records `PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY`. It still records manifest rotation as `NOT_GRANTED`, scoring as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
+
+If the proof fails, do not treat helper installation as accepted and do not proceed to runtime-manifest rotation. Investigate the drift first.
+
 ## Manual protected PAPER manifest rotation
 
 A runtime-manifest v2 candidate is not installed by the normal GitHub deploy chain. The deployment account keeps exactly the release-install sudo rule above and receives no passwordless authority for `shreks-paper-manifest-manager`.
