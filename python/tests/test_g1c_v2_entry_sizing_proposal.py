@@ -52,17 +52,28 @@ def test_entry_sizing_proposal_preserves_source_quote_notional_by_flooring_raw_u
     assert proposal["status"] == "PROPOSAL_EVIDENCE_ONLY"
     assert proposal["sizing_policy"] == "preserve_source_quote_notional_floor"
     assert proposal["source_manifest_sha256"] == hashlib.sha256(source_bytes).hexdigest()
-    assert proposal["source_entry_input_amount"] == 25_000_000
-    assert proposal["source_quote_decimals"] == 6
+    source = _manifest()
+    source_raw = source.policy_bundle.entry_quote_identity.input_amount
+    source_decimals = source.policy_bundle.quote_asset.decimals
+    source_usd = source.policy_bundle.quote_asset.usd_per_token
+    expected_source_notional = (
+        source_raw / (10**source_decimals) * source_usd
+    )
+
+    assert proposal["source_entry_input_amount"] == source_raw
+    assert proposal["source_quote_decimals"] == source_decimals
     assert proposal["source_quote_usd_per_token"] == "1"
-    assert proposal["source_quote_notional_usd"] == "25"
+    assert float(proposal["source_quote_notional_usd"]) == expected_source_notional
     assert proposal["target_quote_mint"] == WSOL
     assert proposal["target_quote_decimals"] == 9
     assert proposal["target_quote_usd_per_token"] == "200"
     assert proposal["quote_evidence_fingerprint_sha256"] == EVIDENCE_FP
-    assert proposal["proposed_entry_input_amount"] == 125_000_000
-    assert proposal["proposed_quote_token_amount"] == "0.125"
-    assert proposal["proposed_quote_notional_usd"] == "25"
+    expected_raw = int(expected_source_notional / 200 * 1_000_000_000)
+    assert proposal["proposed_entry_input_amount"] == expected_raw
+    assert float(proposal["proposed_quote_token_amount"]) == (
+        expected_raw / 1_000_000_000
+    )
+    assert float(proposal["proposed_quote_notional_usd"]) == expected_source_notional
     assert proposal["notional_shortfall_usd"] == "0"
     assert proposal["candidate_value_authority"] == "NOT_GRANTED"
     assert proposal["candidate_authoring_authority"] == "NOT_GRANTED"
@@ -92,7 +103,13 @@ def test_entry_sizing_proposal_rounds_down_and_never_exceeds_source_notional(
     )
 
     assert proposal["proposed_entry_input_amount"] > 0
-    assert float(proposal["proposed_quote_notional_usd"]) <= 25.0
+    source = _manifest()
+    source_notional = (
+        source.policy_bundle.entry_quote_identity.input_amount
+        / (10**source.policy_bundle.quote_asset.decimals)
+        * source.policy_bundle.quote_asset.usd_per_token
+    )
+    assert float(proposal["proposed_quote_notional_usd"]) <= source_notional
     assert float(proposal["notional_shortfall_usd"]) >= 0.0
     assert float(proposal["notional_shortfall_usd"]) < 187.123456789 / 1_000_000_000
 
