@@ -178,6 +178,35 @@ jobs:
           printf 'g1c_v2_quote_valuation_reference_path=%s\n' "$QUOTE_REFERENCE_RESOLVED"
           printf 'g1c_v2_quote_valuation_reference_module=%s\n' "$QUOTE_REFERENCE_MODULE"
 
+          QUOTE_REVIEW="/opt/shreks/current/.venv/bin/shreks-g1c-v2-quote-valuation-review"
+          test -f "$QUOTE_REVIEW"
+          test ! -L "$QUOTE_REVIEW"
+          test -x "$QUOTE_REVIEW"
+          QUOTE_REVIEW_RESOLVED="$(readlink -f "$QUOTE_REVIEW")"
+          test "$QUOTE_REVIEW_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-quote-valuation-review"
+          QUOTE_REVIEW_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_quote_valuation_review as quote_review
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(quote_review.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "quote valuation review module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$QUOTE_REVIEW_MODULE"
+          printf 'g1c_v2_quote_valuation_review=present\n'
+          printf 'g1c_v2_quote_valuation_review_path=%s\n' "$QUOTE_REVIEW_RESOLVED"
+          printf 'g1c_v2_quote_valuation_review_module=%s\n' "$QUOTE_REVIEW_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"

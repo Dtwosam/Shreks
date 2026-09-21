@@ -487,6 +487,53 @@ from the exact selected persisted market row.
 
 Review the complete reference before using it in any sizing proposal. In particular, review the selected market row, candidate/source/venue/base/quote identity, observation time, freshness boundary, derived USD value, and `reference_fingerprint_sha256`.
 
+### Review multiple exact quote-valuation references
+
+When more than one exact reference has been captured for the same quote mint, source, and frozen `as_of_unix_ms`, do not choose a single venue merely because it is freshest.
+
+A trusted administrator may review three or more existing canonical reference artifacts with the release-local review tool.
+
+The review does not read SQLite and does not capture any new market evidence. It authenticates only the explicit reference files supplied on the command line.
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+REFERENCE_ROOT="<explicit-root-containing-reviewed-reference-files>"
+REVIEW_DIR="/root/shreks-g1c-v2-quote-valuation-review"
+REVIEW="$REVIEW_DIR/quote-valuation-review.json"
+
+sudo install -d -o root -g root -m 0700 "$REVIEW_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-quote-valuation-review" \
+  --reference "$REFERENCE_ROOT/<explicit-reference-1>.json" \
+  --reference "$REFERENCE_ROOT/<explicit-reference-2>.json" \
+  --reference "$REFERENCE_ROOT/<explicit-reference-3>.json" \
+  --destination "$REVIEW"
+
+sudo cat "$REVIEW"
+```
+
+Supply every reference path explicitly. There are no venue/reference selection defaults.
+
+The deterministic review policy is `median_exact_reference_values`. It authenticates each canonical reference, requires one common quote mint/source/as-of boundary, rejects duplicate market rows/fingerprints, and reports exact Decimal min/median/max plus disagreement diagnostics.
+
+The review remains:
+
+```text
+status=REVIEW_EVIDENCE_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The review does not authorize production candidate values. The median is a review statistic, not an approved production price. Do not run candidate authority from this review alone.
+
+Only after reviewing the complete artifact may a later evidence-only sizing proposal use an explicitly reviewed value/fingerprint/timestamp. A still-later explicit production candidate-value decision is required before candidate authority.
+
 ### Produce one evidence-only entry-sizing proposal
 
 Only after reviewing one exact reference, copy its exact quote value, fingerprint, and observation timestamp into the following explicit inputs.
