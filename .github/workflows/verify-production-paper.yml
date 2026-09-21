@@ -120,6 +120,64 @@ jobs:
           printf 'manifest_source_sha=%s\n' "$MANIFEST_SHA"
           test "$MANIFEST_SHA" = "$EXPECTED_SHA"
 
+          ENTRY_SIZING="/opt/shreks/current/.venv/bin/shreks-g1c-v2-entry-sizing-proposal"
+          test -f "$ENTRY_SIZING"
+          test ! -L "$ENTRY_SIZING"
+          test -x "$ENTRY_SIZING"
+          ENTRY_SIZING_RESOLVED="$(readlink -f "$ENTRY_SIZING")"
+          test "$ENTRY_SIZING_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-entry-sizing-proposal"
+          ENTRY_SIZING_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_entry_sizing_proposal as entry_sizing
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(entry_sizing.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "entry sizing proposal module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$ENTRY_SIZING_MODULE"
+          printf 'g1c_v2_entry_sizing_proposal=present\n'
+          printf 'g1c_v2_entry_sizing_proposal_path=%s\n' "$ENTRY_SIZING_RESOLVED"
+          printf 'g1c_v2_entry_sizing_proposal_module=%s\n' "$ENTRY_SIZING_MODULE"
+
+          QUOTE_REFERENCE="/opt/shreks/current/.venv/bin/shreks-g1c-v2-quote-valuation-reference"
+          test -f "$QUOTE_REFERENCE"
+          test ! -L "$QUOTE_REFERENCE"
+          test -x "$QUOTE_REFERENCE"
+          QUOTE_REFERENCE_RESOLVED="$(readlink -f "$QUOTE_REFERENCE")"
+          test "$QUOTE_REFERENCE_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-quote-valuation-reference"
+          QUOTE_REFERENCE_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_quote_valuation_reference as quote_reference
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(quote_reference.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "quote valuation reference module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$QUOTE_REFERENCE_MODULE"
+          printf 'g1c_v2_quote_valuation_reference=present\n'
+          printf 'g1c_v2_quote_valuation_reference_path=%s\n' "$QUOTE_REFERENCE_RESOLVED"
+          printf 'g1c_v2_quote_valuation_reference_module=%s\n' "$QUOTE_REFERENCE_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"

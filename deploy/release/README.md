@@ -416,6 +416,126 @@ A successful `installation-proof.json` records `PROVEN_EXACT_RELEASE_BOUND_HELPE
 
 If the proof fails, do not treat helper installation as accepted and do not proceed to runtime-manifest rotation. Investigate the drift first.
 
+## Capture G1C v2 valuation and sizing evidence
+
+After a sealed release containing the evidence-only valuation/sizing tools is active and production verification has proved both release-local script/module paths, a trusted administrator may capture bounded evidence for a later production candidate-value decision.
+
+These operations are deliberately separate from candidate authority.
+
+A quote reference is `REFERENCE_EVIDENCE_ONLY`.
+
+A sizing proposal is `PROPOSAL_EVIDENCE_ONLY`.
+
+This evidence does not authorize production candidate values. Do not run candidate authority from this evidence alone.
+
+### Capture one exact quote-valuation reference
+
+Supply every market-selection input explicitly. There are no production selector defaults.
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+DB="<explicit-observer-sqlite-path>"
+CANDIDATE_ID="<explicit-candidate-id>"
+AS_OF_UNIX_MS="<explicit-as-of-unix-ms>"
+SOURCE="<explicit-market-source>"
+VENUE="<explicit-market-venue>"
+BASE_MINT="<explicit-base-mint>"
+QUOTE_MINT="<explicit-target-quote-mint>"
+MAX_AGE_MS="<explicit-freshness-bound-ms>"
+EXPECTED_MARKET_ROW_ID="<explicit-exact-row-id-or-empty>"
+
+REFERENCE_DIR="/root/shreks-g1c-v2-quote-valuation-reference"
+REFERENCE="$REFERENCE_DIR/quote-valuation-reference.json"
+
+sudo install -d -o root -g root -m 0700 "$REFERENCE_DIR"
+
+if [[ -n "$EXPECTED_MARKET_ROW_ID" ]]; then
+  sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-quote-valuation-reference" \
+    --database "$DB" \
+    --candidate-id "$CANDIDATE_ID" \
+    --as-of-unix-ms "$AS_OF_UNIX_MS" \
+    --source "$SOURCE" \
+    --venue "$VENUE" \
+    --base-mint "$BASE_MINT" \
+    --quote-mint "$QUOTE_MINT" \
+    --max-age-ms "$MAX_AGE_MS" \
+    --expected-market-row-id "$EXPECTED_MARKET_ROW_ID" \
+    --destination "$REFERENCE"
+else
+  sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-quote-valuation-reference" \
+    --database "$DB" \
+    --candidate-id "$CANDIDATE_ID" \
+    --as-of-unix-ms "$AS_OF_UNIX_MS" \
+    --source "$SOURCE" \
+    --venue "$VENUE" \
+    --base-mint "$BASE_MINT" \
+    --quote-mint "$QUOTE_MINT" \
+    --max-age-ms "$MAX_AGE_MS" \
+    --destination "$REFERENCE"
+fi
+
+sudo cat "$REFERENCE"
+```
+
+The reference reader uses the existing observer-market read-only SQLite path and derives:
+
+`quote_asset_usd_per_token = base_price_usd / base_price_quote`
+
+from the exact selected persisted market row.
+
+Review the complete reference before using it in any sizing proposal. In particular, review the selected market row, candidate/source/venue/base/quote identity, observation time, freshness boundary, derived USD value, and `reference_fingerprint_sha256`.
+
+### Produce one evidence-only entry-sizing proposal
+
+Only after reviewing one exact reference, copy its exact quote value, fingerprint, and observation timestamp into the following explicit inputs.
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE_MANIFEST="/etc/shreks/paper-campaign.json"
+
+TARGET_QUOTE_MINT="<reviewed-target-quote-mint>"
+TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"
+TARGET_QUOTE_USD_PER_TOKEN="<exact-reviewed-reference-quote-usd-per-token>"
+REFERENCE_FINGERPRINT="<exact-reviewed-reference-fingerprint-sha256>"
+REFERENCE_OBSERVED_AT_UNIX_MS="<exact-reviewed-reference-observed-at-unix-ms>"
+
+PROPOSAL_DIR="/root/shreks-g1c-v2-entry-sizing-proposal"
+PROPOSAL="$PROPOSAL_DIR/entry-sizing-proposal.json"
+
+sudo install -d -o root -g root -m 0700 "$PROPOSAL_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-entry-sizing-proposal" \
+  --source-runtime-manifest "$SOURCE_MANIFEST" \
+  --target-quote-mint "$TARGET_QUOTE_MINT" \
+  --target-quote-decimals "$TARGET_QUOTE_DECIMALS" \
+  --target-quote-usd-per-token "$TARGET_QUOTE_USD_PER_TOKEN" \
+  --quote-evidence-fingerprint-sha256 "$REFERENCE_FINGERPRINT" \
+  --quote-evidence-observed-at-unix-ms "$REFERENCE_OBSERVED_AT_UNIX_MS" \
+  --destination "$PROPOSAL"
+
+sudo cat "$PROPOSAL"
+```
+
+The proposal policy is `preserve_source_quote_notional_floor`: it derives the authenticated source quote notional and floors the target raw units so raw-unit rounding cannot increase that notional.
+
+The output still records:
+
+```text
+status=PROPOSAL_EVIDENCE_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+Review the proposed raw amount and its exact evidence chain separately. A later explicit production candidate-value decision may accept, reject, or replace it. Do not feed it into the candidate-authority binder merely because the proposal exists.
+
 ## Bind explicit G1C v2 candidate inputs
 
 After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
