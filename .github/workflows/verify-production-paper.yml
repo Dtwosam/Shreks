@@ -178,6 +178,64 @@ jobs:
           printf 'paper_manifest_rotation_readiness_path=%s\n' "$ROTATION_READINESS_RESOLVED"
           printf 'paper_manifest_rotation_readiness_module=%s\n' "$ROTATION_READINESS_MODULE"
 
+          INSTALLER="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install"
+          test -f "$INSTALLER"
+          test ! -L "$INSTALLER"
+          test -x "$INSTALLER"
+          INSTALLER_RESOLVED="$(readlink -f "$INSTALLER")"
+          test "$INSTALLER_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install"
+          INSTALLER_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_paper_manifest_manager_install as installer
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(installer.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "manifest manager installer module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$INSTALLER_MODULE"
+          printf 'paper_manifest_manager_installer=present\n'
+          printf 'paper_manifest_manager_installer_path=%s\n' "$INSTALLER_RESOLVED"
+          printf 'paper_manifest_manager_installer_module=%s\n' "$INSTALLER_MODULE"
+
+          INSTALL_PROOF="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-proof"
+          test -f "$INSTALL_PROOF"
+          test ! -L "$INSTALL_PROOF"
+          test -x "$INSTALL_PROOF"
+          INSTALL_PROOF_RESOLVED="$(readlink -f "$INSTALL_PROOF")"
+          test "$INSTALL_PROOF_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-proof"
+          INSTALL_PROOF_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof as installation_proof
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(installation_proof.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "manifest manager installation proof module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$INSTALL_PROOF_MODULE"
+          printf 'paper_manifest_manager_installation_proof=present\n'
+          printf 'paper_manifest_manager_installation_proof_path=%s\n' "$INSTALL_PROOF_RESOLVED"
+          printf 'paper_manifest_manager_installation_proof_module=%s\n' "$INSTALL_PROOF_MODULE"
+
           PAPER_MANIFEST_MANAGER_STATUS_JSON="$(
             /opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status "$EXPECTED_SHA"
           )"

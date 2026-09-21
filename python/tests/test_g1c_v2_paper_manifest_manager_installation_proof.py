@@ -16,6 +16,7 @@ from shreks_brain import g1c_v2_paper_manifest_manager_installation_proof as pro
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANAGER_SOURCE = _REPO_ROOT / "deploy" / "release" / "paper_manifest_manager.py"
 _RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
+_VERIFY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "verify-production-paper.yml"
 _PYPROJECT = _REPO_ROOT / "python" / "pyproject.toml"
 RELEASE_SHA = "e" * 40
 WHEEL_RELATIVE_PATH = "wheelhouse/shreks_brain-0.1.0-py3-none-any.whl"
@@ -321,3 +322,33 @@ def test_installation_proof_authority_firewall_and_operator_contract() -> None:
     assert "installation-proof-pre.json" in runbook
     assert "installation-proof.json" in runbook
     assert "does not invoke the manifest manager" in runbook
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+    assert (
+        'INSTALLER="/opt/shreks/current/.venv/bin/'
+        'shreks-g1c-v2-paper-manifest-manager-install"'
+    ) in workflow
+    assert (
+        'INSTALL_PROOF="/opt/shreks/current/.venv/bin/'
+        'shreks-g1c-v2-paper-manifest-manager-install-proof"'
+    ) in workflow
+    assert 'test -f "$INSTALLER"' in workflow
+    assert 'test ! -L "$INSTALLER"' in workflow
+    assert 'test -x "$INSTALLER"' in workflow
+    assert 'readlink -f "$INSTALLER"' in workflow
+    assert 'test -f "$INSTALL_PROOF"' in workflow
+    assert 'test ! -L "$INSTALL_PROOF"' in workflow
+    assert 'test -x "$INSTALL_PROOF"' in workflow
+    assert 'readlink -f "$INSTALL_PROOF"' in workflow
+    assert "import shreks_brain.g1c_v2_paper_manifest_manager_install as installer" in workflow
+    assert (
+        "import shreks_brain.g1c_v2_paper_manifest_manager_installation_proof "
+        "as installation_proof"
+    ) in workflow
+    assert "paper_manifest_manager_installer=present" in workflow
+    assert "paper_manifest_manager_installation_proof=present" in workflow
+    assert "paper_manifest_manager_installer_path=%s" in workflow
+    assert "paper_manifest_manager_installation_proof_path=%s" in workflow
+    assert "paper_manifest_manager_installer_module=%s" in workflow
+    assert "paper_manifest_manager_installation_proof_module=%s" in workflow
+    assert 'exec "$INSTALLER"' not in workflow
+    assert 'exec "$INSTALL_PROOF"' not in workflow
