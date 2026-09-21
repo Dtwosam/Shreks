@@ -26,6 +26,7 @@ from test_g1c_v2_runtime_manifest_transition_binding import _inputs
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MANAGER_SOURCE = _REPO_ROOT / "deploy" / "release" / "paper_manifest_manager.py"
 _RUNBOOK = _REPO_ROOT / "deploy" / "release" / "README.md"
+_VERIFY_WORKFLOW = _REPO_ROOT / ".github" / "workflows" / "verify-production-paper.yml"
 _PYPROJECT = _REPO_ROOT / "python" / "pyproject.toml"
 RELEASE_SHA = "f" * 40
 WHEEL_RELATIVE_PATH = "wheelhouse/shreks_brain-0.1.0-py3-none-any.whl"
@@ -458,3 +459,19 @@ def test_rotation_readiness_authority_firewall_and_operator_contract() -> None:
     assert "Prove protected PAPER manifest rotation readiness" in runbook
     assert "rotation-readiness.json" in runbook
     assert "does not authorize rotation" in runbook
+
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+    assert (
+        'ROTATION_READINESS="/opt/shreks/current/.venv/bin/'
+        'shreks-g1c-v2-paper-manifest-rotation-readiness"'
+    ) in workflow
+    assert 'test -f "$ROTATION_READINESS"' in workflow
+    assert 'test ! -L "$ROTATION_READINESS"' in workflow
+    assert 'test -x "$ROTATION_READINESS"' in workflow
+    assert 'readlink -f "$ROTATION_READINESS"' in workflow
+    assert "import shreks_brain.g1c_v2_paper_manifest_rotation_readiness as readiness" in workflow
+    assert 'paper_manifest_rotation_readiness=present' in workflow
+    assert 'paper_manifest_rotation_readiness_path=%s' in workflow
+    assert 'paper_manifest_rotation_readiness_module=%s' in workflow
+    assert "readiness.main(" not in workflow
+    assert 'exec "$ROTATION_READINESS"' not in workflow
