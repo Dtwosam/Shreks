@@ -119,6 +119,42 @@ jobs:
           printf 'manifest_source_sha=%s\n' "$MANIFEST_SHA"
           test "$MANIFEST_SHA" = "$EXPECTED_SHA"
 
+          PAPER_MANIFEST_MANAGER_STATUS_JSON="$(
+            /opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status "$EXPECTED_SHA"
+          )"
+          printf 'paper_manifest_manager_status_json=%s\n' "$PAPER_MANIFEST_MANAGER_STATUS_JSON"
+          PAPER_MANIFEST_MANAGER_STATUS="$(
+            PAPER_MANIFEST_MANAGER_STATUS_JSON="$PAPER_MANIFEST_MANAGER_STATUS_JSON" \
+              /opt/shreks/current/.venv/bin/python - <<'PY'
+          import json
+          import os
+
+          document = json.loads(os.environ["PAPER_MANIFEST_MANAGER_STATUS_JSON"])
+          allowed = {
+              "ABSENT",
+              "MATCHED_CURRENT_RELEASE",
+              "PRESENT_DIFFERENT_BYTES",
+              "PRESENT_METADATA_MISMATCH",
+              "PRESENT_UNSAFE_TYPE",
+          }
+          if document.get("schema_name") != "shreks.g1c_v2_paper_manifest_manager_status":
+              raise SystemExit("helper status schema mismatch")
+          if document.get("schema_version") != 1:
+              raise SystemExit("helper status schema version mismatch")
+          if document.get("observation_authority") != "READ_ONLY":
+              raise SystemExit("helper status observation authority mismatch")
+          if document.get("installation_authority") != "NOT_EXERCISED":
+              raise SystemExit("helper status installation authority mismatch")
+          if document.get("manifest_rotation_authority") != "NOT_GRANTED":
+              raise SystemExit("helper status rotation authority mismatch")
+          status = document.get("status")
+          if status not in allowed:
+              raise SystemExit("helper status value is unsupported")
+          print(status)
+          PY
+          )"
+          printf 'paper_manifest_manager_status=%s\n' "$PAPER_MANIFEST_MANAGER_STATUS"
+
           unexpected_restarts=0
           for unit in shreks-observe.service shreks-paper-evidence.service shreks-paper-campaign.service; do
             echo "--- $unit ---"

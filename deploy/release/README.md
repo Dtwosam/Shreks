@@ -263,6 +263,33 @@ This installer does not stop or restart any Shreks service. It does not read or 
 
 Do not add the installer or `shreks-paper-manifest-manager` to the `shreks-deploy` sudoers rule. A later production manifest rotation remains a separate explicitly authorized administrator action.
 
+## Observe the release-bound helper status read-only
+
+The release-local helper-status command provides read-only observability for the physical administrator gate:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+"$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status" "$CURRENT_SHA"
+```
+
+It authenticates the exact current immutable release, release manifest, manifest-hashed Shreks wheel, and sealed manager member before inspecting:
+
+`/usr/local/sbin/shreks-paper-manifest-manager`
+
+The command never creates, replaces, chmods, chowns, or invokes the helper. It reports one of:
+
+- `ABSENT` — no helper exists at the fixed destination;
+- `MATCHED_CURRENT_RELEASE` — bytes and expected root-owned `0755` metadata match the sealed manager in the current release;
+- `PRESENT_DIFFERENT_BYTES` — a regular file exists but does not match the current sealed manager bytes;
+- `PRESENT_METADATA_MISMATCH` — bytes match but uid/gid/mode do not;
+- `PRESENT_UNSAFE_TYPE` — the destination exists as a symlink or other non-regular object.
+
+Normal production verification prints both the canonical status JSON and the compact status value. Absence or divergence is observational evidence and does not cause automatic installation or replacement. A status inspection failure itself fails verification because the host state could not be established safely.
+
+Every result records observation authority as `READ_ONLY`, installation authority as `NOT_EXERCISED`, manifest rotation as `NOT_GRANTED`, scoring as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
+
 ## Prepare and verify the helper-installation proof
 
 The release-bound installer intentionally has no service-management or protected-campaign mutation code. For a production installation, preserve an independent before/after proof around that already-authorized installer action.
