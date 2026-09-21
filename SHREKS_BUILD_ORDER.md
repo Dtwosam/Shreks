@@ -585,16 +585,16 @@ Never claim a phase complete without exact verification evidence.
 
 The currently deployed and production-verified sealed release is:
 
-`86a3033aea5e26ff127f3b64c8c9dbc1fcd40652`
+`0fba6030c9ff53ecd6c1edbddc3a5e77ac5a6ed5`
 
 For that exact SHA:
 
-- sealed-main CI `35627976689` completed successfully;
-- immutable release build `35628219677` completed successfully;
-- protected PAPER deploy/verify `35628807240` completed successfully;
-- production verification proved the install-planner console script and Python module are physically present inside the exact immutable release;
+- sealed-main CI `35640439003` completed successfully;
+- immutable release build `35640878859` completed successfully;
+- protected PAPER deploy/verify `35641487454` completed successfully;
+- production verification proved the trusted-admin install planner, exact release-bound helper installer, installation-proof CLI, and rotation-readiness CLI are all physically present and release-proven inside the exact immutable release;
 - production verification still reported `paper_manifest_manager_status=ABSENT`;
-- the canonical PAPER manifest-manager status evidence artifact was uploaded;
+- canonical PAPER manifest-manager status evidence artifact `10659036131` was uploaded;
 - protected FL9 discovery still reported `HOLD_NO_COMPATIBLE`.
 
 ### Protected PAPER manifest-manager state
@@ -622,7 +622,14 @@ The repository already contains and has separately sealed the narrow G1C v2 capa
 - rotation-readiness proof;
 - trusted-administrator read-only first-install planner.
 
-The first-install planner is present and release-proven in the exact deployed release. Automatic planner execution and automatic helper installation remain forbidden.
+All four trusted-admin ceremony/readiness tools are present and release-proven in the exact deployed release:
+
+- first-install planner;
+- exact release-bound helper installer;
+- installation-proof CLI;
+- rotation-readiness CLI.
+
+Automatic planner execution, installation-proof execution, helper installation, and rotation-readiness execution remain forbidden to deployment automation.
 
 ### Current FL9 discovery state
 
