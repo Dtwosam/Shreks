@@ -583,7 +583,7 @@ Never claim a phase complete without exact verification evidence.
 
 ### Canonical production release
 
-The currently deployed and production-verified sealed release is:
+The currently deployed and production-verified sealed release remains:
 
 `0fba6030c9ff53ecd6c1edbddc3a5e77ac5a6ed5`
 
@@ -593,69 +593,115 @@ For that exact SHA:
 - immutable release build `35640878859` completed successfully;
 - protected PAPER deploy/verify `35641487454` completed successfully;
 - production verification proved the trusted-admin install planner, exact release-bound helper installer, installation-proof CLI, and rotation-readiness CLI are all physically present and release-proven inside the exact immutable release;
-- production verification still reported `paper_manifest_manager_status=ABSENT`;
-- canonical PAPER manifest-manager status evidence artifact `10659036131` was uploaded;
-- protected FL9 discovery still reported `HOLD_NO_COMPATIBLE`.
+- the earlier canonical PAPER manifest-manager status evidence artifact `10659036131` proved the helper was absent before the trusted-administrator ceremony;
+- protected FL9 discovery remains `HOLD_NO_COMPATIBLE`.
 
-### Protected PAPER manifest-manager state
+### Physical trusted-administrator installation proof
 
-Production currently reports:
+The previously required trusted-administrator first-install ceremony has now been completed manually on the production host for the exact current release.
+
+The sealed read-only planner returned:
+
+`READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY`
+
+with exact release identity, protected manifest/sudoers hashes, healthy unchanged PAPER services, and helper state `ABSENT`.
+
+The canonical pre-install snapshot then bound the same exact release and protected state. The exact release-bound installer installed only:
+
+`/usr/local/sbin/shreks-paper-manifest-manager`
+
+with:
+
+- exact sealed manager SHA-256 `e612ca524d633fb5ee58be2e4bb38ad5e1ff1bba418354ca2176561a74fef104`;
+- exact sealed wheel SHA-256 `97d9ea978403529312b67aaaa9dd0f1d88ef9f967e1bdd0ea40ce4da41d482a3`;
+- owner/group `root:root`;
+- mode `0755`;
+- installation authority `EXERCISED_EXACT_RELEASE_BOUND_HELPER_ONLY`.
+
+The canonical post-install proof returned:
+
+`status=VERIFIED`
+
+with:
+
+- `installation_authority=PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY`;
+- proof fingerprint `176a14b5301130781118dfd9dd3c2b4cc7e1690739bbc98724214668a5f7a2f1`;
+- campaign manifest SHA-256 unchanged at `3118bc5289b758a02bfd993085ed16f103a524b4d15a29ee50f45922a47fd530`;
+- deployment sudoers SHA-256 unchanged at `d21e7ee16e9c9b60ec8f950dcf04bb95a53a49b6bb986602640374e33efc1204`;
+- PAPER service lifecycle unchanged;
+- `manifest_rotation_authority=NOT_GRANTED`;
+- `scoring_authority=NOT_GRANTED`;
+- `paper_promotion_authority=BLOCKED`;
+- `live_authority=DISABLED`.
+
+Therefore helper installation is no longer the active physical gate.
+
+### Candidate/readiness evidence gap
+
+The evidence-only rotation-readiness tool requires two already-created immutable inputs:
+
+- one exact canonical G1C runtime-manifest v2 candidate;
+- its exact canonical transition binding and binding fingerprint.
+
+A bounded trusted-administrator inspection of the canonical staging paths and existing protected evidence found:
 
 ```text
-paper_manifest_manager_status=ABSENT
-installation_authority=NOT_EXERCISED
+/var/tmp/shreks-paper-candidate.json = ABSENT
+/var/tmp/shreks-paper-transition-binding.json = ABSENT
+transition_binding_count = 0
+v2_runtime_manifest_count = 0
+search_status = NO_PREEXISTING_G1C_V2_ARTIFACTS
+```
+
+The preserved V2 request authority is healthy but does not fill this gap:
+
+- three historical V2 request candidates exist;
+- all three authenticate;
+- all three collapse to one authority group;
+- authority-group fingerprint is `f144dc01919d1caff902f2ce2ce8950481722645ae7a411135d74e01009a49c5`;
+- the selected canonical request path is `/var/lib/shreks/fl9-v2-post-fix-c6473a1a8b1252ade0ad1883ab4ce2f33bf70f46-20260915T193846Z/v2-first-champion-request.json`;
+- selected request fingerprint is `28e7427206b2a919cb29c4bf514ee991b54b2c4c6bc45ac23f43b6a877852a02`;
+- frozen V2 cohort quote mint is WSOL `So11111111111111111111111111111111111111112`.
+
+However, the authenticated historical hydration policy remains USDC-derived and therefore is context only, not WSOL candidate authority. The repository deliberately requires explicit new-run values for:
+
+- `paper_run_id`;
+- `start_at_unix_ms`;
+- target quote mint;
+- target quote decimals;
+- target `entry_input_amount`.
+
+Those production candidate values are not present in repository authority and no prior production candidate/binding artifact exists. Unit-test/example values are not production authority and must not be substituted.
+
+### Active next gate
+
+The next mandatory progression is now an explicit **production candidate-authority** slice, not another VPS installation action and not rotation-readiness execution.
+
+That slice must establish the exact new-run G1C v2 candidate inputs through reviewed repository authority, then use the already-implemented canonical authoring and binding paths to produce:
+
+1. one exact canonical v2 candidate;
+2. one read-only `COMPATIBLE` assessment against the frozen FL9 V2 cohort and preserved request authority;
+3. one exact immutable transition binding and fingerprint;
+4. only then, staged immutable candidate/binding inputs for the already-sealed evidence-only rotation-readiness proof.
+
+Until those artifacts exist:
+
+- do not run rotation-readiness with guessed or test-derived values;
+- do not rotate `/etc/shreks/paper-campaign.json`;
+- do not retry V2 scoring or model fitting;
+- do not promote PAPER;
+- do not widen sudoers or add automatic candidate/install/rotation authority;
+- do not enable signing, submission, or LIVE.
+
+Current authority remains:
+
+```text
+installation_authority=PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY
 manifest_rotation_authority=NOT_GRANTED
 scoring_authority=NOT_GRANTED
 paper_promotion_authority=BLOCKED
 live_authority=DISABLED
 ```
-
-This is an expected physical gate, not a missing code path.
-
-The repository already contains and has separately sealed the narrow G1C v2 capabilities required around this gate:
-
-- protected PAPER manifest rotation manager;
-- exact release-bound helper installer;
-- helper installation proof;
-- read-only helper status observation;
-- helper-status evidence artifact preservation;
-- rotation-readiness proof;
-- trusted-administrator read-only first-install planner.
-
-All four trusted-admin ceremony/readiness tools are present and release-proven in the exact deployed release:
-
-- first-install planner;
-- exact release-bound helper installer;
-- installation-proof CLI;
-- rotation-readiness CLI.
-
-Automatic planner execution, installation-proof execution, helper installation, and rotation-readiness execution remain forbidden to deployment automation.
-
-### Current FL9 discovery state
-
-Protected FL9 discovery remains read-only and currently reports:
-
-```text
-HOLD_NO_COMPATIBLE
-```
-
-The active PAPER runtime authority is still the incompatible v1 quote-policy path, so no v2 scoring retry or promotion is authorized.
-
-### Active next gate
-
-The next mandatory progression is physical trusted-administrator evidence on the production host, not additional automatic deployment authority:
-
-1. run the sealed read-only first-install planner against the exact current release;
-2. require `READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY`;
-3. execute the already-authorized narrow ceremony:
-   `installation-proof prepare -> exact release-bound helper installer -> installation-proof verify`;
-4. require canonical `VERIFIED` installation proof for the exact current release;
-5. run the already-sealed evidence-only rotation-readiness proof;
-6. only after that physical evidence exists, make a separate explicit decision about authorizing production v2 manifest rotation.
-
-Do not skip directly to production manifest rotation, v2 scoring, model fitting, PAPER promotion, signing/submission, or LIVE.
-
-Do not add an automatic helper-install workflow or widen deployment sudoers to bypass the trusted-administrator gate.
 
 ---
 
