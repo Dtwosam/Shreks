@@ -426,7 +426,7 @@ A quote reference is `REFERENCE_EVIDENCE_ONLY`.
 
 A sizing proposal is `PROPOSAL_EVIDENCE_ONLY`.
 
-Neither artifact authorizes production candidate values. Do not run candidate authority from this evidence alone.
+This evidence does not authorize production candidate values. Do not run candidate authority from this evidence alone.
 
 ### Capture one exact quote-valuation reference
 
