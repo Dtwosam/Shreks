@@ -290,3 +290,41 @@ def test_candidate_authority_cli_is_registered_and_has_no_host_or_trade_authorit
         "RuntimeMode.LIVE",
     ):
         assert forbidden not in source
+
+
+def test_candidate_authority_production_presence_contract_is_read_only() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    workflow = (
+        repo_root / ".github" / "workflows" / "verify-production-paper.yml"
+    ).read_text(encoding="utf-8")
+    runbook = (
+        repo_root / "deploy" / "release" / "README.md"
+    ).read_text(encoding="utf-8")
+
+    assert (
+        'CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/'
+        'shreks-g1c-v2-runtime-manifest-candidate-authority-bind"'
+    ) in workflow
+    assert 'test -f "$CANDIDATE_AUTHORITY"' in workflow
+    assert 'test ! -L "$CANDIDATE_AUTHORITY"' in workflow
+    assert 'test -x "$CANDIDATE_AUTHORITY"' in workflow
+    assert 'readlink -f "$CANDIDATE_AUTHORITY"' in workflow
+    assert (
+        'test "$CANDIDATE_AUTHORITY_RESOLVED" = '
+        '"$EXPECTED/.venv/bin/'
+        'shreks-g1c-v2-runtime-manifest-candidate-authority-bind"'
+    ) in workflow
+    assert (
+        "import shreks_brain.g1c_v2_runtime_manifest_candidate_authority "
+        "as candidate_authority"
+    ) in workflow
+    assert "candidate authority module is outside the exact deployed release" in workflow
+    assert "g1c_v2_candidate_authority=present" in workflow
+    assert "g1c_v2_candidate_authority_path=%s" in workflow
+    assert "g1c_v2_candidate_authority_module=%s" in workflow
+    assert 'exec "$CANDIDATE_AUTHORITY"' not in workflow
+    assert "candidate_authority.main(" not in workflow
+
+    assert "Bind explicit G1C v2 candidate inputs" in runbook
+    assert "candidate-authority.json" in runbook
+    assert "does not choose production candidate values" in runbook

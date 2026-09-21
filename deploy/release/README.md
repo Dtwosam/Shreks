@@ -416,6 +416,67 @@ A successful `installation-proof.json` records `PROVEN_EXACT_RELEASE_BOUND_HELPE
 
 If the proof fails, do not treat helper installation as accepted and do not proceed to runtime-manifest rotation. Investigate the drift first.
 
+## Bind explicit G1C v2 candidate inputs
+
+After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
+
+The binder does not choose production candidate values. It does not infer them from the frozen cohort, historical USDC hydration evidence, recent quote evidence, unit tests, or example values. Every new-run value below is an operator-supplied placeholder until a separate reviewed production-value decision establishes the exact value.
+
+The binder authenticates the existing v1 source, frozen FL9 V2 cohort, and preserved V2 request authority; requires the explicit target quote mint to equal the frozen cohort quote mint; derives the canonical v2 candidate only in memory; and writes one immutable private authority artifact. It does not stage candidate bytes, write a transition binding, execute rotation-readiness, replace the protected manifest, or grant downstream authority.
+
+Use a root-private destination and invoke only from the exact current release:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE="/etc/shreks/paper-campaign.json"
+COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
+REQUEST="<exact-authenticated-v2-request-path>"
+
+AUTHORITY_DIR="/root/shreks-g1c-v2-candidate-authority"
+AUTHORITY="$AUTHORITY_DIR/candidate-authority.json"
+
+PAPER_RUN_ID="<explicit-reviewed-new-run-id>"
+START_AT_UNIX_MS="<explicit-reviewed-new-run-start-ms>"
+QUOTE_ASSET_MINT="<explicit-reviewed-target-quote-mint>"
+QUOTE_ASSET_DECIMALS="<explicit-reviewed-target-quote-decimals>"
+ENTRY_INPUT_AMOUNT="<explicit-reviewed-raw-entry-input-amount>"
+
+sudo install -d -o root -g root -m 0700 "$AUTHORITY_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind" \
+  --source-runtime-manifest "$SOURCE" \
+  --cohort "$COHORT" \
+  --v2-host-request-authority "$REQUEST" \
+  --paper-run-id "$PAPER_RUN_ID" \
+  --start-at-unix-ms "$START_AT_UNIX_MS" \
+  --quote-asset-mint "$QUOTE_ASSET_MINT" \
+  --quote-asset-decimals "$QUOTE_ASSET_DECIMALS" \
+  --entry-input-amount "$ENTRY_INPUT_AMOUNT" \
+  --destination "$AUTHORITY"
+
+sudo cat "$AUTHORITY"
+```
+
+The placeholders above are intentionally not defaults. In particular, do not substitute unit-test values, the active USDC runtime's decimals/raw amount, or historical hydration-policy values for the reviewed production inputs.
+
+A successful `candidate-authority.json` proves only that one explicit input set is bound to the exact authenticated source/cohort/request authority and to one exact canonically derivable v2 candidate identity. It records:
+
+```text
+candidate_authoring_authority=EXPLICIT_INPUTS_BOUND
+installation_authority=NOT_GRANTED
+activation_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The authority binder itself does not emit or stage the candidate runtime-manifest file. After one exact production-value authority artifact has been separately reviewed and accepted, use the existing canonical candidate-authoring path to emit those exact candidate bytes, assess that exact candidate read-only against the frozen cohort/request authority, and create the existing immutable transition binding.
+
+Do not run rotation-readiness until the exact canonical candidate file and its exact canonical transition binding already exist and have been staged as immutable regular files.
+
 ## Prove protected PAPER manifest rotation readiness
 
 After the root helper has been installed with a successful `installation-proof.json`, use the release-local readiness proof before requesting any separate production manifest-rotation authority.
