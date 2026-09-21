@@ -232,6 +232,7 @@ def test_sudoers_widening_fails_postinstall_proof(
     setup = _layout(tmp_path, monkeypatch)
     before = _prepare(setup)
     receipt = _install(setup)
+    setup["sudoers"].chmod(0o640)
     setup["sudoers"].write_text(
         proof._SUDOERS_LINE
         + "\nshreks-deploy ALL=(root) NOPASSWD: "
