@@ -149,6 +149,35 @@ jobs:
           printf 'paper_manifest_manager_install_planner_path=%s\n' "$INSTALL_PLANNER_RESOLVED"
           printf 'paper_manifest_manager_install_planner_module=%s\n' "$INSTALL_PLANNER_MODULE"
 
+          ROTATION_READINESS="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-rotation-readiness"
+          test -f "$ROTATION_READINESS"
+          test ! -L "$ROTATION_READINESS"
+          test -x "$ROTATION_READINESS"
+          ROTATION_READINESS_RESOLVED="$(readlink -f "$ROTATION_READINESS")"
+          test "$ROTATION_READINESS_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-paper-manifest-rotation-readiness"
+          ROTATION_READINESS_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_paper_manifest_rotation_readiness as readiness
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(readiness.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "rotation readiness module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$ROTATION_READINESS_MODULE"
+          printf 'paper_manifest_rotation_readiness=present\n'
+          printf 'paper_manifest_rotation_readiness_path=%s\n' "$ROTATION_READINESS_RESOLVED"
+          printf 'paper_manifest_rotation_readiness_module=%s\n' "$ROTATION_READINESS_MODULE"
+
           PAPER_MANIFEST_MANAGER_STATUS_JSON="$(
             /opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status "$EXPECTED_SHA"
           )"
