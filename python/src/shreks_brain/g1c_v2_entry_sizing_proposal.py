@@ -98,9 +98,9 @@ def propose_g1c_v2_entry_sizing(
         )
     source_decimals = source_quote.decimals
     _require_decimals("source_quote_decimals", source_decimals)
-    source_usd = _parse_positive_decimal(
+    source_usd = _coerce_positive_decimal(
         "source_quote_usd_per_token",
-        str(source_quote.usd_per_token),
+        source_quote.usd_per_token,
     )
 
     source_scale = Decimal(10) ** source_decimals
@@ -358,6 +358,24 @@ def _decimal_text(value: Decimal) -> str:
     return text
 
 
+def _coerce_positive_decimal(name: str, value: object) -> Decimal:
+    if isinstance(value, bool):
+        raise G1CV2EntrySizingProposalError(
+            f"{name} must be a positive finite decimal value"
+        )
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise G1CV2EntrySizingProposalError(
+            f"{name} must be a positive finite decimal value"
+        ) from error
+    if not parsed.is_finite() or parsed <= 0:
+        raise G1CV2EntrySizingProposalError(
+            f"{name} must be a positive finite decimal value"
+        )
+    return parsed
+
+
 def _parse_positive_decimal(name: str, value: object) -> Decimal:
     if not isinstance(value, str) or not value.strip():
         raise G1CV2EntrySizingProposalError(
@@ -580,10 +598,10 @@ def _require_decimals(name: str, value: object) -> None:
         isinstance(value, bool)
         or not isinstance(value, int)
         or value < 0
-        or value > 18
+        or value > 255
     ):
         raise G1CV2EntrySizingProposalError(
-            f"{name} must be an integer within [0, 18]"
+            f"{name} must be an integer within [0, 255]"
         )
 
 
