@@ -1288,6 +1288,78 @@ The binder requires exact expected/observed release equality, one authenticated 
 
 The binding is evidence only. It does not authorize model fitting, a V2 scoring retry, champion publication, PAPER promotion, signing/submission, or LIVE trading.
 
+### Prepare one discovery-backed FL9 V2 request
+
+Only after production verification proves the discovery-backed preparation CLI/module belong to the exact active immutable release may a trusted administrator prepare a fresh canonical V2 request bound to the exact reviewed discovery authority.
+
+Use only reviewed existing evidence and new non-existing destinations:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+BINDING="<exact-reviewed-discovery-authority-binding.json>"
+PROOF="<exact-proof-workspace>"
+DB="/var/lib/shreks/shreks.db"
+COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
+HYDRATION="<exact-reviewed-hydration-policy.json>"
+OVERLAY="<exact-reviewed-training-economics-overlay>"
+COST_POLICY="<exact-reviewed-training-execution-cost-policy.json>"
+EVALUATION_POLICY="<exact-reviewed-test-evaluation-policy.json>"
+
+PREP_DIR="/root/shreks-fl9-v2-discovery-backed-request"
+REQUEST="$PREP_DIR/v2-first-champion-request.json"
+EVIDENCE="$PREP_DIR/v2-first-champion-evidence"
+PREPARATION="$PREP_DIR/discovery-backed-request-preparation.json"
+
+FUTURE_PATH_LABEL_VERSION="<explicit-reviewed-label-version>"
+COUNTERFACTUAL_BASE_QUANTITY="<explicit-reviewed-base-quantity>"
+CHAMPION_VERSION="<explicit-reviewed-champion-version>"
+MODEL_VERSION_PREFIX="<explicit-reviewed-model-version-prefix>"
+TRAINING_POLICY_VERSION="<explicit-reviewed-training-policy-version>"
+REASON="<explicit-reviewed-reason>"
+
+sudo install -d -o root -g root -m 0700 "$PREP_DIR"
+test ! -e "$REQUEST"
+test ! -e "$EVIDENCE"
+test ! -e "$PREPARATION"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fl9-v2-discovery-backed-request-prepare" \
+  --discovery-authority-binding "$BINDING" \
+  --proof-workspace "$PROOF" \
+  --observer-database "$DB" \
+  --cohort "$COHORT" \
+  --hydration-policy "$HYDRATION" \
+  --training-economics-overlay "$OVERLAY" \
+  --training-execution-cost-policy "$COST_POLICY" \
+  --request-destination "$REQUEST" \
+  --evidence-destination "$EVIDENCE" \
+  --preparation-destination "$PREPARATION" \
+  --evaluation-policy "$EVALUATION_POLICY" \
+  --future-path-label-version "$FUTURE_PATH_LABEL_VERSION" \
+  --counterfactual-base-quantity "$COUNTERFACTUAL_BASE_QUANTITY" \
+  --champion-version "$CHAMPION_VERSION" \
+  --model-version-prefix "$MODEL_VERSION_PREFIX" \
+  --training-policy-version "$TRAINING_POLICY_VERSION" \
+  --reason "$REASON"
+
+sudo cat "$PREPARATION"
+```
+
+The tool must authenticate the discovery binding, the binding-selected runtime manifest, the exact release/cohort/hydration identities, and the canonical request bytes before the companion receipt is accepted. All three destinations above are write-once boundaries; do not reuse an existing request, evidence directory, or preparation receipt.
+
+A successful preparation receipt remains evidence only:
+
+```text
+request_preparation_authority=DISCOVERY_BOUND_REQUEST_ONLY
+scoring_authority=NOT_GRANTED
+champion_publication_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This ceremony does not execute scoring or model fitting. It does not publish champion evidence, promote PAPER, create risk intent, access wallets, sign or submit transactions, or enable LIVE. Preserve and review the canonical request plus preparation receipt separately before any later scoring decision.
+
 ## Rollback
 
 For rollback, select an earlier GitHub Release tag that was previously sealed and verified, then dispatch `Deploy verified Shreks release` with that earlier tag. The same local verification, strict transport, host verification, staging, and health gates apply to rollback; there is no separate bypass path.
