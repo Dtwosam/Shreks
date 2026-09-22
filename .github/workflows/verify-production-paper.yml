@@ -352,6 +352,35 @@ jobs:
           printf 'g1c_v2_decision_backed_transition_binding_path=%s\n' "$DECISION_BACKED_TRANSITION_BINDING_RESOLVED"
           printf 'g1c_v2_decision_backed_transition_binding_module=%s\n' "$DECISION_BACKED_TRANSITION_BINDING_MODULE"
 
+          DECISION_BACKED_ROTATION_READINESS="/opt/shreks/current/.venv/bin/shreks-g1c-v2-decision-backed-rotation-readiness"
+          test -f "$DECISION_BACKED_ROTATION_READINESS"
+          test ! -L "$DECISION_BACKED_ROTATION_READINESS"
+          test -x "$DECISION_BACKED_ROTATION_READINESS"
+          DECISION_BACKED_ROTATION_READINESS_RESOLVED="$(readlink -f "$DECISION_BACKED_ROTATION_READINESS")"
+          test "$DECISION_BACKED_ROTATION_READINESS_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-decision-backed-rotation-readiness"
+          DECISION_BACKED_ROTATION_READINESS_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_decision_backed_rotation_readiness as decision_backed_rotation_readiness
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(decision_backed_rotation_readiness.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "decision-backed rotation readiness module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$DECISION_BACKED_ROTATION_READINESS_MODULE"
+          printf 'g1c_v2_decision_backed_rotation_readiness=present\n'
+          printf 'g1c_v2_decision_backed_rotation_readiness_path=%s\n' "$DECISION_BACKED_ROTATION_READINESS_RESOLVED"
+          printf 'g1c_v2_decision_backed_rotation_readiness_module=%s\n' "$DECISION_BACKED_ROTATION_READINESS_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"
