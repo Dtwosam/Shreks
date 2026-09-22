@@ -410,6 +410,35 @@ jobs:
           printf 'g1c_v2_decision_backed_rotation_plan_path=%s\n' "$DECISION_BACKED_ROTATION_PLAN_RESOLVED"
           printf 'g1c_v2_decision_backed_rotation_plan_module=%s\n' "$DECISION_BACKED_ROTATION_PLAN_MODULE"
 
+          FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE="/opt/shreks/current/.venv/bin/shreks-fl9-v2-discovery-backed-request-prepare"
+          test -f "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE"
+          test ! -L "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE"
+          test -x "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE"
+          FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_RESOLVED="$(readlink -f "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE")"
+          test "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_RESOLVED" = "$EXPECTED/.venv/bin/shreks-fl9-v2-discovery-backed-request-prepare"
+          FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.fl9_v2_discovery_backed_request_preparation as discovery_backed_request_preparation
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(discovery_backed_request_preparation.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "discovery-backed request preparation module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_MODULE"
+          printf 'fl9_v2_discovery_backed_request_prepare=present\n'
+          printf 'fl9_v2_discovery_backed_request_prepare_path=%s\n' "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_RESOLVED"
+          printf 'fl9_v2_discovery_backed_request_prepare_module=%s\n' "$FL9_V2_DISCOVERY_BACKED_REQUEST_PREPARE_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"
