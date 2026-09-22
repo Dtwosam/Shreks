@@ -67,6 +67,7 @@ def install_release_bound_paper_manifest_manager(
     expected_release_source_sha: str,
     paths: PaperManifestManagerInstallPaths,
     runtime_executable: str | os.PathLike[str] | None = None,
+    require_already_installed: bool = False,
 ) -> dict[str, object]:
     if type(paths) is not PaperManifestManagerInstallPaths:
         raise PaperManifestManagerInstallError(
@@ -75,6 +76,10 @@ def install_release_bound_paper_manifest_manager(
     if os.geteuid() != 0:
         raise PaperManifestManagerInstallError(
             "PAPER manifest manager installation requires root"
+        )
+    if type(require_already_installed) is not bool:
+        raise PaperManifestManagerInstallError(
+            "require_already_installed must be a bool"
         )
 
     expected_sha = _validate_source_sha(expected_release_source_sha)
@@ -126,6 +131,11 @@ def install_release_bound_paper_manifest_manager(
             wheel_sha256=wheel_sha256,
             manager_sha256=manager_sha256,
             destination=paths.destination,
+        )
+
+    if require_already_installed:
+        raise PaperManifestManagerInstallError(
+            "PAPER manifest manager must already be installed for proof refresh"
         )
 
     current_before_publish = _require_current_release(
