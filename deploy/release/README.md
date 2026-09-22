@@ -695,6 +695,71 @@ The command authenticates the proposal and binds its proposal fingerprint/file S
 
 Do not run candidate authority from this decision alone. A later separate decision-backed bridge must authenticate one approved decision and combine its exact selected quote mint/decimals/raw amount with separately explicit new-run identity/time inputs before candidate authoring can be granted.
 
+### Bind one decision-backed G1C v2 candidate authority
+
+Only after production verification proves the decision-backed candidate-authority CLI/module belong to the exact active immutable release may a trusted administrator bind one approved candidate-value decision to one exact candidate-authoring authority.
+
+Supply only explicit existing authority artifacts plus the new-run identity/time:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE="/etc/shreks/paper-campaign.json"
+COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
+REQUEST="<exact-authenticated-v2-request-path>"
+DECISION="<exact-approved-candidate-value-decision.json>"
+
+AUTHORITY_DIR="/root/shreks-g1c-v2-decision-backed-candidate-authority"
+AUTHORITY="$AUTHORITY_DIR/decision-backed-candidate-authority.json"
+
+PAPER_RUN_ID="<explicit-reviewed-new-run-id>"
+START_AT_UNIX_MS="<explicit-reviewed-new-run-start-ms>"
+
+sudo install -d -o root -g root -m 0700 "$AUTHORITY_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-decision-backed-candidate-authority-bind" \
+  --source-runtime-manifest "$SOURCE" \
+  --cohort "$COHORT" \
+  --v2-host-request-authority "$REQUEST" \
+  --candidate-value-decision "$DECISION" \
+  --paper-run-id "$PAPER_RUN_ID" \
+  --start-at-unix-ms "$START_AT_UNIX_MS" \
+  --destination "$AUTHORITY"
+
+sudo cat "$AUTHORITY"
+```
+
+There are no raw quote-mint, quote-decimals, or entry-amount inputs. The bridge authenticates the approved decision and takes those exact economics only from its bound fields.
+
+The approved decision must preserve:
+
+```text
+status=CANDIDATE_VALUE_APPROVED
+candidate_value_authority=EXPLICIT_PRODUCTION_DECISION_BOUND
+quote_evidence_authority=MULTI_REFERENCE_REVIEW
+```
+
+The bridge then authenticates the source/cohort/request authority through the existing candidate-authority derivation and records the exact derived candidate identity plus both provenance chains.
+
+A successful artifact records:
+
+```text
+authority_status=BOUND_EXACT_CANONICAL_CANDIDATE
+candidate_value_authority=EXPLICIT_PRODUCTION_DECISION_BOUND
+candidate_authoring_authority=DECISION_BACKED_INPUTS_BOUND
+installation_authority=NOT_GRANTED
+activation_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This command does not emit or stage a runtime-manifest candidate. It does not create a transition binding, execute readiness, install/activate/rotate a manifest, score/model-fit, promote PAPER, sign, submit, or enable LIVE.
+
+Preserve and review the complete authority artifact separately. A later exact candidate-authoring step must reproduce the candidate manifest SHA/fingerprint committed by this authority. Do not run transition binding from this authority alone.
+
 ## Bind explicit G1C v2 candidate inputs
 
 After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
