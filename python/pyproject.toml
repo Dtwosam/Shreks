@@ -25,6 +25,7 @@ shreks-g1c-v2-candidate-value-decision = "shreks_brain.g1c_v2_candidate_value_de
 shreks-g1c-v2-decision-backed-candidate-authority-bind = "shreks_brain.g1c_v2_decision_backed_candidate_authority:main"
 shreks-g1c-v2-decision-backed-candidate-author = "shreks_brain.g1c_v2_decision_backed_candidate_authoring:main"
 shreks-g1c-v2-decision-backed-transition-bind = "shreks_brain.g1c_v2_decision_backed_transition_binding:main"
+shreks-g1c-v2-decision-backed-rotation-readiness = "shreks_brain.g1c_v2_decision_backed_rotation_readiness:main"
 shreks-g1c-v2-entry-sizing-proposal = "shreks_brain.g1c_v2_entry_sizing_proposal:main"
 shreks-g1c-v2-quote-valuation-reference = "shreks_brain.g1c_v2_quote_valuation_reference:main"
 shreks-g1c-v2-quote-valuation-review = "shreks_brain.g1c_v2_quote_valuation_review:main"
