@@ -306,3 +306,14 @@ This seal does not authorize:
 `PAPER_PROMOTION=BLOCKED`
 
 `LIVE=DISABLED`
+
+
+## Release-trigger correction
+
+PR #392 merged the complete seal content to `main`, but that merge used a normal merge commit whose subject began with `Merge pull request` rather than `seal:`.
+
+The existing release workflow intentionally triggers automatic sealed release construction only when the successful `main` CI head commit message begins with `seal:`.
+
+This follow-up changes no implementation, verifier, runbook procedure, authority, candidate value, runtime state, or production policy. Its sole purpose is to place the already-reviewed seal on one verified `main` commit whose subject satisfies the existing sealed-release trigger without weakening or modifying that trigger.
+
+All authority boundaries in this document remain unchanged.
