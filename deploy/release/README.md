@@ -1030,6 +1030,76 @@ live_authority=DISABLED
 
 This evidence-only command does not invoke the manifest manager, does not replace the active runtime manifest, and does not grant manifest-rotation authority. Preserve and review the readiness receipt separately before any later, explicitly authorized rotation decision.
 
+### Plan one exact decision-backed G1C v2 protected rotation
+
+Only after production verification proves the decision-backed rotation-plan CLI/module belong to the exact active immutable release, and only after a separately reviewed `READY_EVIDENCE_ONLY` decision-backed readiness receipt exists for the exact candidate/binding/authority chain, a trusted administrator may build one read-only rotation plan.
+
+The planner re-authenticates the candidate, binding, authority, and readiness receipt; derives the binding fingerprint from the authenticated binding; rechecks current release/manager/source/runtime/sudoers/G7/service state; and requires the manager's binding-named rotation evidence directory to be absent.
+
+It does not invoke the manifest manager.
+
+Use only the exact reviewed artifacts and current release SHA:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+CANDIDATE="<exact-reviewed-decision-backed-candidate.json>"
+BINDING="<exact-reviewed-decision-backed-transition-binding.json>"
+AUTHORITY="<exact-reviewed-decision-backed-candidate-authority.json>"
+READINESS="<exact-reviewed-ready-evidence-only-receipt.json>"
+
+PLAN_DIR="/root/shreks-g1c-v2-decision-backed-rotation-plan-$CURRENT_SHA"
+PLAN="$PLAN_DIR/rotation-plan.json"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$PLAN_DIR"
+
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-decision-backed-rotation-plan" \
+    --candidate-runtime-manifest "$2" \
+    --transition-binding "$3" \
+    --decision-backed-candidate-authority "$4" \
+    --readiness-receipt "$5" \
+    --expected-release-source-sha "$6" \
+    > "$7"
+' sh \
+  "$CURRENT_RELEASE" \
+  "$CANDIDATE" \
+  "$BINDING" \
+  "$AUTHORITY" \
+  "$READINESS" \
+  "$CURRENT_SHA" \
+  "$PLAN"
+
+sudo cat "$PLAN"
+```
+
+There is no operator-supplied binding fingerprint and there are no raw candidate economics, run-identity, timestamp, decision, review, or sizing inputs.
+
+A successful plan records:
+
+```text
+status=READY_FOR_TRUSTED_ADMIN_ROTATION_CEREMONY
+planning_authority=READ_ONLY
+manifest_rotation_authority=NOT_EXERCISED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The plan contains exactly one future trusted-admin manager argv bound to the authenticated candidate path, binding path, derived binding fingerprint, and exact current release SHA. The planner records that this argv was not executed.
+
+Do not execute the planned manager argv merely because this plan exists. Plan creation and review are evidence-only planning; actual protected PAPER rotation authority remains the later trusted administrator's separate explicit root invocation under the protected-rotation design.
+
 ## Prove protected PAPER manifest rotation readiness
 
 After the root helper has been installed with a successful `installation-proof.json`, use the release-local readiness proof before requesting any separate production manifest-rotation authority.
