@@ -912,6 +912,74 @@ The authority binder itself does not emit or stage the candidate runtime-manifes
 
 Do not run rotation-readiness until the exact canonical candidate file and its exact canonical transition binding already exist and have been staged as immutable regular files.
 
+### Prove exact decision-backed G1C v2 rotation readiness
+
+Only after production verification proves the decision-backed readiness CLI/module belong to the exact active immutable release, and only after the exact reviewed decision-backed candidate plus its exact standard transition binding already exist, a trusted administrator may request evidence-only readiness for that authority chain.
+
+A **fresh exact-release installation proof** is mandatory. Because every sealed deployment changes the current release SHA and wheel identity, do not reuse an installation proof from an earlier release even if the installed manifest-manager bytes still match.
+
+Use the exact reviewed candidate, binding, and decision-backed authority together with the current-release helper proof:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+CANDIDATE="<exact-reviewed-decision-backed-candidate.json>"
+BINDING="<exact-reviewed-decision-backed-transition-binding.json>"
+AUTHORITY="<exact-reviewed-decision-backed-candidate-authority.json>"
+INSTALL_PROOF="/root/shreks-paper-manifest-manager-install-$CURRENT_SHA/installation-proof.json"
+
+READINESS_DIR="/root/shreks-g1c-v2-decision-backed-rotation-readiness-$CURRENT_SHA"
+READINESS="$READINESS_DIR/rotation-readiness.json"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$READINESS_DIR"
+
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-decision-backed-rotation-readiness" \
+    --candidate-runtime-manifest "$2" \
+    --transition-binding "$3" \
+    --decision-backed-candidate-authority "$4" \
+    --installation-proof "$5" \
+    --expected-release-source-sha "$6" \
+    > "$7"
+' sh \
+  "$CURRENT_RELEASE" \
+  "$CANDIDATE" \
+  "$BINDING" \
+  "$AUTHORITY" \
+  "$INSTALL_PROOF" \
+  "$CURRENT_SHA" \
+  "$READINESS"
+
+sudo cat "$READINESS"
+```
+
+There is no operator-supplied binding fingerprint. The wrapper authenticates the standard transition binding and **derives the binding fingerprint from the authenticated binding** before delegating to the already-sealed readiness proof.
+
+There are no raw paper-run, timestamp, quote, entry-amount, decision, review, or sizing inputs. The wrapper authenticates the candidate, standard binding, and decision-backed authority, requires their provenance to agree, and then delegates the current-release/helper/service/G7/preflight checks to the existing readiness implementation.
+
+A successful receipt remains the existing standard readiness schema and records:
+
+```text
+status=READY_EVIDENCE_ONLY
+installation_authority=PROVEN
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This evidence-only command does not invoke the manifest manager, does not replace the active runtime manifest, and does not grant manifest-rotation authority. Preserve and review the readiness receipt separately before any later, explicitly authorized rotation decision.
+
 ## Prove protected PAPER manifest rotation readiness
 
 After the root helper has been installed with a successful `installation-proof.json`, use the release-local readiness proof before requesting any separate production manifest-rotation authority.
