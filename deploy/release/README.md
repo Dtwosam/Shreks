@@ -416,6 +416,56 @@ A successful `installation-proof.json` records `PROVEN_EXACT_RELEASE_BOUND_HELPE
 
 If the proof fails, do not treat helper installation as accepted and do not proceed to runtime-manifest rotation. Investigate the drift first.
 
+## Refresh the exact-release helper installation proof
+
+After a later immutable release changes the release SHA or wheel identity, an earlier helper installation proof is stale even when production verification reports `paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`.
+
+Only after production verification proves the refresh CLI/module belong to the exact active immutable release may a trusted administrator produce a fresh proof without reinstalling the helper.
+
+The refresh requires the helper to already match the exact current release. It fails closed if the helper is absent, has different bytes, or has different metadata. It does not install, replace, chmod, or chown the helper.
+
+Create a new root-private evidence directory and run only the release-local refresh command:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+PROOF_DIR="/root/shreks-paper-manifest-manager-proof-refresh-$CURRENT_SHA"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$PROOF_DIR"
+
+sudo sh -c '
+  set -e
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-manager-install-proof-refresh"     "$2" > "$3/installation-proof.json"
+' sh "$CURRENT_RELEASE" "$CURRENT_SHA" "$PROOF_DIR"
+
+sudo cat "$PROOF_DIR/installation-proof.json"
+```
+
+The refresh uses the existing exact-release prestate/poststate proof machinery and allows only the installer's `ALREADY_INSTALLED` path. If the helper is not already exact, refresh fails before helper publication.
+
+A successful `installation-proof.json` retains the existing schema and records:
+
+```text
+status=VERIFIED
+installation_authority=PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This ceremony produces proof evidence only. It does not create or stage a candidate, transition binding, or readiness receipt; it does not execute readiness; and it does not authorize or invoke manifest rotation.
+
+Do not execute decision-backed readiness merely because this fresh proof exists. The exact reviewed candidate, standard transition binding, decision-backed authority, current-release proof, and current release SHA remain separately required inputs to that later evidence-only ceremony.
+
 ## Capture G1C v2 valuation and sizing evidence
 
 After a sealed release containing the evidence-only valuation/sizing tools is active and production verification has proved both release-local script/module paths, a trusted administrator may capture bounded evidence for a later production candidate-value decision.
