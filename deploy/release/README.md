@@ -630,6 +630,71 @@ live_authority=DISABLED
 
 Review the proposed raw amount and its exact evidence chain separately. A later explicit production candidate-value decision may accept, reject, or replace it. Do not feed it into the candidate-authority binder merely because the proposal exists.
 
+### Record one explicit G1C v2 candidate-value decision
+
+Only after production verification proves the candidate-value decision CLI/module belong to the exact active immutable release may a trusted administrator review one existing review-backed sizing proposal and record exactly one explicit production candidate-value decision.
+
+The proposal must authenticate with:
+
+`quote_evidence_authority=MULTI_REFERENCE_REVIEW`
+
+A legacy `EXPLICIT_REFERENCE_ONLY` proposal is rejected by this decision tool.
+
+Choose exactly one decision for the reviewed proposal:
+
+- `ACCEPT_PROPOSAL` — select the proposal's exact raw entry amount;
+- `REJECT_PROPOSAL` — select no amount and grant no candidate-value authority;
+- `REPLACE_PROPOSAL` — select one explicit different positive-u64 raw amount.
+
+Every decision requires a non-empty review reason. Replacement requires `--replacement-entry-input-amount`; accept and reject forbid it.
+
+Example for an explicit ACCEPT decision:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+PROPOSAL="<exact-authenticated-review-backed-sizing-proposal.json>"
+DECISION_DIR="/root/shreks-g1c-v2-candidate-value-decision"
+DECISION_FILE="$DECISION_DIR/candidate-value-decision.json"
+
+sudo install -d -o root -g root -m 0700 "$DECISION_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-candidate-value-decision" \
+  --sizing-proposal "$PROPOSAL" \
+  --decision ACCEPT_PROPOSAL \
+  --decision-reason "<explicit-reviewed-production-value-reason>" \
+  --destination "$DECISION_FILE"
+
+sudo cat "$DECISION_FILE"
+```
+
+For `REJECT_PROPOSAL`, change only the decision and reason. For `REPLACE_PROPOSAL`, also supply:
+
+```sh
+  --replacement-entry-input-amount "<explicit-reviewed-positive-u64-raw-amount>"
+```
+
+Do not execute multiple competing decision commands for the same review ceremony. Preserve the one selected canonical decision artifact.
+
+An accepted or replaced decision records:
+
+```text
+status=CANDIDATE_VALUE_APPROVED
+candidate_value_authority=EXPLICIT_PRODUCTION_DECISION_BOUND
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+A rejected decision records `status=CANDIDATE_VALUE_REJECTED`, no selected raw amount, and `candidate_value_authority=NOT_GRANTED`.
+
+The command authenticates the proposal and binds its proposal fingerprint/file SHA, quote evidence provenance, target quote identity, review reason, and selected amount. It does not invoke candidate authority, author a runtime candidate, create a transition binding, execute readiness, rotate a manifest, score/model-fit, promote PAPER, sign, submit, or enable LIVE.
+
+Do not run candidate authority from this decision alone. A later separate decision-backed bridge must authenticate one approved decision and combine its exact selected quote mint/decimals/raw amount with separately explicit new-run identity/time inputs before candidate authoring can be granted.
+
 ## Bind explicit G1C v2 candidate inputs
 
 After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
