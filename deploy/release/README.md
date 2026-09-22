@@ -760,6 +760,44 @@ This command does not emit or stage a runtime-manifest candidate. It does not cr
 
 Preserve and review the complete authority artifact separately. A later exact candidate-authoring step must reproduce the candidate manifest SHA/fingerprint committed by this authority. Do not run transition binding from this authority alone.
 
+### Author one exact decision-backed G1C v2 candidate
+
+Only after production verification proves the decision-backed candidate-authoring CLI/module belong to the exact active immutable release may a trusted administrator materialize the one canonical candidate already committed by a reviewed decision-backed candidate authority.
+
+Supply only the canonical source manifest, the exact authenticated authority artifact, and a new private destination:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE="/etc/shreks/paper-campaign.json"
+AUTHORITY="<exact-reviewed-decision-backed-candidate-authority.json>"
+
+CANDIDATE_DIR="/root/shreks-g1c-v2-decision-backed-candidate"
+CANDIDATE="$CANDIDATE_DIR/runtime-manifest-candidate.json"
+
+sudo install -d -o root -g root -m 0700 "$CANDIDATE_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-decision-backed-candidate-author" \
+  --source-runtime-manifest "$SOURCE" \
+  --decision-backed-candidate-authority "$AUTHORITY" \
+  --destination "$CANDIDATE"
+
+sudo cat "$CANDIDATE"
+```
+
+There are no raw paper-run, timestamp, quote, entry-amount, cohort, request, or decision inputs. The author authenticates the decision-backed authority and takes the exact new-run identity/time and quote economics only from its bound fields.
+
+The author must reproduce the candidate manifest SHA/fingerprint committed by the authority. Any mismatch fails closed.
+
+The source manifest must also match the source SHA/fingerprint/paper-run identity committed by the authority. The source and authority are re-checked for byte stability before the candidate is persisted.
+
+The destination is write-once and private. A successful invocation writes only the exact canonical mode-0600 runtime-manifest candidate file.
+
+This command does not create a transition binding, execute readiness, install/activate/rotate a manifest, score/model-fit, promote PAPER, sign, submit, or enable LIVE.
+
+Preserve and review the candidate separately. Do not run transition binding from this candidate alone. A later transition-binding step must authenticate this exact candidate together with the authority chain and the existing cohort/request transition requirements.
+
 ## Bind explicit G1C v2 candidate inputs
 
 After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
