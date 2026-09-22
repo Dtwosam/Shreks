@@ -265,6 +265,35 @@ jobs:
           printf 'g1c_v2_candidate_value_decision_path=%s\n' "$CANDIDATE_VALUE_DECISION_RESOLVED"
           printf 'g1c_v2_candidate_value_decision_module=%s\n' "$CANDIDATE_VALUE_DECISION_MODULE"
 
+          DECISION_BACKED_CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-decision-backed-candidate-authority-bind"
+          test -f "$DECISION_BACKED_CANDIDATE_AUTHORITY"
+          test ! -L "$DECISION_BACKED_CANDIDATE_AUTHORITY"
+          test -x "$DECISION_BACKED_CANDIDATE_AUTHORITY"
+          DECISION_BACKED_CANDIDATE_AUTHORITY_RESOLVED="$(readlink -f "$DECISION_BACKED_CANDIDATE_AUTHORITY")"
+          test "$DECISION_BACKED_CANDIDATE_AUTHORITY_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-decision-backed-candidate-authority-bind"
+          DECISION_BACKED_CANDIDATE_AUTHORITY_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_decision_backed_candidate_authority as decision_backed_candidate_authority
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(decision_backed_candidate_authority.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "decision-backed candidate authority module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$DECISION_BACKED_CANDIDATE_AUTHORITY_MODULE"
+          printf 'g1c_v2_decision_backed_candidate_authority=present\n'
+          printf 'g1c_v2_decision_backed_candidate_authority_path=%s\n' "$DECISION_BACKED_CANDIDATE_AUTHORITY_RESOLVED"
+          printf 'g1c_v2_decision_backed_candidate_authority_module=%s\n' "$DECISION_BACKED_CANDIDATE_AUTHORITY_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"
