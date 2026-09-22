@@ -33,6 +33,7 @@ shreks-g1c-v2-review-backed-entry-sizing = "shreks_brain.g1c_v2_review_backed_en
 shreks-g1c-v2-runtime-manifest-transition-bind = "shreks_brain.g1c_v2_runtime_manifest_transition_binding:main"
 shreks-g1c-v2-paper-manifest-manager-install = "shreks_brain.g1c_v2_paper_manifest_manager_install:main"
 shreks-g1c-v2-paper-manifest-manager-install-proof = "shreks_brain.g1c_v2_paper_manifest_manager_installation_proof:main"
+shreks-g1c-v2-paper-manifest-manager-install-proof-refresh = "shreks_brain.g1c_v2_paper_manifest_manager_installation_proof_refresh:main"
 shreks-g1c-v2-paper-manifest-manager-install-plan = "shreks_brain.g1c_v2_paper_manifest_manager_install_plan:main"
 shreks-g1c-v2-paper-manifest-manager-status = "shreks_brain.g1c_v2_paper_manifest_manager_status:main"
 shreks-g1c-v2-paper-manifest-rotation-readiness = "shreks_brain.g1c_v2_paper_manifest_rotation_readiness:main"
