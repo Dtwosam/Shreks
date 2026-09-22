@@ -534,7 +534,54 @@ The review does not authorize production candidate values. The median is a revie
 
 Only after reviewing the complete artifact may a later evidence-only sizing proposal use an explicitly reviewed value/fingerprint/timestamp. A still-later explicit production candidate-value decision is required before candidate authority.
 
+### Derive one evidence-only entry-sizing proposal from a valuation review
+
+Only after production verification proves the review-backed sizing CLI/module belong to the exact active immutable release may a trusted administrator derive a proposal from one authenticated multi-reference quote-valuation review.
+
+Supply the review path explicitly. Do not copy its median, review fingerprint, or conservative evidence timestamp into the older explicit-reference sizing CLI.
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE_MANIFEST="/etc/shreks/paper-campaign.json"
+REVIEW="<exact-authenticated-quote-valuation-review.json>"
+TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"
+
+PROPOSAL_DIR="/root/shreks-g1c-v2-review-backed-entry-sizing"
+PROPOSAL="$PROPOSAL_DIR/entry-sizing-proposal.json"
+
+sudo install -d -o root -g root -m 0700 "$PROPOSAL_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-review-backed-entry-sizing" \
+  --source-runtime-manifest "$SOURCE_MANIFEST" \
+  --review "$REVIEW" \
+  --target-quote-decimals "$TARGET_QUOTE_DECIMALS" \
+  --destination "$PROPOSAL"
+
+sudo cat "$PROPOSAL"
+```
+
+The tool authenticates the canonical review directly. It uses the review's `median_quote_asset_usd_per_token`, review fingerprint (`review_fingerprint_sha256`), and conservative evidence timestamp (`quote_evidence_observed_at_unix_ms`) without re-labeling that provenance as a single explicit reference.
+
+A successful proposal records:
+
+```text
+status=PROPOSAL_EVIDENCE_ONLY
+quote_evidence_authority=MULTI_REFERENCE_REVIEW
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The proposal does not authorize production candidate values. Review the proposed raw amount and its complete review-backed evidence chain separately. A later explicit production candidate-value decision may accept, reject, or replace it. Do not run candidate authority from this proposal alone.
+
 ### Produce one evidence-only entry-sizing proposal
+
+This remains the backward-compatible single-reference path and records `quote_evidence_authority=EXPLICIT_REFERENCE_ONLY`.
 
 Only after reviewing one exact reference, copy its exact quote value, fingerprint, and observation timestamp into the following explicit inputs.
 
