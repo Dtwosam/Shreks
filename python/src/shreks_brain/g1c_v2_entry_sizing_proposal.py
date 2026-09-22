@@ -22,6 +22,8 @@ _SCHEMA_VERSION = 1
 _STATUS = "PROPOSAL_EVIDENCE_ONLY"
 _SIZING_POLICY = "preserve_source_quote_notional_floor"
 _REFERENCE_AUTHORITY = "EXPLICIT_REFERENCE_ONLY"
+_REVIEW_AUTHORITY = "MULTI_REFERENCE_REVIEW"
+_VALID_EVIDENCE_AUTHORITIES = {_REFERENCE_AUTHORITY, _REVIEW_AUTHORITY}
 _NOT_GRANTED = "NOT_GRANTED"
 _BLOCKED = "BLOCKED"
 _DISABLED = "DISABLED"
@@ -43,6 +45,33 @@ def propose_g1c_v2_entry_sizing(
     quote_evidence_observed_at_unix_ms: int,
     destination: str | Path,
 ) -> dict[str, object]:
+    return _propose_g1c_v2_entry_sizing_with_authority(
+        source_runtime_manifest_path=source_runtime_manifest_path,
+        target_quote_mint=target_quote_mint,
+        target_quote_decimals=target_quote_decimals,
+        target_quote_usd_per_token=target_quote_usd_per_token,
+        quote_evidence_fingerprint_sha256=quote_evidence_fingerprint_sha256,
+        quote_evidence_observed_at_unix_ms=quote_evidence_observed_at_unix_ms,
+        quote_evidence_authority=_REFERENCE_AUTHORITY,
+        destination=destination,
+    )
+
+
+def _propose_g1c_v2_entry_sizing_with_authority(
+    *,
+    source_runtime_manifest_path: str | Path,
+    target_quote_mint: str,
+    target_quote_decimals: int,
+    target_quote_usd_per_token: str,
+    quote_evidence_fingerprint_sha256: str,
+    quote_evidence_observed_at_unix_ms: int,
+    quote_evidence_authority: str,
+    destination: str | Path,
+) -> dict[str, object]:
+    if quote_evidence_authority not in _VALID_EVIDENCE_AUTHORITIES:
+        raise G1CV2EntrySizingProposalError(
+            "quote_evidence_authority is unsupported"
+        )
     source_path = _resolve_existing_regular_file(
         source_runtime_manifest_path,
         label="source runtime manifest",
@@ -173,7 +202,7 @@ def propose_g1c_v2_entry_sizing(
         "quote_evidence_observed_at_unix_ms": (
             quote_evidence_observed_at_unix_ms
         ),
-        "quote_evidence_authority": _REFERENCE_AUTHORITY,
+        "quote_evidence_authority": quote_evidence_authority,
         "proposed_entry_input_amount": proposed_raw,
         "proposed_quote_token_amount": _decimal_text(
             proposed_token_amount
@@ -247,7 +276,6 @@ def decode_g1c_v2_entry_sizing_proposal(payload: str) -> dict[str, object]:
         "schema_version": _SCHEMA_VERSION,
         "status": _STATUS,
         "sizing_policy": _SIZING_POLICY,
-        "quote_evidence_authority": _REFERENCE_AUTHORITY,
         "candidate_value_authority": _NOT_GRANTED,
         "candidate_authoring_authority": _NOT_GRANTED,
         "rotation_authority": _NOT_GRANTED,
@@ -260,6 +288,10 @@ def decode_g1c_v2_entry_sizing_proposal(payload: str) -> dict[str, object]:
             raise G1CV2EntrySizingProposalError(
                 f"entry sizing proposal {name} authority is unsupported"
             )
+    if document.get("quote_evidence_authority") not in _VALID_EVIDENCE_AUTHORITIES:
+        raise G1CV2EntrySizingProposalError(
+            "entry sizing proposal quote_evidence_authority is unsupported"
+        )
 
     for name in (
         "source_manifest_sha256",
