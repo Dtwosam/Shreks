@@ -798,6 +798,59 @@ This command does not create a transition binding, execute readiness, install/ac
 
 Preserve and review the candidate separately. Do not run transition binding from this candidate alone. A later transition-binding step must authenticate this exact candidate together with the authority chain and the existing cohort/request transition requirements.
 
+### Bind one exact decision-backed G1C v2 transition
+
+Only after production verification proves the decision-backed transition-binding CLI/module belong to the exact active immutable release may a trusted administrator bind the exact authored candidate through the already-reviewed decision-backed authority and existing frozen cohort/request compatibility checks.
+
+Use the protected source, the exact reviewed candidate, its exact reviewed decision-backed authority, the frozen cohort directory, the authenticated request authority, and a new root-private destination:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE="/etc/shreks/paper-campaign.json"
+CANDIDATE="<exact-reviewed-decision-backed-candidate.json>"
+AUTHORITY="<exact-reviewed-decision-backed-candidate-authority.json>"
+COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
+REQUEST="<exact-authenticated-v2-request-path>"
+
+BINDING_DIR="/root/shreks-g1c-v2-decision-backed-transition"
+BINDING="$BINDING_DIR/transition-binding.json"
+
+sudo install -d -o root -g root -m 0700 "$BINDING_DIR"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-decision-backed-transition-bind" \
+  --source-runtime-manifest "$SOURCE" \
+  --candidate-runtime-manifest "$CANDIDATE" \
+  --decision-backed-candidate-authority "$AUTHORITY" \
+  --cohort "$COHORT" \
+  --v2-host-request-authority "$REQUEST" \
+  --destination "$BINDING"
+
+sudo cat "$BINDING"
+```
+
+The cohort input is the frozen cohort directory, not a single file.
+
+There are no raw paper-run, timestamp, quote, entry-amount, decision, review, or sizing inputs. The bridge authenticates the source, candidate, and decision-backed authority; delegates the cohort/request compatibility assessment to the existing canonical transition binder; then requires the resulting source/candidate/cohort/request provenance to equal the decision-backed authority.
+
+A successful invocation writes the existing standard transition-binding schema, `shreks.g1c_v2_runtime_manifest_transition_binding` version 1, as one write-once mode-0600 private file.
+
+The standard binding continues to record:
+
+```text
+installation_authority=NOT_GRANTED
+activation_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This command does not execute rotation-readiness, install/activate/rotate a runtime manifest, retry scoring/model fitting, promote PAPER, access wallets, sign or submit transactions, or enable LIVE.
+
+Preserve and review the binding separately. Do not execute rotation-readiness merely because this binding exists; readiness remains a separate ceremony that must authenticate the exact candidate/binding, exact current release, and fresh release-bound helper installation proof.
+
 ## Bind explicit G1C v2 candidate inputs
 
 After a sealed release containing the candidate-input authority binder is active and production verification has proved that binder's release-local script/module provenance, a trusted administrator may bind one **separately reviewed** set of explicit new-run values.
