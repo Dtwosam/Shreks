@@ -207,6 +207,35 @@ jobs:
           printf 'g1c_v2_quote_valuation_review_path=%s\n' "$QUOTE_REVIEW_RESOLVED"
           printf 'g1c_v2_quote_valuation_review_module=%s\n' "$QUOTE_REVIEW_MODULE"
 
+          REVIEW_BACKED_ENTRY_SIZING="/opt/shreks/current/.venv/bin/shreks-g1c-v2-review-backed-entry-sizing"
+          test -f "$REVIEW_BACKED_ENTRY_SIZING"
+          test ! -L "$REVIEW_BACKED_ENTRY_SIZING"
+          test -x "$REVIEW_BACKED_ENTRY_SIZING"
+          REVIEW_BACKED_ENTRY_SIZING_RESOLVED="$(readlink -f "$REVIEW_BACKED_ENTRY_SIZING")"
+          test "$REVIEW_BACKED_ENTRY_SIZING_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-review-backed-entry-sizing"
+          REVIEW_BACKED_ENTRY_SIZING_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_review_backed_entry_sizing as review_backed_entry_sizing
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(review_backed_entry_sizing.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "review-backed entry sizing module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$REVIEW_BACKED_ENTRY_SIZING_MODULE"
+          printf 'g1c_v2_review_backed_entry_sizing=present\n'
+          printf 'g1c_v2_review_backed_entry_sizing_path=%s\n' "$REVIEW_BACKED_ENTRY_SIZING_RESOLVED"
+          printf 'g1c_v2_review_backed_entry_sizing_module=%s\n' "$REVIEW_BACKED_ENTRY_SIZING_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"
