@@ -381,6 +381,35 @@ jobs:
           printf 'g1c_v2_decision_backed_rotation_readiness_path=%s\n' "$DECISION_BACKED_ROTATION_READINESS_RESOLVED"
           printf 'g1c_v2_decision_backed_rotation_readiness_module=%s\n' "$DECISION_BACKED_ROTATION_READINESS_MODULE"
 
+          DECISION_BACKED_ROTATION_PLAN="/opt/shreks/current/.venv/bin/shreks-g1c-v2-decision-backed-rotation-plan"
+          test -f "$DECISION_BACKED_ROTATION_PLAN"
+          test ! -L "$DECISION_BACKED_ROTATION_PLAN"
+          test -x "$DECISION_BACKED_ROTATION_PLAN"
+          DECISION_BACKED_ROTATION_PLAN_RESOLVED="$(readlink -f "$DECISION_BACKED_ROTATION_PLAN")"
+          test "$DECISION_BACKED_ROTATION_PLAN_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-decision-backed-rotation-plan"
+          DECISION_BACKED_ROTATION_PLAN_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_decision_backed_rotation_plan as decision_backed_rotation_plan
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(decision_backed_rotation_plan.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "decision-backed rotation plan module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$DECISION_BACKED_ROTATION_PLAN_MODULE"
+          printf 'g1c_v2_decision_backed_rotation_plan=present\n'
+          printf 'g1c_v2_decision_backed_rotation_plan_path=%s\n' "$DECISION_BACKED_ROTATION_PLAN_RESOLVED"
+          printf 'g1c_v2_decision_backed_rotation_plan_module=%s\n' "$DECISION_BACKED_ROTATION_PLAN_MODULE"
+
           CANDIDATE_AUTHORITY="/opt/shreks/current/.venv/bin/shreks-g1c-v2-runtime-manifest-candidate-authority-bind"
           test -f "$CANDIDATE_AUTHORITY"
           test ! -L "$CANDIDATE_AUTHORITY"
