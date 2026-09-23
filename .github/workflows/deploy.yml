@@ -120,11 +120,12 @@ jobs:
           )"
           [[ "$RELEASE_ID" =~ ^[0-9]+$ ]] || exit 2
           gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" > "$RELEASE_ASSETS_JSON"
-          python - "$RELEASE_ASSETS_JSON" "$SOURCE_SHA" <<'PY'
+          RELEASE_ASSET_MAP="$RUNNER_TEMP/shreks-release-asset-download-map.tsv"
+          python - "$RELEASE_ASSETS_JSON" "$SOURCE_SHA" "$RELEASE_ASSET_MAP" <<'PY'
           import json
           import sys
 
-          assets_path, expected_sha = sys.argv[1:]
+          assets_path, expected_sha, map_path = sys.argv[1:]
           with open(assets_path, encoding="utf-8") as handle:
               assets = json.load(handle)
           if not isinstance(assets, list):
@@ -141,6 +142,27 @@ jobs:
               raise SystemExit("release asset set mismatch")
           if any(asset.get("state") != "uploaded" for asset in assets):
               raise SystemExit("release asset upload state is invalid")
+
+          by_name = {}
+          asset_ids = []
+          for asset in assets:
+              asset_id = asset.get("id")
+              if (
+                  isinstance(asset_id, bool)
+                  or not isinstance(asset_id, int)
+                  or asset_id <= 0
+              ):
+                  raise SystemExit("release asset id is invalid")
+              by_name[asset["name"]] = asset
+              asset_ids.append(asset_id)
+          if len(set(asset_ids)) != len(asset_ids):
+              raise SystemExit("release asset ids must be unique")
+
+          with open(map_path, "w", encoding="utf-8", newline="") as handle:
+              for name in expected:
+                  asset_id = by_name[name]["id"]
+                  item = {"name": name, "asset_id": asset_id}
+                  handle.write(f'{item["name"]}\t{item["asset_id"]}\n')
           PY
 
       - name: Download exact release assets
@@ -148,11 +170,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist/deploy
-          gh release download "$RELEASE_TAG" \
-            --pattern "shreks-release-$SOURCE_SHA.tar.gz" \
-            --pattern "shreks-release-$SOURCE_SHA.tar.gz.sha256" \
-            --pattern "RELEASE_MANIFEST.json" \
-            --dir dist/deploy
+          test -z "$(find dist/deploy -mindepth 1 -maxdepth 1 -print -quit)"
+          RELEASE_ASSET_MAP="$RUNNER_TEMP/shreks-release-asset-download-map.tsv"
+          test -f "$RELEASE_ASSET_MAP"
+
+          while IFS=$'\t' read -r ASSET_NAME ASSET_ID; do
+            [[ "$ASSET_ID" =~ ^[0-9]+$ ]] || exit 2
+            case "$ASSET_NAME" in
+              "RELEASE_MANIFEST.json"|"shreks-release-$SOURCE_SHA.tar.gz"|"shreks-release-$SOURCE_SHA.tar.gz.sha256")
+                ;;
+              *)
+                echo "unexpected release asset name in verified download map" >&2
+                exit 2
+                ;;
+            esac
+            gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" > "dist/deploy/$ASSET_NAME"
+            test -f "dist/deploy/$ASSET_NAME"
+          done < "$RELEASE_ASSET_MAP"
 
           test -f "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz"
           test -f "dist/deploy/shreks-release-$SOURCE_SHA.tar.gz.sha256"
