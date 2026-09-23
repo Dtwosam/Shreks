@@ -58,6 +58,17 @@ def test_g1c_v2_review_backed_entry_sizing_has_read_only_production_presence_con
     assert "conservative evidence timestamp" in runbook
     assert "does not authorize production candidate values" in runbook
     assert "Do not run candidate authority from this proposal alone." in runbook
-    assert 'TARGET_QUOTE_DECIMALS="9"' in runbook
-    assert 'TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"' not in runbook
-    assert 'test ! -e "$PROPOSAL"' in runbook
+
+    sizing_section = runbook.split(
+        "### Derive one evidence-only entry-sizing proposal from a valuation review",
+        1,
+    )[1].split(
+        "### Produce one evidence-only entry-sizing proposal",
+        1,
+    )[0]
+    assert 'TARGET_QUOTE_DECIMALS="9"' in sizing_section
+    assert (
+        'TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"'
+        not in sizing_section
+    )
+    assert 'test ! -e "$PROPOSAL"' in sizing_section
