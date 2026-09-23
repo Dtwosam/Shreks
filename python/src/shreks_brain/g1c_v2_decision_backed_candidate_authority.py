@@ -13,6 +13,10 @@ from shreks_brain.g1c_v2_candidate_value_decision import (
     G1CV2CandidateValueDecisionError,
     decode_g1c_v2_candidate_value_decision,
 )
+from shreks_brain.g1c_v2_candidate_value_preflight import (
+    G1CV2CandidateValuePreflightError,
+    decode_g1c_v2_candidate_value_preflight,
+)
 from shreks_brain.g1c_v2_runtime_manifest_candidate_authority import (
     G1CV2RuntimeManifestCandidateAuthorityError,
     bind_g1c_v2_runtime_manifest_candidate_authority,
@@ -24,11 +28,11 @@ from shreks_brain.observer_campaign.runtime_manifest import (
 
 
 _SCHEMA_NAME = "shreks.g1c_v2_decision_backed_candidate_authority"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _AUTHORITY_KIND = "approved_candidate_value_decision"
 _AUTHORITY_STATUS = "BOUND_EXACT_CANONICAL_CANDIDATE"
 _APPROVED_STATUS = "CANDIDATE_VALUE_APPROVED"
-_ALLOWED_DECISIONS = {"ACCEPT_PROPOSAL", "REPLACE_PROPOSAL"}
+_ALLOWED_DECISIONS = {"ACCEPT_PROPOSAL"}
 _REQUIRED_VALUE_AUTHORITY = "EXPLICIT_PRODUCTION_DECISION_BOUND"
 _REQUIRED_EVIDENCE_AUTHORITY = "MULTI_REFERENCE_REVIEW"
 _AUTHORING_AUTHORITY = "DECISION_BACKED_INPUTS_BOUND"
@@ -49,14 +53,17 @@ def bind_g1c_v2_decision_backed_candidate_authority(
     source_runtime_manifest_path: str | Path,
     cohort_path: str | Path,
     v2_host_request_authority_path: str | Path,
+    candidate_value_preflight_path: str | Path,
     candidate_value_decision_path: str | Path,
-    paper_run_id: str,
-    start_at_unix_ms: int,
     destination: str | Path,
 ) -> dict[str, object]:
     source_path = _resolve_existing_regular_file(
         source_runtime_manifest_path,
         label="source runtime manifest",
+    )
+    preflight_path = _resolve_existing_regular_file(
+        candidate_value_preflight_path,
+        label="candidate value preflight",
     )
     decision_path = _resolve_existing_regular_file(
         candidate_value_decision_path,
@@ -65,6 +72,10 @@ def bind_g1c_v2_decision_backed_candidate_authority(
     source_payload = _read_regular_file_stable(
         source_path,
         label="source runtime manifest",
+    )
+    preflight_payload = _read_regular_file_stable(
+        preflight_path,
+        label="candidate value preflight",
     )
     decision_payload = _read_regular_file_stable(
         decision_path,
@@ -76,6 +87,19 @@ def bind_g1c_v2_decision_backed_candidate_authority(
     except ObserverPaperCampaignRuntimeManifestError as error:
         raise G1CV2DecisionBackedCandidateAuthorityError(
             f"source runtime manifest authentication failed: {error}"
+        ) from error
+    try:
+        preflight = decode_g1c_v2_candidate_value_preflight(
+            preflight_payload.decode("utf-8")
+        )
+    except (
+        G1CV2CandidateValuePreflightError,
+        UnicodeDecodeError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            f"candidate value preflight authentication failed: {error}"
         ) from error
     try:
         decision = decode_g1c_v2_candidate_value_decision(
@@ -92,25 +116,93 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         ) from error
 
     _require_approved_decision(decision)
+
     source_sha256 = hashlib.sha256(source_payload).hexdigest()
-    if source_sha256 != decision["source_manifest_sha256"]:
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "candidate value decision source manifest SHA does not match supplied source"
-        )
-    if (
-        source.manifest_fingerprint_sha256
-        != decision["source_runtime_manifest_fingerprint_sha256"]
+    for label, value in (
+        ("candidate value preflight", preflight["source_manifest_sha256"]),
+        ("candidate value decision", decision["source_manifest_sha256"]),
     ):
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "candidate value decision source manifest fingerprint does not match supplied source"
-        )
-    if source.paper_run_id != decision["source_paper_run_id"]:
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "candidate value decision source paper_run_id does not match supplied source"
-        )
+        if value != source_sha256:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"{label} source manifest SHA does not match supplied source"
+            )
+    for label, value in (
+        (
+            "candidate value preflight",
+            preflight["source_runtime_manifest_fingerprint_sha256"],
+        ),
+        (
+            "candidate value decision",
+            decision["source_runtime_manifest_fingerprint_sha256"],
+        ),
+    ):
+        if value != source.manifest_fingerprint_sha256:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"{label} source manifest fingerprint does not match supplied source"
+            )
+    for label, value in (
+        ("candidate value preflight", preflight["source_paper_run_id"]),
+        ("candidate value decision", decision["source_paper_run_id"]),
+    ):
+        if value != source.paper_run_id:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"{label} source paper_run_id does not match supplied source"
+            )
+
+    equality_pairs = (
+        (
+            "source proposal SHA",
+            preflight["source_proposal_sha256"],
+            decision["source_proposal_sha256"],
+        ),
+        (
+            "proposal fingerprint",
+            preflight["proposal_fingerprint_sha256"],
+            decision["proposal_fingerprint_sha256"],
+        ),
+        (
+            "quote evidence authority",
+            preflight["quote_evidence_authority"],
+            decision["quote_evidence_authority"],
+        ),
+        (
+            "quote evidence fingerprint",
+            preflight["quote_evidence_fingerprint_sha256"],
+            decision["quote_evidence_fingerprint_sha256"],
+        ),
+        (
+            "quote evidence timestamp",
+            preflight["quote_evidence_observed_at_unix_ms"],
+            decision["quote_evidence_observed_at_unix_ms"],
+        ),
+        (
+            "target quote mint",
+            preflight["target_quote_mint"],
+            decision["target_quote_mint"],
+        ),
+        (
+            "target quote decimals",
+            preflight["target_quote_decimals"],
+            decision["target_quote_decimals"],
+        ),
+        (
+            "proposed entry amount",
+            preflight["proposed_entry_input_amount"],
+            decision["proposed_entry_input_amount"],
+        ),
+    )
+    for label, left, right in equality_pairs:
+        if left != right:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"candidate value preflight/decision {label} mismatch"
+            )
 
     selected_amount = decision["selected_entry_input_amount"]
     _require_positive_u64("selected_entry_input_amount", selected_amount)
+    if selected_amount != preflight["proposed_entry_input_amount"]:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            "approved candidate value must equal the preflighted proposal amount"
+        )
 
     with tempfile.TemporaryDirectory(
         prefix="shreks-g1c-v2-decision-backed-authority-"
@@ -121,8 +213,8 @@ def bind_g1c_v2_decision_backed_candidate_authority(
                 source_runtime_manifest_path=source_path,
                 cohort_path=cohort_path,
                 v2_host_request_authority_path=v2_host_request_authority_path,
-                paper_run_id=paper_run_id,
-                start_at_unix_ms=start_at_unix_ms,
+                paper_run_id=preflight["candidate_paper_run_id"],
+                start_at_unix_ms=preflight["candidate_start_at_unix_ms"],
                 quote_asset_mint=decision["target_quote_mint"],
                 quote_asset_decimals=decision["target_quote_decimals"],
                 entry_input_amount=selected_amount,
@@ -142,6 +234,10 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         source_path,
         label="source runtime manifest",
     )
+    preflight_after = _read_regular_file_stable(
+        preflight_path,
+        label="candidate value preflight",
+    )
     decision_after = _read_regular_file_stable(
         decision_path,
         label="candidate value decision",
@@ -150,32 +246,101 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         raise G1CV2DecisionBackedCandidateAuthorityError(
             "source runtime manifest changed while decision-backed authority was derived"
         )
+    if preflight_after != preflight_payload:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            "candidate value preflight changed while authority was derived"
+        )
     if decision_after != decision_payload:
         raise G1CV2DecisionBackedCandidateAuthorityError(
             "candidate value decision changed while authority was derived"
         )
 
-    if derived["candidate_quote_asset_mint"] != decision["target_quote_mint"]:
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "derived candidate quote mint does not match approved decision"
-        )
-    if (
-        derived["candidate_quote_asset_decimals"]
-        != decision["target_quote_decimals"]
-    ):
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "derived candidate quote decimals do not match approved decision"
-        )
-    if derived["candidate_entry_input_amount"] != selected_amount:
-        raise G1CV2DecisionBackedCandidateAuthorityError(
-            "derived candidate entry amount does not match approved decision"
-        )
+    derived_checks = (
+        (
+            "preflighted candidate manifest SHA",
+            derived["candidate_manifest_sha256"],
+            preflight["candidate_manifest_sha256"],
+        ),
+        (
+            "preflighted candidate fingerprint",
+            derived["candidate_runtime_manifest_fingerprint_sha256"],
+            preflight["candidate_runtime_manifest_fingerprint_sha256"],
+        ),
+        (
+            "preflighted candidate run id",
+            derived["candidate_paper_run_id"],
+            preflight["candidate_paper_run_id"],
+        ),
+        (
+            "preflighted candidate start time",
+            derived["candidate_start_at_unix_ms"],
+            preflight["candidate_start_at_unix_ms"],
+        ),
+        (
+            "candidate quote mint",
+            derived["candidate_quote_asset_mint"],
+            preflight["target_quote_mint"],
+        ),
+        (
+            "candidate quote decimals",
+            derived["candidate_quote_asset_decimals"],
+            preflight["target_quote_decimals"],
+        ),
+        (
+            "candidate entry amount",
+            derived["candidate_entry_input_amount"],
+            preflight["proposed_entry_input_amount"],
+        ),
+        (
+            "frozen cohort fingerprint",
+            derived["cohort_artifact_fingerprint_sha256"],
+            preflight["cohort_artifact_fingerprint_sha256"],
+        ),
+        (
+            "frozen cohort quote mint",
+            derived["cohort_quote_mint"],
+            preflight["cohort_quote_mint"],
+        ),
+        (
+            "request fingerprint",
+            derived["request_fingerprint_sha256"],
+            preflight["request_fingerprint_sha256"],
+        ),
+        (
+            "request release SHA",
+            derived["request_release_source_sha"],
+            preflight["request_release_source_sha"],
+        ),
+        (
+            "request hydration fingerprint",
+            derived["request_hydration_policy_fingerprint_sha256"],
+            preflight["request_hydration_policy_fingerprint_sha256"],
+        ),
+    )
+    for label, left, right in derived_checks:
+        if left != right:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"derived authority does not match {label}"
+            )
 
     material: dict[str, object] = {
         "schema_name": _SCHEMA_NAME,
         "schema_version": _SCHEMA_VERSION,
         "authority_kind": _AUTHORITY_KIND,
         "authority_status": _AUTHORITY_STATUS,
+        "candidate_value_preflight_sha256": hashlib.sha256(
+            preflight_payload
+        ).hexdigest(),
+        "candidate_value_preflight_fingerprint_sha256": preflight[
+            "preflight_fingerprint_sha256"
+        ],
+        "candidate_value_preflight_status": preflight["status"],
+        "candidate_compatibility": preflight["candidate_compatibility"],
+        "preflight_authority": preflight["preflight_authority"],
+        "source_proposal_sha256": preflight["source_proposal_sha256"],
+        "proposal_fingerprint_sha256": preflight[
+            "proposal_fingerprint_sha256"
+        ],
         "candidate_value_decision_sha256": hashlib.sha256(
             decision_payload
         ).hexdigest(),
@@ -251,7 +416,6 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         )
     return authority
 
-
 def decode_g1c_v2_decision_backed_candidate_authority(
     payload: str,
 ) -> dict[str, object]:
@@ -261,6 +425,13 @@ def decode_g1c_v2_decision_backed_candidate_authority(
         "schema_version",
         "authority_kind",
         "authority_status",
+        "candidate_value_preflight_sha256",
+        "candidate_value_preflight_fingerprint_sha256",
+        "candidate_value_preflight_status",
+        "candidate_compatibility",
+        "preflight_authority",
+        "source_proposal_sha256",
+        "proposal_fingerprint_sha256",
         "candidate_value_decision_sha256",
         "candidate_value_decision_fingerprint_sha256",
         "candidate_value_decision_status",
@@ -310,6 +481,11 @@ def decode_g1c_v2_decision_backed_candidate_authority(
         "schema_version": _SCHEMA_VERSION,
         "authority_kind": _AUTHORITY_KIND,
         "authority_status": _AUTHORITY_STATUS,
+        "candidate_value_preflight_status": (
+            "READY_FOR_EXPLICIT_CANDIDATE_VALUE_DECISION"
+        ),
+        "candidate_compatibility": "COMPATIBLE",
+        "preflight_authority": "EVIDENCE_ONLY",
         "candidate_value_decision_status": _APPROVED_STATUS,
         "candidate_value_authority": _REQUIRED_VALUE_AUTHORITY,
         "quote_evidence_authority": _REQUIRED_EVIDENCE_AUTHORITY,
@@ -328,7 +504,7 @@ def decode_g1c_v2_decision_backed_candidate_authority(
             )
     if document.get("candidate_value_decision_kind") not in _ALLOWED_DECISIONS:
         raise G1CV2DecisionBackedCandidateAuthorityError(
-            "decision-backed authority requires accepted or replaced decision"
+            "decision-backed authority requires an accepted preflighted proposal"
         )
     _require_non_empty_text(
         "candidate_value_decision_reason",
@@ -336,6 +512,10 @@ def decode_g1c_v2_decision_backed_candidate_authority(
     )
 
     for name in (
+        "candidate_value_preflight_sha256",
+        "candidate_value_preflight_fingerprint_sha256",
+        "source_proposal_sha256",
+        "proposal_fingerprint_sha256",
         "candidate_value_decision_sha256",
         "candidate_value_decision_fingerprint_sha256",
         "quote_evidence_fingerprint_sha256",
@@ -428,7 +608,6 @@ def decode_g1c_v2_decision_backed_candidate_authority(
         )
     return document
 
-
 def _require_approved_decision(decision: dict[str, object]) -> None:
     if decision.get("status") != _APPROVED_STATUS:
         raise G1CV2DecisionBackedCandidateAuthorityError(
@@ -436,7 +615,7 @@ def _require_approved_decision(decision: dict[str, object]) -> None:
         )
     if decision.get("decision") not in _ALLOWED_DECISIONS:
         raise G1CV2DecisionBackedCandidateAuthorityError(
-            "candidate value decision must accept or replace the proposal"
+            "candidate value decision must accept the preflighted proposal"
         )
     if decision.get("candidate_value_authority") != _REQUIRED_VALUE_AUTHORITY:
         raise G1CV2DecisionBackedCandidateAuthorityError(
@@ -661,16 +840,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="shreks-g1c-v2-decision-backed-candidate-authority-bind",
         description=(
-            "Bind an approved candidate-value decision plus explicit new-run "
-            "identity/time to exact authenticated G1C v2 candidate authority."
+            "Bind one accepted candidate-value decision to the exact candidate "
+            "previously proven COMPATIBLE by an authenticated preflight receipt."
         ),
     )
     parser.add_argument("--source-runtime-manifest", required=True)
     parser.add_argument("--cohort", required=True)
     parser.add_argument("--v2-host-request-authority", required=True)
+    parser.add_argument("--candidate-value-preflight", required=True)
     parser.add_argument("--candidate-value-decision", required=True)
-    parser.add_argument("--paper-run-id", required=True)
-    parser.add_argument("--start-at-unix-ms", required=True, type=int)
     parser.add_argument("--destination", required=True)
     args = parser.parse_args(argv)
 
@@ -679,9 +857,8 @@ def main(argv: list[str] | None = None) -> int:
             source_runtime_manifest_path=args.source_runtime_manifest,
             cohort_path=args.cohort,
             v2_host_request_authority_path=args.v2_host_request_authority,
+            candidate_value_preflight_path=args.candidate_value_preflight,
             candidate_value_decision_path=args.candidate_value_decision,
-            paper_run_id=args.paper_run_id,
-            start_at_unix_ms=args.start_at_unix_ms,
             destination=args.destination,
         )
     except (
