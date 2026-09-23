@@ -466,6 +466,82 @@ This ceremony produces proof evidence only. It does not create or stage a candid
 
 Do not execute decision-backed readiness merely because this fresh proof exists. The exact reviewed candidate, standard transition binding, decision-backed authority, current-release proof, and current release SHA remain separately required inputs to that later evidence-only ceremony.
 
+## Replace one prior verified helper with the exact current-release helper
+
+A later immutable release may intentionally change the sealed PAPER manifest-manager bytes. In that case production verification may report:
+
+```text
+paper_manifest_manager_status=PRESENT_DIFFERENT_BYTES
+```
+
+Do not delete, overwrite, copy, chmod, or repair the helper manually. The ordinary first-install path remains no-overwrite and must not be repurposed as an upgrade mechanism.
+
+Only after production verification proves the helper-update CLI/module belong to the exact active immutable release may a trusted administrator replace one existing helper that is still exactly bound by a separately reviewed prior `VERIFIED` installation proof.
+
+The update requires:
+
+- the exact current immutable release SHA;
+- one explicit root-private prior `installation-proof.json`;
+- the existing helper bytes and root-owned `0755` metadata to match that prior proof exactly;
+- the prior proof to bind a different release;
+- the new current release wheel and sealed manager member to authenticate exactly;
+- the fixed helper destination parent to remain root-owned and not group/world writable.
+
+Use a new root-private receipt destination:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+PRIOR_PROOF="<exact-reviewed-prior-VERIFIED-installation-proof.json>"
+
+UPDATE_DIR="/root/shreks-paper-manifest-manager-update-$CURRENT_SHA"
+UPDATE_RECEIPT="$UPDATE_DIR/update-receipt.json"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo install -d -o root -g root -m 0700 "$UPDATE_DIR"
+sudo test ! -e "$UPDATE_RECEIPT"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
+
+sudo sh -c '
+  set -Ce
+  umask 077
+  exec "$1/.venv/bin/shreks-g1c-v2-paper-manifest-manager-update" \
+    "$2" \
+    --prior-installation-proof "$3" \
+    > "$4"
+' sh \
+  "$CURRENT_RELEASE" \
+  "$CURRENT_SHA" \
+  "$PRIOR_PROOF" \
+  "$UPDATE_RECEIPT"
+
+sudo cat "$UPDATE_RECEIPT"
+```
+
+A successful update receipt records:
+
+```text
+status=UPDATED
+helper_update_authority=EXERCISED_EXACT_RELEASE_BOUND_HELPER_REPLACEMENT_ONLY
+manifest_rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+The updater replaces only `/usr/local/sbin/shreks-paper-manifest-manager`. It has no systemd, protected campaign-manifest, SQLite/E11, G7, scoring, promotion, wallet, signing, submission, or LIVE mutation authority.
+
+The update receipt is not sufficient for rotation readiness. Immediately afterward, use the current release's **proof-refresh** ceremony above to create a fresh current-release `VERIFIED` installation proof. Do not execute decision-backed readiness until that fresh proof succeeds.
+
+If update fails, do not retry blindly and do not delete the existing helper. Re-run the read-only helper-status command and inspect the prior proof/current-release identities first.
+
 ## Capture G1C v2 valuation and sizing evidence
 
 After a sealed release containing the evidence-only valuation/sizing tools is active and production verification has proved both release-local script/module paths, a trusted administrator may capture bounded evidence for a later production candidate-value decision.
