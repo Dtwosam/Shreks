@@ -809,15 +809,41 @@ Every decision requires a non-empty review reason. Replacement requires `--repla
 
 Example for an explicit ACCEPT decision:
 
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification run that authorized this ceremony. Do not substitute the latest repository commit, latest release tag, or an unverified active release.
+
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 PROPOSAL="<exact-authenticated-review-backed-sizing-proposal.json>"
 DECISION_DIR="/root/shreks-g1c-v2-candidate-value-decision"
 DECISION_FILE="$DECISION_DIR/candidate-value-decision.json"
 
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
 sudo install -d -o root -g root -m 0700 "$DECISION_DIR"
+sudo test ! -e "$DECISION_FILE"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-candidate-value-decision" \
   --sizing-proposal "$PROPOSAL" \
