@@ -12,6 +12,9 @@ import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 from shreks_brain.g1c_v2_candidate_value_decision import (
     decide_g1c_v2_candidate_value,
 )
+from shreks_brain.g1c_v2_candidate_value_preflight import (
+    preflight_g1c_v2_candidate_value,
+)
 from shreks_brain.g1c_v2_decision_backed_candidate_authority import (
     G1CV2DecisionBackedCandidateAuthorityError,
     bind_g1c_v2_decision_backed_candidate_authority,
@@ -32,9 +35,16 @@ from test_g1c_v2_runtime_manifest_candidate_authority import (
 def _approved_decision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[Path, tuple[object, ...]]:
+) -> tuple[Path, Path, tuple[object, ...]]:
     inputs = _inputs(tmp_path, monkeypatch)
-    source, source_path, _source_bytes, cohort_path, *_ = inputs
+    (
+        source,
+        source_path,
+        _source_bytes,
+        cohort_path,
+        request_path,
+        _request,
+    ) = inputs
 
     # The reusable candidate-authority fixture freezes a synthetic "quote-sol"
     # cohort. This bridge test must exercise the real review-backed WSOL
@@ -71,6 +81,18 @@ def _approved_decision(
         target_quote_decimals=9,
         destination=proposal_path,
     )
+
+    preflight_path = tmp_path / "preflight.json"
+    preflight_g1c_v2_candidate_value(
+        source_runtime_manifest_path=source_path,
+        sizing_proposal_path=proposal_path,
+        cohort_path=cohort_path,
+        v2_host_request_authority_path=request_path,
+        paper_run_id=NEW_RUN_ID,
+        start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
+        destination=preflight_path,
+    )
+
     decision_path = tmp_path / "decision.json"
     decide_g1c_v2_candidate_value(
         sizing_proposal_path=proposal_path,
@@ -79,25 +101,23 @@ def _approved_decision(
         replacement_entry_input_amount=None,
         destination=decision_path,
     )
-    return decision_path, inputs
+    return preflight_path, decision_path, inputs
 
 
 def test_decision_backed_authority_binds_approved_values_to_exact_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
+    preflight_path, decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
     source, source_path, _source_bytes, cohort_path, request_path, _request = inputs
-    start_at = source.initial_state.last_cycle_at_unix_ms + 1_000
     destination = tmp_path / "decision-backed-authority.json"
 
     authority = bind_g1c_v2_decision_backed_candidate_authority(
         source_runtime_manifest_path=source_path,
         cohort_path=cohort_path,
         v2_host_request_authority_path=request_path,
+        candidate_value_preflight_path=preflight_path,
         candidate_value_decision_path=decision_path,
-        paper_run_id=NEW_RUN_ID,
-        start_at_unix_ms=start_at,
         destination=destination,
     )
 
@@ -105,7 +125,14 @@ def test_decision_backed_authority_binds_approved_values_to_exact_candidate(
     assert authority["schema_name"] == (
         "shreks.g1c_v2_decision_backed_candidate_authority"
     )
+    assert authority["schema_version"] == 2
     assert authority["authority_status"] == "BOUND_EXACT_CANONICAL_CANDIDATE"
+    preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    assert authority["candidate_value_preflight_fingerprint_sha256"] == (
+        preflight["preflight_fingerprint_sha256"]
+    )
+    assert authority["candidate_compatibility"] == "COMPATIBLE"
+    assert authority["preflight_authority"] == "EVIDENCE_ONLY"
     assert authority["candidate_value_decision_fingerprint_sha256"] == (
         decision["decision_fingerprint_sha256"]
     )
@@ -139,7 +166,7 @@ def test_rejected_decision_cannot_grant_candidate_authoring(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
+    preflight_path, decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
     source, source_path, _source_bytes, cohort_path, request_path, _request = inputs
     decision = json.loads(decision_path.read_text(encoding="utf-8"))
     decision["status"] = "CANDIDATE_VALUE_REJECTED"
@@ -159,9 +186,8 @@ def test_rejected_decision_cannot_grant_candidate_authoring(
             source_runtime_manifest_path=source_path,
             cohort_path=cohort_path,
             v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
             candidate_value_decision_path=decision_path,
-            paper_run_id=NEW_RUN_ID,
-            start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
             destination=tmp_path / "authority.json",
         )
 
@@ -170,7 +196,7 @@ def test_decision_backed_authority_rejects_different_source_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
+    preflight_path, decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
     source, _source_path, _source_bytes, cohort_path, request_path, _request = inputs
     wrong_source = tmp_path / "wrong-source.json"
     wrong_source.write_text("{}\n", encoding="utf-8")
@@ -183,10 +209,45 @@ def test_decision_backed_authority_rejects_different_source_manifest(
             source_runtime_manifest_path=wrong_source,
             cohort_path=cohort_path,
             v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
             candidate_value_decision_path=decision_path,
-            paper_run_id=NEW_RUN_ID,
-            start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
             destination=tmp_path / "authority.json",
+        )
+
+
+
+
+def test_replaced_decision_is_rejected_without_compatible_replacement_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight_path, decision_path, inputs = _approved_decision(
+        tmp_path, monkeypatch
+    )
+    source, source_path, _source_bytes, cohort_path, request_path, _request = inputs
+    approved = json.loads(decision_path.read_text(encoding="utf-8"))
+    replacement_path = tmp_path / "replacement-decision.json"
+    decide_g1c_v2_candidate_value(
+        sizing_proposal_path=tmp_path / "proposal.json",
+        decision="REPLACE_PROPOSAL",
+        decision_reason="Replacement must be preflighted separately.",
+        replacement_entry_input_amount=(
+            int(approved["selected_entry_input_amount"]) + 1
+        ),
+        destination=replacement_path,
+    )
+
+    with pytest.raises(
+        G1CV2DecisionBackedCandidateAuthorityError,
+        match="accept|preflight|decision",
+    ):
+        bind_g1c_v2_decision_backed_candidate_authority(
+            source_runtime_manifest_path=source_path,
+            cohort_path=cohort_path,
+            v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
+            candidate_value_decision_path=replacement_path,
+            destination=tmp_path / "replacement-authority.json",
         )
 
 
@@ -205,9 +266,10 @@ def test_decision_backed_authority_cli_has_no_raw_candidate_value_inputs() -> No
         '"shreks_brain.g1c_v2_decision_backed_candidate_authority:main"'
         in pyproject
     )
+    assert "--candidate-value-preflight" in source
     assert "--candidate-value-decision" in source
-    assert "--paper-run-id" in source
-    assert "--start-at-unix-ms" in source
+    assert "--paper-run-id" not in source
+    assert "--start-at-unix-ms" not in source
     assert "--quote-asset-mint" not in source
     assert "--quote-asset-decimals" not in source
     assert "--entry-input-amount" not in source

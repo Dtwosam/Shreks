@@ -22,14 +22,13 @@ from shreks_brain.g1c_v2_runtime_manifest_transition_binding import (
 )
 
 from test_g1c_v2_decision_backed_candidate_authority import _approved_decision
-from test_g1c_v2_runtime_manifest_candidate_authority import NEW_RUN_ID
 
 
 def _inputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
+    preflight_path, decision_path, inputs = _approved_decision(tmp_path, monkeypatch)
     source, source_path, source_bytes, cohort_path, request_path, _request = inputs
 
     authority_path = tmp_path / "decision-backed-authority.json"
@@ -37,9 +36,8 @@ def _inputs(
         source_runtime_manifest_path=source_path,
         cohort_path=cohort_path,
         v2_host_request_authority_path=request_path,
+        candidate_value_preflight_path=preflight_path,
         candidate_value_decision_path=decision_path,
-        paper_run_id=NEW_RUN_ID,
-        start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
         destination=authority_path,
     )
 

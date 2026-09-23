@@ -49,8 +49,18 @@ def test_g1c_v2_decision_backed_candidate_authority_has_read_only_production_pre
 
     assert "### Bind one decision-backed G1C v2 candidate authority" in runbook
     assert script in runbook
+    assert "--candidate-value-preflight" in runbook
+    assert "--candidate-value-decision" in runbook
+    assert "--paper-run-id" not in runbook.split(
+        "### Bind one decision-backed G1C v2 candidate authority", 1
+    )[1].split("\n### ", 1)[0]
+    assert "--start-at-unix-ms" not in runbook.split(
+        "### Bind one decision-backed G1C v2 candidate authority", 1
+    )[1].split("\n### ", 1)[0]
+    assert "candidate_compatibility=COMPATIBLE" in runbook
+    assert "preflight_authority=EVIDENCE_ONLY" in runbook
     assert "EXPLICIT_PRODUCTION_DECISION_BOUND" in runbook
     assert "DECISION_BACKED_INPUTS_BOUND" in runbook
-    assert "There are no raw quote-mint, quote-decimals, or entry-amount inputs." in runbook
+    assert "There are no raw paper-run, timestamp, quote-mint, quote-decimals, or entry-amount inputs." in runbook
     assert "does not emit or stage a runtime-manifest candidate" in runbook
     assert "Do not run transition binding from this authority alone." in runbook
