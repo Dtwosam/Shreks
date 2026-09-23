@@ -161,7 +161,7 @@ def test_deploy_workflow_supports_manual_and_automatic_sealed_release_delivery()
         "target_commitish",
         "draft",
         "prerelease",
-        "gh release download",
+        'releases/assets/$ASSET_ID',
         'shreks-release-$SOURCE_SHA.tar.gz',
         'shreks-release-$SOURCE_SHA.tar.gz.sha256',
         "RELEASE_MANIFEST.json",
