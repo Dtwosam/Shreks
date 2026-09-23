@@ -46,9 +46,13 @@ fn observe_service_runs_existing_observer_under_non_root_bounded_supervision() {
 }
 
 #[test]
-fn paper_evidence_service_runs_daemon_under_non_root_bounded_supervision() {
+fn paper_evidence_service_runs_manifest_authority_launcher_under_non_root_bounded_supervision() {
     assert_common_service_contract(EVIDENCE_SERVICE);
+    assert!(EVIDENCE_SERVICE.contains("Environment=PYTHONDONTWRITEBYTECODE=1"));
     assert!(EVIDENCE_SERVICE.contains(
+        "ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.paper_evidence_runtime_launcher"
+    ));
+    assert!(!EVIDENCE_SERVICE.contains(
         "ExecStart=/opt/shreks/current/target/release/shreks-paper-evidence"
     ));
     assert!(EVIDENCE_SERVICE.contains("WantedBy=shreks.target"));
