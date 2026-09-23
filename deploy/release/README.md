@@ -886,10 +886,14 @@ Only after production verification proves the decision-backed candidate-authorit
 
 Supply only explicit existing authority artifacts. The future run identity/time and candidate economics are already committed by the preflight plus accepted decision and are not re-entered here:
 
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification run that authorized this ceremony. Do not substitute the latest repository commit, latest release tag, or an unverified active release.
+
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 SOURCE="/etc/shreks/paper-campaign.json"
 COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
 REQUEST="<exact-authenticated-v2-request-path>"
@@ -899,8 +903,29 @@ DECISION="<exact-approved-candidate-value-decision.json>"
 AUTHORITY_DIR="/root/shreks-g1c-v2-decision-backed-candidate-authority"
 AUTHORITY="$AUTHORITY_DIR/decision-backed-candidate-authority.json"
 
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
 sudo install -d -o root -g root -m 0700 "$AUTHORITY_DIR"
-test ! -e "$AUTHORITY"
+sudo test ! -e "$AUTHORITY"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-decision-backed-candidate-authority-bind" \
   --source-runtime-manifest "$SOURCE" \
