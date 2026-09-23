@@ -63,3 +63,13 @@ def test_g1c_v2_candidate_value_decision_has_read_only_production_presence_contr
         "candidate-authority path"
         in runbook
     )
+
+    heading = "### Record one explicit G1C v2 candidate-value decision"
+    section = runbook.split(heading, 1)[1].split("\n### ", 1)[0]
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$DECISION_FILE"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
