@@ -11,7 +11,9 @@ import tempfile
 
 from shreks_brain.fl9_v2_runtime_manifest_discovery import (
     RuntimeManifestDiscoveryError,
+    _authority_document,
     assess_fl9_v2_runtime_manifest_candidate_from_v2_request_authority,
+    authenticate_fl9_v2_discovery_request_authority,
 )
 from shreks_brain.g1c_v2_entry_sizing_proposal import (
     G1CV2EntrySizingProposalError,
@@ -122,6 +124,16 @@ def preflight_g1c_v2_candidate_value(
         )
 
     try:
+        authority_before = authenticate_fl9_v2_discovery_request_authority(
+            cohort_path=cohort,
+            v2_host_request_authority_path=request_path,
+        )
+    except RuntimeManifestDiscoveryError as error:
+        raise G1CV2CandidateValuePreflightError(
+            f"V2 authority authentication failed before preflight: {error}"
+        ) from error
+
+    try:
         candidate = author_g1c_v2_runtime_manifest_candidate(
             source_runtime_manifest_path=source_path,
             paper_run_id=paper_run_id,
@@ -173,6 +185,16 @@ def preflight_g1c_v2_candidate_value(
         raise G1CV2CandidateValuePreflightError(
             "canonical candidate assessment is missing request authority"
         )
+    try:
+        authority_before_document = _authority_document(authority_before)
+    except RuntimeManifestDiscoveryError as error:
+        raise G1CV2CandidateValuePreflightError(
+            f"V2 authority authentication failed before publication: {error}"
+        ) from error
+    if authority_document != authority_before_document:
+        raise G1CV2CandidateValuePreflightError(
+            "V2 authority changed during preflight assessment"
+        )
     if (
         assessment.get("status") != _COMPATIBLE
         or candidate_document.get("compatibility") != _COMPATIBLE
@@ -208,6 +230,20 @@ def preflight_g1c_v2_candidate_value(
     if proposal_after != proposal_payload:
         raise G1CV2CandidateValuePreflightError(
             "sizing proposal changed during preflight"
+        )
+
+    try:
+        authority_after = authenticate_fl9_v2_discovery_request_authority(
+            cohort_path=cohort,
+            v2_host_request_authority_path=request_path,
+        )
+    except RuntimeManifestDiscoveryError as error:
+        raise G1CV2CandidateValuePreflightError(
+            f"V2 authority authentication failed after candidate assessment: {error}"
+        ) from error
+    if authority_after != authority_before:
+        raise G1CV2CandidateValuePreflightError(
+            "V2 authority changed during preflight"
         )
 
     material: dict[str, object] = {

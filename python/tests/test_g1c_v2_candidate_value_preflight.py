@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
+import shreks_brain.g1c_v2_candidate_value_preflight as preflight_module
 from shreks_brain.g1c_v2_candidate_value_preflight import (
     G1CV2CandidateValuePreflightError,
     decode_g1c_v2_candidate_value_preflight,
@@ -255,6 +256,57 @@ def test_preflight_rejects_tampered_proposal_without_output(
     with pytest.raises(
         G1CV2CandidateValuePreflightError,
         match="proposal|fingerprint",
+    ):
+        preflight_g1c_v2_candidate_value(
+            source_runtime_manifest_path=source_path,
+            sizing_proposal_path=proposal_path,
+            cohort_path=cohort_path,
+            v2_host_request_authority_path=request_path,
+            paper_run_id=NEW_RUN_ID,
+            start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 5_000,
+            destination=destination,
+        )
+
+    assert not destination.exists()
+
+
+def test_preflight_rejects_request_authority_change_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        source,
+        source_path,
+        _source_bytes,
+        cohort_path,
+        request_path,
+        _request,
+        _review_document,
+        proposal_path,
+        _proposal,
+    ) = _review_backed_inputs(tmp_path, monkeypatch)
+    destination = tmp_path / "preflight.json"
+    real_assess = (
+        preflight_module.assess_fl9_v2_runtime_manifest_candidate_from_v2_request_authority
+    )
+
+    def assess_then_mutate_authority(**kwargs: object) -> dict[str, object]:
+        assessment = real_assess(**kwargs)
+        request_path.write_text(
+            request_path.read_text(encoding="utf-8") + " ",
+            encoding="utf-8",
+        )
+        return assessment
+
+    monkeypatch.setattr(
+        preflight_module,
+        "assess_fl9_v2_runtime_manifest_candidate_from_v2_request_authority",
+        assess_then_mutate_authority,
+    )
+
+    with pytest.raises(
+        G1CV2CandidateValuePreflightError,
+        match="authority changed during preflight|authority authentication failed",
     ):
         preflight_g1c_v2_candidate_value(
             source_runtime_manifest_path=source_path,
