@@ -714,10 +714,14 @@ This ceremony is evidence-only. It does not approve candidate values, persist or
 
 Use only reviewed existing inputs plus explicit future run identity/time and a new root-private destination:
 
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification run that authorized this ceremony. Do not substitute the latest repository commit, latest release tag, or an unverified active release.
+
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 SOURCE="/etc/shreks/paper-campaign.json"
 PROPOSAL="<exact-authenticated-MULTI_REFERENCE_REVIEW-sizing-proposal.json>"
 COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
@@ -729,8 +733,29 @@ PREFLIGHT="$PREFLIGHT_DIR/candidate-value-preflight.json"
 PAPER_RUN_ID="<explicit-reviewed-new-run-id>"
 START_AT_UNIX_MS="<explicit-reviewed-new-run-start-ms>"
 
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
 sudo install -d -o root -g root -m 0700 "$PREFLIGHT_DIR"
-test ! -e "$PREFLIGHT"
+sudo test ! -e "$PREFLIGHT"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-candidate-value-preflight" \
   --source-runtime-manifest "$SOURCE" \
