@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 from threading import Event
 
 import pytest
@@ -335,6 +336,24 @@ def test_next_cycle_assembly_preflight_rejects_dynamic_quote_without_exact_marke
     config.manifest_path.write_bytes(
         encode_observer_paper_campaign_runtime_manifest(candidate)
     )
+
+    # Production-shaped failure: a live Jupiter route exists for WSOL input,
+    # so dynamic quote-USD valuation is required, but the observer market rows
+    # still carry only the prior quote asset and cannot authenticate WSOL.
+    connection = sqlite3.connect(config.observer_database_path)
+    connection.execute(
+        """
+        UPDATE paper_quote_snapshots
+        SET input_mint = ?, input_amount = ?
+        WHERE candidate_id = 1 AND purpose = 'entry'
+        """,
+        (
+            candidate.policy_bundle.quote_asset.mint,
+            str(candidate.policy_bundle.entry_quote_identity.input_amount),
+        ),
+    )
+    connection.commit()
+    connection.close()
 
     bootstrap = preflight_observer_paper_campaign_runtime(
         config,
