@@ -22,6 +22,7 @@ shreks-fl9-v2-runtime-manifest-candidate-assessment = "shreks_brain.fl9_v2_runti
 shreks-g1c-v2-runtime-manifest-candidate-author = "shreks_brain.g1c_v2_runtime_manifest_candidate_authoring:main"
 shreks-g1c-v2-runtime-manifest-candidate-authority-bind = "shreks_brain.g1c_v2_runtime_manifest_candidate_authority:main"
 shreks-g1c-v2-candidate-value-decision = "shreks_brain.g1c_v2_candidate_value_decision:main"
+shreks-g1c-v2-candidate-value-preflight = "shreks_brain.g1c_v2_candidate_value_preflight:main"
 shreks-g1c-v2-decision-backed-candidate-authority-bind = "shreks_brain.g1c_v2_decision_backed_candidate_authority:main"
 shreks-g1c-v2-decision-backed-candidate-author = "shreks_brain.g1c_v2_decision_backed_candidate_authoring:main"
 shreks-g1c-v2-decision-backed-transition-bind = "shreks_brain.g1c_v2_decision_backed_transition_binding:main"
