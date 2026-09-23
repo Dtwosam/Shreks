@@ -10,6 +10,7 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+import time
 
 from shreks_brain import g1c_v2_paper_manifest_manager_install as installer
 from shreks_brain import g1c_v2_paper_manifest_manager_installation_proof as install_proof
@@ -19,6 +20,7 @@ from shreks_brain.g1c_v2_runtime_manifest_transition_binding import (
 )
 from shreks_brain.observer_campaign.runtime import (
     ObserverPaperCampaignRuntimeError,
+    preflight_observer_paper_campaign_next_cycle,
     preflight_observer_paper_campaign_runtime,
 )
 from shreks_brain.observer_campaign.runtime_config import (
@@ -98,6 +100,8 @@ class _Inputs:
 
 
 PreflightRunner = Callable[[ObserverPaperCampaignRuntimeConfig], object]
+CycleAssemblyRunner = Callable[[ObserverPaperCampaignRuntimeConfig, int], object]
+ReadinessClock = Callable[[], int]
 
 
 def prove_paper_manifest_rotation_readiness(
@@ -111,6 +115,8 @@ def prove_paper_manifest_rotation_readiness(
     runtime_executable: str | os.PathLike[str] | None = None,
     service_runner: install_proof.CommandRunner | None = None,
     preflight_runner: PreflightRunner | None = None,
+    cycle_assembly_runner: CycleAssemblyRunner | None = None,
+    clock_unix_ms: ReadinessClock | None = None,
 ) -> dict[str, object]:
     if type(paths) is not PaperManifestRotationReadinessPaths:
         raise PaperManifestRotationReadinessError(
@@ -178,10 +184,18 @@ def prove_paper_manifest_rotation_readiness(
     runner = install_proof._default_runner if service_runner is None else service_runner
     services_before = _service_observations(runner)
     preflight = _default_preflight_runner if preflight_runner is None else preflight_runner
+    cycle_assembly = (
+        _default_cycle_assembly_runner
+        if cycle_assembly_runner is None
+        else cycle_assembly_runner
+    )
+    clock = _wall_clock_unix_ms if clock_unix_ms is None else clock_unix_ms
     _preflight_private_candidate(
         paths=paths,
         candidate_payload=inputs.candidate_payload,
         preflight_runner=preflight,
+        cycle_assembly_runner=cycle_assembly,
+        as_of_unix_ms=_readiness_timestamp(clock),
     )
 
     # Re-prove every mutable external input after preflight so this receipt
@@ -608,11 +622,41 @@ def _default_preflight_runner(
     )
 
 
+def _default_cycle_assembly_runner(
+    config: ObserverPaperCampaignRuntimeConfig,
+    as_of_unix_ms: int,
+) -> object:
+    return preflight_observer_paper_campaign_next_cycle(
+        config,
+        as_of_unix_ms=as_of_unix_ms,
+    )
+
+
+def _wall_clock_unix_ms() -> int:
+    return time.time_ns() // 1_000_000
+
+
+def _readiness_timestamp(clock: ReadinessClock) -> int:
+    try:
+        value = clock()
+    except Exception as error:
+        raise PaperManifestRotationReadinessError(
+            "readiness clock failed"
+        ) from error
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise PaperManifestRotationReadinessError(
+            "readiness clock must return a non-negative integer millisecond timestamp"
+        )
+    return value
+
+
 def _preflight_private_candidate(
     *,
     paths: PaperManifestRotationReadinessPaths,
     candidate_payload: bytes,
     preflight_runner: PreflightRunner,
+    cycle_assembly_runner: CycleAssemblyRunner,
+    as_of_unix_ms: int,
 ) -> None:
     try:
         with tempfile.TemporaryDirectory(
@@ -646,6 +690,7 @@ def _preflight_private_candidate(
                 risk_control_path=paths.risk_control_path,
             )
             preflight_runner(config)
+            cycle_assembly_runner(config, as_of_unix_ms)
     except (
         ObserverPaperCampaignRuntimeError,
         OSError,

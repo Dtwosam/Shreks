@@ -21,6 +21,7 @@ from shreks_brain.risk_control.paper_runtime import (
 from .coordinator import (
     ObserverCampaignCoordinatorError,
     ObserverPaperCampaignCoordinatorRunner,
+    assemble_observer_paper_campaign_cycle,
 )
 from .runtime_config import (
     ObserverPaperCampaignRuntimeConfig,
@@ -123,6 +124,55 @@ def preflight_observer_paper_campaign_runtime(
     bootstrap = bootstrap_observer_paper_campaign_runtime(config)
     sink = print if status_sink is None else status_sink
     sink(_preflight_status_line(bootstrap))
+    return bootstrap
+
+
+def preflight_observer_paper_campaign_next_cycle(
+    config: ObserverPaperCampaignRuntimeConfig,
+    *,
+    as_of_unix_ms: int,
+) -> ObserverPaperCampaignRuntimeBootstrap:
+    """Assemble one production-shaped PAPER cycle without executing or persisting it."""
+
+    if type(config) is not ObserverPaperCampaignRuntimeConfig:
+        raise ObserverPaperCampaignRuntimeError(
+            "runtime config must be an exact ObserverPaperCampaignRuntimeConfig"
+        )
+    if (
+        isinstance(as_of_unix_ms, bool)
+        or not isinstance(as_of_unix_ms, int)
+        or as_of_unix_ms < 0
+    ):
+        raise ObserverPaperCampaignRuntimeError(
+            "next-cycle preflight timestamp must be a non-negative integer"
+        )
+
+    bootstrap = bootstrap_observer_paper_campaign_runtime(config)
+    if as_of_unix_ms < bootstrap.restored_state.last_cycle_at_unix_ms:
+        raise ObserverPaperCampaignRuntimeError(
+            "next-cycle preflight timestamp cannot precede restored paper state"
+        )
+
+    manifest = bootstrap.manifest
+    try:
+        assemble_observer_paper_campaign_cycle(
+            config.observer_database_path,
+            bootstrap.restored_state,
+            as_of_unix_ms,
+            manifest.policy_bundle,
+            manifest.risk_environment,
+            manifest.selection_policy,
+            quote_usd_valuation_mode=_manifest_quote_usd_valuation_mode(
+                manifest
+            ),
+            recent_performance=manifest.recent_performance,
+            global_risk_halt=manifest.global_risk_halt,
+        )
+    except (ObserverCampaignCoordinatorError, OSError, TypeError, ValueError) as error:
+        raise ObserverPaperCampaignRuntimeError(
+            "paper campaign next-cycle assembly preflight failed"
+        ) from error
+
     return bootstrap
 
 

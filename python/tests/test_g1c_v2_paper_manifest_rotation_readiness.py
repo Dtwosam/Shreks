@@ -93,6 +93,20 @@ class PreflightRunner:
         return object()
 
 
+class CycleAssemblyRunner:
+    def __init__(self, *, fail: bool = False):
+        self.calls: list[tuple[Path, int]] = []
+        self.fail = fail
+
+    def __call__(self, config, as_of_unix_ms: int):
+        self.calls.append((config.manifest_path, as_of_unix_ms))
+        if self.fail:
+            raise ObserverPaperCampaignRuntimeError(
+                "simulated next-cycle assembly failure"
+            )
+        return object()
+
+
 def _write_release(
     tmp_path: Path,
 ) -> tuple[Path, Path, bytes]:
@@ -264,7 +278,12 @@ def _setup(
     }
 
 
-def _prove(setup, preflight: PreflightRunner):
+def _prove(
+    setup,
+    preflight: PreflightRunner,
+    cycle_assembly: CycleAssemblyRunner | None = None,
+):
+    cycle = CycleAssemblyRunner() if cycle_assembly is None else cycle_assembly
     return readiness.prove_paper_manifest_rotation_readiness(
         candidate_runtime_manifest_path=setup["candidate_path"],
         transition_binding_path=setup["binding_path"],
@@ -277,6 +296,8 @@ def _prove(setup, preflight: PreflightRunner):
         runtime_executable=setup["runtime_python"],
         service_runner=setup["services"],
         preflight_runner=preflight,
+        cycle_assembly_runner=cycle,
+        clock_unix_ms=lambda: 1_234_567,
     )
 
 
@@ -286,8 +307,9 @@ def test_readiness_proves_exact_release_helper_binding_and_private_preflight(
 ) -> None:
     setup = _setup(tmp_path, monkeypatch)
     preflight = PreflightRunner()
+    cycle_assembly = CycleAssemblyRunner()
 
-    receipt = _prove(setup, preflight)
+    receipt = _prove(setup, preflight, cycle_assembly)
 
     assert receipt["status"] == "READY_EVIDENCE_ONLY"
     assert receipt["release_source_sha"] == RELEASE_SHA
@@ -315,6 +337,8 @@ def test_readiness_proves_exact_release_helper_binding_and_private_preflight(
     assert len(preflight.paths) == 1
     assert preflight.paths[0] != setup["candidate_path"]
     assert preflight.paths[0].name == "candidate-paper-campaign.json"
+    assert len(cycle_assembly.calls) == 1
+    assert cycle_assembly.calls[0] == (preflight.paths[0], 1_234_567)
     assert not preflight.paths[0].exists()
     assert setup["paths"].active_manifest_path.read_bytes() == setup["source_bytes"]
     assert setup["candidate_path"].read_bytes() == setup["candidate_bytes"]
@@ -404,6 +428,26 @@ def test_readiness_preflight_failure_does_not_mutate_protected_source(
     assert setup["candidate_path"].read_bytes() == setup["candidate_bytes"]
 
 
+def test_readiness_next_cycle_assembly_failure_does_not_mutate_protected_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _setup(tmp_path, monkeypatch)
+
+    with pytest.raises(
+        readiness.PaperManifestRotationReadinessError,
+        match="preflight rejected candidate readiness",
+    ):
+        _prove(
+            setup,
+            PreflightRunner(),
+            CycleAssemblyRunner(fail=True),
+        )
+
+    assert setup["paths"].active_manifest_path.read_bytes() == setup["source_bytes"]
+    assert setup["candidate_path"].read_bytes() == setup["candidate_bytes"]
+
+
 def test_readiness_rejects_service_lifecycle_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -452,6 +496,7 @@ def test_rotation_readiness_authority_firewall_and_operator_contract() -> None:
     assert "NOT_GRANTED" in source
     assert "TemporaryDirectory" in source
     assert "preflight_observer_paper_campaign_runtime" in source
+    assert "preflight_observer_paper_campaign_next_cycle" in source
     assert (
         'shreks-g1c-v2-paper-manifest-rotation-readiness = '
         '"shreks_brain.g1c_v2_paper_manifest_rotation_readiness:main"'
