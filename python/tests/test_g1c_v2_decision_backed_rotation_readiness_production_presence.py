@@ -64,3 +64,16 @@ def test_decision_backed_rotation_readiness_has_read_only_production_presence_co
     assert "paper_promotion_authority=BLOCKED" in runbook
     assert "live_authority=DISABLED" in runbook
     assert "does not invoke the manifest manager" in runbook
+
+    heading = "### Prove exact decision-backed G1C v2 rotation readiness"
+    section = runbook.split(heading, 1)[1].split(
+        "\n### Plan one exact decision-backed G1C v2 protected rotation", 1
+    )[0]
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$READINESS"' in section
+    assert "set -Ce" in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
+    assert '"$EXPECTED_RELEASE_SHA" \\' in section
