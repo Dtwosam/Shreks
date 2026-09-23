@@ -71,4 +71,10 @@ def test_g1c_v2_review_backed_entry_sizing_has_read_only_production_presence_con
         'TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"'
         not in sizing_section
     )
-    assert 'test ! -e "$PROPOSAL"' in sizing_section
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in sizing_section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in sizing_section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in sizing_section
+    assert 'MANIFEST_SHA="$(' in sizing_section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in sizing_section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in sizing_section
+    assert 'sudo test ! -e "$PROPOSAL"' in sizing_section
