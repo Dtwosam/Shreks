@@ -272,6 +272,12 @@ def rotate_paper_manifest(
 
         try:
             if source_replaced:
+                # A candidate process may already be running if startup succeeded
+                # but a later health/identity/byte check failed. Quiesce it before
+                # restoring source bytes so the rollback always restarts from the
+                # restored source manifest rather than leaving candidate state in
+                # memory behind a source manifest on disk.
+                _systemctl(command_runner, "stop", _CAMPAIGN_SERVICE)
                 _atomic_replace_manifest(
                     paths.active_manifest_path,
                     inputs.source_payload,

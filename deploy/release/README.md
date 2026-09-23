@@ -1518,7 +1518,7 @@ The manager then:
 8. requires the campaign service to be active and its process identity to come from the exact expected immutable release;
 9. writes an immutable activation receipt.
 
-If any candidate preflight, replacement, startup, health, identity, or byte-verification step fails after campaign quiesce, the manager restores the exact source manifest, preflights it, starts the source campaign again, verifies source bytes and process health, and writes a rollback receipt when the evidence directory exists. It does not delete any candidate-run checkpoint or E11 rows that may already have been written; preserving evidence is safer than fabricating rollback history.
+If any candidate preflight, replacement, startup, health, identity, or byte-verification step fails after campaign quiesce, rollback fails closed. If candidate bytes have already replaced the source manifest, the manager first stops the campaign service again so no candidate process can remain resident while source bytes are restored. It then restores the exact source manifest, preflights it, starts the source campaign again, verifies source bytes and process health, and writes a rollback receipt when the evidence directory exists. It does not delete any candidate-run checkpoint or E11 rows that may already have been written; preserving evidence is safer than fabricating rollback history.
 
 This command is manifest rotation authority only. It does not modify the SQLite database, E11 evidence, G7 control state, scoring evidence, champion state, wallet/signing material, transaction submission paths, PAPER promotion state, or LIVE authority. The rotation receipt records scoring authority as `NOT_GRANTED`, PAPER promotion as `BLOCKED`, and LIVE as `DISABLED`.
 
