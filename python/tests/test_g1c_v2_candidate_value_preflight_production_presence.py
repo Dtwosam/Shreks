@@ -70,3 +70,10 @@ def test_g1c_v2_candidate_value_preflight_has_read_only_production_presence_cont
     assert "live_authority=DISABLED" in section
     assert "does not approve candidate values" in section
     assert "separate explicit candidate-value decision remains mandatory" in section
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$PREFLIGHT"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
