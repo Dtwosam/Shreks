@@ -49,7 +49,7 @@ def test_v2_dynamic_valuation_uses_same_current_market_row_and_records_provenanc
     assert len(audit.quote_usd_valuation_evidence_fingerprint) == 64
 
 
-def test_v2_dynamic_valuation_fails_closed_if_current_cycle_row_is_not_exact_quote_pair(
+def test_v2_dynamic_valuation_selects_manifest_quote_pair_over_newer_other_pair(
     tmp_path,
 ) -> None:
     path = tmp_path / "observer.db"
@@ -65,7 +65,7 @@ def test_v2_dynamic_valuation_fails_closed_if_current_cycle_row_is_not_exact_quo
                pair_created_at_unix_ms
            ) VALUES (
                6, 1, 995000, 'dexscreener', 994999, 'pump_fun',
-               'PairAssembler', ?, 'WrongQuote', '0.001625', 0.26,
+               'PairAssemblerWrongQuote', ?, 'WrongQuote', '0.001625', 0.26,
                100.0, 50.0, 500.0, 5000.0,
                45, 5, 360, 140, 50000
            )""",
@@ -74,9 +74,35 @@ def test_v2_dynamic_valuation_fails_closed_if_current_cycle_row_is_not_exact_quo
     connection.commit()
     connection.close()
 
+    cycle, audit = assemble_observer_paper_cycle(
+        path,
+        _state(),
+        AS_OF,
+        _bundle(),
+        _environment(),
+        quote_usd_valuation_mode=DYNAMIC_MODE,
+        global_risk_halt=False,
+    )
+
+    assert len(cycle.quotes) == 1
+    assert audit.quote_usd_valuation_market_row_id == 4
+
+
+def test_v2_dynamic_valuation_fails_closed_without_fresh_manifest_quote_pair(
+    tmp_path,
+) -> None:
+    path = tmp_path / "observer.db"
+    _seed(path)
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "UPDATE market_snapshots SET quote_mint = 'WrongQuote'"
+    )
+    connection.commit()
+    connection.close()
+
     with pytest.raises(
         ObserverPaperAssemblyError,
-        match="row|quote|valuation|market",
+        match="quote mint|market|snapshot",
     ):
         assemble_observer_paper_cycle(
             path,

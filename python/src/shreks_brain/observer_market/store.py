@@ -398,16 +398,29 @@ class ObserverMarketStore:
         candidate_id: int,
         as_of_unix_ms: int,
         policy: ObserverMarketReadPolicy,
+        *,
+        required_quote_mint: str | None = None,
     ) -> ObservedMarketWindow:
         _require_positive_int("candidate_id", candidate_id)
         _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
         if type(policy) is not ObserverMarketReadPolicy:
             raise ValueError("policy must be an ObserverMarketReadPolicy")
+        if required_quote_mint is not None:
+            _require_non_empty_string("required_quote_mint", required_quote_mint)
 
         connection = self._connect()
         try:
             candidate = self._candidate_by_id(connection, candidate_id)
-            current = self._select_current(connection, candidate_id, as_of_unix_ms, policy)
+            if required_quote_mint is not None:
+                self._validate_exact_market_columns(connection)
+            current = self._select_current(
+                connection,
+                candidate_id,
+                candidate.mint,
+                as_of_unix_ms,
+                policy,
+                required_quote_mint=required_quote_mint,
+            )
             selected_source = current.source
             selected_pair_address = current.pair_address
 
@@ -416,11 +429,22 @@ class ObserverMarketStore:
                 as_of_unix_ms
                 - max(ANCHOR_15M_MAX_AGE_MS, policy.local_range_lookback_ms),
             )
+            history_identity_clause = ""
+            history_identity_parameters: tuple[object, ...] = ()
+            if required_quote_mint is not None:
+                history_identity_clause = (
+                    " AND base_mint = ? AND quote_mint = ?"
+                )
+                history_identity_parameters = (
+                    candidate.mint,
+                    required_quote_mint,
+                )
             rows = connection.execute(
                 f"""{_MARKET_SELECT}
                     WHERE candidate_id = ?
                       AND source = ?
                       AND pair_address = ?
+                      {history_identity_clause}
                       AND observed_at_unix_ms BETWEEN ? AND ?
                       AND (
                           pair_created_at_unix_ms IS NULL
@@ -431,6 +455,7 @@ class ObserverMarketStore:
                     candidate_id,
                     selected_source,
                     selected_pair_address,
+                    *history_identity_parameters,
                     history_start,
                     as_of_unix_ms,
                 ),
@@ -477,6 +502,7 @@ class ObserverMarketStore:
                         WHERE candidate_id = ?
                           AND source = ?
                           AND pair_address = ?
+                          {history_identity_clause}
                           AND observed_at_unix_ms <= ?
                           AND pair_created_at_unix_ms IS NOT NULL
                           AND pair_created_at_unix_ms <= observed_at_unix_ms
@@ -486,6 +512,7 @@ class ObserverMarketStore:
                         candidate_id,
                         selected_source,
                         selected_pair_address,
+                        *history_identity_parameters,
                         as_of_unix_ms,
                     ),
                 ).fetchone()
@@ -543,15 +570,25 @@ class ObserverMarketStore:
     def _select_current(
         connection: sqlite3.Connection,
         candidate_id: int,
+        candidate_mint: str,
         as_of_unix_ms: int,
         policy: ObserverMarketReadPolicy,
+        *,
+        required_quote_mint: str | None = None,
     ) -> ObserverMarketSnapshot:
         minimum_observed_at = max(0, as_of_unix_ms - policy.max_current_age_ms)
         for source in policy.source_priority:
+            identity_clause = ""
+            parameters: list[object] = [candidate_id, source]
+            if required_quote_mint is not None:
+                identity_clause = " AND base_mint = ? AND quote_mint = ?"
+                parameters.extend((candidate_mint, required_quote_mint))
+            parameters.extend((minimum_observed_at, as_of_unix_ms))
             row = connection.execute(
                 f"""{_MARKET_SELECT}
                     WHERE candidate_id = ?
                       AND source = ?
+                      {identity_clause}
                       AND observed_at_unix_ms BETWEEN ? AND ?
                       AND (
                           pair_created_at_unix_ms IS NULL
@@ -559,12 +596,17 @@ class ObserverMarketStore:
                       )
                     ORDER BY observed_at_unix_ms DESC, id ASC
                     LIMIT 1""",
-                (candidate_id, source, minimum_observed_at, as_of_unix_ms),
+                parameters,
             ).fetchone()
             if row is not None:
                 return _snapshot_from_row(row)
+        boundary = (
+            "source priority"
+            if required_quote_mint is None
+            else "source priority and required quote mint"
+        )
         raise ObserverMarketReadError(
-            "no fresh observer market snapshot matches caller source priority"
+            f"no fresh observer market snapshot matches caller {boundary}"
         )
 
     def _connect(self) -> sqlite3.Connection:

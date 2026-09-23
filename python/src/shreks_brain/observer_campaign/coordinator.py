@@ -94,6 +94,9 @@ class ObserverPaperCampaignCycleAudit:
         _require_sha256("aggregate_cycle_fingerprint", self.aggregate_cycle_fingerprint)
 
 
+_QUOTE_IDENTITY_COLUMNS = frozenset({"base_mint", "quote_mint"})
+
+
 _REQUIRED_COLUMNS = {
     "token_candidates": frozenset(
         {
@@ -145,6 +148,7 @@ class ObserverCampaignCandidateStore:
         policy: ObserverPaperCampaignSelectionPolicy,
         pair_age_window_ms: tuple[int, int] | None = None,
         market_read_policy: ObserverMarketReadPolicy | None = None,
+        required_quote_mint: str | None = None,
     ) -> tuple[ObserverCampaignCandidate, ...]:
         _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
         if type(policy) is not ObserverPaperCampaignSelectionPolicy:
@@ -155,6 +159,12 @@ class ObserverCampaignCandidateStore:
             raise ObserverCampaignCoordinatorError(
                 "market_read_policy must be an exact ObserverMarketReadPolicy or None"
             )
+        if required_quote_mint is not None:
+            _require_non_empty_string("required_quote_mint", required_quote_mint)
+            if market_read_policy is None:
+                raise ObserverCampaignCoordinatorError(
+                    "required_quote_mint requires market_read_policy"
+                )
         if pair_age_window_ms is not None:
             if not isinstance(pair_age_window_ms, tuple) or len(pair_age_window_ms) != 2:
                 raise ObserverCampaignCoordinatorError(
@@ -171,6 +181,8 @@ class ObserverCampaignCandidateStore:
 
         connection = self._connect()
         try:
+            if required_quote_mint is not None:
+                self._validate_quote_identity_columns(connection)
             if pair_age_window_ms is None:
                 rows = connection.execute(
                     """SELECT
@@ -200,8 +212,10 @@ class ObserverCampaignCandidateStore:
                         if _has_current_market_snapshot(
                             connection,
                             candidate.candidate_id,
+                            candidate.mint,
                             as_of_unix_ms,
                             market_read_policy,
+                            required_quote_mint=required_quote_mint,
                         )
                     )
             elif market_read_policy is None:
@@ -289,8 +303,10 @@ class ObserverCampaignCandidateStore:
                     current = _current_market_snapshot_metadata(
                         connection,
                         candidate.candidate_id,
+                        candidate.mint,
                         as_of_unix_ms,
                         market_read_policy,
+                        required_quote_mint=required_quote_mint,
                     )
                     if current is None:
                         continue
@@ -412,6 +428,26 @@ class ObserverCampaignCandidateStore:
             ) from error
 
     @staticmethod
+    def _validate_quote_identity_columns(
+        connection: sqlite3.Connection,
+    ) -> None:
+        try:
+            rows = connection.execute(
+                "PRAGMA table_info(market_snapshots)"
+            ).fetchall()
+            columns = frozenset(str(row[1]) for row in rows)
+        except sqlite3.Error as error:
+            raise ObserverCampaignCoordinatorError(
+                f"observer campaign quote-identity schema read failed: {error}"
+            ) from error
+        missing = _QUOTE_IDENTITY_COLUMNS - columns
+        if missing:
+            raise ObserverCampaignCoordinatorError(
+                "observer campaign database missing quote-identity columns: "
+                + ", ".join(sorted(missing))
+            )
+
+    @staticmethod
     def _validate_schema(connection: sqlite3.Connection) -> None:
         try:
             for table, required in _REQUIRED_COLUMNS.items():
@@ -492,6 +528,11 @@ def assemble_observer_paper_campaign_cycle(
             int(policy_bundle.fresh_launch_policy.max_age_seconds * 1000),
         ),
         market_read_policy=policy_bundle.market_read_policy,
+        required_quote_mint=(
+            None
+            if canonical_quote_usd_valuation_mode is None
+            else policy_bundle.quote_asset.mint
+        ),
     )
     selected = _merge_selected_candidates(required, recent)
 
@@ -655,16 +696,26 @@ def _insert_unique(mapping: dict[str, object], key: str, value: object, label: s
 def _current_market_snapshot_metadata(
     connection: sqlite3.Connection,
     candidate_id: int,
+    candidate_mint: str,
     as_of_unix_ms: int,
     policy: ObserverMarketReadPolicy,
+    *,
+    required_quote_mint: str | None = None,
 ) -> tuple[int, int | None] | None:
     minimum_observed_at = max(0, as_of_unix_ms - policy.max_current_age_ms)
     for source in policy.source_priority:
+        identity_clause = ""
+        parameters: list[object] = [candidate_id, source]
+        if required_quote_mint is not None:
+            identity_clause = " AND base_mint = ? AND quote_mint = ?"
+            parameters.extend((candidate_mint, required_quote_mint))
+        parameters.extend((minimum_observed_at, as_of_unix_ms))
         row = connection.execute(
-            """SELECT observed_at_unix_ms, pair_created_at_unix_ms
+            f"""SELECT observed_at_unix_ms, pair_created_at_unix_ms
                FROM market_snapshots
                WHERE candidate_id = ?
                  AND source = ?
+                 {identity_clause}
                  AND observed_at_unix_ms BETWEEN ? AND ?
                  AND (
                      pair_created_at_unix_ms IS NULL
@@ -672,7 +723,7 @@ def _current_market_snapshot_metadata(
                  )
                ORDER BY observed_at_unix_ms DESC, id ASC
                LIMIT 1""",
-            (candidate_id, source, minimum_observed_at, as_of_unix_ms),
+            parameters,
         ).fetchone()
         if row is not None:
             observed_at, pair_created_at = row
@@ -685,15 +736,20 @@ def _current_market_snapshot_metadata(
 def _has_current_market_snapshot(
     connection: sqlite3.Connection,
     candidate_id: int,
+    candidate_mint: str,
     as_of_unix_ms: int,
     policy: ObserverMarketReadPolicy,
+    *,
+    required_quote_mint: str | None = None,
 ) -> bool:
     return (
         _current_market_snapshot_metadata(
             connection,
             candidate_id,
+            candidate_mint,
             as_of_unix_ms,
             policy,
+            required_quote_mint=required_quote_mint,
         )
         is not None
     )

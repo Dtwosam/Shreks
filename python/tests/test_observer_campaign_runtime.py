@@ -316,7 +316,7 @@ def test_next_cycle_assembly_preflight_is_read_only(
     assert not config.evidence_path.exists()
 
 
-def test_next_cycle_assembly_preflight_rejects_dynamic_quote_without_exact_market_evidence(
+def test_next_cycle_assembly_preflight_skips_dynamic_candidate_without_exact_quote_market(
     tmp_path: Path,
 ) -> None:
     config = _runtime_config(tmp_path, max_cycles=None)
@@ -337,9 +337,9 @@ def test_next_cycle_assembly_preflight_rejects_dynamic_quote_without_exact_marke
         encode_observer_paper_campaign_runtime_manifest(candidate)
     )
 
-    # Production-shaped failure: a live Jupiter route exists for WSOL input,
-    # so dynamic quote-USD valuation is required, but the observer market rows
-    # still carry only the prior quote asset and cannot authenticate WSOL.
+    # A matching Jupiter WSOL route alone is insufficient. Without a fresh
+    # observer market row for the manifest quote mint, aggregate selection
+    # excludes the candidate instead of assembling it against another quote pair.
     connection = sqlite3.connect(config.observer_database_path)
     connection.execute(
         """
@@ -361,15 +361,12 @@ def test_next_cycle_assembly_preflight_rejects_dynamic_quote_without_exact_marke
     )
     assert bootstrap.manifest == candidate
 
-    with pytest.raises(
-        ObserverPaperCampaignRuntimeError,
-        match="next-cycle assembly preflight failed",
-    ):
-        preflight_observer_paper_campaign_next_cycle(
-            config,
-            as_of_unix_ms=AS_OF,
-        )
+    preflight = preflight_observer_paper_campaign_next_cycle(
+        config,
+        as_of_unix_ms=AS_OF,
+    )
 
+    assert preflight.manifest == candidate
     assert load_latest_paper_checkpoint(
         config.observer_database_path,
         candidate.paper_run_id,

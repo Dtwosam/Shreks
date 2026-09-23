@@ -326,6 +326,11 @@ def assemble_observer_paper_cycle(
             candidate_id,
             as_of_unix_ms,
             bundle.market_read_policy,
+            required_quote_mint=(
+                None
+                if canonical_quote_usd_valuation_mode is None
+                else bundle.quote_asset.mint
+            ),
         )
         if window.candidate.mint != bundle.entry_quote_identity.output_mint:
             raise ObserverPaperAssemblyError(
