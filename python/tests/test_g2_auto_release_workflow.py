@@ -79,7 +79,9 @@ def test_production_deploy_auto_continues_only_canonical_release_with_manual_fal
     assert "gh api" in workflow
     assert "immutable" in workflow
     assert "target_commitish" in workflow
-    assert "gh release download" in workflow
+    assert "gh release download" not in workflow
+    assert 'releases/assets/$ASSET_ID' in workflow
+    assert 'Accept: application/octet-stream' in workflow
     assert "release_bundle.py verify" in workflow
     assert "sudo /usr/local/sbin/shreks-release-manager install" in workflow
     assert "gh release create" not in workflow
