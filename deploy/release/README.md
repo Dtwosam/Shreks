@@ -1429,7 +1429,7 @@ Do not execute the planned manager argv merely because this plan exists. Plan cr
 
 After the root helper has been installed with a successful `installation-proof.json`, use the release-local readiness proof before requesting any separate production manifest-rotation authority.
 
-This proof is deliberately non-mutating with respect to protected runtime state. It does not stop or start services, does not invoke `shreks-paper-manifest-manager`, and does not replace the active campaign manifest. It creates only a private temporary candidate copy for the existing PAPER preflight and removes that copy when the command exits.
+This proof is deliberately non-mutating with respect to protected runtime state. It does not stop or start services, does not invoke `shreks-paper-manifest-manager`, and does not replace the active campaign manifest. It creates only a private temporary candidate copy, runs the existing durable-state/bootstrap preflight, and then assembles one production-shaped next PAPER cycle at the current wall-clock timestamp without executing the cycle or writing E11/checkpoint state. The private candidate copy is removed when the command exits.
 
 Stage the exact canonical v2 candidate and exact transition binding as regular non-symlink files. Preserve the installation proof from the helper-install ceremony, then run:
 
@@ -1470,7 +1470,8 @@ The readiness proof fails closed unless all of the following are true:
 - the exact transition-binding fingerprint equals the explicit operator value and all source/candidate identities match the binding;
 - G7 operator-control state is valid and stable during the proof;
 - observer, PAPER evidence, and PAPER campaign services are healthy and do not change lifecycle identity during the proof;
-- the exact authenticated candidate bytes pass the existing PAPER runtime preflight from a private temporary copy;
+- the exact authenticated candidate bytes pass the existing PAPER runtime bootstrap preflight from a private temporary copy;
+- those same candidate bytes can assemble one production-shaped next PAPER cycle at the current wall-clock timestamp against the protected observer database, including current candidate selection, quote identity, and dynamic quote-USD valuation evidence, without executing the cycle or writing PAPER state;
 - release/helper/sudoers/env/source/candidate/binding/G7/service observations remain stable through the end of the proof.
 
 A successful `rotation-readiness.json` has:
@@ -1485,6 +1486,8 @@ scoring_authority=NOT_GRANTED
 paper_promotion_authority=BLOCKED
 live_authority=DISABLED
 ```
+
+`candidate_preflight_status=PASSED` means both durable-state/bootstrap validation and the read-only next-cycle assembly check passed inside the same readiness window. It does not claim that market evidence will remain fresh indefinitely.
 
 `READY_EVIDENCE_ONLY` does not authorize rotation. It is evidence for a later, separately explicit production-rotation authority decision. The rotation manager independently rechecks the source, candidate, binding fingerprint, active release, runtime environment, and G7 state at invocation time.
 
