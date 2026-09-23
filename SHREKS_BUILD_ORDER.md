@@ -585,20 +585,20 @@ Never claim a phase complete without exact verification evidence.
 
 The currently deployed and production-verified sealed release is:
 
-`bbb7663ccedbbc9ecb1aa4508182f9900f595147`
+`6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`
 
 Immutable release:
 
-`shreks-bbb7663ccedbbc9ecb1aa4508182f9900f595147`
+`shreks-6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`
 
 For that exact SHA:
 
-- sealed-main CI `35851432984` completed successfully;
-- immutable release build `35851704271` completed successfully;
-- protected PAPER deploy/verify `35852263653` completed successfully;
+- sealed-main CI `35858224372` completed successfully;
+- immutable release build `35858530128` completed successfully;
+- protected PAPER deploy/verify `35859139199` completed successfully;
 - production verification proved:
-  - `current_release=/opt/shreks/releases/bbb7663ccedbbc9ecb1aa4508182f9900f595147`;
-  - `expected_release=/opt/shreks/releases/bbb7663ccedbbc9ecb1aa4508182f9900f595147`;
+  - `current_release=/opt/shreks/releases/6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`;
+  - `expected_release=/opt/shreks/releases/6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`;
   - `g1c_v2_entry_sizing_proposal=present`;
   - `g1c_v2_quote_valuation_reference=present`;
   - `g1c_v2_quote_valuation_review=present`;
@@ -614,6 +614,8 @@ For that exact SHA:
   - protected FL9 discovery remains `HOLD_NO_COMPATIBLE`.
 
 The deployed review-backed sizing path now publishes its proposal only after the authenticated review remains stable through the final post-derivation check. A review change cannot leave a final proposal artifact behind.
+
+The deployed candidate-value preflight now binds the frozen cohort, preserved V2 host-request authority, and request-bound hydration policy transactionally across candidate assessment and final receipt publication. If that non-manifest authority changes or cannot re-authenticate, the preflight fails closed and leaves the requested final receipt absent.
 
 The deployed decision-backed candidate-authority implementation remains schema v2 and preflight-bound. It does not accept separately re-entered future run identity/time and requires exact reproduction of the candidate previously proven `COMPATIBLE`.
 
@@ -704,7 +706,7 @@ The manifest-manager binary reports:
 
 for the exact current release.
 
-However, helper installation-proof artifacts are release-bound. Any proof created for an older release SHA must not be reused for readiness under `bbb7663ccedbbc9ecb1aa4508182f9900f595147`.
+However, helper installation-proof artifacts are release-bound. Any proof created for an older release SHA must not be reused for readiness under `6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`.
 
 A fresh exact-release helper proof is mandatory before future rotation-readiness, but it is not required merely to create/review the offline proposal, preflight, decision, authority, candidate, or transition artifacts.
 
