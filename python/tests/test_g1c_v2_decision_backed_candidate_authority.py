@@ -186,9 +186,8 @@ def test_rejected_decision_cannot_grant_candidate_authoring(
             source_runtime_manifest_path=source_path,
             cohort_path=cohort_path,
             v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
             candidate_value_decision_path=decision_path,
-            paper_run_id=NEW_RUN_ID,
-            start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
             destination=tmp_path / "authority.json",
         )
 
@@ -210,9 +209,8 @@ def test_decision_backed_authority_rejects_different_source_manifest(
             source_runtime_manifest_path=wrong_source,
             cohort_path=cohort_path,
             v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
             candidate_value_decision_path=decision_path,
-            paper_run_id=NEW_RUN_ID,
-            start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
             destination=tmp_path / "authority.json",
         )
 
