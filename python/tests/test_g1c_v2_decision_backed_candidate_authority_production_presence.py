@@ -64,3 +64,13 @@ def test_g1c_v2_decision_backed_candidate_authority_has_read_only_production_pre
     assert "There are no raw paper-run, timestamp, quote-mint, quote-decimals, or entry-amount inputs." in runbook
     assert "does not emit or stage a runtime-manifest candidate" in runbook
     assert "Do not run transition binding from this authority alone." in runbook
+
+    heading = "### Bind one decision-backed G1C v2 candidate authority"
+    section = runbook.split(heading, 1)[1].split("\n### ", 1)[0]
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$AUTHORITY"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
