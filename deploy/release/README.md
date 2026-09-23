@@ -1199,29 +1199,49 @@ A **fresh exact-release installation proof** is mandatory. Because every sealed 
 
 Use the exact reviewed candidate, binding, and decision-backed authority together with the current-release helper proof:
 
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification run that authorized this ceremony. Do not substitute the latest repository commit, latest release tag, or an unverified active release.
+
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
 CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 
 CANDIDATE="<exact-reviewed-decision-backed-candidate.json>"
 BINDING="<exact-reviewed-decision-backed-transition-binding.json>"
 AUTHORITY="<exact-reviewed-decision-backed-candidate-authority.json>"
-INSTALL_PROOF="/root/shreks-paper-manifest-manager-install-$CURRENT_SHA/installation-proof.json"
+INSTALL_PROOF="/root/shreks-paper-manifest-manager-install-$EXPECTED_RELEASE_SHA/installation-proof.json"
 
-READINESS_DIR="/root/shreks-g1c-v2-decision-backed-rotation-readiness-$CURRENT_SHA"
+READINESS_DIR="/root/shreks-g1c-v2-decision-backed-rotation-readiness-$EXPECTED_RELEASE_SHA"
 READINESS="$READINESS_DIR/rotation-readiness.json"
 
-if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "current release identity is invalid" >&2
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
   exit 2
 fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
 
 sudo install -d -o root -g root -m 0700 "$READINESS_DIR"
+sudo test ! -e "$READINESS"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo sh -c '
-  set -e
+  set -Ce
   umask 077
   exec "$1/.venv/bin/shreks-g1c-v2-decision-backed-rotation-readiness" \
     --candidate-runtime-manifest "$2" \
@@ -1236,7 +1256,7 @@ sudo sh -c '
   "$BINDING" \
   "$AUTHORITY" \
   "$INSTALL_PROOF" \
-  "$CURRENT_SHA" \
+  "$EXPECTED_RELEASE_SHA" \
   "$READINESS"
 
 sudo cat "$READINESS"
