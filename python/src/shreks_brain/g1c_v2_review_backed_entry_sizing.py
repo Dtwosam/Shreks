@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 import sys
+import tempfile
 
 from shreks_brain.g1c_v2_entry_sizing_proposal import (
     G1CV2EntrySizingProposalError,
     _REVIEW_AUTHORITY,
     _canonical_json,
     _propose_g1c_v2_entry_sizing_with_authority,
+    _write_once,
+    decode_g1c_v2_entry_sizing_proposal,
 )
 from shreks_brain.g1c_v2_quote_valuation_review import (
     G1CV2QuoteValuationReviewError,
@@ -27,17 +30,25 @@ def propose_g1c_v2_entry_sizing_from_review(
     target_quote_decimals: int,
     destination: str | Path,
 ) -> dict[str, object]:
+    source_file = _resolve_existing_regular_file(
+        source_runtime_manifest_path,
+        label="source runtime manifest",
+    )
+    source_payload = _read_regular_file_stable(
+        source_file,
+        label="source runtime manifest",
+    )
     review_file = _resolve_existing_regular_file(
         review_path,
         label="quote-valuation review",
     )
-    payload = _read_regular_file_stable(
+    review_payload = _read_regular_file_stable(
         review_file,
         label="quote-valuation review",
     )
     try:
         review = decode_g1c_v2_quote_valuation_review(
-            payload.decode("utf-8")
+            review_payload.decode("utf-8")
         )
     except (
         G1CV2QuoteValuationReviewError,
@@ -49,22 +60,58 @@ def propose_g1c_v2_entry_sizing_from_review(
         ) from error
 
     try:
-        proposal = _propose_g1c_v2_entry_sizing_with_authority(
-            source_runtime_manifest_path=source_runtime_manifest_path,
-            target_quote_mint=str(review["quote_mint"]),
-            target_quote_decimals=target_quote_decimals,
-            target_quote_usd_per_token=str(
-                review["median_quote_asset_usd_per_token"]
-            ),
-            quote_evidence_fingerprint_sha256=str(
-                review["review_fingerprint_sha256"]
-            ),
-            quote_evidence_observed_at_unix_ms=int(
-                review["quote_evidence_observed_at_unix_ms"]
-            ),
-            quote_evidence_authority=_REVIEW_AUTHORITY,
-            destination=destination,
-        )
+        with tempfile.TemporaryDirectory(
+            prefix="shreks-g1c-v2-review-backed-sizing-"
+        ) as temporary_directory:
+            temporary_proposal = (
+                Path(temporary_directory) / "entry-sizing-proposal.json"
+            )
+            proposal = _propose_g1c_v2_entry_sizing_with_authority(
+                source_runtime_manifest_path=source_file,
+                target_quote_mint=str(review["quote_mint"]),
+                target_quote_decimals=target_quote_decimals,
+                target_quote_usd_per_token=str(
+                    review["median_quote_asset_usd_per_token"]
+                ),
+                quote_evidence_fingerprint_sha256=str(
+                    review["review_fingerprint_sha256"]
+                ),
+                quote_evidence_observed_at_unix_ms=int(
+                    review["quote_evidence_observed_at_unix_ms"]
+                ),
+                quote_evidence_authority=_REVIEW_AUTHORITY,
+                destination=temporary_proposal,
+            )
+
+            source_after = _read_regular_file_stable(
+                source_file,
+                label="source runtime manifest",
+            )
+            if source_after != source_payload:
+                raise G1CV2ReviewBackedEntrySizingError(
+                    "source runtime manifest changed while sizing was derived"
+                )
+
+            review_after = _read_regular_file_stable(
+                review_file,
+                label="quote-valuation review",
+            )
+            if review_after != review_payload:
+                raise G1CV2ReviewBackedEntrySizingError(
+                    "quote-valuation review changed while sizing was derived"
+                )
+
+            _write_once(destination, proposal)
+            written = Path(destination).expanduser().resolve()
+            verified = decode_g1c_v2_entry_sizing_proposal(
+                written.read_text(encoding="utf-8")
+            )
+            if verified != proposal:
+                raise G1CV2ReviewBackedEntrySizingError(
+                    "written review-backed entry sizing proposal did not round-trip"
+                )
+    except G1CV2ReviewBackedEntrySizingError:
+        raise
     except (
         FileExistsError,
         G1CV2EntrySizingProposalError,
@@ -76,14 +123,6 @@ def propose_g1c_v2_entry_sizing_from_review(
             f"review-backed entry sizing failed: {error}"
         ) from error
 
-    review_after = _read_regular_file_stable(
-        review_file,
-        label="quote-valuation review",
-    )
-    if review_after != payload:
-        raise G1CV2ReviewBackedEntrySizingError(
-            "quote-valuation review changed while sizing was derived"
-        )
     return proposal
 
 
