@@ -342,6 +342,7 @@ def test_candidate_activation_health_failure_restores_source_and_restarts_it(
             "--quiet",
             "shreks-paper-campaign.service",
         ),
+        ("systemctl", "stop", "shreks-paper-campaign.service"),
         ("systemctl", "start", "shreks-paper-campaign.service"),
         (
             "systemctl",
@@ -350,6 +351,65 @@ def test_candidate_activation_health_failure_restores_source_and_restarts_it(
             "shreks-paper-campaign.service",
         ),
     ]
+
+
+def test_candidate_runtime_identity_failure_stops_candidate_before_source_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _setup_rotation(tmp_path, monkeypatch)
+    runner = SystemctlRunner()
+    preflight = PreflightRunner()
+    identity_calls = 0
+
+    def identity_reader(_unit):
+        nonlocal identity_calls
+        identity_calls += 1
+        if identity_calls == 1:
+            raise RuntimeError("simulated candidate identity failure")
+        return (
+            4243,
+            setup["release_dir"] / ".venv" / "bin" / "python",
+            setup["release_dir"],
+        )
+
+    with pytest.raises(
+        manager.PaperManifestManagerError,
+        match="source manifest restored",
+    ):
+        manager.rotate_paper_manifest(
+            candidate_runtime_manifest_path=setup["candidate_path"],
+            transition_binding_path=setup["binding_path"],
+            expected_binding_fingerprint_sha256=setup["binding"][
+                "binding_fingerprint_sha256"
+            ],
+            expected_release_source_sha=RELEASE_SHA,
+            paths=setup["paths"],
+            command_runner=runner,
+            runtime_identity_reader=identity_reader,
+            preflight_runner=preflight,
+        )
+
+    assert setup["paths"].active_manifest_path.read_bytes() == setup["source_bytes"]
+    assert runner.calls == [
+        ("systemctl", "stop", "shreks-paper-campaign.service"),
+        ("systemctl", "start", "shreks-paper-campaign.service"),
+        (
+            "systemctl",
+            "is-active",
+            "--quiet",
+            "shreks-paper-campaign.service",
+        ),
+        ("systemctl", "stop", "shreks-paper-campaign.service"),
+        ("systemctl", "start", "shreks-paper-campaign.service"),
+        (
+            "systemctl",
+            "is-active",
+            "--quiet",
+            "shreks-paper-campaign.service",
+        ),
+    ]
+    assert identity_calls == 2
 
 
 def test_active_manifest_mismatch_is_rejected_before_campaign_stop(
