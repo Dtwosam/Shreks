@@ -605,10 +605,11 @@ TARGET_QUOTE_DECIMALS="9"
 PROPOSAL_DIR="/root/shreks-g1c-v2-review-backed-entry-sizing"
 PROPOSAL="$PROPOSAL_DIR/entry-sizing-proposal.json"
 
-if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || "$CURRENT_SHA" != "$EXPECTED_RELEASE_SHA" ]]; then
-  echo "active release is not the exact production-verified release" >&2
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
   exit 2
 fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
 
 MANIFEST_SHA="$(
   python3 - "$CURRENT_RELEASE" <<'PY'
