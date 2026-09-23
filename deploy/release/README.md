@@ -801,7 +801,7 @@ A rejected decision records `status=CANDIDATE_VALUE_REJECTED`, no selected raw a
 
 The command authenticates the proposal and binds its proposal fingerprint/file SHA, quote evidence provenance, target quote identity, review reason, and selected amount. It does not invoke candidate authority, author a runtime candidate, create a transition binding, execute readiness, rotate a manifest, score/model-fit, promote PAPER, sign, submit, or enable LIVE.
 
-Do not run candidate authority from this decision alone. A later separate decision-backed bridge must authenticate one approved decision and combine its exact selected quote mint/decimals/raw amount with separately explicit new-run identity/time inputs before candidate authoring can be granted.
+Do not run candidate authority from this decision alone. The current schema-v2 decision-backed authority path must authenticate the exact successful candidate-value compatibility preflight together with one approved `ACCEPT_PROPOSAL` decision. Future run identity/time only from the preflight; candidate economics come only from the accepted decision. `REPLACE_PROPOSAL` is not eligible for the current schema-v2 candidate-authority path because the existing preflight proves the proposal-derived amount only; a replacement requires a separately designed compatibility proof.
 
 ### Bind one decision-backed G1C v2 candidate authority
 
