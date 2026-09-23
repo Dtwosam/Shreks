@@ -69,3 +69,13 @@ def test_g1c_v2_decision_backed_transition_binding_has_read_only_production_pres
     assert "paper_promotion_authority=BLOCKED" in runbook
     assert "live_authority=DISABLED" in runbook
     assert "does not execute rotation-readiness" in runbook
+
+    heading = "### Bind one exact decision-backed G1C v2 transition"
+    section = runbook.split(heading, 1)[1].split("\n### ", 1)[0]
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$BINDING"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
