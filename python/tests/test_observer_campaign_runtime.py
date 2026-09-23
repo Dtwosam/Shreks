@@ -7,12 +7,16 @@ from threading import Event
 import pytest
 
 import shreks_brain.observer_campaign.runtime as runtime_module
+from shreks_brain.g1c_v2_runtime_manifest_candidate_authoring import (
+    author_g1c_v2_runtime_manifest_candidate,
+)
 from shreks_brain.observer_campaign.coordinator import ObserverPaperCampaignCoordinatorRunner
 from shreks_brain.observer_campaign.runtime import (
     OBSERVER_PAPER_CAMPAIGN_RUNTIME_STATUS_SCHEMA_VERSION,
     ObserverPaperCampaignRuntimeError,
     bootstrap_observer_paper_campaign_runtime,
     main,
+    preflight_observer_paper_campaign_next_cycle,
     preflight_observer_paper_campaign_runtime,
     run_observer_paper_campaign_runtime,
 )
@@ -264,6 +268,94 @@ def test_preflight_corrupt_evidence_fails_closed_without_advancing_checkpoint(tm
 
     after = load_latest_paper_checkpoint(config.observer_database_path, RUN_ID)
     assert after is not None and after.sequence == checkpoint.sequence
+
+
+def test_next_cycle_assembly_preflight_is_read_only(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = _runtime_config(tmp_path, max_cycles=None)
+    source = _manifest()
+    manifest_v2 = build_observer_paper_campaign_runtime_manifest_v2(
+        paper_run_id=source.paper_run_id,
+        candidate=source.candidate,
+        initial_state=source.initial_state,
+        policy_bundle=source.policy_bundle,
+        risk_environment=source.risk_environment,
+        selection_policy=source.selection_policy,
+        recent_performance=source.recent_performance,
+        global_risk_halt=source.global_risk_halt,
+        quote_usd_valuation_policy=ObserverPaperQuoteUsdValuationPolicy(
+            version=OBSERVER_PAPER_QUOTE_USD_VALUATION_POLICY_VERSION,
+            mode=ObserverPaperQuoteUsdValuationMode.EXACT_MARKET_RATIO,
+        ),
+    )
+    config.manifest_path.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(manifest_v2)
+    )
+    monkeypatch.setattr(
+        ObserverPaperCampaignCoordinatorRunner,
+        "run_cycle",
+        lambda *_args, **_kwargs: pytest.fail(
+            "next-cycle assembly preflight must not execute a PAPER cycle"
+        ),
+    )
+
+    bootstrap = preflight_observer_paper_campaign_next_cycle(
+        config,
+        as_of_unix_ms=AS_OF,
+    )
+
+    assert bootstrap.manifest == manifest_v2
+    assert bootstrap.restored_state == source.initial_state
+    assert load_latest_paper_checkpoint(
+        config.observer_database_path,
+        RUN_ID,
+    ) is None
+    assert not config.evidence_path.exists()
+
+
+def test_next_cycle_assembly_preflight_rejects_dynamic_quote_without_exact_market_evidence(
+    tmp_path: Path,
+) -> None:
+    config = _runtime_config(tmp_path, max_cycles=None)
+    source = _manifest()
+    source_path = tmp_path / "source-v1.json"
+    source_path.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(source)
+    )
+    candidate = author_g1c_v2_runtime_manifest_candidate(
+        source_runtime_manifest_path=source_path,
+        paper_run_id="paper-wsol-readiness-regression",
+        start_at_unix_ms=source.initial_state.last_cycle_at_unix_ms + 1_000,
+        quote_asset_mint="So11111111111111111111111111111111111111112",
+        quote_asset_decimals=9,
+        entry_input_amount=125_000_000,
+    )
+    config.manifest_path.write_bytes(
+        encode_observer_paper_campaign_runtime_manifest(candidate)
+    )
+
+    bootstrap = preflight_observer_paper_campaign_runtime(
+        config,
+        status_sink=lambda _line: None,
+    )
+    assert bootstrap.manifest == candidate
+
+    with pytest.raises(
+        ObserverPaperCampaignRuntimeError,
+        match="next-cycle assembly preflight failed",
+    ):
+        preflight_observer_paper_campaign_next_cycle(
+            config,
+            as_of_unix_ms=AS_OF,
+        )
+
+    assert load_latest_paper_checkpoint(
+        config.observer_database_path,
+        candidate.paper_run_id,
+    ) is None
+    assert not config.evidence_path.exists()
 
 
 def test_main_preflight_uses_runtime_loader_but_never_enters_cycle_loop(
