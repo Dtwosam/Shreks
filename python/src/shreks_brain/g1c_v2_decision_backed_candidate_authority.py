@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 
+import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 from shreks_brain.g1c_v2_candidate_value_decision import (
     G1CV2CandidateValueDecisionError,
     decode_g1c_v2_candidate_value_decision,
@@ -21,7 +22,6 @@ from shreks_brain.g1c_v2_runtime_manifest_candidate_authority import (
     G1CV2RuntimeManifestCandidateAuthorityError,
     bind_g1c_v2_runtime_manifest_candidate_authority,
 )
-import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 from shreks_brain.observer_campaign.runtime_manifest import (
     ObserverPaperCampaignRuntimeManifestError,
     decode_observer_paper_campaign_runtime_manifest,
@@ -219,7 +219,8 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         ValueError,
     ) as error:
         raise G1CV2DecisionBackedCandidateAuthorityError(
-            f"V2 authority authentication failed before decision-backed authority derivation: {error}"
+            "V2 authority authentication failed before "
+            f"decision-backed authority derivation: {error}"
         ) from error
 
     with tempfile.TemporaryDirectory(
@@ -287,7 +288,8 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         ValueError,
     ) as error:
         raise G1CV2DecisionBackedCandidateAuthorityError(
-            f"V2 authority authentication failed after decision-backed authority derivation: {error}"
+            "V2 authority authentication failed after "
+            f"decision-backed authority derivation: {error}"
         ) from error
     if authority_after != authority_before:
         raise G1CV2DecisionBackedCandidateAuthorityError(
