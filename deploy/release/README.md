@@ -590,10 +590,14 @@ Only after production verification proves the review-backed sizing CLI/module be
 
 Supply the review path explicitly. Do not copy its median, review fingerprint, or conservative evidence timestamp into the older explicit-reference sizing CLI.
 
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification run that authorized this ceremony. Do not substitute the latest repository commit, latest release tag, or an unverified active release.
+
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 SOURCE_MANIFEST="/etc/shreks/paper-campaign.json"
 REVIEW="<exact-authenticated-quote-valuation-review.json>"
 TARGET_QUOTE_DECIMALS="9"
@@ -601,8 +605,29 @@ TARGET_QUOTE_DECIMALS="9"
 PROPOSAL_DIR="/root/shreks-g1c-v2-review-backed-entry-sizing"
 PROPOSAL="$PROPOSAL_DIR/entry-sizing-proposal.json"
 
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
 sudo install -d -o root -g root -m 0700 "$PROPOSAL_DIR"
-test ! -e "$PROPOSAL"
+sudo test ! -e "$PROPOSAL"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-review-backed-entry-sizing" \
   --source-runtime-manifest "$SOURCE_MANIFEST" \
