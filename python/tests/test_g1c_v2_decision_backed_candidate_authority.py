@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
+import shreks_brain.g1c_v2_decision_backed_candidate_authority as authority_module
 
 from shreks_brain.g1c_v2_candidate_value_decision import (
     decide_g1c_v2_candidate_value,
@@ -160,6 +161,47 @@ def test_decision_backed_authority_binds_approved_values_to_exact_candidate(
         destination.read_text(encoding="utf-8")
     ) == authority
     assert oct(destination.stat().st_mode & 0o777) == "0o600"
+
+
+def test_decision_backed_authority_rejects_request_change_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight_path, decision_path, inputs = _approved_decision(
+        tmp_path, monkeypatch
+    )
+    source, source_path, _source_bytes, cohort_path, request_path, _request = inputs
+    destination = tmp_path / "authority.json"
+    real_bind = authority_module.bind_g1c_v2_runtime_manifest_candidate_authority
+
+    def bind_then_mutate_authority(**kwargs: object) -> dict[str, object]:
+        derived = real_bind(**kwargs)
+        request_path.write_text(
+            request_path.read_text(encoding="utf-8") + " ",
+            encoding="utf-8",
+        )
+        return derived
+
+    monkeypatch.setattr(
+        authority_module,
+        "bind_g1c_v2_runtime_manifest_candidate_authority",
+        bind_then_mutate_authority,
+    )
+
+    with pytest.raises(
+        G1CV2DecisionBackedCandidateAuthorityError,
+        match="authority changed while decision-backed authority was derived|authority authentication failed",
+    ):
+        bind_g1c_v2_decision_backed_candidate_authority(
+            source_runtime_manifest_path=source_path,
+            cohort_path=cohort_path,
+            v2_host_request_authority_path=request_path,
+            candidate_value_preflight_path=preflight_path,
+            candidate_value_decision_path=decision_path,
+            destination=destination,
+        )
+
+    assert not destination.exists()
 
 
 def test_rejected_decision_cannot_grant_candidate_authoring(

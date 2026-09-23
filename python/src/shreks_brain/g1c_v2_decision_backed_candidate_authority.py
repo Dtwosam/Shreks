@@ -9,6 +9,7 @@ import re
 import sys
 import tempfile
 
+import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 from shreks_brain.g1c_v2_candidate_value_decision import (
     G1CV2CandidateValueDecisionError,
     decode_g1c_v2_candidate_value_decision,
@@ -204,6 +205,24 @@ def bind_g1c_v2_decision_backed_candidate_authority(
             "approved candidate value must equal the preflighted proposal amount"
         )
 
+    try:
+        authority_before = (
+            discovery.authenticate_fl9_v2_discovery_request_authority(
+                cohort_path=cohort_path,
+                v2_host_request_authority_path=v2_host_request_authority_path,
+            )
+        )
+    except (
+        discovery.RuntimeManifestDiscoveryError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            "V2 authority authentication failed before "
+            f"decision-backed authority derivation: {error}"
+        ) from error
+
     with tempfile.TemporaryDirectory(
         prefix="shreks-g1c-v2-decision-backed-authority-"
     ) as temporary_directory:
@@ -254,6 +273,56 @@ def bind_g1c_v2_decision_backed_candidate_authority(
         raise G1CV2DecisionBackedCandidateAuthorityError(
             "candidate value decision changed while authority was derived"
         )
+
+    try:
+        authority_after = (
+            discovery.authenticate_fl9_v2_discovery_request_authority(
+                cohort_path=cohort_path,
+                v2_host_request_authority_path=v2_host_request_authority_path,
+            )
+        )
+    except (
+        discovery.RuntimeManifestDiscoveryError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            "V2 authority authentication failed after "
+            f"decision-backed authority derivation: {error}"
+        ) from error
+    if authority_after != authority_before:
+        raise G1CV2DecisionBackedCandidateAuthorityError(
+            "V2 authority changed while decision-backed authority was derived"
+        )
+
+    authority_checks = (
+        (
+            "frozen cohort fingerprint",
+            derived["cohort_artifact_fingerprint_sha256"],
+            authority_before.cohort_artifact_fingerprint_sha256,
+        ),
+        (
+            "request fingerprint",
+            derived["request_fingerprint_sha256"],
+            authority_before.request_fingerprint_sha256,
+        ),
+        (
+            "request release SHA",
+            derived["request_release_source_sha"],
+            authority_before.request_release_source_sha,
+        ),
+        (
+            "request hydration fingerprint",
+            derived["request_hydration_policy_fingerprint_sha256"],
+            authority_before.hydration_policy_fingerprint_sha256,
+        ),
+    )
+    for label, left, right in authority_checks:
+        if left != right:
+            raise G1CV2DecisionBackedCandidateAuthorityError(
+                f"derived authority does not match authenticated {label}"
+            )
 
     derived_checks = (
         (
