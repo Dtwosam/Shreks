@@ -15,13 +15,22 @@ import tempfile
 from typing import Callable
 import uuid
 
-from release_bundle import (
-    ReleaseBundleError,
-    ReleaseManifest,
-    decode_release_manifest,
-    validate_source_sha,
-    verify_release_archive,
-)
+if __package__:
+    from .release_bundle import (
+        ReleaseBundleError,
+        ReleaseManifest,
+        decode_release_manifest,
+        validate_source_sha,
+        verify_release_archive,
+    )
+else:
+    from release_bundle import (
+        ReleaseBundleError,
+        ReleaseManifest,
+        decode_release_manifest,
+        validate_source_sha,
+        verify_release_archive,
+    )
 
 
 CommandRunner = Callable[[tuple[str, ...]], None]

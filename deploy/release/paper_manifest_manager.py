@@ -14,15 +14,45 @@ import sys
 import tempfile
 from typing import Callable
 
-from release_bundle import (
-    ReleaseBundleError,
-    decode_release_manifest,
-    validate_source_sha,
-)
-from release_manager import (
-    ReleaseManagerError,
-    _default_runtime_identity_reader,
-)
+if __package__:
+    from .release_bundle import (
+        ReleaseBundleError,
+        decode_release_manifest,
+        validate_source_sha,
+    )
+    from .release_manager import (
+        ReleaseManagerError,
+        _default_runtime_identity_reader,
+    )
+else:
+    _LOCAL_CONTROL_DIR = Path(__file__).resolve().parent
+    _LOCAL_RELEASE_BUNDLE = _LOCAL_CONTROL_DIR / "release_bundle.py"
+    _LOCAL_RELEASE_MANAGER = _LOCAL_CONTROL_DIR / "release_manager.py"
+    if (
+        _LOCAL_RELEASE_BUNDLE.is_file()
+        and not _LOCAL_RELEASE_BUNDLE.is_symlink()
+        and _LOCAL_RELEASE_MANAGER.is_file()
+        and not _LOCAL_RELEASE_MANAGER.is_symlink()
+    ):
+        from release_bundle import (
+            ReleaseBundleError,
+            decode_release_manifest,
+            validate_source_sha,
+        )
+        from release_manager import (
+            ReleaseManagerError,
+            _default_runtime_identity_reader,
+        )
+    else:
+        from shreks_brain._sealed_deploy_control.release_bundle import (
+            ReleaseBundleError,
+            decode_release_manifest,
+            validate_source_sha,
+        )
+        from shreks_brain._sealed_deploy_control.release_manager import (
+            ReleaseManagerError,
+            _default_runtime_identity_reader,
+        )
 
 from shreks_brain.g1c_v2_runtime_manifest_transition_binding import (
     G1CV2RuntimeManifestTransitionBindingError,
