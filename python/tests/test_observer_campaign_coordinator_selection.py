@@ -33,6 +33,8 @@ def _schema(path) -> sqlite3.Connection:
             source_observed_at_unix_ms INTEGER,
             venue TEXT NOT NULL,
             pair_address TEXT NOT NULL,
+            base_mint TEXT,
+            quote_mint TEXT,
             price_usd REAL,
             liquidity_usd REAL,
             volume_m5_usd REAL,
@@ -202,6 +204,105 @@ def test_recent_duplicate_mint_identity_fails_closed_before_limit(tmp_path) -> N
                 recent_lookback_ms=100,
                 max_entry_candidates=1,
             ),
+        )
+
+
+def test_recent_candidates_can_require_one_exact_quote_mint(
+    tmp_path,
+) -> None:
+    database = tmp_path / "observer.sqlite"
+    _seed(database)
+    connection = sqlite3.connect(database)
+    connection.execute(
+        """INSERT INTO market_snapshots (
+               id, candidate_id, observed_at_unix_ms, source,
+               source_observed_at_unix_ms, venue, pair_address,
+               base_mint, quote_mint, price_usd, liquidity_usd,
+               volume_m5_usd, volume_h1_usd, buys_m5, sells_m5,
+               buys_h1, sells_h1, pair_created_at_unix_ms
+           ) VALUES (
+               7, 2, 970, 'dexscreener', 969, 'pump_fun',
+               'PairBWSOL', 'MintRecentB',
+               'So11111111111111111111111111111111111111112',
+               1.0, 100.0, 10.0, 100.0, 10, 5, 100, 50, 1
+           )"""
+    )
+    connection.commit()
+    connection.close()
+
+    candidates = ObserverCampaignCandidateStore(database).recent_candidates(
+        as_of_unix_ms=1_000,
+        policy=ObserverPaperCampaignSelectionPolicy(
+            recent_lookback_ms=100,
+            max_entry_candidates=2,
+        ),
+        pair_age_window_ms=(0, 1_000),
+        market_read_policy=ObserverMarketReadPolicy(
+            version="market-read-v1",
+            source_priority=("dexscreener",),
+            max_current_age_ms=100,
+            local_range_lookback_ms=1_000,
+        ),
+        required_quote_mint="So11111111111111111111111111111111111111112",
+    )
+
+    assert candidates == (
+        ObserverCampaignCandidate(
+            candidate_id=2,
+            mint="MintRecentB",
+            latest_market_observed_at_unix_ms=970,
+        ),
+    )
+
+
+def test_required_quote_mint_requires_quote_identity_schema(
+    tmp_path,
+) -> None:
+    database = tmp_path / "observer.sqlite"
+    connection = sqlite3.connect(database)
+    connection.executescript(
+        """
+        CREATE TABLE token_candidates (
+            id INTEGER PRIMARY KEY,
+            mint TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            discovery_source TEXT NOT NULL,
+            discovered_at_unix_ms INTEGER NOT NULL,
+            venue TEXT
+        );
+        CREATE TABLE market_snapshots (
+            id INTEGER PRIMARY KEY,
+            candidate_id INTEGER NOT NULL,
+            observed_at_unix_ms INTEGER NOT NULL,
+            source TEXT NOT NULL,
+            source_observed_at_unix_ms INTEGER,
+            venue TEXT NOT NULL,
+            pair_address TEXT NOT NULL,
+            pair_created_at_unix_ms INTEGER
+        );
+        """
+    )
+    connection.commit()
+    connection.close()
+
+    store = ObserverCampaignCandidateStore(database)
+    with pytest.raises(
+        ObserverCampaignCoordinatorError,
+        match="quote-identity columns",
+    ):
+        store.recent_candidates(
+            as_of_unix_ms=1_000,
+            policy=ObserverPaperCampaignSelectionPolicy(
+                recent_lookback_ms=100,
+                max_entry_candidates=2,
+            ),
+            market_read_policy=ObserverMarketReadPolicy(
+                version="market-read-v1",
+                source_priority=("dexscreener",),
+                max_current_age_ms=100,
+                local_range_lookback_ms=1_000,
+            ),
+            required_quote_mint="So11111111111111111111111111111111111111112",
         )
 
 
