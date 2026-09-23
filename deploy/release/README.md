@@ -596,12 +596,13 @@ set -euo pipefail
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
 SOURCE_MANIFEST="/etc/shreks/paper-campaign.json"
 REVIEW="<exact-authenticated-quote-valuation-review.json>"
-TARGET_QUOTE_DECIMALS="<reviewed-target-quote-decimals>"
+TARGET_QUOTE_DECIMALS="9"
 
 PROPOSAL_DIR="/root/shreks-g1c-v2-review-backed-entry-sizing"
 PROPOSAL="$PROPOSAL_DIR/entry-sizing-proposal.json"
 
 sudo install -d -o root -g root -m 0700 "$PROPOSAL_DIR"
+test ! -e "$PROPOSAL"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-review-backed-entry-sizing" \
   --source-runtime-manifest "$SOURCE_MANIFEST" \
