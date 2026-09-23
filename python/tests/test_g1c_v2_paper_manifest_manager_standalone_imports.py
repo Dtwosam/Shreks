@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.machinery
 import importlib.util
 from pathlib import Path
 import shutil
@@ -51,11 +52,12 @@ def test_installed_standalone_manifest_manager_loads_sealed_control_dependencies
     installed.parent.mkdir(parents=True)
     shutil.copy2(_CONTROL_SOURCE / "paper_manifest_manager.py", installed)
 
-    spec = importlib.util.spec_from_file_location(
+    loader = importlib.machinery.SourceFileLoader(
         "installed_shreks_paper_manifest_manager",
-        installed,
+        str(installed),
     )
-    assert spec is not None and spec.loader is not None
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    assert spec is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     try:
