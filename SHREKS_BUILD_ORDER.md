@@ -4,7 +4,7 @@
 **Repository:** `Dtwosam/Shreks`  
 **Architecture:** Rust Fast Lane + Python research/learning/control plane  
 **Purpose:** Defines the required implementation order for the Fast Lane rebuild while preserving already-proven Shreks infrastructure.  
-**Last updated:** 2026-08-28
+**Last updated:** 2026-09-23
 
 ---
 
@@ -579,124 +579,153 @@ Never claim a phase complete without exact verification evidence.
 
 ---
 
-# 6. CURRENT POSITION — 2026-09-21
+# 6. CURRENT POSITION — 2026-09-23
 
 ### Canonical production release
 
-The currently deployed and production-verified sealed release remains:
+The currently deployed and production-verified sealed release is:
 
-`0fba6030c9ff53ecd6c1edbddc3a5e77ac5a6ed5`
+`23f79a38207894e694f7c9d077a89a0cf795e6e3`
+
+Immutable release:
+
+`shreks-23f79a38207894e694f7c9d077a89a0cf795e6e3`
 
 For that exact SHA:
 
-- sealed-main CI `35640439003` completed successfully;
-- immutable release build `35640878859` completed successfully;
-- protected PAPER deploy/verify `35641487454` completed successfully;
-- production verification proved the trusted-admin install planner, exact release-bound helper installer, installation-proof CLI, and rotation-readiness CLI are all physically present and release-proven inside the exact immutable release;
-- the earlier canonical PAPER manifest-manager status evidence artifact `10659036131` proved the helper was absent before the trusted-administrator ceremony;
-- protected FL9 discovery remains `HOLD_NO_COMPATIBLE`.
+- sealed-main CI `35841183610` completed successfully;
+- immutable release build `35841511534` completed successfully;
+- protected PAPER deploy/verify `35842040979` completed successfully;
+- production verification proved:
+  - `current_release=/opt/shreks/releases/23f79a38207894e694f7c9d077a89a0cf795e6e3`;
+  - `expected_release=/opt/shreks/releases/23f79a38207894e694f7c9d077a89a0cf795e6e3`;
+  - `g1c_v2_quote_valuation_review=present`;
+  - `g1c_v2_review_backed_entry_sizing=present`;
+  - `g1c_v2_candidate_value_preflight=present`;
+  - `g1c_v2_candidate_value_decision=present`;
+  - `g1c_v2_decision_backed_candidate_authority=present`;
+  - `g1c_v2_decision_backed_candidate_authoring=present`;
+  - `g1c_v2_decision_backed_transition_binding=present`;
+  - `paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`;
+  - protected FL9 discovery remains `HOLD_NO_COMPATIBLE`.
 
-### Physical trusted-administrator installation proof
+The deployed decision-backed candidate-authority implementation is schema v2 and preflight-bound. It no longer accepts separately re-entered future run identity/time and requires exact reproduction of the candidate previously proven `COMPATIBLE`.
 
-The previously required trusted-administrator first-install ceremony has now been completed manually on the production host for the exact current release.
+### Release-transport recovery evidence
 
-The sealed read-only planner returned:
+Two preceding sealed releases failed closed before host contact and therefore did not change protected PAPER production:
 
-`READY_FOR_TRUSTED_ADMIN_FIRST_INSTALL_CEREMONY`
+1. release `shreks-6c441abdbabb30d0585175e298effd5a688f7db0` built successfully, but deploy run `35835299708` stopped at immutable release asset-set verification because the tag-release response exposed an empty embedded asset list;
+2. release `shreks-91a4792cfb4b739884ac5a49ffebe288ed80c7f8` built successfully, and the dedicated release-assets endpoint verified the exact three uploaded assets, but deploy run `35838293289` stopped at `gh release download` with `no assets to download`.
 
-with exact release identity, protected manifest/sudoers hashes, healthy unchanged PAPER services, and helper state `ABSENT`.
+Both failures occurred before local bundle verification completed and before SSH/SCP or host release-manager contact.
 
-The canonical pre-install snapshot then bound the same exact release and protected state. The exact release-bound installer installed only:
+The final transport fix merged as:
 
-`/usr/local/sbin/shreks-paper-manifest-manager`
+`c2cc5becdff71456e5d232a945d05d22dd24d4fb`
 
-with:
+It downloads only the already-verified positive unique GitHub release-asset ids through the release-asset API with `Accept: application/octet-stream`, then retains exact local bundle verification before any host contact.
 
-- exact sealed manager SHA-256 `e612ca524d633fb5ee58be2e4bb38ad5e1ff1bba418354ca2176561a74fef104`;
-- exact sealed wheel SHA-256 `97d9ea978403529312b67aaaa9dd0f1d88ef9f967e1bdd0ea40ce4da41d482a3`;
-- owner/group `root:root`;
-- mode `0755`;
-- installation authority `EXERCISED_EXACT_RELEASE_BOUND_HELPER_ONLY`.
+The recovery seal `23f79a38207894e694f7c9d077a89a0cf795e6e3` proved that transport path end to end.
 
-The canonical post-install proof returned:
+### Existing trusted-administrator WSOL evidence
 
-`status=VERIFIED`
+A prior trusted-administrator ceremony already produced twelve exact canonical WSOL quote-reference artifacts and one authenticated multi-reference valuation review.
 
-with:
-
-- `installation_authority=PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY`;
-- proof fingerprint `176a14b5301130781118dfd9dd3c2b4cc7e1690739bbc98724214668a5f7a2f1`;
-- campaign manifest SHA-256 unchanged at `3118bc5289b758a02bfd993085ed16f103a524b4d15a29ee50f45922a47fd530`;
-- deployment sudoers SHA-256 unchanged at `d21e7ee16e9c9b60ec8f950dcf04bb95a53a49b6bb986602640374e33efc1204`;
-- PAPER service lifecycle unchanged;
-- `manifest_rotation_authority=NOT_GRANTED`;
-- `scoring_authority=NOT_GRANTED`;
-- `paper_promotion_authority=BLOCKED`;
-- `live_authority=DISABLED`.
-
-Therefore helper installation is no longer the active physical gate.
-
-### Candidate/readiness evidence gap
-
-The evidence-only rotation-readiness tool requires two already-created immutable inputs:
-
-- one exact canonical G1C runtime-manifest v2 candidate;
-- its exact canonical transition binding and binding fingerprint.
-
-A bounded trusted-administrator inspection of the canonical staging paths and existing protected evidence found:
+The preserved review summary is:
 
 ```text
-/var/tmp/shreks-paper-candidate.json = ABSENT
-/var/tmp/shreks-paper-transition-binding.json = ABSENT
-transition_binding_count = 0
-v2_runtime_manifest_count = 0
-search_status = NO_PREEXISTING_G1C_V2_ARTIFACTS
+reference_count=12
+quote_mint=So11111111111111111111111111111111111111112
+median_quote_asset_usd_per_token=118.17810687350131
+quote_evidence_observed_at_unix_ms=1790028815338
+status=REVIEW_EVIDENCE_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
 ```
 
-The preserved V2 request authority is healthy but does not fill this gap:
+The review fingerprint remains authority only when read from and authenticated against the canonical protected review artifact itself.
 
-- three historical V2 request candidates exist;
-- all three authenticate;
-- all three collapse to one authority group;
-- authority-group fingerprint is `f144dc01919d1caff902f2ce2ce8950481722645ae7a411135d74e01009a49c5`;
-- the selected canonical request path is `/var/lib/shreks/fl9-v2-post-fix-c6473a1a8b1252ade0ad1883ab4ce2f33bf70f46-20260915T193846Z/v2-first-champion-request.json`;
-- selected request fingerprint is `28e7427206b2a919cb29c4bf514ee991b54b2c4c6bc45ac23f43b6a877852a02`;
-- frozen V2 cohort quote mint is WSOL `So11111111111111111111111111111111111111112`.
+Repository authority does not record a completed production review-backed sizing proposal, candidate-value preflight, candidate-value decision, schema-v2 candidate-authority artifact, runtime-manifest v2 candidate, or decision-backed transition binding.
 
-However, the authenticated historical hydration policy remains USDC-derived and therefore is context only, not WSOL candidate authority. The repository deliberately requires explicit new-run values for:
+Do not infer that any such artifact exists merely because its CLI is deployed.
 
-- `paper_run_id`;
-- `start_at_unix_ms`;
-- target quote mint;
-- target quote decimals;
-- target `entry_input_amount`.
+### Current candidate-evidence gap
 
-Those production candidate values are not present in repository authority and no prior production candidate/binding artifact exists. Unit-test/example values are not production authority and must not be substituted.
+The first missing production artifact is one authenticated review-backed entry-sizing proposal derived from:
+
+- the current canonical source runtime manifest;
+- the existing canonical `MULTI_REFERENCE_REVIEW` artifact;
+- WSOL target quote decimals `9`;
+- one new non-existing private proposal destination.
+
+That proposal remains evidence only:
+
+```text
+status=PROPOSAL_EVIDENCE_ONLY
+quote_evidence_authority=MULTI_REFERENCE_REVIEW
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+No unit-test/example amount may be substituted for the proposal output.
+
+After the proposal exists and is reviewed, the remaining candidate-authority chain is strictly ordered:
+
+1. explicitly review/select one future `paper_run_id` and `start_at_unix_ms`;
+2. run the evidence-only candidate-value compatibility preflight against the frozen V2 cohort and preserved V2 request authority;
+3. require exact `candidate_compatibility=COMPATIBLE`;
+4. make one separate explicit candidate-value decision;
+5. for the current schema-v2 authority path, only `ACCEPT_PROPOSAL` is eligible because the current preflight proves the proposal-derived amount; a replacement amount requires its own later compatibility-proof design;
+6. bind one schema-v2 decision-backed candidate-authority artifact using the exact preflight plus exact accepted decision;
+7. author one exact canonical candidate whose manifest SHA/fingerprint must equal the authority artifact;
+8. bind one exact immutable decision-backed transition artifact;
+9. only then stage the reviewed candidate/binding inputs for rotation-readiness.
+
+### Helper/readiness proof boundary
+
+The manifest-manager binary reports:
+
+`paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`
+
+for the exact current release.
+
+However, helper installation-proof artifacts are release-bound. Any proof created for an older release SHA must not be reused for readiness under `23f79a38207894e694f7c9d077a89a0cf795e6e3`.
+
+A fresh exact-release helper proof is mandatory before future rotation-readiness, but it is not required merely to create/review the offline proposal, preflight, decision, authority, candidate, or transition artifacts.
 
 ### Active next gate
 
-The next mandatory progression is now an explicit **production candidate-authority** slice, not another VPS installation action and not rotation-readiness execution.
+The next mandatory progression is a **trusted-administrator production candidate-evidence ceremony**, beginning with the review-backed entry-sizing proposal.
 
-That slice must establish the exact new-run G1C v2 candidate inputs through reviewed repository authority, then use the already-implemented canonical authoring and binding paths to produce:
+This is not another release/deploy slice.
 
-1. one exact canonical v2 candidate;
-2. one read-only `COMPATIBLE` assessment against the frozen FL9 V2 cohort and preserved request authority;
-3. one exact immutable transition binding and fingerprint;
-4. only then, staged immutable candidate/binding inputs for the already-sealed evidence-only rotation-readiness proof.
+Do not add another automatic workflow to manufacture candidate economics, run identity, candidate authority, or runtime mutation merely because the required CLIs are present.
 
-Until those artifacts exist:
+Until the ordered evidence chain above exists:
 
 - do not run rotation-readiness with guessed or test-derived values;
 - do not rotate `/etc/shreks/paper-campaign.json`;
 - do not retry V2 scoring or model fitting;
+- do not publish champion evidence;
 - do not promote PAPER;
 - do not widen sudoers or add automatic candidate/install/rotation authority;
-- do not enable signing, submission, or LIVE.
+- do not access wallets, sign, or submit transactions;
+- do not enable LIVE.
 
 Current authority remains:
 
 ```text
-installation_authority=PROVEN_EXACT_RELEASE_BOUND_HELPER_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
 manifest_rotation_authority=NOT_GRANTED
 scoring_authority=NOT_GRANTED
 paper_promotion_authority=BLOCKED
