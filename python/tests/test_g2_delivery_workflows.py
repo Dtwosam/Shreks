@@ -180,6 +180,39 @@ def test_deploy_workflow_supports_manual_and_automatic_sealed_release_delivery()
 
 
 
+
+def test_deploy_release_asset_set_uses_dedicated_release_assets_endpoint_before_host_contact():
+    workflow = _read(_DEPLOY_WORKFLOW)
+
+    assert 'RELEASE_ASSETS_JSON="$RUNNER_TEMP/shreks-release-assets.json"' in workflow
+    assert 'release_id = release.get("id")' in workflow
+    assert 'printf \'%s\\n\' "$RELEASE_ID"' not in workflow
+    assert (
+        'gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"'
+        in workflow
+    )
+    assert 'with open(assets_path, encoding="utf-8") as handle:' in workflow
+    assert "assets = json.load(handle)" in workflow
+    assert 'names = sorted(asset.get("name") for asset in assets)' in workflow
+    assert 'release.get("assets", [])' not in workflow
+
+    asset_endpoint = workflow.index(
+        'gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100"'
+    )
+    asset_validation = workflow.index(
+        'names = sorted(asset.get("name") for asset in assets)',
+        asset_endpoint,
+    )
+    host_tokens = [
+        workflow.find(token)
+        for token in ('ssh "', 'scp "')
+        if workflow.find(token) != -1
+    ]
+    assert host_tokens
+    assert asset_endpoint < asset_validation < min(host_tokens)
+
+
+
 def test_deploy_workflow_chains_reusable_verifier_after_successful_deploy():
     workflow = _read(_DEPLOY_WORKFLOW)
 
