@@ -4,9 +4,11 @@ import hashlib
 import json
 from pathlib import Path
 import stat
+from types import SimpleNamespace
 
 import pytest
 
+import shreks_brain.fl9_v2_runtime_manifest_discovery as discovery
 from shreks_brain.g1c_v2_candidate_value_preflight import (
     G1CV2CandidateValuePreflightError,
     decode_g1c_v2_candidate_value_preflight,
@@ -45,6 +47,32 @@ def _review_backed_inputs(
         request_path,
         request,
     ) = _inputs(tmp_path, monkeypatch)
+
+    # The older candidate-authority fixture intentionally uses the synthetic
+    # quote mint "quote-sol". This preflight exercises the actual review-backed
+    # path, whose canonical quote identity is WSOL. Keep the same frozen cohort
+    # artifact/request binding while making its accepted decision identities
+    # represent that real target quote mint.
+    frozen = discovery.read_fl9_v2_cohort_acceptance(cohort_path)
+    accepted_decisions = []
+    for row in frozen.accepted_decisions:
+        identity = list(row.decision_identity)
+        identity[4] = WSOL
+        accepted_decisions.append(
+            SimpleNamespace(decision_identity=tuple(identity))
+        )
+    wsol_frozen = SimpleNamespace(
+        path=frozen.path,
+        manifest=frozen.manifest,
+        accepted_decisions=tuple(accepted_decisions),
+        quarantined_decisions=frozen.quarantined_decisions,
+    )
+    monkeypatch.setattr(
+        discovery,
+        "read_fl9_v2_cohort_acceptance",
+        lambda _path: wsol_frozen,
+    )
+
     review_path, review = _review(tmp_path)
     proposal_path = tmp_path / "proposal.json"
     proposal = propose_g1c_v2_entry_sizing_from_review(
