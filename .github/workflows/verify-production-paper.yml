@@ -236,6 +236,35 @@ jobs:
           printf 'g1c_v2_review_backed_entry_sizing_path=%s\n' "$REVIEW_BACKED_ENTRY_SIZING_RESOLVED"
           printf 'g1c_v2_review_backed_entry_sizing_module=%s\n' "$REVIEW_BACKED_ENTRY_SIZING_MODULE"
 
+          CANDIDATE_VALUE_PREFLIGHT="/opt/shreks/current/.venv/bin/shreks-g1c-v2-candidate-value-preflight"
+          test -f "$CANDIDATE_VALUE_PREFLIGHT"
+          test ! -L "$CANDIDATE_VALUE_PREFLIGHT"
+          test -x "$CANDIDATE_VALUE_PREFLIGHT"
+          CANDIDATE_VALUE_PREFLIGHT_RESOLVED="$(readlink -f "$CANDIDATE_VALUE_PREFLIGHT")"
+          test "$CANDIDATE_VALUE_PREFLIGHT_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-candidate-value-preflight"
+          CANDIDATE_VALUE_PREFLIGHT_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_candidate_value_preflight as candidate_value_preflight
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(candidate_value_preflight.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "candidate value preflight module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$CANDIDATE_VALUE_PREFLIGHT_MODULE"
+          printf 'g1c_v2_candidate_value_preflight=present\n'
+          printf 'g1c_v2_candidate_value_preflight_path=%s\n' "$CANDIDATE_VALUE_PREFLIGHT_RESOLVED"
+          printf 'g1c_v2_candidate_value_preflight_module=%s\n' "$CANDIDATE_VALUE_PREFLIGHT_MODULE"
+
           CANDIDATE_VALUE_DECISION="/opt/shreks/current/.venv/bin/shreks-g1c-v2-candidate-value-decision"
           test -f "$CANDIDATE_VALUE_DECISION"
           test ! -L "$CANDIDATE_VALUE_DECISION"
