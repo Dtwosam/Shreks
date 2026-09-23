@@ -56,3 +56,10 @@ def test_g1c_v2_candidate_value_decision_has_read_only_production_presence_contr
     assert "EXPLICIT_PRODUCTION_DECISION_BOUND" in runbook
     assert "does not invoke candidate authority" in runbook
     assert "Do not run candidate authority from this decision alone." in runbook
+    assert "separately explicit new-run identity/time inputs" not in runbook
+    assert "future run identity/time only from the preflight" in runbook
+    assert (
+        "REPLACE_PROPOSAL is not eligible for the current schema-v2 "
+        "candidate-authority path"
+        in runbook
+    )
