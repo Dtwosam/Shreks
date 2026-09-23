@@ -805,9 +805,9 @@ Do not run candidate authority from this decision alone. A later separate decisi
 
 ### Bind one decision-backed G1C v2 candidate authority
 
-Only after production verification proves the decision-backed candidate-authority CLI/module belong to the exact active immutable release may a trusted administrator bind one approved candidate-value decision to one exact candidate-authoring authority.
+Only after production verification proves the decision-backed candidate-authority CLI/module belong to the exact active immutable release may a trusted administrator bind one accepted candidate-value decision to the exact candidate that was previously proven `COMPATIBLE` by a candidate-value preflight.
 
-Supply only explicit existing authority artifacts plus the new-run identity/time:
+Supply only explicit existing authority artifacts. The future run identity/time and candidate economics are already committed by the preflight plus accepted decision and are not re-entered here:
 
 ```sh
 set -euo pipefail
@@ -816,44 +816,61 @@ CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
 SOURCE="/etc/shreks/paper-campaign.json"
 COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
 REQUEST="<exact-authenticated-v2-request-path>"
+PREFLIGHT="<exact-reviewed-compatible-candidate-value-preflight.json>"
 DECISION="<exact-approved-candidate-value-decision.json>"
 
 AUTHORITY_DIR="/root/shreks-g1c-v2-decision-backed-candidate-authority"
 AUTHORITY="$AUTHORITY_DIR/decision-backed-candidate-authority.json"
 
-PAPER_RUN_ID="<explicit-reviewed-new-run-id>"
-START_AT_UNIX_MS="<explicit-reviewed-new-run-start-ms>"
-
 sudo install -d -o root -g root -m 0700 "$AUTHORITY_DIR"
+test ! -e "$AUTHORITY"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-decision-backed-candidate-authority-bind" \
   --source-runtime-manifest "$SOURCE" \
   --cohort "$COHORT" \
   --v2-host-request-authority "$REQUEST" \
+  --candidate-value-preflight "$PREFLIGHT" \
   --candidate-value-decision "$DECISION" \
-  --paper-run-id "$PAPER_RUN_ID" \
-  --start-at-unix-ms "$START_AT_UNIX_MS" \
   --destination "$AUTHORITY"
 
 sudo cat "$AUTHORITY"
 ```
 
-There are no raw quote-mint, quote-decimals, or entry-amount inputs. The bridge authenticates the approved decision and takes those exact economics only from its bound fields.
+There are no raw paper-run, timestamp, quote-mint, quote-decimals, or entry-amount inputs. The bridge authenticates the exact successful preflight and accepted decision, then takes the future run identity/time only from the preflight and the candidate economics only from the accepted decision.
+
+The preflight must preserve:
+
+```text
+status=READY_FOR_EXPLICIT_CANDIDATE_VALUE_DECISION
+candidate_compatibility=COMPATIBLE
+preflight_authority=EVIDENCE_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
 
 The approved decision must preserve:
 
 ```text
 status=CANDIDATE_VALUE_APPROVED
+decision=ACCEPT_PROPOSAL
 candidate_value_authority=EXPLICIT_PRODUCTION_DECISION_BOUND
 quote_evidence_authority=MULTI_REFERENCE_REVIEW
 ```
 
-The bridge then authenticates the source/cohort/request authority through the existing candidate-authority derivation and records the exact derived candidate identity plus both provenance chains.
+A `REPLACE_PROPOSAL` decision is rejected by this authority path because the current preflight proves the proposal-derived amount only. Do not authorize a replacement amount without a separately designed compatibility proof.
 
-A successful artifact records:
+The bridge requires source/proposal/quote-evidence provenance to match exactly across the preflight and decision. It then delegates ordinary candidate derivation to the existing candidate-authority path and requires the resulting manifest SHA/fingerprint, run id/time, quote identity, amount, cohort provenance, and request provenance to equal the exact preflighted candidate.
+
+A successful schema-v2 artifact records:
 
 ```text
 authority_status=BOUND_EXACT_CANONICAL_CANDIDATE
+candidate_compatibility=COMPATIBLE
+preflight_authority=EVIDENCE_ONLY
 candidate_value_authority=EXPLICIT_PRODUCTION_DECISION_BOUND
 candidate_authoring_authority=DECISION_BACKED_INPUTS_BOUND
 installation_authority=NOT_GRANTED
