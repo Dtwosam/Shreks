@@ -680,6 +680,64 @@ live_authority=DISABLED
 
 Review the proposed raw amount and its exact evidence chain separately. A later explicit production candidate-value decision may accept, reject, or replace it. Do not feed it into the candidate-authority binder merely because the proposal exists.
 
+### Preflight one G1C v2 candidate-value proposal for compatibility
+
+Only after production verification proves the candidate-value preflight CLI/module belong to the exact active immutable release may a trusted administrator test one existing review-backed sizing proposal against the frozen V2 cohort and preserved request authority.
+
+This ceremony is evidence-only. It does not approve candidate values, persist or stage a runtime-manifest candidate, bind candidate authority, rotate the protected manifest, or execute scoring/model fitting.
+
+Use only reviewed existing inputs plus explicit future run identity/time and a new root-private destination:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+SOURCE="/etc/shreks/paper-campaign.json"
+PROPOSAL="<exact-authenticated-MULTI_REFERENCE_REVIEW-sizing-proposal.json>"
+COHORT="/var/lib/shreks/fl9-v2-cohort-acceptance-a0cdf58ac14981d44ab8a0f8ca584abc8f9e28e2"
+REQUEST="<exact-authenticated-v2-request-path>"
+
+PREFLIGHT_DIR="/root/shreks-g1c-v2-candidate-value-preflight"
+PREFLIGHT="$PREFLIGHT_DIR/candidate-value-preflight.json"
+
+PAPER_RUN_ID="<explicit-reviewed-new-run-id>"
+START_AT_UNIX_MS="<explicit-reviewed-new-run-start-ms>"
+
+sudo install -d -o root -g root -m 0700 "$PREFLIGHT_DIR"
+test ! -e "$PREFLIGHT"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-g1c-v2-candidate-value-preflight" \
+  --source-runtime-manifest "$SOURCE" \
+  --sizing-proposal "$PROPOSAL" \
+  --cohort "$COHORT" \
+  --v2-host-request-authority "$REQUEST" \
+  --paper-run-id "$PAPER_RUN_ID" \
+  --start-at-unix-ms "$START_AT_UNIX_MS" \
+  --destination "$PREFLIGHT"
+
+sudo cat "$PREFLIGHT"
+```
+
+The proposal must authenticate as `status=PROPOSAL_EVIDENCE_ONLY` with `quote_evidence_authority=MULTI_REFERENCE_REVIEW` and all downstream authority still blocked. The preflight takes the target quote mint, decimals, and proposed raw entry amount only from that authenticated proposal; there are no operator-supplied raw candidate economics.
+
+The tool derives the exact hypothetical v2 candidate only in a private temporary file, delegates compatibility to the existing canonical FL9 V2 candidate assessment, requires exact `COMPATIBLE`, removes the temporary candidate, rechecks source/proposal stability, and writes only the private receipt.
+
+A successful receipt remains:
+
+```text
+status=READY_FOR_EXPLICIT_CANDIDATE_VALUE_DECISION
+candidate_compatibility=COMPATIBLE
+preflight_authority=EVIDENCE_ONLY
+candidate_value_authority=NOT_GRANTED
+candidate_authoring_authority=NOT_GRANTED
+rotation_authority=NOT_GRANTED
+scoring_authority=NOT_GRANTED
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+This preflight does not approve candidate values. Review the receipt and its exact proposal/cohort/request/candidate fingerprints separately; a separate explicit candidate-value decision remains mandatory before any candidate-value authority can exist.
+
 ### Record one explicit G1C v2 candidate-value decision
 
 Only after production verification proves the candidate-value decision CLI/module belong to the exact active immutable release may a trusted administrator review one existing review-backed sizing proposal and record exactly one explicit production candidate-value decision.
