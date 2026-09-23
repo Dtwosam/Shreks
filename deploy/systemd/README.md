@@ -39,7 +39,7 @@ Do not use an editable Python install for the production release. `shreks-paper-
 
 ## Runtime configuration
 
-Create `/etc/shreks/shreks.env` from the repository `.env.example`, then fill every required runtime value on the host. Provider credentials and paper-evidence collection parameters belong only in this host file or an equivalent protected runtime secret mechanism. Do not commit populated values.
+Create `/etc/shreks/shreks.env` from the repository `.env.example`, then fill every required runtime value on the host. Provider credentials and non-policy paper-evidence collection parameters belong only in this host file or an equivalent protected runtime secret mechanism. For canonical G1C v2 campaign manifests, the paper-evidence quote mint, entry amount, exit amount, probe policy version, taker, and slippage are derived at service launch from the authenticated protected campaign manifest; legacy v1 continues to use the environment values unchanged. Do not commit populated values.
 
 ```sh
 sudo chmod 600 /etc/shreks/shreks.env
@@ -67,6 +67,8 @@ sudo install -o root -g shreks -m 0640 paper-campaign.json /etc/shreks/paper-cam
 ```
 
 The campaign manifest contains policy/economic configuration but no wallet signing secret. Wallet/private signing credentials remain out of GitHub and are not required by this PAPER runtime.
+
+For G1C v2, `shreks-paper-evidence.service` starts the release-local Python manifest-authority launcher before replacing itself with the existing Rust `shreks-paper-evidence` binary. The launcher authenticates the same protected campaign manifest with the canonical Python decoder and overrides only the child-process quote-policy environment values in memory. It does not edit `/etc/shreks/shreks.env`, write a derived policy artifact, or remain as a supervising process. Because it uses `execve`, the final process identity remains the release-local Rust binary required by the release manager.
 
 ### G4 read-only telemetry configuration
 

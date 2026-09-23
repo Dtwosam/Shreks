@@ -13,9 +13,10 @@ User=shreks
 Group=shreks
 WorkingDirectory=/opt/shreks/current
 EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/bin/test -d /var/lib/shreks
 ExecStartPre=/usr/bin/test -w /var/lib/shreks
-ExecStart=/opt/shreks/current/target/release/shreks-paper-evidence
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.paper_evidence_runtime_launcher
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
