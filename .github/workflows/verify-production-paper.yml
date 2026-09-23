@@ -642,6 +642,35 @@ jobs:
           printf 'paper_manifest_manager_installation_proof_refresh_path=%s\n' "$INSTALL_PROOF_REFRESH_RESOLVED"
           printf 'paper_manifest_manager_installation_proof_refresh_module=%s\n' "$INSTALL_PROOF_REFRESH_MODULE"
 
+          PAPER_MANIFEST_MANAGER_UPDATE="/opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-update"
+          test -f "$PAPER_MANIFEST_MANAGER_UPDATE"
+          test ! -L "$PAPER_MANIFEST_MANAGER_UPDATE"
+          test -x "$PAPER_MANIFEST_MANAGER_UPDATE"
+          PAPER_MANIFEST_MANAGER_UPDATE_RESOLVED="$(readlink -f "$PAPER_MANIFEST_MANAGER_UPDATE")"
+          test "$PAPER_MANIFEST_MANAGER_UPDATE_RESOLVED" = "$EXPECTED/.venv/bin/shreks-g1c-v2-paper-manifest-manager-update"
+          PAPER_MANIFEST_MANAGER_UPDATE_MODULE="$(
+            EXPECTED_RELEASE="$EXPECTED" /opt/shreks/current/.venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+
+          import shreks_brain.g1c_v2_paper_manifest_manager_update as paper_manifest_manager_update
+
+          expected_release = Path(os.environ["EXPECTED_RELEASE"]).resolve()
+          module_path = Path(paper_manifest_manager_update.__file__).resolve()
+          try:
+              module_path.relative_to(expected_release)
+          except ValueError as error:
+              raise SystemExit(
+                  "manifest manager update module is outside the exact deployed release"
+              ) from error
+          print(module_path)
+          PY
+          )"
+          test -n "$PAPER_MANIFEST_MANAGER_UPDATE_MODULE"
+          printf 'paper_manifest_manager_update=present\n'
+          printf 'paper_manifest_manager_update_path=%s\n' "$PAPER_MANIFEST_MANAGER_UPDATE_RESOLVED"
+          printf 'paper_manifest_manager_update_module=%s\n' "$PAPER_MANIFEST_MANAGER_UPDATE_MODULE"
+
           PAPER_MANIFEST_MANAGER_STATUS_JSON="$(
             /opt/shreks/current/.venv/bin/shreks-g1c-v2-paper-manifest-manager-status "$EXPECTED_SHA"
           )"
