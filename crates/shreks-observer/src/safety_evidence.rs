@@ -97,22 +97,26 @@ impl SafetyEvidenceCollector {
 
     /// Collect the full read-only evidence recipe for exactly one candidate.
     /// This compatibility entry point preserves the historical behavior: holder
-    /// distribution is probed on every invocation.
+    /// distribution is probed on every invocation and mint state is fetched only
+    /// when no durable row exists.
     pub async fn collect_candidate(
         &self,
         candidate_id: i64,
         candidate_mint: &str,
         probe: &SafetyEvidenceProbe,
     ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
-        self.collect_candidate_with_holder_probe(candidate_id, candidate_mint, probe, true)
-            .await
+        self.collect_candidate_with_refresh_controls(
+            candidate_id,
+            candidate_mint,
+            probe,
+            false,
+            true,
+        )
+        .await
     }
 
-    /// Collect and persist read-only mint/holder/exitability evidence for exactly
-    /// one candidate while allowing an operational caller to suppress only the
-    /// holder-distribution transport when fresh durable holder evidence already
-    /// exists. Quote and mint-state semantics are unchanged. Provider failures
-    /// remain unknown evidence, never false facts.
+    /// Compatibility entry point preserving historical mint-state behavior while
+    /// allowing holder-distribution transport to be freshness-suppressed.
     pub async fn collect_candidate_with_holder_probe(
         &self,
         candidate_id: i64,
@@ -120,10 +124,32 @@ impl SafetyEvidenceCollector {
         probe: &SafetyEvidenceProbe,
         collect_holder_distribution: bool,
     ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
+        self.collect_candidate_with_refresh_controls(
+            candidate_id,
+            candidate_mint,
+            probe,
+            false,
+            collect_holder_distribution,
+        )
+        .await
+    }
+
+    /// Collect and persist read-only safety evidence with explicit operational
+    /// refresh controls. A forced mint-state probe is still bounded by the
+    /// configured chain provider budget and provider failures remain unknown
+    /// evidence, never false facts.
+    pub async fn collect_candidate_with_refresh_controls(
+        &self,
+        candidate_id: i64,
+        candidate_mint: &str,
+        probe: &SafetyEvidenceProbe,
+        refresh_mint_state: bool,
+        collect_holder_distribution: bool,
+    ) -> Result<SafetyEvidenceCycleReport, SafetyEvidenceError> {
         validate_probe(candidate_id, candidate_mint, probe)?;
         let mut report = SafetyEvidenceCycleReport::default();
 
-        if !self.db.has_mint_state(candidate_id)? {
+        if refresh_mint_state || !self.db.has_mint_state(candidate_id)? {
             for provider in &self.chain_providers {
                 let provider_id = provider.provider_id();
                 match provider.token_mint_state(candidate_mint).await {
