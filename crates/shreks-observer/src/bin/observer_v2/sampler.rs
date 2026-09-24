@@ -176,7 +176,11 @@ impl HighResolutionSampler {
             .sample_active_pumpswap_priority(now_unix_ms, &mut report)
             .await?;
         let fresh_pair_sampled = self
-            .sample_fresh_pair_priority(now_unix_ms, &mut report)
+            .sample_fresh_pair_priority(
+                now_unix_ms,
+                &priority_sampled,
+                &mut report,
+            )
             .await?;
 
         let due = self.registry.due_candidates(now_unix_ms);
@@ -448,6 +452,7 @@ impl HighResolutionSampler {
     async fn sample_fresh_pair_priority(
         &mut self,
         now_unix_ms: i64,
+        already_sampled: &HashSet<i64>,
         report: &mut SamplerCycleReport,
     ) -> Result<HashSet<i64>, SamplerError> {
         if !self
@@ -468,7 +473,10 @@ impl HighResolutionSampler {
             )?;
 
         let mut sampled = HashSet::with_capacity(targets.len());
-        for target in targets {
+        for target in targets
+            .into_iter()
+            .filter(|target| !already_sampled.contains(&target.candidate_id))
+        {
             report.priority_candidate_count =
                 report.priority_candidate_count.saturating_add(1);
             report.fresh_pair_priority_candidate_count = report
