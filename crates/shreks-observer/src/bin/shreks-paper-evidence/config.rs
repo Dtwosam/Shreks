@@ -14,6 +14,7 @@ pub struct PaperEvidenceRuntimeConfig {
     pub market_sources: Vec<String>,
     pub max_candidates: usize,
     pub holder_refresh: Duration,
+    pub mint_state_max_age: Duration,
     pub helius_max_requests_per_process: u64,
     pub probe_policy_version: String,
     pub quote_asset_mint: String,
@@ -95,6 +96,10 @@ impl PaperEvidenceRuntimeConfig {
             &lookup,
             "SHREKS_PAPER_HOLDER_REFRESH_SECONDS",
         )?;
+        let mint_state_max_age_ms = parse_positive_u64(
+            &lookup,
+            "SHREKS_PAPER_MINT_STATE_MAX_AGE_MS",
+        )?;
         let helius_max_requests_per_process = parse_positive_u64(
             &lookup,
             "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
@@ -136,6 +141,7 @@ impl PaperEvidenceRuntimeConfig {
             market_sources,
             max_candidates,
             holder_refresh: Duration::from_secs(holder_refresh_seconds),
+            mint_state_max_age: Duration::from_millis(mint_state_max_age_ms),
             helius_max_requests_per_process,
             probe_policy_version,
             quote_asset_mint,
