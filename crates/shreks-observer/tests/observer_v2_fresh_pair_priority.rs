@@ -192,3 +192,66 @@ async fn old_candidate_with_fresh_pair_is_prioritized_before_broad_schedule_is_d
     drop(sampler);
     cleanup_dir(&root);
 }
+
+
+#[tokio::test]
+async fn fresh_pair_priority_refreshes_immediately_after_25_second_boundary() {
+    let root = unique_test_dir("25-second-boundary");
+    let db_path = root.join("shreks.db");
+
+    let now = 20 * HOUR;
+    let pair_created_at = now - 5 * MINUTE;
+
+    let discovery = Arc::new(StaticDiscovery {
+        candidates: vec![discovered("mint-25s", 0)],
+    });
+    let market = Arc::new(SequenceMarket::new(vec![
+        Ok(vec![snapshot(
+            "mint-25s",
+            "pair-25s",
+            now,
+            pair_created_at,
+        )]),
+        Ok(vec![snapshot(
+            "mint-25s",
+            "pair-25s",
+            now + 25 * SECOND + 1,
+            pair_created_at,
+        )]),
+    ]));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(market.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let first = sampler.run_cycle_at(now).await.unwrap();
+    assert_eq!(first.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 1);
+
+    let boundary = sampler
+        .run_cycle_at(now + 25 * SECOND)
+        .await
+        .unwrap();
+    assert_eq!(boundary.priority_candidate_count, 0);
+    assert_eq!(boundary.fresh_pair_priority_candidate_count, 0);
+    assert_eq!(boundary.sampled_candidate_count, 0);
+    assert_eq!(market.call_count(), 1);
+
+    let overdue = sampler
+        .run_cycle_at(now + 25 * SECOND + 1)
+        .await
+        .unwrap();
+    assert_eq!(overdue.priority_candidate_count, 1);
+    assert_eq!(overdue.priority_persisted_snapshot_count, 1);
+    assert_eq!(overdue.fresh_pair_priority_candidate_count, 1);
+    assert_eq!(overdue.fresh_pair_priority_persisted_snapshot_count, 1);
+    assert_eq!(overdue.sampled_candidate_count, 0);
+    assert_eq!(market.call_count(), 2);
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
