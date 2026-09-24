@@ -389,6 +389,7 @@ async fn active_pumpswap_priority_reports_empty_provider_response() {
     assert_eq!(priority.priority_persisted_snapshot_count, 0);
     assert_eq!(priority.priority_empty_response_count, 1);
     assert_eq!(priority.priority_provider_failure_count, 0);
+    assert_eq!(priority.fresh_pair_priority_candidate_count, 0);
     assert_eq!(dex.call_count(), 2);
 
     drop(sampler);
@@ -437,6 +438,7 @@ async fn active_pumpswap_priority_reports_provider_failure_separately() {
     assert_eq!(priority.priority_empty_response_count, 0);
     assert_eq!(priority.priority_provider_failure_count, 1);
     assert_eq!(priority.market_provider_failure_count, 1);
+    assert_eq!(priority.fresh_pair_priority_candidate_count, 0);
     assert_eq!(dex.call_count(), 2);
 
     drop(sampler);
