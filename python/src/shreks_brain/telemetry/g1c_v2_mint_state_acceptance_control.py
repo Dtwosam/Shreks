@@ -66,18 +66,6 @@ def process_pending_mint_state_acceptance_requests(
     now_ms = int(time.time() * 1000) if now_unix_ms is None else now_unix_ms
     if isinstance(now_ms, bool) or not isinstance(now_ms, int) or now_ms < 0:
         raise ValueError("now_unix_ms must be a non-negative integer")
-    interval_ms = (
-        _evidence_cycle_interval_ms_from_environment()
-        if evidence_cycle_interval_ms is None
-        else evidence_cycle_interval_ms
-    )
-    if (
-        isinstance(interval_ms, bool)
-        or not isinstance(interval_ms, int)
-        or interval_ms <= 0
-    ):
-        raise ValueError("evidence_cycle_interval_ms must be positive")
-
     directory = _resolve_marker_directory(
         Path(marker_directory),
         expected_owner_uid=expected_marker_directory_owner_uid,
@@ -97,6 +85,18 @@ def process_pending_mint_state_acceptance_requests(
         return ()
     if not markers:
         return ()
+
+    interval_ms = (
+        _evidence_cycle_interval_ms_from_environment()
+        if evidence_cycle_interval_ms is None
+        else evidence_cycle_interval_ms
+    )
+    if (
+        isinstance(interval_ms, bool)
+        or not isinstance(interval_ms, int)
+        or interval_ms <= 0
+    ):
+        raise ValueError("evidence_cycle_interval_ms must be positive")
 
     owner_uid = (
         pwd.getpwnam("shreks-deploy").pw_uid
