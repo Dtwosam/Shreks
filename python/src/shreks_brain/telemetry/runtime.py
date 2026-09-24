@@ -20,6 +20,13 @@ from .fl9_v2_discovery_control import (
     process_pending_fl9_v2_discovery_requests,
     publish_fl9_v2_discovery_control_result,
 )
+from .g1c_v2_mint_state_acceptance_control import (
+    CONTROL_RESULT_SCHEMA_NAME as MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_NAME,
+    CONTROL_RESULT_SCHEMA_VERSION as MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_VERSION,
+    emit_mint_state_acceptance_control_result,
+    process_pending_mint_state_acceptance_requests,
+    publish_mint_state_acceptance_control_result,
+)
 from .models import TelemetrySnapshot
 from .snapshot import (
     TelemetrySnapshotError,
@@ -206,6 +213,56 @@ def run_telemetry_once(
         raise TelemetryRuntimeConfigError("telemetry snapshot generation failed") from error
 
 
+def _process_mint_state_acceptance_controls() -> None:
+    try:
+        results = process_pending_mint_state_acceptance_requests()
+    except Exception:
+        emit_mint_state_acceptance_control_result(
+            {
+                "schema_name": MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_NAME,
+                "schema_version": MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_VERSION,
+                "request_id": None,
+                "expected_release_sha": None,
+                "observed_release_sha": None,
+                "status": "FAILED",
+                "error": {
+                    "code": "CONTROL_PROCESSOR_FAILED",
+                    "message": "mint-state acceptance control processing failed",
+                },
+                "observation_authority": "READ_ONLY",
+                "manifest_rotation_authority": "NOT_GRANTED",
+                "scoring_authority": "NOT_GRANTED",
+                "paper_promotion_authority": "BLOCKED",
+                "live_authority": "DISABLED",
+            }
+        )
+        return
+
+    for result in results:
+        emitted = result
+        try:
+            publish_mint_state_acceptance_control_result(result)
+        except Exception:
+            emitted = {
+                "schema_name": MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_NAME,
+                "schema_version": MINT_ACCEPTANCE_CONTROL_RESULT_SCHEMA_VERSION,
+                "request_id": result.get("request_id"),
+                "expected_release_sha": result.get("expected_release_sha"),
+                "observed_release_sha": result.get("observed_release_sha"),
+                "status": "FAILED",
+                "error": {
+                    "code": "CONTROL_RESULT_PUBLISH_FAILED",
+                    "message": "mint-state acceptance control result publication failed",
+                },
+                "observation_authority": "READ_ONLY",
+                "manifest_rotation_authority": "NOT_GRANTED",
+                "scoring_authority": "NOT_GRANTED",
+                "paper_promotion_authority": "BLOCKED",
+                "live_authority": "DISABLED",
+            }
+        emit_mint_state_acceptance_control_result(emitted)
+
+
 def _process_discovery_controls() -> None:
     try:
         results = process_pending_fl9_v2_discovery_requests()
@@ -250,6 +307,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = tuple(sys.argv[1:] if argv is None else argv)
     if args not in ((), ("--preflight",)):
         return 2
+    _process_mint_state_acceptance_controls()
     _process_discovery_controls()
     try:
         config = load_telemetry_runtime_config()
