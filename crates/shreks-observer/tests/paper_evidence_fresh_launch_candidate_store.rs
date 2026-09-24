@@ -228,3 +228,59 @@ fn fresh_launch_candidates_skip_stale_or_disallowed_market_sources() {
 
     cleanup_dir(&root);
 }
+
+
+#[test]
+fn fresh_launch_candidates_use_current_pair_instead_of_requiring_uniform_pair_history() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("multi-pair-current-row");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let candidate_id = db
+        .upsert_candidate(&candidate("MintMultiPair", 100))
+        .unwrap();
+
+    db.insert_market_snapshot(
+        candidate_id,
+        &snapshot(
+            "MintMultiPair",
+            AS_OF - 40_000,
+            AS_OF - 900_000,
+        ),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        candidate_id,
+        &snapshot(
+            "MintMultiPair",
+            AS_OF - 10_000,
+            AS_OF - 300_000,
+        ),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            2,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, candidate_id);
+    assert_eq!(selected[0].mint, "MintMultiPair");
+    assert_eq!(
+        selected[0].latest_market_observed_at_unix_ms,
+        AS_OF - 10_000
+    );
+
+    cleanup_dir(&root);
+}
