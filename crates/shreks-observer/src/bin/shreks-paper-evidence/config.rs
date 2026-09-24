@@ -164,6 +164,19 @@ impl PaperEvidenceRuntimeConfig {
         Self::from_lookup(|name| std::env::var(name).ok())
     }
 
+    pub fn mint_state_refresh_age_ms(&self) -> i64 {
+        const HEADROOM_CYCLES: i64 = 6;
+
+        let cycle_interval_ms = i64::try_from(self.cycle_interval.as_millis())
+            .unwrap_or(i64::MAX);
+        let scheduler_headroom_ms =
+            cycle_interval_ms.saturating_mul(HEADROOM_CYCLES);
+        let maximum_headroom_ms = self.mint_state_max_age_ms / 2;
+        let headroom_ms = scheduler_headroom_ms.min(maximum_headroom_ms);
+
+        self.mint_state_max_age_ms.saturating_sub(headroom_ms)
+    }
+
     pub fn require_providers(&self) -> Result<(), PaperEvidenceRuntimeConfigError> {
         if !self.providers.helius_enabled() {
             return Err(PaperEvidenceRuntimeConfigError::new(

@@ -91,7 +91,7 @@ pub async fn run_paper_evidence_cycle(
     for candidate in candidates {
         let probe = config.probe_for(&candidate.mint)?;
         let minimum_mint_state_observed_at_unix_ms = as_of_unix_ms
-            .saturating_sub(config.mint_state_max_age_ms)
+            .saturating_sub(config.mint_state_refresh_age_ms())
             .max(0);
         let refresh_mint_state = !store.has_mint_state_since(
             candidate.candidate_id,
