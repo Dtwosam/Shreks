@@ -789,6 +789,291 @@ jobs:
             echo 'historical_evidence_read_access=denied'
           fi
 
+          if ! /opt/shreks/current/.venv/bin/python -c 'import shreks_brain.telemetry.g1c_v2_mint_state_acceptance_control' >/dev/null 2>&1; then
+            echo 'g1c_v2_mint_state_acceptance_bridge=unavailable'
+            exit 1
+          fi
+          systemctl is-active --quiet shreks-telemetry.timer
+          echo 'g1c_v2_mint_state_acceptance_bridge=available'
+
+          PAPER_EVIDENCE_JOURNAL="$(journalctl -u shreks-paper-evidence.service -o cat -n 5000 --no-pager 2>&1)"
+          if ! printf '%s\n' "$PAPER_EVIDENCE_JOURNAL" \
+            | grep -F 'Shreks paper evidence starting:' \
+            | grep -F 'mint_state_max_age=900000ms' \
+            | grep -F 'mint_state_refresh_age=540000ms' >/dev/null; then
+            echo 'g1c_v2_mint_state_runtime_thresholds=mismatch'
+            exit 1
+          fi
+          echo 'g1c_v2_mint_state_runtime_thresholds=matched'
+          RECENT_EVIDENCE_CYCLES="$(printf '%s\n' "$JOURNAL" | grep -F 'Shreks paper evidence cycle:' || true)"
+          printf 'g1c_v2_recent_evidence_cycle_lines=%s\n' "$(printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -c . || true)"
+          if printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -Eq 'provider_failures=[1-9][0-9]*'; then
+            echo 'g1c_v2_recent_provider_failures=nonzero'
+            exit 1
+          fi
+          echo 'g1c_v2_recent_provider_failures=zero_or_no_recent_cycle'
+          if printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -Fq 'helius_budget_exhausted=true'; then
+            echo 'g1c_v2_helius_budget_exhausted=true'
+            exit 1
+          fi
+          echo 'g1c_v2_helius_budget_exhausted=false_or_no_recent_cycle'
+
+          SHREKS_UID="$(id -u shreks)"
+          [[ "$SHREKS_UID" =~ ^[0-9]+$ ]] || exit 2
+          MINT_REQUEST_ID="${REQUEST_ID}-mint"
+          MINT_MARKER="/dev/shm/shreks-g1c-v2-mint-state-acceptance.${MINT_REQUEST_ID}.request"
+          MINT_TMP="${MINT_MARKER}.tmp"
+          MINT_RESULT_DIR="/dev/shm/shreks-g1c-v2-mint-state-acceptance.${MINT_REQUEST_ID}.result.d"
+          MINT_RESULT_FILE="$MINT_RESULT_DIR/result.json"
+          cleanup_mint_acceptance() {
+            rm -f "$MINT_TMP"
+            rm -f "$MINT_MARKER"
+            rm -f "$MINT_RESULT_FILE"
+            rmdir "$MINT_RESULT_DIR" 2>/dev/null || true
+          }
+          cleanup_mint_acceptance_on_exit() {
+            cleanup_mint_acceptance
+            if [[ "$PRESTAGED" == 1 ]]; then
+              cleanup_prestaged_discovery
+            fi
+          }
+          trap cleanup_mint_acceptance_on_exit EXIT
+          test ! -e "$MINT_MARKER"
+          test ! -e "$MINT_TMP"
+          test ! -e "$MINT_RESULT_DIR"
+          install -d -m 0733 "$MINT_RESULT_DIR"
+          test "$(stat -c %u "$MINT_RESULT_DIR")" = "$(id -u)"
+          test "$(stat -c %a "$MINT_RESULT_DIR")" = 733
+
+          /opt/shreks/current/.venv/bin/python - "$MINT_REQUEST_ID" "$EXPECTED_SHA" "$JOURNAL_MINUTES" "$MINT_TMP" <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          request_id, expected_sha, journal_minutes_raw, output_path = sys.argv[1:]
+          journal_minutes = int(journal_minutes_raw)
+          created_at = time.time_ns() // 1_000_000
+          window_start = max(0, created_at - journal_minutes * 60_000)
+          document = {
+              "schema_name": "shreks.g1c_v2_mint_state_acceptance_control_request",
+              "schema_version": 1,
+              "request_id": request_id,
+              "expected_release_sha": expected_sha,
+              "created_at_unix_ms": created_at,
+              "window_start_unix_ms": window_start,
+              "window_end_unix_ms": created_at,
+          }
+          payload = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          fd = os.open(output_path, flags, 0o644)
+          try:
+              os.write(fd, payload.encode("utf-8"))
+              os.fsync(fd)
+          finally:
+              os.close(fd)
+          os.chmod(output_path, 0o644)
+          PY
+          mv -- "$MINT_TMP" "$MINT_MARKER"
+
+          MINT_ACCEPTANCE_RESULT=''
+          MINT_ACCEPTANCE_DEADLINE="$(( $(date +%s) + 180 ))"
+          while (( $(date +%s) <= MINT_ACCEPTANCE_DEADLINE )); do
+            if test -e "$MINT_RESULT_FILE"; then
+              MINT_ACCEPTANCE_RESULT="$(
+                /opt/shreks/current/.venv/bin/python - "$MINT_RESULT_FILE" "$SHREKS_UID" <<'PY' 2>/dev/null || true
+          import json
+          import os
+          import stat
+          import sys
+
+          path, expected_uid_raw = sys.argv[1:]
+          expected_uid = int(expected_uid_raw)
+          before = os.lstat(path)
+          if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+              raise SystemExit("mint acceptance result must be a regular file")
+          if before.st_uid != expected_uid or stat.S_IMODE(before.st_mode) != 0o644:
+              raise SystemExit("mint acceptance result identity mismatch")
+          if before.st_size < 2 or before.st_size > 65_536:
+              raise SystemExit("mint acceptance result size is outside the allowed bound")
+          flags = os.O_RDONLY
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          fd = os.open(path, flags)
+          try:
+              opened = os.fstat(fd)
+              payload = os.read(fd, 65_537)
+              after = os.fstat(fd)
+          finally:
+              os.close(fd)
+          identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+          identity_opened = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+          identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+          if identity_before != identity_opened or identity_opened != identity_after:
+              raise SystemExit("mint acceptance result changed while being read")
+          if len(payload) != before.st_size:
+              raise SystemExit("mint acceptance result size changed while being read")
+          text = payload.decode("utf-8")
+          document = json.loads(text)
+          canonical = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          if text != canonical:
+              raise SystemExit("mint acceptance result is not canonical")
+          print(text, end="")
+          PY
+              )"
+            fi
+            if [[ -z "$MINT_ACCEPTANCE_RESULT" ]]; then
+              MINT_ACCEPTANCE_RESULT="$(
+                journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>/dev/null \
+                  | grep -F '"schema_name":"shreks.g1c_v2_mint_state_acceptance_control_result"' \
+                  | grep -F "\"request_id\":\"${MINT_REQUEST_ID}\"" \
+                  | tail -n 1 \
+                  || true
+              )"
+            fi
+            if [[ -n "$MINT_ACCEPTANCE_RESULT" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ -z "$MINT_ACCEPTANCE_RESULT" ]]; then
+            echo 'g1c_v2_mint_state_acceptance_status=TIMEOUT'
+            cleanup_mint_acceptance
+            exit 1
+          fi
+
+          MINT_ACCEPTANCE_VALIDATION="$(
+            MINT_ACCEPTANCE_RESULT="$MINT_ACCEPTANCE_RESULT" /opt/shreks/current/.venv/bin/python - "$MINT_REQUEST_ID" "$EXPECTED_SHA" <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          request_id, expected_sha = sys.argv[1:]
+          document = json.loads(os.environ["MINT_ACCEPTANCE_RESULT"])
+          if not isinstance(document, dict):
+              raise SystemExit("mint acceptance result must be an object")
+          if document.get("schema_name") != "shreks.g1c_v2_mint_state_acceptance_control_result":
+              raise SystemExit("mint acceptance result schema mismatch")
+          if document.get("schema_version") != 1:
+              raise SystemExit("mint acceptance result schema version mismatch")
+          if document.get("request_id") != request_id:
+              raise SystemExit("mint acceptance request identity mismatch")
+          if document.get("expected_release_sha") != expected_sha:
+              raise SystemExit("mint acceptance expected release mismatch")
+          if document.get("observed_release_sha") != expected_sha:
+              raise SystemExit("mint acceptance observed release mismatch")
+          if document.get("observation_authority") != "READ_ONLY":
+              raise SystemExit("mint acceptance observation authority mismatch")
+          if document.get("manifest_rotation_authority") != "NOT_GRANTED":
+              raise SystemExit("mint acceptance rotation authority mismatch")
+          if document.get("scoring_authority") != "NOT_GRANTED":
+              raise SystemExit("mint acceptance scoring authority mismatch")
+          if document.get("paper_promotion_authority") != "BLOCKED":
+              raise SystemExit("mint acceptance PAPER promotion authority mismatch")
+          if document.get("live_authority") != "DISABLED":
+              raise SystemExit("mint acceptance LIVE authority mismatch")
+
+          status = document.get("status")
+          if status == "FAILED":
+              error = document.get("error")
+              if not isinstance(error, dict) or set(error) != {"code", "message"}:
+                  raise SystemExit("mint acceptance failure shape is invalid")
+              code = error.get("code")
+              message = error.get("message")
+              if not isinstance(code, str) or re.fullmatch(r"[A-Z0-9_]{1,64}", code) is None:
+                  raise SystemExit("mint acceptance failure code is invalid")
+              if not isinstance(message, str) or not message.strip():
+                  raise SystemExit("mint acceptance failure message is invalid")
+              print("FAILED")
+              print(code)
+              print(" ".join(message.split())[:240])
+              raise SystemExit(0)
+
+          if status not in {"PASS", "HOLD_INSUFFICIENT_EVIDENCE"}:
+              raise SystemExit("mint acceptance status is unsupported")
+          analysis = document.get("analysis")
+          if not isinstance(analysis, dict):
+              raise SystemExit("mint acceptance analysis is missing")
+          if analysis.get("schema_name") != "shreks.g1c_v2_mint_state_acceptance":
+              raise SystemExit("mint acceptance analysis schema mismatch")
+          if analysis.get("schema_version") != 1 or analysis.get("status") != status:
+              raise SystemExit("mint acceptance analysis status mismatch")
+          if analysis.get("max_critical_data_age_ms") != 900000:
+              raise SystemExit("mint acceptance B1 max age mismatch")
+          if analysis.get("evidence_cycle_interval_ms") != 60000:
+              raise SystemExit("mint acceptance evidence interval mismatch")
+          if analysis.get("mint_state_refresh_age_ms") != 540000:
+              raise SystemExit("mint acceptance proactive refresh age mismatch")
+          count_keys = (
+              "selected_observation_count",
+              "proactive_refresh_count",
+              "selected_missing_mint_count",
+              "selected_stale_mint_count",
+              "invalid_observation_count",
+              "reconstructed_checkpoint_count",
+          )
+          for key in count_keys:
+              value = analysis.get(key)
+              if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                  raise SystemExit(f"mint acceptance {key} is invalid")
+          max_age = analysis.get("max_selected_mint_age_ms")
+          if max_age is not None and (
+              isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 0
+          ):
+              raise SystemExit("mint acceptance max selected age is invalid")
+          print(status)
+          print(analysis["selected_observation_count"])
+          print(analysis["proactive_refresh_count"])
+          print(analysis["selected_missing_mint_count"])
+          print(analysis["selected_stale_mint_count"])
+          print(analysis["invalid_observation_count"])
+          print(analysis["reconstructed_checkpoint_count"])
+          print("none" if max_age is None else max_age)
+          PY
+          )"
+          mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"
+          MINT_ACCEPTANCE_STATUS="${MINT_ACCEPTANCE_LINES[0]:-}"
+          printf 'g1c_v2_mint_state_acceptance_status=%s\n' "$MINT_ACCEPTANCE_STATUS"
+          if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]; then
+            printf 'g1c_v2_mint_state_acceptance_failure_code=%s\n' "${MINT_ACCEPTANCE_LINES[1]:-UNKNOWN}"
+            printf 'g1c_v2_mint_state_acceptance_failure_message=%s\n' "${MINT_ACCEPTANCE_LINES[2]:-unknown}"
+            cleanup_mint_acceptance
+            exit 1
+          fi
+          printf 'g1c_v2_mint_state_selected_observations=%s\n' "${MINT_ACCEPTANCE_LINES[1]:-0}"
+          printf 'g1c_v2_mint_state_proactive_refreshes=%s\n' "${MINT_ACCEPTANCE_LINES[2]:-0}"
+          printf 'g1c_v2_mint_state_missing_selected=%s\n' "${MINT_ACCEPTANCE_LINES[3]:-0}"
+          printf 'g1c_v2_mint_state_stale_selected=%s\n' "${MINT_ACCEPTANCE_LINES[4]:-0}"
+          printf 'g1c_v2_mint_state_invalid_observations=%s\n' "${MINT_ACCEPTANCE_LINES[5]:-0}"
+          printf 'g1c_v2_mint_state_reconstructed_checkpoints=%s\n' "${MINT_ACCEPTANCE_LINES[6]:-0}"
+          printf 'g1c_v2_mint_state_max_selected_age_ms=%s\n' "${MINT_ACCEPTANCE_LINES[7]:-none}"
+          if [[ "$MINT_ACCEPTANCE_STATUS" == "HOLD_INSUFFICIENT_EVIDENCE" ]]; then
+            echo 'g1c_v2_mint_state_physical_acceptance=HOLD'
+          else
+            echo 'g1c_v2_mint_state_physical_acceptance=PASS'
+          fi
+          cleanup_mint_acceptance
+          if [[ "$PRESTAGED" == 1 ]]; then
+            trap cleanup_prestaged_discovery EXIT
+          else
+            trap - EXIT
+          fi
+
           if ! /opt/shreks/current/.venv/bin/python -c 'import shreks_brain.telemetry.fl9_v2_discovery_control' >/dev/null 2>&1; then
             echo 'fl9_v2_discovery_bridge=unavailable'
             exit 0
