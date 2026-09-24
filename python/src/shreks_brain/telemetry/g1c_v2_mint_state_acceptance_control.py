@@ -90,20 +90,6 @@ def process_pending_mint_state_acceptance_requests(
     if not markers:
         return ()
 
-    resolved_database_path = database_path
-    resolved_manifest_path = manifest_path
-    if resolved_database_path is None or resolved_manifest_path is None:
-        try:
-            runtime_config = load_observer_paper_campaign_runtime_config()
-        except ObserverPaperCampaignRuntimeConfigError as error:
-            raise MintStateAcceptanceControlError(
-                "PAPER campaign runtime authority is unavailable"
-            ) from error
-        if resolved_database_path is None:
-            resolved_database_path = runtime_config.observer_database_path
-        if resolved_manifest_path is None:
-            resolved_manifest_path = runtime_config.manifest_path
-
     interval_ms = (
         _evidence_cycle_interval_ms_from_environment()
         if evidence_cycle_interval_ms is None
@@ -127,8 +113,8 @@ def process_pending_mint_state_acceptance_requests(
     return tuple(
         _process_one_request(
             path,
-            database_path=Path(resolved_database_path),
-            manifest_path=Path(resolved_manifest_path),
+            database_path=None if database_path is None else Path(database_path),
+            manifest_path=None if manifest_path is None else Path(manifest_path),
             current_release_link=Path(current_release_link),
             expected_owner_uid=owner_uid,
             evidence_cycle_interval_ms=interval_ms,
@@ -250,8 +236,8 @@ def emit_mint_state_acceptance_control_result(
 def _process_one_request(
     marker_path: Path,
     *,
-    database_path: Path,
-    manifest_path: Path,
+    database_path: Path | None,
+    manifest_path: Path | None,
     current_release_link: Path,
     expected_owner_uid: int,
     evidence_cycle_interval_ms: int,
@@ -306,10 +292,28 @@ def _process_one_request(
             message="mint-state acceptance request is future-dated",
         )
 
+    resolved_database_path = database_path
+    resolved_manifest_path = manifest_path
+    if resolved_database_path is None or resolved_manifest_path is None:
+        try:
+            runtime_config = load_observer_paper_campaign_runtime_config()
+        except ObserverPaperCampaignRuntimeConfigError:
+            return _failure_result(
+                request_id=request_id,
+                expected_release_sha=expected_release_sha,
+                observed_release_sha=observed_release_sha,
+                error_code="RUNTIME_AUTHORITY_UNAVAILABLE",
+                message="PAPER campaign runtime authority is unavailable",
+            )
+        if resolved_database_path is None:
+            resolved_database_path = runtime_config.observer_database_path
+        if resolved_manifest_path is None:
+            resolved_manifest_path = runtime_config.manifest_path
+
     try:
         analysis = analyze_mint_state_acceptance(
-            database_path,
-            manifest_path,
+            resolved_database_path,
+            resolved_manifest_path,
             window_start_unix_ms=request["window_start_unix_ms"],
             window_end_unix_ms=request["window_end_unix_ms"],
             evidence_cycle_interval_ms=evidence_cycle_interval_ms,
