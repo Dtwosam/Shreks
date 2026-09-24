@@ -11,7 +11,7 @@ pub struct FreshPairSamplingTarget {
 
 impl ShreksDb {
     /// Return candidates with a recently created, internally time-consistent
-    /// market pair whose DexScreener token-pair view is older than the requested
+    /// DexScreener pair whose token-pair view is older than the requested
     /// freshness target.
     ///
     /// This selector is outcome-neutral. It uses only pair creation timestamps
@@ -62,11 +62,12 @@ impl ShreksDb {
                    JOIN market_snapshots AS snapshot
                      ON snapshot.candidate_id = candidate.id
                     AND snapshot.base_mint = candidate.mint
-                   WHERE snapshot.pair_created_at_unix_ms IS NOT NULL
+                   WHERE snapshot.source = 'dexscreener'
+                     AND snapshot.observed_at_unix_ms BETWEEN ?1 AND ?2
+                     AND snapshot.pair_created_at_unix_ms IS NOT NULL
                      AND snapshot.pair_created_at_unix_ms BETWEEN ?1 AND ?2
                      AND snapshot.pair_created_at_unix_ms
                          <= snapshot.observed_at_unix_ms
-                     AND snapshot.observed_at_unix_ms <= ?2
                    GROUP BY candidate.id, candidate.mint
                )
                SELECT
