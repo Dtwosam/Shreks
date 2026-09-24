@@ -79,6 +79,7 @@ pub async fn run_paper_evidence_cycle(
         config.max_pair_age_ms,
         config.preferred_min_pair_age_ms,
         &config.market_sources,
+        &config.quote_asset_mint,
         config.max_candidates,
     )?;
     let mut aggregate = PaperEvidenceCycleReport {

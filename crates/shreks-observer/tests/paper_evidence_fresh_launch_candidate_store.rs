@@ -8,6 +8,9 @@ mod candidate_store;
 
 use candidate_store::EvidenceCandidateStore;
 
+const WSOL: &str = "So11111111111111111111111111111111111111112";
+const USDC: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
 fn unique_test_dir(label: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -49,7 +52,7 @@ fn snapshot_from(
         base_mint: mint.to_owned(),
         base_name: None,
         base_symbol: None,
-        quote_mint: "So11111111111111111111111111111111111111112".to_owned(),
+        quote_mint: WSOL.to_owned(),
         quote_name: None,
         quote_symbol: None,
         price_native: None,
@@ -74,6 +77,17 @@ fn snapshot(mint: &str, observed_at_unix_ms: i64, pair_created_at_unix_ms: i64) 
         observed_at_unix_ms,
         pair_created_at_unix_ms,
     )
+}
+
+fn snapshot_with_quote(
+    mint: &str,
+    quote_mint: &str,
+    observed_at_unix_ms: i64,
+    pair_created_at_unix_ms: i64,
+) -> PairMarketData {
+    let mut value = snapshot(mint, observed_at_unix_ms, pair_created_at_unix_ms);
+    value.quote_mint = quote_mint.to_owned();
+    value
 }
 
 fn dex_sources() -> Vec<String> {
@@ -120,6 +134,7 @@ fn fresh_launch_candidates_prioritize_entry_window_then_too_young_and_exclude_ex
             MAX_PAIR_AGE_MS,
             PREFERRED_MIN_PAIR_AGE_MS,
             &dex_sources(),
+            WSOL,
             2,
         )
         .unwrap();
@@ -165,6 +180,7 @@ fn fresh_launch_candidates_use_too_young_when_entry_window_is_empty() {
             1_800_000,
             60_000,
             &dex_sources(),
+            WSOL,
             2,
         )
         .unwrap();
@@ -218,6 +234,7 @@ fn fresh_launch_candidates_skip_stale_or_disallowed_market_sources() {
             1_800_000,
             60_000,
             &dex_sources(),
+            WSOL,
             3,
         )
         .unwrap();
@@ -225,6 +242,121 @@ fn fresh_launch_candidates_skip_stale_or_disallowed_market_sources() {
     assert_eq!(selected.len(), 1);
     assert_eq!(selected[0].candidate_id, eligible);
     assert_eq!(selected[0].mint, "MintEligible");
+
+    cleanup_dir(&root);
+}
+
+
+#[test]
+fn fresh_launch_candidates_use_current_pair_instead_of_requiring_uniform_pair_history() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("multi-pair-current-row");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let candidate_id = db
+        .upsert_candidate(&candidate("MintMultiPair", 100))
+        .unwrap();
+
+    db.insert_market_snapshot(
+        candidate_id,
+        &snapshot(
+            "MintMultiPair",
+            AS_OF - 40_000,
+            AS_OF - 900_000,
+        ),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        candidate_id,
+        &snapshot(
+            "MintMultiPair",
+            AS_OF - 10_000,
+            AS_OF - 300_000,
+        ),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            WSOL,
+            2,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, candidate_id);
+    assert_eq!(selected[0].mint, "MintMultiPair");
+    assert_eq!(
+        selected[0].latest_market_observed_at_unix_ms,
+        AS_OF - 10_000
+    );
+
+    cleanup_dir(&root);
+}
+
+
+#[test]
+fn fresh_launch_candidates_filter_quote_identity_before_applying_limit() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("quote-before-limit");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let wrong_quote = db
+        .upsert_candidate(&candidate("MintWrongQuote", 100))
+        .unwrap();
+    let exact_quote = db
+        .upsert_candidate(&candidate("MintExactQuote", 200))
+        .unwrap();
+
+    db.insert_market_snapshot(
+        wrong_quote,
+        &snapshot_with_quote(
+            "MintWrongQuote",
+            USDC,
+            AS_OF - 1_000,
+            AS_OF - 600_000,
+        ),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        exact_quote,
+        &snapshot_with_quote(
+            "MintExactQuote",
+            WSOL,
+            AS_OF - 2_000,
+            AS_OF - 600_000,
+        ),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            WSOL,
+            1,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, exact_quote);
+    assert_eq!(selected[0].mint, "MintExactQuote");
 
     cleanup_dir(&root);
 }

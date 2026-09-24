@@ -138,6 +138,7 @@ impl EvidenceCandidateStore {
         max_pair_age_ms: i64,
         preferred_min_pair_age_ms: i64,
         market_sources: &[String],
+        required_quote_mint: &str,
         limit: usize,
     ) -> Result<Vec<EvidenceProbeCandidate>, EvidenceCandidateStoreError> {
         validate_window(as_of_unix_ms, current_market_lookback_ms)?;
@@ -153,11 +154,15 @@ impl EvidenceCandidateStore {
             ));
         }
         validate_market_sources(market_sources)?;
+        validate_required_quote_mint(required_quote_mint)?;
+        validate_required_table(
+            &self.connection,
+            ("market_snapshots", &["base_mint", "quote_mint"]),
+        )?;
         if limit == 0 {
             return Ok(Vec::new());
         }
 
-        let pair_evidence_cutoff = as_of_unix_ms.saturating_sub(max_pair_age_ms).max(0);
         let current_market_cutoff = as_of_unix_ms
             .saturating_sub(current_market_lookback_ms)
             .max(0);
@@ -178,27 +183,13 @@ impl EvidenceCandidateStore {
                    JOIN market_snapshots AS ms ON ms.candidate_id = tc.id
                    WHERE ms.observed_at_unix_ms BETWEEN ?1 AND ?2
                    GROUP BY tc.id, tc.mint
-                   HAVING COUNT(ms.pair_created_at_unix_ms) > 0
-                      AND MIN(ms.pair_created_at_unix_ms) = MAX(ms.pair_created_at_unix_ms)
-                      AND MAX(ms.pair_created_at_unix_ms) BETWEEN ?3 AND ?2
-                   ORDER BY
-                      CASE
-                          WHEN MAX(ms.pair_created_at_unix_ms) <= ?4 THEN 0
-                          ELSE 1
-                      END ASC,
-                      latest_market_observed_at_unix_ms DESC,
-                      tc.id ASC"#,
+                   ORDER BY latest_market_observed_at_unix_ms DESC, tc.id ASC"#,
             )
             .map_err(EvidenceCandidateStoreError::Sqlite)?;
 
         let rows = statement
             .query_map(
-                params![
-                    pair_evidence_cutoff,
-                    as_of_unix_ms,
-                    oldest_allowed_created_at_unix_ms,
-                    preferred_created_at_ceiling,
-                ],
+                params![current_market_cutoff, as_of_unix_ms],
                 |row| {
                     Ok((
                         row.get::<_, i64>(0)?,
@@ -209,23 +200,64 @@ impl EvidenceCandidateStore {
             )
             .map_err(EvidenceCandidateStoreError::Sqlite)?;
 
-        let candidates = collect_candidates(rows, pair_evidence_cutoff, as_of_unix_ms)?;
-        let mut selected = Vec::new();
+        let candidates =
+            collect_candidates(rows, current_market_cutoff, as_of_unix_ms)?;
+        let mut eligible: Vec<(u8, EvidenceProbeCandidate)> = Vec::new();
+
         for candidate in candidates {
-            if has_current_market_snapshot(
-                &self.connection,
-                candidate.candidate_id,
-                current_market_cutoff,
-                as_of_unix_ms,
-                market_sources,
-            )? {
-                selected.push(candidate);
-                if selected.len() == limit {
-                    break;
-                }
+            let Some((current_observed_at_unix_ms, pair_created_at_unix_ms)) =
+                current_market_snapshot_metadata(
+                    &self.connection,
+                    candidate.candidate_id,
+                    &candidate.mint,
+                    current_market_cutoff,
+                    as_of_unix_ms,
+                    market_sources,
+                    required_quote_mint,
+                )?
+            else {
+                continue;
+            };
+
+            if pair_created_at_unix_ms < oldest_allowed_created_at_unix_ms
+                || pair_created_at_unix_ms > as_of_unix_ms
+            {
+                continue;
             }
+
+            let age_priority =
+                if pair_created_at_unix_ms <= preferred_created_at_ceiling {
+                    0
+                } else {
+                    1
+                };
+
+            eligible.push((
+                age_priority,
+                EvidenceProbeCandidate {
+                    candidate_id: candidate.candidate_id,
+                    mint: candidate.mint,
+                    latest_market_observed_at_unix_ms: current_observed_at_unix_ms,
+                },
+            ));
         }
-        Ok(selected)
+
+        eligible.sort_by(|(left_priority, left), (right_priority, right)| {
+            left_priority
+                .cmp(right_priority)
+                .then_with(|| {
+                    right
+                        .latest_market_observed_at_unix_ms
+                        .cmp(&left.latest_market_observed_at_unix_ms)
+                })
+                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+        });
+
+        Ok(eligible
+            .into_iter()
+            .take(limit)
+            .map(|(_, candidate)| candidate)
+            .collect())
     }
 
     pub fn has_holder_distribution_since(
@@ -269,38 +301,59 @@ impl EvidenceCandidateStore {
     }
 }
 
-fn has_current_market_snapshot(
+fn current_market_snapshot_metadata(
     connection: &Connection,
     candidate_id: i64,
+    candidate_mint: &str,
     minimum_observed_at_unix_ms: i64,
     as_of_unix_ms: i64,
     market_sources: &[String],
-) -> Result<bool, EvidenceCandidateStoreError> {
+    required_quote_mint: &str,
+) -> Result<Option<(i64, i64)>, EvidenceCandidateStoreError> {
     for source in market_sources {
-        let found = connection
+        let row = connection
             .query_row(
-                r#"SELECT 1
+                r#"SELECT observed_at_unix_ms, pair_created_at_unix_ms
                    FROM market_snapshots
                    WHERE candidate_id = ?1
                      AND source = ?2
-                     AND observed_at_unix_ms BETWEEN ?3 AND ?4
+                     AND base_mint = ?3
+                     AND quote_mint = ?4
+                     AND observed_at_unix_ms BETWEEN ?5 AND ?6
+                     AND pair_created_at_unix_ms IS NOT NULL
+                     AND pair_created_at_unix_ms <= observed_at_unix_ms
                    ORDER BY observed_at_unix_ms DESC, id ASC
                    LIMIT 1"#,
                 params![
                     candidate_id,
                     source,
+                    candidate_mint,
+                    required_quote_mint,
                     minimum_observed_at_unix_ms,
                     as_of_unix_ms,
                 ],
-                |_| Ok(()),
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()
             .map_err(EvidenceCandidateStoreError::Sqlite)?;
-        if found.is_some() {
-            return Ok(true);
+
+        if row.is_some() {
+            return Ok(row);
         }
     }
-    Ok(false)
+
+    Ok(None)
+}
+
+fn validate_required_quote_mint(
+    required_quote_mint: &str,
+) -> Result<(), EvidenceCandidateStoreError> {
+    if required_quote_mint.trim().is_empty() {
+        return Err(EvidenceCandidateStoreError::InvalidData(
+            "required_quote_mint must not be blank".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_window(
