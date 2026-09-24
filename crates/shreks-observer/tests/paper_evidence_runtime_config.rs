@@ -92,6 +92,29 @@ fn valid_config_builds_exact_bidirectional_probe_without_exposing_keys() {
 }
 
 #[test]
+fn mint_state_refresh_age_derives_six_cycle_headroom_with_half_age_cap() {
+    let config = from_map(&valid_env()).unwrap();
+    assert_eq!(config.cycle_interval.as_secs(), 30);
+    assert_eq!(config.mint_state_max_age_ms, 900_000);
+    assert_eq!(config.mint_state_refresh_age_ms(), 720_000);
+
+    let mut deployed = valid_env();
+    deployed.insert("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", "60");
+    let deployed = from_map(&deployed).unwrap();
+    assert_eq!(deployed.mint_state_refresh_age_ms(), 540_000);
+
+    let mut capped = valid_env();
+    capped.insert("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", "120");
+    let capped = from_map(&capped).unwrap();
+    assert_eq!(capped.mint_state_refresh_age_ms(), 450_000);
+
+    let mut zero = valid_env();
+    zero.insert("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "0");
+    let zero = from_map(&zero).unwrap();
+    assert_eq!(zero.mint_state_refresh_age_ms(), 0);
+}
+
+#[test]
 fn missing_or_blank_required_runtime_inputs_fail_closed() {
     let required = [
         "SHREKS_DB_PATH",
