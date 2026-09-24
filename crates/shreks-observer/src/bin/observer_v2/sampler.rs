@@ -26,6 +26,9 @@ const DISCOVERY_INTERVAL_MS: i64 = 30_000;
 const ACTIVE_PUMPSWAP_LOOKBACK_MS: i64 = 60_000;
 const ACTIVE_PUMPSWAP_FRESHNESS_TARGET_MS: i64 = 45_000;
 const ACTIVE_PUMPSWAP_PRIORITY_LIMIT: usize = 32;
+const FRESH_PAIR_PRIORITY_LOOKBACK_MS: i64 = 30 * 60 * 1_000;
+const FRESH_PAIR_FRESHNESS_TARGET_MS: i64 = 45_000;
+const FRESH_PAIR_PRIORITY_LIMIT: usize = 32;
 const BROAD_CANDIDATES_PER_CYCLE: usize = 1;
 const RUNTIME_LOOP_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -96,6 +99,10 @@ pub struct SamplerCycleReport {
     pub priority_persisted_snapshot_count: usize,
     pub priority_empty_response_count: usize,
     pub priority_provider_failure_count: usize,
+    pub fresh_pair_priority_candidate_count: usize,
+    pub fresh_pair_priority_persisted_snapshot_count: usize,
+    pub fresh_pair_priority_empty_response_count: usize,
+    pub fresh_pair_priority_provider_failure_count: usize,
     pub sampled_candidate_count: usize,
     pub persisted_snapshot_count: usize,
     pub market_provider_failure_count: usize,
@@ -168,11 +175,17 @@ impl HighResolutionSampler {
         let priority_sampled = self
             .sample_active_pumpswap_priority(now_unix_ms, &mut report)
             .await?;
+        let fresh_pair_sampled = self
+            .sample_fresh_pair_priority(now_unix_ms, &mut report)
+            .await?;
 
         let due = self.registry.due_candidates(now_unix_ms);
         for candidate in due
             .into_iter()
-            .filter(|candidate| !priority_sampled.contains(&candidate.candidate_id))
+            .filter(|candidate| {
+                !priority_sampled.contains(&candidate.candidate_id)
+                    && !fresh_pair_sampled.contains(&candidate.candidate_id)
+            })
             .take(BROAD_CANDIDATES_PER_CYCLE)
         {
             self.sample_candidate(&candidate, now_unix_ms, &mut report)
@@ -423,9 +436,54 @@ impl HighResolutionSampler {
                 ProviderId::DexScreener,
                 now_unix_ms,
                 report,
+                false,
             )
             .await?;
             sampled.insert(candidate_id);
+        }
+
+        Ok(sampled)
+    }
+
+    async fn sample_fresh_pair_priority(
+        &mut self,
+        now_unix_ms: i64,
+        report: &mut SamplerCycleReport,
+    ) -> Result<HashSet<i64>, SamplerError> {
+        if !self
+            .market
+            .iter()
+            .any(|provider| provider.provider_id() == ProviderId::DexScreener)
+        {
+            return Ok(HashSet::new());
+        }
+
+        let targets = self
+            .db
+            .fresh_pair_mints_needing_dexscreener_snapshot(
+                now_unix_ms,
+                FRESH_PAIR_PRIORITY_LOOKBACK_MS,
+                FRESH_PAIR_FRESHNESS_TARGET_MS,
+                FRESH_PAIR_PRIORITY_LIMIT,
+            )?;
+
+        let mut sampled = HashSet::with_capacity(targets.len());
+        for target in targets {
+            report.priority_candidate_count =
+                report.priority_candidate_count.saturating_add(1);
+            report.fresh_pair_priority_candidate_count = report
+                .fresh_pair_priority_candidate_count
+                .saturating_add(1);
+            self.sample_candidate_from_provider(
+                target.candidate_id,
+                &target.mint,
+                ProviderId::DexScreener,
+                now_unix_ms,
+                report,
+                true,
+            )
+            .await?;
+            sampled.insert(target.candidate_id);
         }
 
         Ok(sampled)
@@ -438,6 +496,7 @@ impl HighResolutionSampler {
         provider_id: ProviderId,
         now_unix_ms: i64,
         report: &mut SamplerCycleReport,
+        fresh_pair_priority: bool,
     ) -> Result<(), SamplerError> {
         let Some(index) = self
             .market
@@ -453,6 +512,11 @@ impl HighResolutionSampler {
                 if provider_snapshots.is_empty() {
                     report.priority_empty_response_count =
                         report.priority_empty_response_count.saturating_add(1);
+                    if fresh_pair_priority {
+                        report.fresh_pair_priority_empty_response_count = report
+                            .fresh_pair_priority_empty_response_count
+                            .saturating_add(1);
+                    }
                     eprintln!(
                         "Observer V2 priority market response empty: provider={provider_id} mint={mint} candidate_id={candidate_id}"
                     );
@@ -483,6 +547,11 @@ impl HighResolutionSampler {
                     report.priority_persisted_snapshot_count = report
                         .priority_persisted_snapshot_count
                         .saturating_add(1);
+                    if fresh_pair_priority {
+                        report.fresh_pair_priority_persisted_snapshot_count = report
+                            .fresh_pair_priority_persisted_snapshot_count
+                            .saturating_add(1);
+                    }
                 }
                 report.completed_checkpoint_count = report
                     .completed_checkpoint_count
@@ -496,6 +565,11 @@ impl HighResolutionSampler {
                     self.market[index].consecutive_failures.saturating_add(1);
                 report.priority_provider_failure_count =
                     report.priority_provider_failure_count.saturating_add(1);
+                if fresh_pair_priority {
+                    report.fresh_pair_priority_provider_failure_count = report
+                        .fresh_pair_priority_provider_failure_count
+                        .saturating_add(1);
+                }
                 report.market_provider_failure_count =
                     report.market_provider_failure_count.saturating_add(1);
                 eprintln!(
