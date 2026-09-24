@@ -4,7 +4,7 @@
 **Repository:** `Dtwosam/Shreks`  
 **Architecture:** Rust Fast Lane + Python research/learning/control plane  
 **Purpose:** Defines the required implementation order for the Fast Lane rebuild while preserving already-proven Shreks infrastructure.  
-**Last updated:** 2026-09-23
+**Last updated:** 2026-09-24
 
 ---
 
@@ -579,165 +579,97 @@ Never claim a phase complete without exact verification evidence.
 
 ---
 
-# 6. CURRENT POSITION — 2026-09-23
+# 6. CURRENT POSITION — 2026-09-24
 
 ### Canonical production release
 
-The currently deployed and production-verified sealed release is:
+The currently deployed immutable PAPER release is:
 
-`6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`
+`0219b5b5149e6ca98c9c76365242e35ab64204da`
 
 Immutable release:
 
-`shreks-6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`
+`shreks-0219b5b5149e6ca98c9c76365242e35ab64204da`
 
-For that exact SHA:
+This release seals the G1C V2 PAPER mint-state pre-expiry headroom repair. The
+behavior implementation merged as
+`61302828cf0621783fc5801c886597b7dd0c4651` in PR #487.
 
-- sealed-main CI `35858224372` completed successfully;
-- immutable release build `35858530128` completed successfully;
-- protected PAPER deploy/verify `35859139199` completed successfully;
-- production verification proved:
-  - `current_release=/opt/shreks/releases/6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`;
-  - `expected_release=/opt/shreks/releases/6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`;
-  - `g1c_v2_entry_sizing_proposal=present`;
-  - `g1c_v2_quote_valuation_reference=present`;
-  - `g1c_v2_quote_valuation_review=present`;
-  - `g1c_v2_review_backed_entry_sizing=present`;
-  - `g1c_v2_candidate_value_preflight=present`;
-  - `g1c_v2_candidate_value_decision=present`;
-  - `g1c_v2_decision_backed_candidate_authority=present`;
-  - `g1c_v2_decision_backed_candidate_authoring=present`;
-  - `g1c_v2_decision_backed_transition_binding=present`;
-  - `g1c_v2_decision_backed_rotation_readiness=present`;
-  - `g1c_v2_decision_backed_rotation_plan=present`;
+For the exact sealed release:
+
+- merged-main behavior CI `36061943104` completed successfully;
+- immutable release workflow `36062738641` completed successfully;
+- protected deploy/verify workflow `36063304557` completed successfully;
+- the deploy verifier proved:
+  - `current_release=/opt/shreks/releases/0219b5b5149e6ca98c9c76365242e35ab64204da`;
+  - `expected_release=/opt/shreks/releases/0219b5b5149e6ca98c9c76365242e35ab64204da`;
+  - release-manifest source SHA equals the sealed SHA;
   - `paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`;
-  - protected FL9 discovery remains `HOLD_NO_COMPATIBLE`.
+  - observer, PAPER-evidence, and PAPER-campaign services were active/running
+    with `NRestarts=0` at verification;
+  - FL9 V2 runtime discovery returned `FOUND_COMPATIBLE` for the active
+    schema-v2 WSOL PAPER manifest.
 
-The deployed review-backed sizing path now publishes its proposal only after the authenticated review remains stable through the final post-derivation check. A review change cannot leave a final proposal artifact behind.
+The successful deploy verifier proves exact-release installation and immediate
+runtime health. It does **not** by itself satisfy the behavioral physical-host
+acceptance required by the mint-state pre-expiry seal because that verifier does
+not read the historical PAPER evidence needed to prove refresh timing.
 
-The deployed candidate-value preflight now binds the frozen cohort, preserved V2 host-request authority, and request-bound hydration policy transactionally across candidate assessment and final receipt publication. If that non-manifest authority changes or cannot re-authenticate, the preflight fails closed and leaves the requested final receipt absent.
+### Current sealed PAPER evidence behavior
 
-The deployed decision-backed candidate-authority implementation remains schema v2 and preflight-bound. It does not accept separately re-entered future run identity/time and requires exact reproduction of the candidate previously proven `COMPATIBLE`.
+The 2026-09-24 production repair sequence now includes:
 
-### Release-transport recovery evidence
+- exact-quote PAPER evidence candidate-selector alignment;
+- discovery-bootstrap sampling priority;
+- denser fresh-pair sampling for the B2 one-minute anchor;
+- refresh of stale pre-existing Helius mint-state evidence;
+- bounded proactive mint-state refresh before B1 freshness expiry.
 
-Two preceding sealed releases failed closed before host contact and therefore did not change protected PAPER production:
-
-1. release `shreks-6c441abdbabb30d0585175e298effd5a688f7db0` built successfully, but deploy run `35835299708` stopped at immutable release asset-set verification because the tag-release response exposed an empty embedded asset list;
-2. release `shreks-91a4792cfb4b739884ac5a49ffebe288ed80c7f8` built successfully, and the dedicated release-assets endpoint verified the exact three uploaded assets, but deploy run `35838293289` stopped at `gh release download` with `no assets to download`.
-
-Both failures occurred before local bundle verification completed and before SSH/SCP or host release-manager contact.
-
-The final transport fix merged as:
-
-`c2cc5becdff71456e5d232a945d05d22dd24d4fb`
-
-It downloads only the already-verified positive unique GitHub release-asset ids through the release-asset API with `Accept: application/octet-stream`, then retains exact local bundle verification before any host contact.
-
-The recovery seal `23f79a38207894e694f7c9d077a89a0cf795e6e3` proved that transport path end to end.
-
-### Existing trusted-administrator WSOL evidence
-
-A prior trusted-administrator ceremony already produced twelve exact canonical WSOL quote-reference artifacts and one authenticated multi-reference valuation review.
-
-The preserved review summary is:
+For the active production configuration, the latest repair derives:
 
 ```text
-reference_count=12
-quote_mint=So11111111111111111111111111111111111111112
-median_quote_asset_usd_per_token=118.17810687350131
-quote_evidence_observed_at_unix_ms=1790028815338
-status=REVIEW_EVIDENCE_ONLY
-candidate_value_authority=NOT_GRANTED
-candidate_authoring_authority=NOT_GRANTED
-rotation_authority=NOT_GRANTED
-scoring_authority=NOT_GRANTED
-paper_promotion_authority=BLOCKED
-live_authority=DISABLED
+B1_MAX_CRITICAL_DATA_AGE_MS=900000
+PAPER_EVIDENCE_CYCLE_INTERVAL_MS=60000
+PAPER_MINT_STATE_REFRESH_AGE_MS=540000
 ```
 
-The review fingerprint remains authority only when read from and authenticated against the canonical protected review artifact itself.
+The 540,000 ms collection threshold is operational headroom only. B1 safety
+validity remains 900,000 ms. Candidate ordering, holder refresh semantics,
+Jupiter quote semantics, B2 feature schema, strategy thresholds, and the
+protected campaign manifest are unchanged by this repair.
 
-Repository authority does not record a completed production review-backed sizing proposal, candidate-value preflight, candidate-value decision, schema-v2 candidate-authority artifact, runtime-manifest v2 candidate, or decision-backed transition binding.
+### Active next gate — physical acceptance of pre-expiry mint refresh
 
-Do not infer that any such artifact exists merely because its CLI is deployed.
+Do not invent another trading-code or threshold change before collecting the
+required physical evidence from the exact deployed release.
 
-### Current candidate-evidence gap
+Acceptance must establish all of the following on the production PAPER host:
 
-The first missing production artifact is one authenticated review-backed entry-sizing proposal derived from:
+1. startup/runtime evidence reports
+   `mint_state_max_age=900000ms` and
+   `mint_state_refresh_age=540000ms`;
+2. selected PAPER candidates whose Helius mint-state row crosses the derived
+   540,000 ms refresh age receive a bounded refresh attempt before the unchanged
+   900,000 ms B1 expiry boundary;
+3. selected PAPER evaluations are not blocked solely by mint-state
+   `CRITICAL_DATA_STALE` when provider transport/budget succeeds;
+4. provider failures remain fail-closed and the Helius per-process request
+   budget is not exhausted;
+5. historical point-in-time replay remains unchanged.
 
-- the current canonical source runtime manifest;
-- the existing canonical `MULTI_REFERENCE_REVIEW` artifact;
-- WSOL target quote decimals `9`;
-- one new non-existing private proposal destination.
-
-That proposal remains evidence only:
-
-```text
-status=PROPOSAL_EVIDENCE_ONLY
-quote_evidence_authority=MULTI_REFERENCE_REVIEW
-candidate_value_authority=NOT_GRANTED
-candidate_authoring_authority=NOT_GRANTED
-rotation_authority=NOT_GRANTED
-scoring_authority=NOT_GRANTED
-paper_promotion_authority=BLOCKED
-live_authority=DISABLED
-```
-
-No unit-test/example amount may be substituted for the proposal output.
-
-After the proposal exists and is reviewed, the remaining candidate-authority chain is strictly ordered:
-
-1. explicitly review/select one future `paper_run_id` and `start_at_unix_ms`;
-2. run the evidence-only candidate-value compatibility preflight against the frozen V2 cohort and preserved V2 request authority;
-3. require exact `candidate_compatibility=COMPATIBLE`;
-4. make one separate explicit candidate-value decision;
-5. for the current schema-v2 authority path, only `ACCEPT_PROPOSAL` is eligible because the current preflight proves the proposal-derived amount; a replacement amount requires its own later compatibility-proof design;
-6. bind one schema-v2 decision-backed candidate-authority artifact using the exact preflight plus exact accepted decision;
-7. author one exact canonical candidate whose manifest SHA/fingerprint must equal the authority artifact;
-8. bind one exact immutable decision-backed transition artifact;
-9. only then stage the reviewed candidate/binding inputs for rotation-readiness.
-
-### Helper/readiness proof boundary
-
-The manifest-manager binary reports:
-
-`paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`
-
-for the exact current release.
-
-However, helper installation-proof artifacts are release-bound. Any proof created for an older release SHA must not be reused for readiness under `6fa8b337fb5b71601e473e06907f4b8ba23ae0ee`.
-
-A fresh exact-release helper proof is mandatory before future rotation-readiness, but it is not required merely to create/review the offline proposal, preflight, decision, authority, candidate, or transition artifacts.
-
-### Active next gate
-
-The next mandatory progression is a **trusted-administrator production candidate-evidence ceremony**, beginning with the review-backed entry-sizing proposal.
-
-This is not another release/deploy slice.
-
-Do not add another automatic workflow to manufacture candidate economics, run identity, candidate authority, or runtime mutation merely because the required CLIs are present.
-
-Until the ordered evidence chain above exists:
-
-- do not run rotation-readiness with guessed or test-derived values;
-- do not rotate `/etc/shreks/paper-campaign.json`;
-- do not retry V2 scoring or model fitting;
-- do not publish champion evidence;
-- do not promote PAPER;
-- do not widen sudoers or add automatic candidate/install/rotation authority;
-- do not access wallets, sign, or submit transactions;
-- do not enable LIVE.
+If that evidence passes, record a physical-acceptance seal before moving to the
+next strategy/evaluation gate. If it fails, the observed failure becomes the
+next implementation slice; do not weaken B1, selector, strategy, or risk
+thresholds merely to create PAPER trades.
 
 Current authority remains:
 
 ```text
-candidate_value_authority=NOT_GRANTED
-candidate_authoring_authority=NOT_GRANTED
-manifest_rotation_authority=NOT_GRANTED
-scoring_authority=NOT_GRANTED
-paper_promotion_authority=BLOCKED
-live_authority=DISABLED
+MANIFEST_ROTATION_AUTHORITY=NOT_GRANTED
+SCORING_AUTHORITY=NOT_GRANTED
+MODEL_FITTING_AUTHORITY=NOT_GRANTED
+PAPER_PROMOTION=BLOCKED
+LIVE=DISABLED
 ```
 
 ---
