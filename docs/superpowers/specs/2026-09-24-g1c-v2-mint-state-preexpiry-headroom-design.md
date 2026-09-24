@@ -128,8 +128,11 @@ RED/GREEN coverage must prove:
 4. a row 540,001 ms old triggers one bounded mint refresh;
 5. the six-cycle headroom is capped at half the B1 max age;
 6. zero B1 max age remains representable and yields zero refresh age;
-7. existing stale-row, exact-B1-boundary, holder, quote, launcher, provider
-   failure, repository-safety, Python, Rust, and ARM64 tests remain green.
+7. existing stale-row, holder, quote, launcher, provider-failure,
+   repository-safety, Python, Rust, and ARM64 tests remain green;
+8. B1's own inclusive 900,000 ms safety-validity boundary remains unchanged;
+   evidence-cycle tests move to the earlier proactive refresh boundary instead
+   of asserting that the collector waits until B1 expiry.
 
 ## Physical acceptance
 
