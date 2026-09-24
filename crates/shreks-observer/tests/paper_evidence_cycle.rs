@@ -358,7 +358,7 @@ async fn stale_existing_mint_state_is_refreshed_for_selected_candidate() {
 }
 
 #[tokio::test]
-async fn mint_state_exactly_at_b1_freshness_boundary_suppresses_refresh() {
+async fn mint_state_exactly_at_proactive_refresh_boundary_suppresses_refresh() {
     let root = unique_test_dir("mint-boundary");
     let db_path = root.join("shreks.db");
     let seed = ShreksDb::open(&db_path).unwrap();
@@ -375,7 +375,7 @@ async fn mint_state_exactly_at_b1_freshness_boundary_suppresses_refresh() {
             mint_authority: None,
             freeze_authority: None,
             slot: 100,
-            observed_at_unix_ms: 9_500,
+            observed_at_unix_ms: 9_750,
         },
     )
     .unwrap();
@@ -383,6 +383,8 @@ async fn mint_state_exactly_at_b1_freshness_boundary_suppresses_refresh() {
 
     let mut config = runtime_config(&db_path, 10);
     config.mint_state_max_age_ms = 500;
+
+    assert_eq!(config.mint_state_refresh_age_ms(), 250);
 
     let store = EvidenceCandidateStore::open(&db_path).unwrap();
     let chain_requests = Arc::new(Mutex::new(Vec::new()));
@@ -404,6 +406,62 @@ async fn mint_state_exactly_at_b1_freshness_boundary_suppresses_refresh() {
     assert_eq!(report.chain_provider_failures, 0);
     assert!(chain_requests.lock().unwrap().is_empty());
     assert_eq!(table_count(&db_path, "token_mint_states"), 1);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn mint_state_one_ms_past_proactive_refresh_boundary_is_refreshed() {
+    let root = unique_test_dir("mint-preexpiry");
+    let db_path = root.join("shreks.db");
+    let seed = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = seed.upsert_candidate(&candidate("MintPreexpiry", 100)).unwrap();
+    seed.insert_market_snapshot(candidate_id, &snapshot("MintPreexpiry", 9_500)).unwrap();
+    seed.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintPreexpiry".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: 9_749,
+        },
+    )
+    .unwrap();
+    drop(seed);
+
+    let mut config = runtime_config(&db_path, 10);
+    config.mint_state_max_age_ms = 500;
+
+    assert_eq!(config.mint_state_refresh_age_ms(), 250);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let chain_requests = Arc::new(Mutex::new(Vec::new()));
+    let collector = SafetyEvidenceCollector::new(
+        ShreksDb::open(&db_path).unwrap(),
+        vec![],
+        vec![],
+    )
+    .with_chain_provider(Arc::new(RecordingChainProvider {
+        requests: Arc::clone(&chain_requests),
+    }));
+
+    let report = run_paper_evidence_cycle(&store, &collector, &config, 10_000)
+        .await
+        .unwrap();
+
+    assert_eq!(report.candidates_selected, 1);
+    assert_eq!(report.mint_states_stored, 1);
+    assert_eq!(report.chain_provider_failures, 0);
+    assert_eq!(
+        chain_requests.lock().unwrap().as_slice(),
+        &["MintPreexpiry".to_owned()]
+    );
+    assert_eq!(table_count(&db_path, "token_mint_states"), 2);
 
     cleanup_dir(&root);
 }
