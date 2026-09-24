@@ -217,3 +217,22 @@ def test_result_exchange_is_canonical_and_write_once(tmp_path: Path) -> None:
         marker_directory=tmp_path,
         expected_exchange_owner_uid=os.getuid(),
     )
+
+
+def test_idle_control_needs_no_paper_interval_or_deploy_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_directory = tmp_path / "markers"
+    marker_directory.mkdir()
+    monkeypatch.delenv("SHREKS_PAPER_EVIDENCE_INTERVAL_SECONDS", raising=False)
+    monkeypatch.setattr(
+        control.pwd,
+        "getpwnam",
+        lambda _name: pytest.fail("idle control must not resolve deploy user"),
+    )
+
+    assert control.process_pending_mint_state_acceptance_requests(
+        marker_directory=marker_directory,
+        expected_marker_directory_owner_uid=os.getuid(),
+    ) == ()
