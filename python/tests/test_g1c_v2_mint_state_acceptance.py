@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
+
+from shreks_brain.observer_campaign.runtime import (
+    bootstrap_observer_paper_campaign_runtime,
+)
 from shreks_brain.telemetry.g1c_v2_mint_state_acceptance import (
+    analyze_mint_state_acceptance,
     MintStateAcceptanceSample,
     derive_mint_state_refresh_age_ms,
     evaluate_mint_state_acceptance_samples,
@@ -116,3 +122,52 @@ def test_refresh_transitions_are_counted_once_across_reused_decisions() -> None:
 
     assert result["selected_observation_count"] == 2
     assert result["proactive_refresh_count"] == 1
+
+
+def test_historical_analyzer_replays_selected_candidates_without_mutating_database(
+    tmp_path,
+) -> None:
+    from test_observer_campaign_runner import AS_OF
+    from test_observer_campaign_runtime import _runtime_config
+
+    config = _runtime_config(tmp_path, max_cycles=1)
+    with sqlite3.connect(config.observer_database_path) as connection:
+        connection.execute("DELETE FROM token_mint_states")
+        for candidate_id in (1, 2):
+            current = AS_OF - 10_000
+            previous = current - 600_000
+            connection.execute(
+                """INSERT INTO token_mint_states
+                   (candidate_id, provider, decimals, mint_authority, freeze_authority,
+                    slot, observed_at_unix_ms)
+                   VALUES (?, 'helius', 6, NULL, NULL, ?, ?)""",
+                (candidate_id, str(candidate_id * 1000 + 1), previous),
+            )
+            connection.execute(
+                """INSERT INTO token_mint_states
+                   (candidate_id, provider, decimals, mint_authority, freeze_authority,
+                    slot, observed_at_unix_ms)
+                   VALUES (?, 'helius', 6, NULL, NULL, ?, ?)""",
+                (candidate_id, str(candidate_id * 1000 + 2), current),
+            )
+        connection.commit()
+
+    runner = bootstrap_observer_paper_campaign_runtime(config).runner
+    runner.run_cycle(AS_OF, AS_OF)
+    before_mtime = config.observer_database_path.stat().st_mtime_ns
+
+    result = analyze_mint_state_acceptance(
+        config.observer_database_path,
+        config.manifest_path,
+        window_start_unix_ms=AS_OF - 1,
+        window_end_unix_ms=AS_OF,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "PASS"
+    assert result["reconstructed_checkpoint_count"] == 1
+    assert result["selected_observation_count"] == 2
+    assert result["proactive_refresh_count"] == 2
+    assert result["selected_missing_mint_count"] == 0
+    assert result["selected_stale_mint_count"] == 0
+    assert config.observer_database_path.stat().st_mtime_ns == before_mtime
