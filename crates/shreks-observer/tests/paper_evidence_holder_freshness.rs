@@ -1,6 +1,6 @@
 use std::{fs, path::{Path, PathBuf}, process, time::{SystemTime, UNIX_EPOCH}};
 
-use shreks_core::{DiscoveredToken, ProviderId, TokenHolderDistribution};
+use shreks_core::{DiscoveredToken, ProviderId, TokenHolderDistribution, TokenMintState};
 use shreks_storage::ShreksDb;
 
 #[path = "../src/bin/shreks-paper-evidence/candidate_store.rs"]
@@ -83,6 +83,72 @@ fn holder_freshness_rejects_invalid_time_window() {
     for (minimum, as_of) in [(-1, 10_000), (10_001, 10_000), (0, -1)] {
         assert!(store
             .has_holder_distribution_since(1, minimum, as_of)
+            .is_err());
+    }
+
+    cleanup(&root);
+}
+
+
+#[test]
+fn mint_state_freshness_uses_exact_helius_point_in_time_window() {
+    let root = unique_test_dir();
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db
+        .upsert_candidate(&DiscoveredToken {
+            mint: "MintStateFresh".to_owned(),
+            pair_address: None,
+            dex_id: Some("pumpfun".to_owned()),
+            venue: None,
+            discovered_at_unix_ms: 100,
+            source: ProviderId::DexScreener,
+        })
+        .unwrap();
+    db.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintStateFresh".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 123,
+            observed_at_unix_ms: 10_000,
+        },
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    assert!(store
+        .has_mint_state_since(candidate_id, 9_500, 10_000)
+        .unwrap());
+    assert!(store
+        .has_mint_state_since(candidate_id, 10_000, 10_000)
+        .unwrap());
+    assert!(!store
+        .has_mint_state_since(candidate_id, 10_001, 11_000)
+        .unwrap());
+    assert!(!store
+        .has_mint_state_since(candidate_id + 1, 0, 10_000)
+        .unwrap());
+
+    cleanup(&root);
+}
+
+#[test]
+fn mint_state_freshness_rejects_invalid_time_window() {
+    let root = unique_test_dir();
+    let db_path = root.join("shreks.db");
+    ShreksDb::open(&db_path).unwrap();
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+
+    for (minimum, as_of) in [(-1, 10_000), (10_001, 10_000), (0, -1)] {
+        assert!(store
+            .has_mint_state_since(1, minimum, as_of)
             .is_err());
     }
 
