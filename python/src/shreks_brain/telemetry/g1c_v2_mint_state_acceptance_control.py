@@ -9,6 +9,10 @@ import stat
 import time
 from typing import Final
 
+from shreks_brain.observer_campaign.runtime_config import (
+    ObserverPaperCampaignRuntimeConfigError,
+    load_observer_paper_campaign_runtime_config,
+)
 from shreks_brain.telemetry.fl9_v2_discovery_control import (
     DiscoveryControlError,
     _read_exchange_result,
@@ -52,8 +56,8 @@ class MintStateAcceptanceControlError(RuntimeError):
 def process_pending_mint_state_acceptance_requests(
     *,
     marker_directory: Path = Path("/dev/shm"),
-    database_path: Path = Path("/var/lib/shreks/shreks.db"),
-    manifest_path: Path = Path("/etc/shreks/paper-campaign.json"),
+    database_path: Path | None = None,
+    manifest_path: Path | None = None,
     current_release_link: Path = Path("/opt/shreks/current"),
     expected_owner_uid: int | None = None,
     expected_marker_directory_owner_uid: int = 0,
@@ -86,6 +90,20 @@ def process_pending_mint_state_acceptance_requests(
     if not markers:
         return ()
 
+    resolved_database_path = database_path
+    resolved_manifest_path = manifest_path
+    if resolved_database_path is None or resolved_manifest_path is None:
+        try:
+            runtime_config = load_observer_paper_campaign_runtime_config()
+        except ObserverPaperCampaignRuntimeConfigError as error:
+            raise MintStateAcceptanceControlError(
+                "PAPER campaign runtime authority is unavailable"
+            ) from error
+        if resolved_database_path is None:
+            resolved_database_path = runtime_config.observer_database_path
+        if resolved_manifest_path is None:
+            resolved_manifest_path = runtime_config.manifest_path
+
     interval_ms = (
         _evidence_cycle_interval_ms_from_environment()
         if evidence_cycle_interval_ms is None
@@ -109,8 +127,8 @@ def process_pending_mint_state_acceptance_requests(
     return tuple(
         _process_one_request(
             path,
-            database_path=Path(database_path),
-            manifest_path=Path(manifest_path),
+            database_path=Path(resolved_database_path),
+            manifest_path=Path(resolved_manifest_path),
             current_release_link=Path(current_release_link),
             expected_owner_uid=owner_uid,
             evidence_cycle_interval_ms=interval_ms,
