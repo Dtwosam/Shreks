@@ -135,7 +135,10 @@ def test_historical_analyzer_replays_selected_candidates_without_mutating_databa
         connection.execute("DELETE FROM token_mint_states")
         for candidate_id in (1, 2):
             current = AS_OF - 10_000
-            previous = current - 600_000
+            # The shared fixture's B1 max age is 100_000 ms. With a 60 s
+            # evidence interval the half-age cap derives a 50_000 ms refresh age,
+            # so a 60_000 ms row-to-row gap is a valid pre-expiry refresh.
+            previous = current - 60_000
             connection.execute(
                 """INSERT INTO token_mint_states
                    (candidate_id, provider, decimals, mint_authority, freeze_authority,
