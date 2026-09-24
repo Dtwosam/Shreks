@@ -45,13 +45,16 @@ def derive_paper_evidence_environment(
         ) from error
 
     derived = dict(environment)
+    bundle = manifest.policy_bundle
+    derived["SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"] = str(
+        bundle.safety_policy.max_critical_data_age_ms
+    )
     if (
         manifest.schema_version
         != OBSERVER_PAPER_CAMPAIGN_RUNTIME_MANIFEST_SCHEMA_VERSION_V2
     ):
         return derived
 
-    bundle = manifest.policy_bundle
     entry = bundle.entry_quote_identity
     safety_probe = bundle.safety_probe_identity
 
