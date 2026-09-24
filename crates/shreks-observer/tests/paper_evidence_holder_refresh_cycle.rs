@@ -121,6 +121,7 @@ fn runtime_config(db_path: &Path) -> PaperEvidenceRuntimeConfig {
         ),
         ("SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES", "1".to_owned()),
         ("SHREKS_PAPER_HOLDER_REFRESH_SECONDS", "1".to_owned()),
+        ("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "900000".to_owned()),
         (
             "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
             "100".to_owned(),
