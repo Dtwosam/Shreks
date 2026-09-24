@@ -11,11 +11,11 @@ use async_trait::async_trait;
 use rusqlite::Connection;
 use shreks_core::{
     DiscoveredToken, PairMarketData, ProviderId, QuoteRequest, QuoteSnapshot,
-    TokenDistributionRequest, TokenHolderDistribution, VenueId,
+    TokenDistributionRequest, TokenHolderDistribution, TokenMintState, VenueId,
 };
 use shreks_observer::SafetyEvidenceCollector;
 use shreks_providers::{
-    DistributionDataProvider, ProviderError, ProviderErrorKind, QuoteProvider,
+    ChainDataProvider, DistributionDataProvider, ProviderError, ProviderErrorKind, QuoteProvider,
 };
 use shreks_storage::ShreksDb;
 
@@ -160,6 +160,32 @@ fn quote_result(request: &QuoteRequest) -> QuoteSnapshot {
     }
 }
 
+struct RecordingChainProvider {
+    requests: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl ChainDataProvider for RecordingChainProvider {
+    fn provider_id(&self) -> ProviderId {
+        ProviderId::Helius
+    }
+
+    async fn token_mint_state(&self, mint: &str) -> Result<TokenMintState, ProviderError> {
+        self.requests.lock().unwrap().push(mint.to_owned());
+        Ok(TokenMintState {
+            provider: ProviderId::Helius,
+            mint: mint.to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 200,
+            observed_at_unix_ms: 10_000,
+        })
+    }
+}
+
 struct RecordingDistributionProvider {
     requests: Arc<Mutex<Vec<TokenDistributionRequest>>>,
     fail: bool,
@@ -276,6 +302,108 @@ async fn cycle_collects_exact_bidirectional_evidence_for_selected_candidates_onl
 
     assert_eq!(table_count(&db_path, "token_holder_distributions"), 1);
     assert_eq!(table_count(&db_path, "paper_quote_snapshots"), 2);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn stale_existing_mint_state_is_refreshed_for_selected_candidate() {
+    let root = unique_test_dir("stale-mint-refresh");
+    let db_path = root.join("shreks.db");
+    let seed = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = seed.upsert_candidate(&candidate("MintRefresh", 100)).unwrap();
+    seed.insert_market_snapshot(candidate_id, &snapshot("MintRefresh", 9_500)).unwrap();
+    seed.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintRefresh".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: 9_000,
+        },
+    )
+    .unwrap();
+    drop(seed);
+
+    let mut config = runtime_config(&db_path, 10);
+    config.mint_state_max_age_ms = 500;
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let chain_requests = Arc::new(Mutex::new(Vec::new()));
+    let collector = SafetyEvidenceCollector::new(
+        ShreksDb::open(&db_path).unwrap(),
+        vec![],
+        vec![],
+    )
+    .with_chain_provider(Arc::new(RecordingChainProvider {
+        requests: Arc::clone(&chain_requests),
+    }));
+
+    let report = run_paper_evidence_cycle(&store, &collector, &config, 10_000)
+        .await
+        .unwrap();
+
+    assert_eq!(report.candidates_selected, 1);
+    assert_eq!(report.mint_states_stored, 1);
+    assert_eq!(report.chain_provider_failures, 0);
+    assert_eq!(chain_requests.lock().unwrap().as_slice(), &["MintRefresh".to_owned()]);
+    assert_eq!(table_count(&db_path, "token_mint_states"), 2);
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
+async fn mint_state_exactly_at_b1_freshness_boundary_suppresses_refresh() {
+    let root = unique_test_dir("mint-boundary");
+    let db_path = root.join("shreks.db");
+    let seed = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = seed.upsert_candidate(&candidate("MintBoundary", 100)).unwrap();
+    seed.insert_market_snapshot(candidate_id, &snapshot("MintBoundary", 9_500)).unwrap();
+    seed.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintBoundary".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: 9_500,
+        },
+    )
+    .unwrap();
+    drop(seed);
+
+    let mut config = runtime_config(&db_path, 10);
+    config.mint_state_max_age_ms = 500;
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let chain_requests = Arc::new(Mutex::new(Vec::new()));
+    let collector = SafetyEvidenceCollector::new(
+        ShreksDb::open(&db_path).unwrap(),
+        vec![],
+        vec![],
+    )
+    .with_chain_provider(Arc::new(RecordingChainProvider {
+        requests: Arc::clone(&chain_requests),
+    }));
+
+    let report = run_paper_evidence_cycle(&store, &collector, &config, 10_000)
+        .await
+        .unwrap();
+
+    assert_eq!(report.candidates_selected, 1);
+    assert_eq!(report.mint_states_stored, 0);
+    assert_eq!(report.chain_provider_failures, 0);
+    assert!(chain_requests.lock().unwrap().is_empty());
+    assert_eq!(table_count(&db_path, "token_mint_states"), 1);
 
     cleanup_dir(&root);
 }
