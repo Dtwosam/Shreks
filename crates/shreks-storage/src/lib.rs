@@ -18,6 +18,7 @@ mod fast_lane_metadata;
 mod future_path_generation;
 mod fast_population_parity;
 mod fast_realtime_coverage;
+mod fresh_pair_sampling;
 mod future_path_labels;
 mod lifecycle;
 mod migration_sampling;
@@ -126,6 +127,7 @@ pub use fast_deterministic_row::{
 pub use fast_lane::{PumpTradeEvidenceWrite, StoredFastEvent};
 pub use future_path_labels::StoredFuturePathLabel;
 pub use fast_realtime_coverage::FastRealtimeCoverageSession;
+pub use fresh_pair_sampling::FreshPairSamplingTarget;
 pub use fast_population_parity::{
     prove_fast_baseline_population_parity, FastBaselinePopulationParityError,
     FastBaselinePopulationParityProof, FAST_BASELINE_POPULATION_PARITY_VERSION,
