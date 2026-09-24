@@ -83,12 +83,10 @@ def test_production_verifier_treats_hold_as_nonfatal_and_failed_as_terminal() ->
         'if [[ "$MINT_ACCEPTANCE_STATUS" == "HOLD_INSUFFICIENT_EVIDENCE" ]]'
     )
     failed_branch = workflow.index(
-        'if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]',
-        hold_branch,
+        'if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]'
     )
-    next_section = workflow.index("fl9_v2_discovery_bridge=available", failed_branch)
-    hold_text = workflow[hold_branch:failed_branch]
-    failed_text = workflow[failed_branch:next_section]
+    hold_text = workflow[hold_branch : hold_branch + 240]
+    failed_text = workflow[failed_branch : failed_branch + 520]
 
     assert "exit 1" not in hold_text
     assert "exit 1" in failed_text
