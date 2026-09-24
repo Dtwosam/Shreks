@@ -43,7 +43,6 @@ fn paper_evidence_cost_controls_are_required_and_parsed() {
 
     for name in [
         "SHREKS_PAPER_HOLDER_REFRESH_SECONDS",
-        "SHREKS_PAPER_MINT_STATE_MAX_AGE_MS",
         "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
     ] {
         let mut missing = valid_env();
@@ -58,6 +57,25 @@ fn paper_evidence_cost_controls_are_required_and_parsed() {
             assert!(error.to_string().contains(name), "{name}={invalid}: {error}");
         }
     }
+
+    let mut missing = valid_env();
+    missing.remove("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS");
+    let error = from_map(&missing).expect_err("mint-state freshness authority must be required");
+    assert!(error.to_string().contains("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"));
+
+    for invalid in ["-1", "nope"] {
+        let mut values = valid_env();
+        values.insert("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", invalid);
+        let error = from_map(&values).expect_err("invalid mint-state max age must fail");
+        assert!(error.to_string().contains("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"));
+    }
+
+    let mut zero = valid_env();
+    zero.insert("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "0");
+    assert_eq!(
+        from_map(&zero).expect("B1 permits zero max critical-data age").mint_state_max_age_ms,
+        0,
+    );
 }
 
 #[test]
