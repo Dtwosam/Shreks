@@ -497,6 +497,66 @@ async fn broad_sampling_is_bounded_to_one_due_candidate_per_cycle() {
 }
 
 #[tokio::test]
+async fn recent_unsampled_discovery_bootstraps_ahead_of_stale_due_backlog_without_expanding_broad_budget() {
+    let root = unique_test_dir("recent-bootstrap");
+    let db_path = root.join("shreks.db");
+    let now = 40 * MINUTE;
+    let discovery = Arc::new(StaticDiscovery::new(vec![
+        discovered("mint-old-a", 0),
+        discovered("mint-old-b", 0),
+        discovered("mint-fresh", now),
+    ]));
+    let market = Arc::new(SequenceMarket::new(
+        ProviderId::DexScreener,
+        vec![
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-fresh",
+                "pair-fresh",
+                now,
+                100.0,
+                50_000.0,
+            )]),
+            Ok(vec![snapshot(
+                ProviderId::DexScreener,
+                "mint-old-a",
+                "pair-old-a",
+                now + 1,
+                100.0,
+                50_000.0,
+            )]),
+        ],
+    ));
+
+    let mut sampler = HighResolutionSampler::new(
+        ShreksDb::open(&db_path).unwrap(),
+        Some(discovery),
+        vec![SamplerProvider::unpaced(market.clone())],
+        SamplingPolicy::default_v1(),
+    )
+    .unwrap();
+
+    let first = sampler.run_cycle_at(now).await.unwrap();
+    assert_eq!(first.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 1);
+    assert_eq!(
+        market.calls.lock().unwrap().as_slice(),
+        &["mint-fresh".to_owned()]
+    );
+
+    let second = sampler.run_cycle_at(now + 1).await.unwrap();
+    assert_eq!(second.sampled_candidate_count, 1);
+    assert_eq!(market.call_count(), 2);
+    assert_eq!(
+        market.calls.lock().unwrap().as_slice(),
+        &["mint-fresh".to_owned(), "mint-old-a".to_owned()]
+    );
+
+    drop(sampler);
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn discovery_is_persisted_scheduled_and_sampled_before_first_checkpoint() {
     let root = unique_test_dir("early-resample");
     let db_path = root.join("shreks.db");
