@@ -831,7 +831,13 @@ jobs:
             rm -f "$MINT_RESULT_FILE"
             rmdir "$MINT_RESULT_DIR" 2>/dev/null || true
           }
-          trap cleanup_mint_acceptance EXIT
+          cleanup_mint_acceptance_on_exit() {
+            cleanup_mint_acceptance
+            if [[ "$PRESTAGED" == 1 ]]; then
+              cleanup_prestaged_discovery
+            fi
+          }
+          trap cleanup_mint_acceptance_on_exit EXIT
           test ! -e "$MINT_MARKER"
           test ! -e "$MINT_TMP"
           test ! -e "$MINT_RESULT_DIR"
@@ -1062,7 +1068,11 @@ jobs:
             echo 'g1c_v2_mint_state_physical_acceptance=PASS'
           fi
           cleanup_mint_acceptance
-          trap - EXIT
+          if [[ "$PRESTAGED" == 1 ]]; then
+            trap cleanup_prestaged_discovery EXIT
+          else
+            trap - EXIT
+          fi
 
           if ! /opt/shreks/current/.venv/bin/python -c 'import shreks_brain.telemetry.fl9_v2_discovery_control' >/dev/null 2>&1; then
             echo 'fl9_v2_discovery_bridge=unavailable'
