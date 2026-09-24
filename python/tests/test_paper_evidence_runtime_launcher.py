@@ -116,13 +116,16 @@ def test_v2_manifest_overrides_only_collector_quote_policy_environment(
     assert derived["SHREKS_PAPER_PROBE_POLICY_VERSION"] == "probe-v2"
     assert derived["SHREKS_PAPER_QUOTE_TAKER"] == "TakerRunner111"
     assert derived["SHREKS_PAPER_SLIPPAGE_BPS"] == "75"
+    assert derived["SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"] == str(
+        _manifest().policy_bundle.safety_policy.max_critical_data_age_ms
+    )
 
     assert derived["HELIUS_API_KEY"] == "test-helius-placeholder"
     assert derived["JUPITER_API_KEY"] == "test-jupiter-placeholder"
     assert derived["UNRELATED_RUNTIME_SETTING"] == "preserve-me"
 
 
-def test_v1_manifest_preserves_legacy_environment_exactly(tmp_path: Path) -> None:
+def test_v1_manifest_preserves_legacy_environment_and_derives_safety_freshness(tmp_path: Path) -> None:
     manifest_path = tmp_path / "paper-campaign.json"
     manifest_path.write_bytes(
         encode_observer_paper_campaign_runtime_manifest(_manifest())
@@ -134,7 +137,11 @@ def test_v1_manifest_preserves_legacy_environment_exactly(tmp_path: Path) -> Non
         environment=original,
     )
 
-    assert derived == original
+    for name, value in original.items():
+        assert derived[name] == value
+    assert derived["SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"] == str(
+        _manifest().policy_bundle.safety_policy.max_critical_data_age_ms
+    )
     assert derived is not original
 
 
