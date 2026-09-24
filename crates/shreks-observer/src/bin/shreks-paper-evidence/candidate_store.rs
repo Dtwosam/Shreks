@@ -17,11 +17,12 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
         "token_holder_distributions",
         &["candidate_id", "observed_at_unix_ms"],
     ),
-    (
-        "token_mint_states",
-        &["candidate_id", "provider", "observed_at_unix_ms"],
-    ),
 ];
+
+const MINT_STATE_REQUIRED_COLUMNS: (&str, &[&str]) = (
+    "token_mint_states",
+    &["candidate_id", "provider", "observed_at_unix_ms"],
+);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceProbeCandidate {
@@ -286,7 +287,7 @@ impl EvidenceCandidateStore {
             ));
         }
 
-        validate_required_table(&self.connection, REQUIRED_TABLE_COLUMNS[3])?;
+        validate_required_table(&self.connection, MINT_STATE_REQUIRED_COLUMNS)?;
         let found = self
             .connection
             .query_row(
