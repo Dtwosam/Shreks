@@ -10,8 +10,6 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
             "candidate_id",
             "observed_at_unix_ms",
             "source",
-            "base_mint",
-            "quote_mint",
             "pair_created_at_unix_ms",
         ],
     ),
@@ -157,6 +155,10 @@ impl EvidenceCandidateStore {
         }
         validate_market_sources(market_sources)?;
         validate_required_quote_mint(required_quote_mint)?;
+        validate_required_table(
+            &self.connection,
+            ("market_snapshots", &["base_mint", "quote_mint"]),
+        )?;
         if limit == 0 {
             return Ok(Vec::new());
         }
