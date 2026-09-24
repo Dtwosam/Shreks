@@ -184,12 +184,35 @@ impl HighResolutionSampler {
             .await?;
 
         let due = self.registry.due_candidates(now_unix_ms);
-        for candidate in due
-            .into_iter()
+        let recent_discovery_floor = now_unix_ms
+            .saturating_sub(FRESH_PAIR_PRIORITY_LOOKBACK_MS)
+            .max(0);
+        let bootstrap = due
+            .iter()
             .filter(|candidate| {
+                candidate.last_sample_at_unix_ms.is_none()
+                    && candidate.discovered_at_unix_ms >= recent_discovery_floor
+                    && !priority_sampled.contains(&candidate.candidate_id)
+                    && !fresh_pair_sampled.contains(&candidate.candidate_id)
+            })
+            .min_by(|left, right| {
+                right
+                    .discovered_at_unix_ms
+                    .cmp(&left.discovered_at_unix_ms)
+                    .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+                    .then_with(|| left.mint.cmp(&right.mint))
+            })
+            .cloned();
+
+        let broad_candidate = bootstrap.or_else(|| {
+            due.into_iter().find(|candidate| {
                 !priority_sampled.contains(&candidate.candidate_id)
                     && !fresh_pair_sampled.contains(&candidate.candidate_id)
             })
+        });
+
+        for candidate in broad_candidate
+            .into_iter()
             .take(BROAD_CANDIDATES_PER_CYCLE)
         {
             self.sample_candidate(&candidate, now_unix_ms, &mut report)
