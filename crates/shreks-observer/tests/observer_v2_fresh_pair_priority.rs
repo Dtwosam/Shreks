@@ -184,6 +184,8 @@ async fn old_candidate_with_fresh_pair_is_prioritized_before_broad_schedule_is_d
 
     assert_eq!(second.priority_candidate_count, 1);
     assert_eq!(second.priority_persisted_snapshot_count, 1);
+    assert_eq!(second.fresh_pair_priority_candidate_count, 1);
+    assert_eq!(second.fresh_pair_priority_persisted_snapshot_count, 1);
     assert_eq!(second.sampled_candidate_count, 0);
     assert_eq!(market.call_count(), 2);
 
