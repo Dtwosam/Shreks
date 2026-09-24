@@ -63,13 +63,6 @@ def process_pending_mint_state_acceptance_requests(
 ) -> tuple[dict[str, object], ...]:
     if isinstance(max_requests, bool) or not isinstance(max_requests, int) or max_requests < 1:
         raise ValueError("max_requests must be a positive integer")
-    owner_uid = (
-        pwd.getpwnam("shreks-deploy").pw_uid
-        if expected_owner_uid is None
-        else expected_owner_uid
-    )
-    if isinstance(owner_uid, bool) or not isinstance(owner_uid, int) or owner_uid < 0:
-        raise ValueError("expected_owner_uid must be a non-negative integer")
     now_ms = int(time.time() * 1000) if now_unix_ms is None else now_unix_ms
     if isinstance(now_ms, bool) or not isinstance(now_ms, int) or now_ms < 0:
         raise ValueError("now_unix_ms must be a non-negative integer")
@@ -102,6 +95,16 @@ def process_pending_mint_state_acceptance_requests(
         )[:max_requests]
     except OSError:
         return ()
+    if not markers:
+        return ()
+
+    owner_uid = (
+        pwd.getpwnam("shreks-deploy").pw_uid
+        if expected_owner_uid is None
+        else expected_owner_uid
+    )
+    if isinstance(owner_uid, bool) or not isinstance(owner_uid, int) or owner_uid < 0:
+        raise ValueError("expected_owner_uid must be a non-negative integer")
 
     return tuple(
         _process_one_request(
