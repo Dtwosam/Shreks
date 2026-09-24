@@ -170,6 +170,8 @@ def test_analysis_failure_is_sanitized(
 
     result = control.process_pending_mint_state_acceptance_requests(
         marker_directory=marker_directory,
+        database_path=tmp_path / "protected.sqlite",
+        manifest_path=tmp_path / "paper-campaign.json",
         current_release_link=current,
         expected_owner_uid=os.getuid(),
         expected_marker_directory_owner_uid=os.getuid(),
