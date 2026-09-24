@@ -23,6 +23,7 @@ fn valid_env() -> HashMap<&'static str, &'static str> {
         ("SHREKS_PAPER_DISTRIBUTION_PAGE_SIZE", "100"),
         ("SHREKS_PAPER_DISTRIBUTION_MAX_PAGES", "2"),
         ("SHREKS_PAPER_HOLDER_REFRESH_SECONDS", "300"),
+        ("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "900000"),
         ("SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS", "1000"),
         ("HELIUS_API_KEY", "helius-test-secret"),
         ("JUPITER_API_KEY", "jupiter-test-secret"),
@@ -37,6 +38,7 @@ fn from_map(values: &HashMap<&str, &str>) -> Result<PaperEvidenceRuntimeConfig, 
 fn paper_evidence_cost_controls_are_required_and_parsed() {
     let config = from_map(&valid_env()).expect("valid bounded config");
     assert_eq!(config.holder_refresh.as_secs(), 300);
+    assert_eq!(config.mint_state_max_age_ms, 900_000);
     assert_eq!(config.helius_max_requests_per_process, 1000);
 
     for name in [
@@ -55,11 +57,31 @@ fn paper_evidence_cost_controls_are_required_and_parsed() {
             assert!(error.to_string().contains(name), "{name}={invalid}: {error}");
         }
     }
+
+    let mut missing = valid_env();
+    missing.remove("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS");
+    let error = from_map(&missing).expect_err("mint-state freshness authority must be required");
+    assert!(error.to_string().contains("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"));
+
+    for invalid in ["-1", "nope"] {
+        let mut values = valid_env();
+        values.insert("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", invalid);
+        let error = from_map(&values).expect_err("invalid mint-state max age must fail");
+        assert!(error.to_string().contains("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS"));
+    }
+
+    let mut zero = valid_env();
+    zero.insert("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "0");
+    assert_eq!(
+        from_map(&zero).expect("B1 permits zero max critical-data age").mint_state_max_age_ms,
+        0,
+    );
 }
 
 #[test]
 fn env_example_declares_bounded_paper_evidence_controls() {
     let env_example = include_str!("../../../.env.example");
     assert!(env_example.contains("SHREKS_PAPER_HOLDER_REFRESH_SECONDS="));
+    assert!(env_example.contains("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS="));
     assert!(env_example.contains("SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS="));
 }

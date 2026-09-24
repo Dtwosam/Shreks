@@ -19,6 +19,11 @@ const REQUIRED_TABLE_COLUMNS: &[(&str, &[&str])] = &[
     ),
 ];
 
+const MINT_STATE_REQUIRED_COLUMNS: (&str, &[&str]) = (
+    "token_mint_states",
+    &["candidate_id", "provider", "observed_at_unix_ms"],
+);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceProbeCandidate {
     pub candidate_id: i64,
@@ -258,6 +263,47 @@ impl EvidenceCandidateStore {
             .take(limit)
             .map(|(_, candidate)| candidate)
             .collect())
+    }
+
+    pub fn has_mint_state_since(
+        &self,
+        candidate_id: i64,
+        minimum_observed_at_unix_ms: i64,
+        as_of_unix_ms: i64,
+    ) -> Result<bool, EvidenceCandidateStoreError> {
+        if candidate_id <= 0 {
+            return Err(EvidenceCandidateStoreError::InvalidData(
+                "candidate id must be positive".to_owned(),
+            ));
+        }
+        if minimum_observed_at_unix_ms < 0 || as_of_unix_ms < 0 {
+            return Err(EvidenceCandidateStoreError::InvalidData(
+                "mint-state freshness timestamps must be non-negative".to_owned(),
+            ));
+        }
+        if minimum_observed_at_unix_ms > as_of_unix_ms {
+            return Err(EvidenceCandidateStoreError::InvalidData(
+                "mint-state freshness minimum timestamp cannot exceed as_of_unix_ms".to_owned(),
+            ));
+        }
+
+        validate_required_table(&self.connection, MINT_STATE_REQUIRED_COLUMNS)?;
+        let found = self
+            .connection
+            .query_row(
+                r#"SELECT 1
+                   FROM token_mint_states
+                   WHERE candidate_id = ?1
+                     AND provider = 'helius'
+                     AND observed_at_unix_ms BETWEEN ?2 AND ?3
+                   ORDER BY observed_at_unix_ms DESC
+                   LIMIT 1"#,
+                params![candidate_id, minimum_observed_at_unix_ms, as_of_unix_ms],
+                |_| Ok(()),
+            )
+            .optional()
+            .map_err(EvidenceCandidateStoreError::Sqlite)?;
+        Ok(found.is_some())
     }
 
     pub fn has_holder_distribution_since(

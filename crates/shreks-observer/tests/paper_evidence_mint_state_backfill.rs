@@ -159,3 +159,54 @@ async fn mint_state_provider_failure_stays_unknown_and_is_counted() {
 
     cleanup_dir(&root);
 }
+
+
+#[tokio::test]
+async fn selected_paper_candidate_can_refresh_existing_stale_mint_state() {
+    let root = unique_test_dir("stale-refresh");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+    let candidate_id = db.upsert_candidate(&candidate("MintRefresh")).unwrap();
+
+    db.insert_mint_state(
+        candidate_id,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintRefresh".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: 1_000,
+        },
+    )
+    .unwrap();
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let collector = SafetyEvidenceCollector::new(db, vec![], vec![]).with_chain_provider(
+        Arc::new(RecordingChainProvider {
+            requests: Arc::clone(&requests),
+            fail: false,
+        }),
+    );
+
+    let report = collector
+        .collect_candidate_with_refresh_controls(
+            candidate_id,
+            "MintRefresh",
+            &probe("MintRefresh"),
+            true,
+            false,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.mint_states_stored, 1);
+    assert_eq!(report.chain_provider_failures, 0);
+    assert_eq!(table_count(&db_path, "token_mint_states"), 2);
+    assert_eq!(requests.lock().unwrap().as_slice(), &["MintRefresh".to_owned()]);
+
+    cleanup_dir(&root);
+}

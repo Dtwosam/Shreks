@@ -18,6 +18,7 @@ fn valid_env() -> HashMap<&'static str, &'static str> {
         ("SHREKS_PAPER_EVIDENCE_MARKET_SOURCES", "dexscreener"),
         ("SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES", "16"),
         ("SHREKS_PAPER_HOLDER_REFRESH_SECONDS", "300"),
+        ("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", "900000"),
         ("SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS", "1000"),
         ("SHREKS_PAPER_PROBE_POLICY_VERSION", "paper-probe-v1"),
         (
@@ -53,6 +54,7 @@ fn valid_config_builds_exact_bidirectional_probe_without_exposing_keys() {
     assert_eq!(config.market_sources, vec!["dexscreener".to_owned()]);
     assert_eq!(config.max_candidates, 16);
     assert_eq!(config.holder_refresh.as_secs(), 300);
+    assert_eq!(config.mint_state_max_age_ms, 900_000);
     assert_eq!(config.helius_max_requests_per_process, 1000);
 
     let candidate_mint = "Candidate111111111111111111111111111111111";
@@ -100,6 +102,7 @@ fn missing_or_blank_required_runtime_inputs_fail_closed() {
         "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES",
         "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
         "SHREKS_PAPER_HOLDER_REFRESH_SECONDS",
+        "SHREKS_PAPER_MINT_STATE_MAX_AGE_MS",
         "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
         "SHREKS_PAPER_PROBE_POLICY_VERSION",
         "SHREKS_PAPER_QUOTE_ASSET_MINT",
@@ -136,6 +139,7 @@ fn invalid_numeric_runtime_inputs_fail_closed() {
         ),
         ("SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_HOLDER_REFRESH_SECONDS", &["0", "-1", "nope"][..]),
+        ("SHREKS_PAPER_MINT_STATE_MAX_AGE_MS", &["-1", "nope"][..]),
         ("SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_ENTRY_INPUT_AMOUNT", &["0", "-1", "nope"][..]),
         ("SHREKS_PAPER_EXIT_INPUT_AMOUNT", &["0", "-1", "nope"][..]),
@@ -213,6 +217,7 @@ fn repository_env_example_declares_paper_evidence_inputs_without_secret_values()
         "SHREKS_PAPER_EVIDENCE_MARKET_SOURCES",
         "SHREKS_PAPER_EVIDENCE_MAX_CANDIDATES",
         "SHREKS_PAPER_HOLDER_REFRESH_SECONDS",
+        "SHREKS_PAPER_MINT_STATE_MAX_AGE_MS",
         "SHREKS_PAPER_HELIUS_MAX_REQUESTS_PER_PROCESS",
         "SHREKS_PAPER_PROBE_POLICY_VERSION",
         "SHREKS_PAPER_QUOTE_ASSET_MINT",

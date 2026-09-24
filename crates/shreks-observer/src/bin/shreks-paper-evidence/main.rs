@@ -55,12 +55,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .with_chain_provider(chain_provider);
 
     eprintln!(
-        "Shreks paper evidence starting: db={} interval={}s lookback={}ms max_candidates={} holder_refresh={}s helius_request_limit={} probe_policy={} providers=helius+jupiter",
+        "Shreks paper evidence starting: db={} interval={}s lookback={}ms max_candidates={} holder_refresh={}s mint_state_max_age={}ms helius_request_limit={} probe_policy={} providers=helius+jupiter",
         config.db_path.display(),
         config.cycle_interval.as_secs(),
         config.candidate_lookback_ms,
         config.max_candidates,
         config.holder_refresh.as_secs(),
+        config.mint_state_max_age_ms,
         config.helius_max_requests_per_process,
         config.probe_policy_version,
     );
