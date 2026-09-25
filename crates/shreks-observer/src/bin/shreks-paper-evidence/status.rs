@@ -16,6 +16,7 @@ pub const PAPER_EVIDENCE_RUNTIME_STATUS_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaperEvidenceRuntimeStatus {
+    release_source_sha: String,
     process_started_at_unix_ms: i64,
     generated_at_unix_ms: i64,
     completed_cycle_count: u64,
@@ -34,12 +35,14 @@ pub struct PaperEvidenceRuntimeStatus {
 
 impl PaperEvidenceRuntimeStatus {
     pub fn started(
+        release_source_sha: &str,
         process_started_at_unix_ms: i64,
         evidence_cycle_interval_ms: i64,
         mint_state_max_age_ms: i64,
         mint_state_refresh_age_ms: i64,
         helius_requests_limit: u64,
     ) -> io::Result<Self> {
+        require_release_source_sha(release_source_sha)?;
         require_non_negative_i64(
             process_started_at_unix_ms,
             "process_started_at_unix_ms",
@@ -64,6 +67,7 @@ impl PaperEvidenceRuntimeStatus {
         }
 
         Ok(Self {
+            release_source_sha: release_source_sha.to_owned(),
             process_started_at_unix_ms,
             generated_at_unix_ms: process_started_at_unix_ms,
             completed_cycle_count: 0,
@@ -141,6 +145,7 @@ impl PaperEvidenceRuntimeStatus {
         }
 
         Ok(Self {
+            release_source_sha: self.release_source_sha.clone(),
             process_started_at_unix_ms: self.process_started_at_unix_ms,
             generated_at_unix_ms,
             completed_cycle_count,
@@ -163,6 +168,7 @@ impl PaperEvidenceRuntimeStatus {
 
     fn document(&self) -> serde_json::Value {
         json!({
+            "release_source_sha": self.release_source_sha,
             "schema_name": PAPER_EVIDENCE_RUNTIME_STATUS_SCHEMA_NAME,
             "schema_version": PAPER_EVIDENCE_RUNTIME_STATUS_SCHEMA_VERSION,
             "state": if self.completed_cycle_count == 0 {
@@ -239,6 +245,19 @@ pub fn write_paper_evidence_runtime_status(
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn require_release_source_sha(value: &str) -> io::Result<()> {
+    if value.len() != 40
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(invalid_input(
+            "release_source_sha must be exactly 40 lowercase hex characters",
+        ));
+    }
+    Ok(())
 }
 
 fn require_non_negative_i64(value: i64, name: &str) -> io::Result<()> {
