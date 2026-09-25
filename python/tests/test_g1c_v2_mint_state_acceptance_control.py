@@ -67,7 +67,7 @@ def _write_request(marker_directory: Path, *, mode: int = 0o644) -> Path:
     return path
 
 
-def _runtime_status(path: Path) -> Path:
+def _runtime_status(path: Path, **overrides: object) -> Path:
     document = {
         "release_source_sha": SHA,
         "schema_name": "shreks.paper_evidence_runtime_status",
@@ -91,6 +91,7 @@ def _runtime_status(path: Path) -> Path:
         "paper_promotion_authority": "BLOCKED",
         "live_authority": "DISABLED",
     }
+    document.update(overrides)
     path.write_text(
         json.dumps(
             document,
@@ -106,8 +107,8 @@ def _runtime_status(path: Path) -> Path:
     return path
 
 
-def _analysis() -> dict[str, object]:
-    return {
+def _analysis(**overrides: object) -> dict[str, object]:
+    document: dict[str, object] = {
         "schema_name": "shreks.g1c_v2_mint_state_acceptance",
         "schema_version": 1,
         "status": "PASS",
@@ -125,6 +126,98 @@ def _analysis() -> dict[str, object]:
         "window_start_unix_ms": NOW - 60_000,
         "window_end_unix_ms": NOW,
     }
+    document.update(overrides)
+    return document
+
+
+def test_release_bound_process_start_clamps_final_analysis_window(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_directory = tmp_path / "markers"
+    marker_directory.mkdir()
+    _write_request(marker_directory)
+    current = _release_tree(tmp_path)
+    process_started_at = NOW - 30_000
+    runtime_status_path = _runtime_status(
+        tmp_path / "paper-evidence-status.json",
+        process_started_at_unix_ms=process_started_at,
+    )
+    calls: list[dict[str, object]] = []
+
+    def analyze(*_args, **kwargs):
+        calls.append(dict(kwargs))
+        return _analysis(
+            window_start_unix_ms=kwargs["window_start_unix_ms"],
+            window_end_unix_ms=kwargs["window_end_unix_ms"],
+        )
+
+    monkeypatch.setattr(control, "analyze_mint_state_acceptance", analyze)
+
+    result = control.process_pending_mint_state_acceptance_requests(
+        marker_directory=marker_directory,
+        database_path=tmp_path / "protected.sqlite",
+        manifest_path=tmp_path / "paper-campaign.json",
+        current_release_link=current,
+        expected_owner_uid=os.getuid(),
+        expected_marker_directory_owner_uid=os.getuid(),
+        evidence_cycle_interval_ms=60_000,
+        runtime_status_path=runtime_status_path,
+        now_unix_ms=NOW,
+    )[0]
+
+    assert result["status"] == "PASS"
+    assert len(calls) == 2
+    assert calls[0]["window_start_unix_ms"] == NOW - 60_000
+    assert calls[1]["window_start_unix_ms"] == process_started_at
+    assert calls[1]["window_end_unix_ms"] == NOW
+    assert result["analysis"]["window_start_unix_ms"] == process_started_at
+    assert result["analysis"]["window_end_unix_ms"] == NOW
+
+
+def test_release_bound_reanalysis_must_match_runtime_age_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_directory = tmp_path / "markers"
+    marker_directory.mkdir()
+    _write_request(marker_directory)
+    current = _release_tree(tmp_path)
+    process_started_at = NOW - 30_000
+    runtime_status_path = _runtime_status(
+        tmp_path / "paper-evidence-status.json",
+        process_started_at_unix_ms=process_started_at,
+    )
+    call_count = 0
+
+    def analyze(*_args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _analysis()
+        return _analysis(
+            max_critical_data_age_ms=899_999,
+            window_start_unix_ms=kwargs["window_start_unix_ms"],
+            window_end_unix_ms=kwargs["window_end_unix_ms"],
+        )
+
+    monkeypatch.setattr(control, "analyze_mint_state_acceptance", analyze)
+
+    result = control.process_pending_mint_state_acceptance_requests(
+        marker_directory=marker_directory,
+        database_path=tmp_path / "protected.sqlite",
+        manifest_path=tmp_path / "paper-campaign.json",
+        current_release_link=current,
+        expected_owner_uid=os.getuid(),
+        expected_marker_directory_owner_uid=os.getuid(),
+        evidence_cycle_interval_ms=60_000,
+        runtime_status_path=runtime_status_path,
+        now_unix_ms=NOW,
+    )[0]
+
+    assert call_count == 2
+    assert result["status"] == "FAILED"
+    assert result["error"]["code"] == "ANALYSIS_RUNTIME_AUTHORITY_MISMATCH"
 
 
 def test_trusted_request_is_release_bound_and_read_only(
