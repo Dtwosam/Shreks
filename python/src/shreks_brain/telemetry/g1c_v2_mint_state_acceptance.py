@@ -38,10 +38,12 @@ _ERROR_CODES = frozenset(
         "CYCLE_RECONSTRUCTION_COMPONENT_QUOTE_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_SAFETY_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_CANDIDATE_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FINALIZE_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED",
@@ -596,6 +598,32 @@ def _classify_regime_reconstruction_detail(detail: str) -> str | None:
 
     if "aggregate regime consumed evidence is not inside the requested window" in canonical:
         return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED"
+
+    stable_stage_codes = (
+        (
+            "observer aggregate regime candidate replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_CANDIDATE_FAILED",
+        ),
+        (
+            "observer aggregate regime market replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
+        ),
+        (
+            "observer aggregate regime safety replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
+        ),
+        (
+            "observer aggregate regime quote replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
+        ),
+        (
+            "observer aggregate regime finalize replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FINALIZE_FAILED",
+        ),
+    )
+    for marker, code in stable_stage_codes:
+        if marker in canonical:
+            return code
 
     replay_prefix = "observer aggregate regime replay failed:"
     if replay_prefix in canonical:
