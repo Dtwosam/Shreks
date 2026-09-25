@@ -10,10 +10,12 @@ import shreks_brain.telemetry.g1c_v2_mint_state_acceptance_control as control
 
 
 NOW = 2_000_000
+SHA = "1" * 40
 
 
 def _document(**overrides) -> dict[str, object]:
     document: dict[str, object] = {
+        "release_source_sha": SHA,
         "schema_name": "shreks.paper_evidence_runtime_status",
         "schema_version": 1,
         "state": "CYCLE_COMPLETE",
@@ -58,6 +60,7 @@ def _read(path: Path, *, now_unix_ms: int = NOW) -> dict[str, object]:
     return control._read_paper_evidence_runtime_status(
         path,
         expected_owner_uid=os.getuid(),
+        expected_release_sha=SHA,
         now_unix_ms=now_unix_ms,
         expected_evidence_cycle_interval_ms=60_000,
         expected_mint_state_max_age_ms=900_000,
@@ -86,6 +89,7 @@ def test_runtime_status_accepts_fresh_cycle_complete_operational_evidence(
 @pytest.mark.parametrize(
     ("overrides", "match"),
     (
+        ({"release_source_sha": "2" * 40}, "release binding"),
         ({"generated_at_unix_ms": NOW + 30_001}, "future"),
         ({"generated_at_unix_ms": NOW - 240_001}, "stale"),
         ({"state": "STARTED", "completed_cycle_count": 0, "cycle_as_of_unix_ms": None}, "cycle"),
