@@ -1114,7 +1114,9 @@ jobs:
               raise SystemExit("mint acceptance LIVE authority mismatch")
 
           status = document.get("status")
-          if status == "FAILED":
+          if status == "FAILED" and "error" in document:
+              if "analysis" in document:
+                  raise SystemExit("mint acceptance failure contract is ambiguous")
               error = document.get("error")
               if not isinstance(error, dict) or set(error) != {"code", "message"}:
                   raise SystemExit("mint acceptance failure shape is invalid")
@@ -1124,12 +1126,12 @@ jobs:
                   raise SystemExit("mint acceptance failure code is invalid")
               if not isinstance(message, str) or not message.strip():
                   raise SystemExit("mint acceptance failure message is invalid")
-              print("FAILED")
+              print("CONTROL_FAILED")
               print(code)
               print(" ".join(message.split())[:240])
               raise SystemExit(0)
 
-          if status not in {"PASS", "HOLD_INSUFFICIENT_EVIDENCE"}:
+          if status not in {"PASS", "HOLD_INSUFFICIENT_EVIDENCE", "FAILED"}:
               raise SystemExit("mint acceptance status is unsupported")
           analysis = document.get("analysis")
           if not isinstance(analysis, dict):
@@ -1233,13 +1235,14 @@ jobs:
           )"
           mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"
           MINT_ACCEPTANCE_STATUS="${MINT_ACCEPTANCE_LINES[0]:-}"
-          printf 'g1c_v2_mint_state_acceptance_status=%s\n' "$MINT_ACCEPTANCE_STATUS"
-          if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]; then
+          if [[ "$MINT_ACCEPTANCE_STATUS" == "CONTROL_FAILED" ]]; then
+            echo 'g1c_v2_mint_state_acceptance_status=FAILED'
             printf 'g1c_v2_mint_state_acceptance_failure_code=%s\n' "${MINT_ACCEPTANCE_LINES[1]:-UNKNOWN}"
             printf 'g1c_v2_mint_state_acceptance_failure_message=%s\n' "${MINT_ACCEPTANCE_LINES[2]:-unknown}"
             cleanup_mint_acceptance
             exit 1
           fi
+          printf 'g1c_v2_mint_state_acceptance_status=%s\n' "$MINT_ACCEPTANCE_STATUS"
           printf 'g1c_v2_mint_state_selected_observations=%s\n' "${MINT_ACCEPTANCE_LINES[1]:-0}"
           printf 'g1c_v2_mint_state_proactive_refreshes=%s\n' "${MINT_ACCEPTANCE_LINES[2]:-0}"
           printf 'g1c_v2_mint_state_missing_selected=%s\n' "${MINT_ACCEPTANCE_LINES[3]:-0}"
@@ -1253,6 +1256,11 @@ jobs:
           printf 'g1c_v2_helius_requests_limit=%s\n' "${MINT_ACCEPTANCE_LINES[11]:-unknown}"
           printf 'g1c_v2_helius_requests_remaining=%s\n' "${MINT_ACCEPTANCE_LINES[12]:-unknown}"
           printf 'g1c_v2_helius_budget_exhausted=%s\n' "${MINT_ACCEPTANCE_LINES[13]:-unknown}"
+          if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]; then
+            echo 'g1c_v2_mint_state_physical_acceptance=FAILED'
+            cleanup_mint_acceptance
+            exit 1
+          fi
           if [[ "$MINT_ACCEPTANCE_STATUS" == "HOLD_INSUFFICIENT_EVIDENCE" ]]; then
             echo 'g1c_v2_mint_state_physical_acceptance=HOLD'
           else
