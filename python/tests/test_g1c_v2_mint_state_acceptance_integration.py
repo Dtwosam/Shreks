@@ -212,3 +212,34 @@ def test_mint_acceptance_timeout_reports_sanitized_reconstruction_substage() -> 
         "CYCLE_RECONSTRUCTION_AGGREGATION",
     ):
         assert required in timeout_text
+
+
+def test_production_verifier_distinguishes_control_failure_from_behavioral_failed() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    validation_start = workflow.index('MINT_ACCEPTANCE_VALIDATION="$(')
+    validation_end = workflow.index(
+        'mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"',
+        validation_start,
+    )
+    validation_text = workflow[validation_start:validation_end]
+
+    assert 'print("CONTROL_FAILED")' in validation_text
+    assert 'status not in {"PASS", "HOLD_INSUFFICIENT_EVIDENCE", "FAILED"}' in validation_text
+    assert 'analysis.get("status") != status' in validation_text
+
+    shell_start = validation_end
+    shell_text = workflow[shell_start : shell_start + 3600]
+
+    assert 'if [[ "$MINT_ACCEPTANCE_STATUS" == "CONTROL_FAILED" ]]' in shell_text
+    assert "g1c_v2_mint_state_acceptance_status=FAILED" in shell_text
+    assert 'if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]' in shell_text
+    assert "g1c_v2_mint_state_physical_acceptance=FAILED" in shell_text
+
+    failed_index = shell_text.index('if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]')
+    counters_index = shell_text.index("g1c_v2_mint_state_selected_observations=")
+    physical_failed_index = shell_text.index(
+        "g1c_v2_mint_state_physical_acceptance=FAILED"
+    )
+    assert counters_index < failed_index < physical_failed_index
+    assert "exit 1" in shell_text[failed_index : physical_failed_index + 180]
