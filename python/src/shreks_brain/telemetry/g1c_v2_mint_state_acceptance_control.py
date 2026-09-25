@@ -56,6 +56,21 @@ _RUNTIME_STATUS_FUTURE_SKEW_MS: Final = 30_000
 _RUNTIME_STATUS_MAX_CYCLES_AGE: Final = 4
 _REQUEST_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 _SOURCE_SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
+_ANALYSIS_STAGE_CODES: Final = frozenset(
+    {
+        "MANIFEST_VALIDATION_FAILED",
+        "DATABASE_OPEN_FAILED",
+        "CHECKPOINT_WINDOW_READ_FAILED",
+        "CHECKPOINT_WINDOW_TOO_LARGE",
+        "CHECKPOINT_DECODE_FAILED",
+        "CHECKPOINT_SEQUENCE_INVALID",
+        "CHECKPOINT_TIME_INVALID",
+        "CYCLE_RECONSTRUCTION_FAILED",
+        "CANDIDATE_ATTRIBUTION_INVALID",
+        "MINT_STATE_READ_FAILED",
+        "MINT_STATE_VALUE_INVALID",
+    }
+)
 
 
 class MintStateAcceptanceControlError(RuntimeError):
@@ -330,7 +345,24 @@ def _process_one_request(
             window_end_unix_ms=request["window_end_unix_ms"],
             evidence_cycle_interval_ms=evidence_cycle_interval_ms,
         )
-    except (MintStateAcceptanceError, OSError, TypeError, ValueError):
+    except MintStateAcceptanceError as error:
+        stage_code = (
+            error.code
+            if error.code in _ANALYSIS_STAGE_CODES
+            else None
+        )
+        return _failure_result(
+            request_id=request_id,
+            expected_release_sha=expected_release_sha,
+            observed_release_sha=observed_release_sha,
+            error_code=(
+                f"ANALYSIS_{stage_code}"
+                if stage_code is not None
+                else "ANALYSIS_FAILED"
+            ),
+            message="mint-state acceptance analysis failed closed",
+        )
+    except (OSError, TypeError, ValueError):
         return _failure_result(
             request_id=request_id,
             expected_release_sha=expected_release_sha,
