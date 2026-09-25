@@ -98,6 +98,50 @@ def test_missing_or_b1_stale_selected_mint_fails() -> None:
     assert stale["selected_stale_mint_count"] == 1
 
 
+def test_missing_mint_followup_is_diagnostic_only_and_still_fails() -> None:
+    sample = MintStateAcceptanceSample(
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        next_mint_observed_at_unix_ms=2_025_000,
+    )
+
+    result = evaluate_mint_state_acceptance_samples(
+        (sample,),
+        max_critical_data_age_ms=900_000,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["selected_missing_mint_count"] == 1
+    assert result["selected_missing_mint_later_observed_count"] == 1
+    assert result["selected_missing_mint_unresolved_count"] == 0
+    assert result["max_selected_missing_mint_followup_delay_ms"] == 25_000
+
+
+def test_missing_mint_without_bounded_followup_is_unresolved() -> None:
+    sample = MintStateAcceptanceSample(
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        next_mint_observed_at_unix_ms=None,
+    )
+
+    result = evaluate_mint_state_acceptance_samples(
+        (sample,),
+        max_critical_data_age_ms=900_000,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["selected_missing_mint_count"] == 1
+    assert result["selected_missing_mint_later_observed_count"] == 0
+    assert result["selected_missing_mint_unresolved_count"] == 1
+    assert result["max_selected_missing_mint_followup_delay_ms"] is None
+
+
 def test_future_mint_row_never_satisfies_historical_selection() -> None:
     result = evaluate_mint_state_acceptance_samples(
         (
