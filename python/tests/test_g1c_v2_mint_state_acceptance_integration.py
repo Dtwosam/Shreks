@@ -49,12 +49,20 @@ def test_production_verifier_requests_sanitized_mint_acceptance_without_permissi
         "/dev/shm/shreks-g1c-v2-mint-state-acceptance.",
         "g1c_v2_mint_state_acceptance_status=%s",
         "HOLD_INSUFFICIENT_EVIDENCE",
-        'mint_state_max_age=900000ms',
-        'mint_state_refresh_age=540000ms',
-        "provider_failures=",
-        "helius_budget_exhausted=true",
+        '"runtime_status"',
+        "shreks.paper_evidence_runtime_status",
+        '"evidence_cycle_interval_ms"',
+        '"mint_state_max_age_ms"',
+        '"mint_state_refresh_age_ms"',
+        '"provider_failures_last_cycle"',
+        '"helius_requests_limit"',
+        '"helius_requests_remaining"',
+        '"helius_budget_exhausted"',
     ):
         assert required in workflow
+
+    assert "PAPER_EVIDENCE_JOURNAL=" not in workflow
+    assert "g1c_v2_mint_state_runtime_thresholds=mismatch" not in workflow
 
     for forbidden in (
         "sudo ",
