@@ -596,95 +596,124 @@ Never claim a phase complete without exact verification evidence.
 
 ---
 
-# 6. CURRENT POSITION — 2026-09-24
+# 6. CURRENT POSITION — 2026-09-26
 
-### Canonical production release
+### Canonical production PAPER release
 
-The currently deployed immutable PAPER release is:
+The latest physically accepted immutable PAPER release is:
 
-`0219b5b5149e6ca98c9c76365242e35ab64204da`
+`816e7c6591d216369b60f893cc5dfe5785e88652`
 
-Immutable release:
-
-`shreks-0219b5b5149e6ca98c9c76365242e35ab64204da`
-
-This release seals the G1C V2 PAPER mint-state pre-expiry headroom repair. The
-behavior implementation merged as
-`61302828cf0621783fc5801c886597b7dd0c4651` in PR #487.
-
-For the exact sealed release:
-
-- merged-main behavior CI `36061943104` completed successfully;
-- immutable release workflow `36062738641` completed successfully;
-- protected deploy/verify workflow `36063304557` completed successfully;
-- the deploy verifier proved:
-  - `current_release=/opt/shreks/releases/0219b5b5149e6ca98c9c76365242e35ab64204da`;
-  - `expected_release=/opt/shreks/releases/0219b5b5149e6ca98c9c76365242e35ab64204da`;
-  - release-manifest source SHA equals the sealed SHA;
-  - `paper_manifest_manager_status=MATCHED_CURRENT_RELEASE`;
-  - observer, PAPER-evidence, and PAPER-campaign services were active/running
-    with `NRestarts=0` at verification;
-  - FL9 V2 runtime discovery returned `FOUND_COMPATIBLE` for the active
-    schema-v2 WSOL PAPER manifest.
-
-The successful deploy verifier proves exact-release installation and immediate
-runtime health. It does **not** by itself satisfy the behavioral physical-host
-acceptance required by the mint-state pre-expiry seal because that verifier does
-not read the historical PAPER evidence needed to prove refresh timing.
-
-### Current sealed PAPER evidence behavior
-
-The 2026-09-24 production repair sequence now includes:
-
-- exact-quote PAPER evidence candidate-selector alignment;
-- discovery-bootstrap sampling priority;
-- denser fresh-pair sampling for the B2 one-minute anchor;
-- refresh of stale pre-existing Helius mint-state evidence;
-- bounded proactive mint-state refresh before B1 freshness expiry.
-
-For the active production configuration, the latest repair derives:
+Protected deploy/verify run `36178349929` proved for that exact release:
 
 ```text
-B1_MAX_CRITICAL_DATA_AGE_MS=900000
-PAPER_EVIDENCE_CYCLE_INTERVAL_MS=60000
-PAPER_MINT_STATE_REFRESH_AGE_MS=540000
+g1c_v2_mint_state_physical_acceptance=PASS
+fl9_v2_discovery_status=FOUND_COMPATIBLE
+paper_manifest_manager_status=MATCHED_CURRENT_RELEASE
 ```
 
-The 540,000 ms collection threshold is operational headroom only. B1 safety
-validity remains 900,000 ms. Candidate ordering, holder refresh semantics,
-Jupiter quote semantics, B2 feature schema, strategy thresholds, and the
-protected campaign manifest are unchanged by this repair.
+The physical acceptance record is
+`docs/superpowers/specs/2026-09-25-g1c-v2-mint-state-physical-acceptance-pass.md`.
 
-### Active next gate — physical acceptance of pre-expiry mint refresh
+The release-bound mint-state gate is therefore closed. Do not continue treating
+the older 2026-09-24 pre-expiry mint-refresh acceptance as the active next gate.
 
-Do not invent another trading-code or threshold change before collecting the
-required physical evidence from the exact deployed release.
+### Repository architecture correction
 
-Acceptance must establish all of the following on the production PAPER host:
+Current `main` at planning time is:
 
-1. startup/runtime evidence reports
-   `mint_state_max_age=900000ms` and
-   `mint_state_refresh_age=540000ms`;
-2. selected PAPER candidates whose Helius mint-state row crosses the derived
-   540,000 ms refresh age receive a bounded refresh attempt before the unchanged
-   900,000 ms B1 expiry boundary;
-3. selected PAPER evaluations are not blocked solely by mint-state
-   `CRITICAL_DATA_STALE` when provider transport/budget succeeds;
-4. provider failures remain fail-closed and the Helius per-process request
-   budget is not exhausted;
-5. historical point-in-time replay remains unchanged.
+`680fe3ff4208af9d7d5241f2f42d20714a814867`
 
-If that evidence passes, record a physical-acceptance seal before moving to the
-next strategy/evaluation gate. If it fails, the observed failure becomes the
-next implementation slice; do not weaken B1, selector, strategy, or risk
-thresholds merely to create PAPER trades.
+That commit makes the self-improvement loop explicit and makes a scoring control
+path non-negotiably forbidden.
+
+The intended decision path is:
+
+```text
+event/state
+-> future-path forecasts
+-> execution economics
+-> expected net value
+-> BUY/SKIP/HOLD/REDUCE/SELL comparison
+-> independent risk
+-> PAPER/LIVE execution when authorized
+-> record actual + counterfactual outcomes
+-> retrain challengers
+```
+
+### Known production architecture debt
+
+The active production PAPER service still runs the legacy commissioning path:
+
+```text
+shreks-paper-campaign.service
+-> shreks_brain.observer_campaign.runtime
+-> legacy paper loop
+-> score_candidate(...)
+-> decide_entry(...)
+-> score-threshold entry approval
+```
+
+This path is operationally proven PAPER infrastructure but is no longer an
+acceptable target trading-intelligence architecture.
+
+Do not:
+
+- tune or extend its scoring thresholds;
+- add new scoring authority;
+- build new score-backed promotion/runtime bridges;
+- interpret legacy score-gated inactivity as learned Fast Lane judgment.
+
+### Learned replacement foundations already present
+
+The repository already contains:
+
+- immutable Fast Lane forecast champion artifacts;
+- Rust `shreks-fast-campaign-decision`;
+- direct continuous `BUY/SKIP/HOLD/REDUCE/SELL` comparison;
+- `run_fast_learned_chronological_campaign(...)`;
+- `run_fast_campaign_paper_candidate(...)`;
+- `execute_fast_paper_buy(...)`;
+- score-free `assess_fast_entry_risk(...)`;
+- the same authoritative `PaperLedger` accounting type used by PAPER
+  execution.
+
+The missing boundary is production runtime integration, not another scoring or
+model-fitting authority layer.
+
+### Active next gate — migrate PAPER authority to the learned Fast Lane path
+
+The implementation sequence is frozen in:
+
+`docs/superpowers/plans/2026-09-26-fast-lane-learned-paper-runtime-migration.md`
+
+Proceed in this order:
+
+1. define a score-free Fast Lane PAPER runtime manifest/state contract;
+2. expose bounded incremental point-in-time Fast Lane decision rows from the
+   canonical observer evidence path;
+3. run the learned champion continuously in an isolated shadow/PAPER ledger;
+4. prove restart, accounting, execution economics, risk, and latency;
+5. cut over the production PAPER service only at a reconciled flat authoritative
+   ledger boundary;
+6. preserve the existing `PaperLedger` across cutover;
+7. physically verify exact champion/runtime identity and no score imports;
+8. only after learned PAPER stability, automate challenger training and shadow
+   evaluation;
+9. keep champion replacement behind a separate explicit proof gate;
+10. keep LIVE disabled until FL12.
+
+After Fast Lane PAPER cutover, rollback may use a previous known-good Fast Lane
+PAPER release or halt/observe-only. Do not restore the score-gated runtime as
+production trading authority.
 
 Current authority remains:
 
 ```text
-MANIFEST_ROTATION_AUTHORITY=NOT_GRANTED
+LEGACY_SCORE_PAPER_RUNTIME=KNOWN_ARCHITECTURE_DEBT_DO_NOT_EXTEND
+FAST_LANE_PAPER_PRODUCTION_AUTHORITY=NOT_YET_GRANTED
 SCORING_CONTROL_PATH=FORBIDDEN
-MODEL_FITTING_AUTHORITY=NOT_GRANTED
+MODEL_FITTING_PRODUCTION_AUTHORITY=NOT_GRANTED
 PAPER_PROMOTION=BLOCKED
 LIVE=DISABLED
 ```
