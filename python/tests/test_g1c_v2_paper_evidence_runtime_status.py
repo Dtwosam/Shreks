@@ -91,7 +91,13 @@ def test_runtime_status_accepts_fresh_cycle_complete_operational_evidence(
     (
         ({"release_source_sha": "2" * 40}, "release binding"),
         ({"generated_at_unix_ms": NOW + 30_001}, "future"),
-        ({"generated_at_unix_ms": NOW - 240_001}, "stale"),
+        (
+            {
+                "generated_at_unix_ms": NOW - 240_001,
+                "cycle_as_of_unix_ms": NOW - 240_001,
+            },
+            "stale",
+        ),
         ({"state": "STARTED", "completed_cycle_count": 0, "cycle_as_of_unix_ms": None}, "cycle"),
         ({"provider_failures_last_cycle": 1}, "provider"),
         (
