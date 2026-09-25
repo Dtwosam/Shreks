@@ -69,6 +69,7 @@ def _write_request(marker_directory: Path, *, mode: int = 0o644) -> Path:
 
 def _runtime_status(path: Path) -> Path:
     document = {
+        "release_source_sha": SHA,
         "schema_name": "shreks.paper_evidence_runtime_status",
         "schema_version": 1,
         "state": "CYCLE_COMPLETE",
@@ -165,6 +166,7 @@ def test_trusted_request_is_release_bound_and_read_only(
     assert result["scoring_authority"] == "NOT_GRANTED"
     assert result["paper_promotion_authority"] == "BLOCKED"
     assert result["live_authority"] == "DISABLED"
+    assert result["runtime_status"]["release_source_sha"] == SHA
     assert result["runtime_status"]["state"] == "CYCLE_COMPLETE"
     assert result["runtime_status"]["provider_failures_last_cycle"] == 0
     assert result["runtime_status"]["helius_budget_exhausted"] is False
