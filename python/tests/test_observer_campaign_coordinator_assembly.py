@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import sqlite3
 
+import shreks_brain.observer_campaign.coordinator as coordinator
 from shreks_brain.observer_campaign.coordinator import (
     OBSERVER_PAPER_CAMPAIGN_CYCLE_AUDIT_SCHEMA_VERSION,
     ObserverPaperCampaignSelectionPolicy,
@@ -175,3 +176,36 @@ def test_candidate_specific_identity_changes_only_candidate_attribution(tmp_path
         candidate_id=1,
         output_mint=MINT,
     )
+
+
+def test_selection_only_replay_matches_full_coordinator_selection(tmp_path) -> None:
+    database = tmp_path / "observer.db"
+    _seed_two_candidates(database)
+    state = _state()
+    template = _bundle()
+    policy = ObserverPaperCampaignSelectionPolicy(
+        recent_lookback_ms=100_000,
+        max_entry_candidates=2,
+    )
+
+    _cycle, audit = assemble_observer_paper_campaign_cycle(
+        database,
+        state,
+        AS_OF,
+        template,
+        _environment(),
+        policy,
+        global_risk_halt=False,
+    )
+
+    selected = coordinator.select_observer_paper_campaign_candidates(
+        database,
+        state,
+        AS_OF,
+        template,
+        policy,
+        quote_usd_valuation_mode=None,
+    )
+
+    assert tuple(item.candidate_id for item in selected) == audit.selected_candidate_ids
+    assert tuple(item.mint for item in selected) == audit.selected_mints
