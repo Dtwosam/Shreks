@@ -263,6 +263,11 @@ def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
     assert "CHECKPOINT_DECODE" in stages
     assert "CYCLE_RECONSTRUCTION" in stages
     assert "CYCLE_RECONSTRUCTION_STORE_INIT" in stages
+    assert "CYCLE_RECONSTRUCTION_REGIME_CANDIDATE_SCAN" in stages
+    assert "CYCLE_RECONSTRUCTION_REGIME_MARKET" in stages
+    assert "CYCLE_RECONSTRUCTION_REGIME_SAFETY" in stages
+    assert "CYCLE_RECONSTRUCTION_REGIME_ENTRY_QUOTE" in stages
+    assert "CYCLE_RECONSTRUCTION_REGIME_FINALIZE" in stages
     assert stages[-1] == "ANALYSIS_COMPLETE"
     assert set(stages) <= {
         "MANIFEST_VALIDATION",
@@ -276,6 +281,11 @@ def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
         "CYCLE_RECONSTRUCTION_QUOTE",
         "CYCLE_RECONSTRUCTION_SAFETY_FEATURES",
         "CYCLE_RECONSTRUCTION_REGIME",
+        "CYCLE_RECONSTRUCTION_REGIME_CANDIDATE_SCAN",
+        "CYCLE_RECONSTRUCTION_REGIME_MARKET",
+        "CYCLE_RECONSTRUCTION_REGIME_SAFETY",
+        "CYCLE_RECONSTRUCTION_REGIME_ENTRY_QUOTE",
+        "CYCLE_RECONSTRUCTION_REGIME_FINALIZE",
         "CYCLE_RECONSTRUCTION_RISK",
         "CYCLE_RECONSTRUCTION_FINALIZE",
         "CYCLE_RECONSTRUCTION_AGGREGATION",
