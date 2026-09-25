@@ -347,3 +347,58 @@ def test_historical_analyzer_classifies_reconstruction_family_without_leaking_de
 
     assert captured.value.code == expected_code
     assert "secret" not in str(captured.value)
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    (
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: aggregate regime consumed evidence is not inside the requested window",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: market snapshot secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: safety evidence secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: opaque secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: unrelated regime secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED",
+        ),
+    ),
+)
+def test_historical_analyzer_refines_regime_reconstruction_family_without_leaking_details(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+    expected_code: str,
+) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+
+    def fail_reconstruction(*_args, **_kwargs):
+        raise ObserverCampaignCoordinatorError(message)
+
+    monkeypatch.setattr(
+        acceptance,
+        "assemble_observer_paper_campaign_cycle",
+        fail_reconstruction,
+    )
+
+    with pytest.raises(MintStateAcceptanceError) as captured:
+        analyze_mint_state_acceptance(
+            config.observer_database_path,
+            config.manifest_path,
+            window_start_unix_ms=as_of - 1,
+            window_end_unix_ms=as_of,
+            evidence_cycle_interval_ms=60_000,
+        )
+
+    assert captured.value.code == expected_code
+    assert "secret" not in str(captured.value)
