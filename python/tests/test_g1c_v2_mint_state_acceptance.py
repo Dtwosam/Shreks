@@ -272,3 +272,78 @@ def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
         "MINT_STATE_READ",
         "ANALYSIS_COMPLETE",
     }
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_code"),
+    (
+        (
+            "required observer candidate mint 'secret-mint' has no point-in-time market evidence",
+            "CYCLE_RECONSTRUCTION_REQUIRED_MINT_FAILED",
+        ),
+        (
+            "recent observer candidate mint 'secret-mint' is ambiguous",
+            "CYCLE_RECONSTRUCTION_CANDIDATE_SELECTION_FAILED",
+        ),
+        (
+            "observer campaign recent-candidate read failed: secret sqlite detail",
+            "CYCLE_RECONSTRUCTION_CANDIDATE_SELECTION_FAILED",
+        ),
+        (
+            "observer candidate 77 assembly failed: market snapshot secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_MARKET_FAILED",
+        ),
+        (
+            "observer candidate 77 assembly failed: quote USD valuation secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_QUOTE_FAILED",
+        ),
+        (
+            "observer candidate 77 assembly failed: safety evidence secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_SAFETY_FAILED",
+        ),
+        (
+            "observer candidate 77 assembly failed: regime market secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED",
+        ),
+        (
+            "observer candidate 77 assembly failed: opaque secret detail",
+            "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED",
+        ),
+        (
+            "aggregate paper cycle is invalid: secret aggregate detail",
+            "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED",
+        ),
+        (
+            "unrecognized secret reconstruction detail",
+            "CYCLE_RECONSTRUCTION_FAILED",
+        ),
+    ),
+)
+def test_historical_analyzer_classifies_reconstruction_family_without_leaking_details(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    message: str,
+    expected_code: str,
+) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+
+    def fail_reconstruction(*_args, **_kwargs):
+        raise ObserverCampaignCoordinatorError(message)
+
+    monkeypatch.setattr(
+        acceptance,
+        "assemble_observer_paper_campaign_cycle",
+        fail_reconstruction,
+    )
+
+    with pytest.raises(MintStateAcceptanceError) as captured:
+        analyze_mint_state_acceptance(
+            config.observer_database_path,
+            config.manifest_path,
+            window_start_unix_ms=as_of - 1,
+            window_end_unix_ms=as_of,
+            evidence_cycle_interval_ms=60_000,
+        )
+
+    assert captured.value.code == expected_code
+    assert "secret" not in str(captured.value)
