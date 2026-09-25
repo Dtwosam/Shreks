@@ -217,6 +217,79 @@ fn fresh_launch_candidates_prioritize_missing_mint_first_hydration_before_limit(
 }
 
 #[test]
+fn future_helius_mint_state_does_not_satisfy_first_hydration_readiness() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("future-mint-readiness");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let hydrated = db.upsert_candidate(&candidate("MintHydrated", 100)).unwrap();
+    let future_only = db.upsert_candidate(&candidate("MintFutureOnly", 200)).unwrap();
+
+    db.insert_market_snapshot(
+        hydrated,
+        &snapshot("MintHydrated", AS_OF - 1_000, AS_OF - 600_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        future_only,
+        &snapshot("MintFutureOnly", AS_OF - 2_000, AS_OF - 30_000),
+    )
+    .unwrap();
+
+    db.insert_mint_state(
+        hydrated,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintHydrated".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: AS_OF - 5_000,
+        },
+    )
+    .unwrap();
+    db.insert_mint_state(
+        future_only,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintFutureOnly".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 101,
+            observed_at_unix_ms: AS_OF + 1,
+        },
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            WSOL,
+            1,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, future_only);
+
+    cleanup_dir(&root);
+}
+
+#[test]
 fn fresh_launch_candidates_use_too_young_when_entry_window_is_empty() {
     const AS_OF: i64 = 2_000_000;
 
