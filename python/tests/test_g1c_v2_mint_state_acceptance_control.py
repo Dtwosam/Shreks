@@ -67,6 +67,44 @@ def _write_request(marker_directory: Path, *, mode: int = 0o644) -> Path:
     return path
 
 
+def _runtime_status(path: Path) -> Path:
+    document = {
+        "schema_name": "shreks.paper_evidence_runtime_status",
+        "schema_version": 1,
+        "state": "CYCLE_COMPLETE",
+        "process_started_at_unix_ms": 1_000_000,
+        "generated_at_unix_ms": NOW - 10_000,
+        "completed_cycle_count": 3,
+        "cycle_as_of_unix_ms": NOW - 10_000,
+        "evidence_cycle_interval_ms": 60_000,
+        "mint_state_max_age_ms": 900_000,
+        "mint_state_refresh_age_ms": 540_000,
+        "provider_failures_last_cycle": 0,
+        "helius_requests_attempted": 7,
+        "helius_requests_limit": 500,
+        "helius_requests_remaining": 493,
+        "helius_budget_exhausted": False,
+        "candidates_selected_last_cycle": 2,
+        "mint_states_stored_last_cycle": 1,
+        "observation_authority": "DERIVED_OPERATIONAL",
+        "paper_promotion_authority": "BLOCKED",
+        "live_authority": "DISABLED",
+    }
+    path.write_text(
+        json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+    return path
+
+
 def _analysis() -> dict[str, object]:
     return {
         "schema_name": "shreks.g1c_v2_mint_state_acceptance",
@@ -96,6 +134,7 @@ def test_trusted_request_is_release_bound_and_read_only(
     marker_directory.mkdir()
     _write_request(marker_directory)
     current = _release_tree(tmp_path)
+    runtime_status_path = _runtime_status(tmp_path / "paper-evidence-status.json")
     calls: list[tuple[object, ...]] = []
 
     def analyze(*args, **kwargs):
@@ -112,6 +151,7 @@ def test_trusted_request_is_release_bound_and_read_only(
         expected_owner_uid=os.getuid(),
         expected_marker_directory_owner_uid=os.getuid(),
         evidence_cycle_interval_ms=60_000,
+        runtime_status_path=runtime_status_path,
         now_unix_ms=NOW,
     )
 
@@ -125,6 +165,9 @@ def test_trusted_request_is_release_bound_and_read_only(
     assert result["scoring_authority"] == "NOT_GRANTED"
     assert result["paper_promotion_authority"] == "BLOCKED"
     assert result["live_authority"] == "DISABLED"
+    assert result["runtime_status"]["state"] == "CYCLE_COMPLETE"
+    assert result["runtime_status"]["provider_failures_last_cycle"] == 0
+    assert result["runtime_status"]["helius_budget_exhausted"] is False
     assert calls
 
 
