@@ -20,8 +20,32 @@ ACCEPTANCE_SCHEMA_VERSION = 1
 _MAX_CHECKPOINT_ROWS = 2_048
 
 
+_ERROR_CODES = frozenset(
+    {
+        "INPUT_INVALID",
+        "MANIFEST_VALIDATION_FAILED",
+        "DATABASE_OPEN_FAILED",
+        "CHECKPOINT_WINDOW_READ_FAILED",
+        "CHECKPOINT_WINDOW_TOO_LARGE",
+        "CHECKPOINT_DECODE_FAILED",
+        "CHECKPOINT_SEQUENCE_INVALID",
+        "CHECKPOINT_TIME_INVALID",
+        "CYCLE_RECONSTRUCTION_FAILED",
+        "CANDIDATE_ATTRIBUTION_INVALID",
+        "MINT_STATE_READ_FAILED",
+        "MINT_STATE_VALUE_INVALID",
+    }
+)
+
+
 class MintStateAcceptanceError(ValueError):
     """Raised when read-only mint-state acceptance evidence cannot be trusted."""
+
+    def __init__(self, message: str, *, code: str = "INPUT_INVALID") -> None:
+        if code not in _ERROR_CODES:
+            raise ValueError("unsupported mint-state acceptance error code")
+        super().__init__(message)
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,20 +185,40 @@ def analyze_mint_state_acceptance(
         "evidence_cycle_interval_ms", evidence_cycle_interval_ms
     )
 
-    database = _require_existing_file(database_path, "observer database")
-    manifest_file = _require_existing_file(manifest_path, "campaign manifest")
+    try:
+        database = _require_existing_file(database_path, "observer database")
+    except MintStateAcceptanceError as error:
+        raise MintStateAcceptanceError(
+            "observer database validation failed",
+            code="DATABASE_OPEN_FAILED",
+        ) from error
+    try:
+        manifest_file = _require_existing_file(manifest_path, "campaign manifest")
+    except MintStateAcceptanceError as error:
+        raise MintStateAcceptanceError(
+            "campaign manifest validation failed",
+            code="MANIFEST_VALIDATION_FAILED",
+        ) from error
     try:
         manifest = decode_observer_paper_campaign_runtime_manifest(
             manifest_file.read_bytes()
         )
     except (OSError, ObserverPaperCampaignRuntimeManifestError) as error:
         raise MintStateAcceptanceError(
-            "campaign manifest validation failed"
+            "campaign manifest validation failed",
+            code="MANIFEST_VALIDATION_FAILED",
         ) from error
 
-    connection = _connect_read_only(database)
     try:
-        previous_row = connection.execute(
+        connection = _connect_read_only(database)
+    except MintStateAcceptanceError as error:
+        raise MintStateAcceptanceError(
+            "observer database could not be opened read-only",
+            code="DATABASE_OPEN_FAILED",
+        ) from error
+    try:
+        try:
+            previous_row = connection.execute(
             """SELECT sequence, state_as_of_unix_ms, payload_sha256, payload_json
                FROM paper_loop_checkpoints
                WHERE run_id = ?
@@ -182,8 +226,8 @@ def analyze_mint_state_acceptance(
                ORDER BY sequence DESC
                LIMIT 1""",
             (manifest.paper_run_id, window_start_unix_ms),
-        ).fetchone()
-        rows = connection.execute(
+            ).fetchone()
+            rows = connection.execute(
             """SELECT sequence, state_as_of_unix_ms, payload_sha256, payload_json
                FROM paper_loop_checkpoints
                WHERE run_id = ?
@@ -196,10 +240,16 @@ def analyze_mint_state_acceptance(
                 window_end_unix_ms,
                 _MAX_CHECKPOINT_ROWS + 1,
             ),
-        ).fetchall()
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise MintStateAcceptanceError(
+                "acceptance checkpoint window read failed",
+                code="CHECKPOINT_WINDOW_READ_FAILED",
+            ) from error
         if len(rows) > _MAX_CHECKPOINT_ROWS:
             raise MintStateAcceptanceError(
-                "acceptance checkpoint window exceeds bounded row limit"
+                "acceptance checkpoint window exceeds bounded row limit",
+                code="CHECKPOINT_WINDOW_TOO_LARGE",
             )
 
         if previous_row is None:
@@ -216,11 +266,13 @@ def analyze_mint_state_acceptance(
             checkpoint = _decode_checkpoint_row(row)
             if checkpoint.sequence != previous_sequence + 1:
                 raise MintStateAcceptanceError(
-                    "paper checkpoint sequence is not contiguous"
+                    "paper checkpoint sequence is not contiguous",
+                    code="CHECKPOINT_SEQUENCE_INVALID",
                 )
             if checkpoint.state_as_of_unix_ms < previous_state.last_cycle_at_unix_ms:
                 raise MintStateAcceptanceError(
-                    "paper checkpoint time moved backwards"
+                    "paper checkpoint time moved backwards",
+                    code="CHECKPOINT_TIME_INVALID",
                 )
 
             quote_policy = manifest.quote_usd_valuation_policy
@@ -239,24 +291,37 @@ def analyze_mint_state_acceptance(
                 )
             except (ObserverCampaignCoordinatorError, OSError, TypeError, ValueError) as error:
                 raise MintStateAcceptanceError(
-                    "historical PAPER candidate reconstruction failed"
+                    "historical PAPER candidate reconstruction failed",
+                    code="CYCLE_RECONSTRUCTION_FAILED",
                 ) from error
 
             if len(audit.selected_candidate_ids) != len(audit.selected_mints):
                 raise MintStateAcceptanceError(
-                    "historical PAPER candidate attribution is inconsistent"
+                    "historical PAPER candidate attribution is inconsistent",
+                    code="CANDIDATE_ATTRIBUTION_INVALID",
                 )
             for candidate_id, mint in zip(
                 audit.selected_candidate_ids,
                 audit.selected_mints,
                 strict=True,
             ):
-                current, previous_mint = _mint_state_times(
-                    connection,
-                    candidate_id=candidate_id,
-                    mint=mint,
-                    as_of_unix_ms=checkpoint.state_as_of_unix_ms,
-                )
+                try:
+                    current, previous_mint = _mint_state_times(
+                        connection,
+                        candidate_id=candidate_id,
+                        mint=mint,
+                        as_of_unix_ms=checkpoint.state_as_of_unix_ms,
+                    )
+                except sqlite3.Error as error:
+                    raise MintStateAcceptanceError(
+                        "historical mint-state read failed",
+                        code="MINT_STATE_READ_FAILED",
+                    ) from error
+                except MintStateAcceptanceError as error:
+                    raise MintStateAcceptanceError(
+                        "historical mint-state value is invalid",
+                        code="MINT_STATE_VALUE_INVALID",
+                    ) from error
                 samples.append(
                     MintStateAcceptanceSample(
                         candidate_id=candidate_id,
@@ -288,7 +353,8 @@ def analyze_mint_state_acceptance(
         raise
     except sqlite3.Error as error:
         raise MintStateAcceptanceError(
-            "acceptance SQLite read failed"
+            "acceptance SQLite read failed",
+            code="CHECKPOINT_WINDOW_READ_FAILED",
         ) from error
     finally:
         connection.close()
@@ -299,7 +365,8 @@ def _decode_checkpoint_row(row: sqlite3.Row):
     checksum = row["payload_sha256"]
     if not isinstance(payload, str) or not isinstance(checksum, str):
         raise MintStateAcceptanceError(
-            "paper checkpoint row contains invalid payload metadata"
+            "paper checkpoint row contains invalid payload metadata",
+            code="CHECKPOINT_DECODE_FAILED",
         )
     try:
         record = decode_paper_checkpoint(
@@ -308,14 +375,16 @@ def _decode_checkpoint_row(row: sqlite3.Row):
         )
     except (PaperCheckpointError, TypeError, ValueError) as error:
         raise MintStateAcceptanceError(
-            "paper checkpoint validation failed"
+            "paper checkpoint validation failed",
+            code="CHECKPOINT_DECODE_FAILED",
         ) from error
     if (
         record.sequence != row["sequence"]
         or record.state_as_of_unix_ms != row["state_as_of_unix_ms"]
     ):
         raise MintStateAcceptanceError(
-            "paper checkpoint row metadata does not match payload"
+            "paper checkpoint row metadata does not match payload",
+            code="CHECKPOINT_DECODE_FAILED",
         )
     return record
 
@@ -368,7 +437,8 @@ def _connect_read_only(path: Path) -> sqlite3.Connection:
         return connection
     except sqlite3.Error as error:
         raise MintStateAcceptanceError(
-            "observer database could not be opened read-only"
+            "observer database could not be opened read-only",
+            code="DATABASE_OPEN_FAILED",
         ) from error
 
 
@@ -385,7 +455,8 @@ def _require_existing_file(value: str | Path, label: str) -> Path:
 def _sqlite_non_negative_int(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise MintStateAcceptanceError(
-            f"{label} is not a non-negative integer"
+            f"{label} is not a non-negative integer",
+            code="MINT_STATE_VALUE_INVALID",
         )
     return value
 
