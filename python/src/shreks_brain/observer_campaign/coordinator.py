@@ -468,6 +468,67 @@ class ObserverCampaignCandidateStore:
             ) from error
 
 
+def select_observer_paper_campaign_candidates(
+    database_path: str | os.PathLike[str],
+    state: PaperLoopState,
+    as_of_unix_ms: int,
+    policy_bundle: ObserverFreshLaunchPolicyBundle,
+    selection_policy: ObserverPaperCampaignSelectionPolicy,
+    *,
+    quote_usd_valuation_mode: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
+) -> tuple[ObserverCampaignCandidate, ...]:
+    """Replay the coordinator's exact point-in-time candidate selection only."""
+    if type(state) is not PaperLoopState:
+        raise ObserverCampaignCoordinatorError("state must be an exact PaperLoopState")
+    _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+    if type(policy_bundle) is not ObserverFreshLaunchPolicyBundle:
+        raise ObserverCampaignCoordinatorError(
+            "policy_bundle must be an exact ObserverFreshLaunchPolicyBundle"
+        )
+    if type(selection_policy) is not ObserverPaperCampaignSelectionPolicy:
+        raise ObserverCampaignCoordinatorError(
+            "selection_policy must be an exact ObserverPaperCampaignSelectionPolicy"
+        )
+    try:
+        canonical_quote_usd_valuation_mode = (
+            validate_observer_paper_quote_usd_valuation_mode(
+                quote_usd_valuation_mode
+            )
+        )
+    except ValueError as error:
+        raise ObserverCampaignCoordinatorError(str(error)) from error
+
+    _emit_progress(progress_callback, "STORE_INIT")
+    store = ObserverCampaignCandidateStore(database_path)
+    required_mints = tuple(
+        managed.exit_state.mint for managed in state.managed_positions
+    )
+    if state.pending_entry is not None:
+        required_mints += (state.pending_entry.intent.mint,)
+
+    _emit_progress(progress_callback, "SELECTION")
+    required = store.resolve_required_mints(
+        tuple(dict.fromkeys(required_mints)),
+        as_of_unix_ms=as_of_unix_ms,
+    )
+    recent = store.recent_candidates(
+        as_of_unix_ms=as_of_unix_ms,
+        policy=selection_policy,
+        pair_age_window_ms=(
+            int(policy_bundle.fresh_launch_policy.min_age_seconds * 1000),
+            int(policy_bundle.fresh_launch_policy.max_age_seconds * 1000),
+        ),
+        market_read_policy=policy_bundle.market_read_policy,
+        required_quote_mint=(
+            None
+            if canonical_quote_usd_valuation_mode is None
+            else policy_bundle.quote_asset.mint
+        ),
+    )
+    return _merge_selected_candidates(required, recent)
+
+
 def assemble_observer_paper_campaign_cycle(
     database_path: str | os.PathLike[str],
     state: PaperLoopState,
@@ -511,34 +572,15 @@ def assemble_observer_paper_campaign_cycle(
     except ValueError as error:
         raise ObserverCampaignCoordinatorError(str(error)) from error
 
-    _emit_progress(progress_callback, "STORE_INIT")
-    store = ObserverCampaignCandidateStore(database_path)
-    required_mints = tuple(
-        managed.exit_state.mint for managed in state.managed_positions
+    selected = select_observer_paper_campaign_candidates(
+        database_path,
+        state,
+        as_of_unix_ms,
+        policy_bundle,
+        selection_policy,
+        quote_usd_valuation_mode=canonical_quote_usd_valuation_mode,
+        progress_callback=progress_callback,
     )
-    if state.pending_entry is not None:
-        required_mints += (state.pending_entry.intent.mint,)
-
-    _emit_progress(progress_callback, "SELECTION")
-    required = store.resolve_required_mints(
-        tuple(dict.fromkeys(required_mints)),
-        as_of_unix_ms=as_of_unix_ms,
-    )
-    recent = store.recent_candidates(
-        as_of_unix_ms=as_of_unix_ms,
-        policy=selection_policy,
-        pair_age_window_ms=(
-            int(policy_bundle.fresh_launch_policy.min_age_seconds * 1000),
-            int(policy_bundle.fresh_launch_policy.max_age_seconds * 1000),
-        ),
-        market_read_policy=policy_bundle.market_read_policy,
-        required_quote_mint=(
-            None
-            if canonical_quote_usd_valuation_mode is None
-            else policy_bundle.quote_asset.mint
-        ),
-    )
-    selected = _merge_selected_candidates(required, recent)
 
     components: list[tuple[ObserverCampaignCandidate, PaperCycleInput, str]] = []
     for candidate in selected:

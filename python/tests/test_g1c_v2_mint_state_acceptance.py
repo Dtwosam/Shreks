@@ -192,6 +192,33 @@ def _one_checkpoint_runtime(tmp_path):
     return config, AS_OF
 
 
+
+
+def test_historical_analyzer_does_not_rebuild_full_paper_cycles(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+
+    def fail_full_cycle(*_args, **_kwargs):
+        raise AssertionError("full PAPER cycle assembly must not run")
+
+    monkeypatch.setattr(
+        acceptance,
+        "assemble_observer_paper_campaign_cycle",
+        fail_full_cycle,
+    )
+
+    result = analyze_mint_state_acceptance(
+        config.observer_database_path,
+        config.manifest_path,
+        window_start_unix_ms=as_of - 1,
+        window_end_unix_ms=as_of,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["reconstructed_checkpoint_count"] == 1
+
 def test_historical_analyzer_classifies_cycle_reconstruction_failure(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,7 +230,7 @@ def test_historical_analyzer_classifies_cycle_reconstruction_failure(
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
@@ -342,7 +369,7 @@ def test_historical_analyzer_classifies_reconstruction_family_without_leaking_de
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
@@ -421,7 +448,7 @@ def test_historical_analyzer_refines_regime_reconstruction_family_without_leakin
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
