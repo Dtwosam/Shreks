@@ -38,6 +38,10 @@ _ERROR_CODES = frozenset(
         "CYCLE_RECONSTRUCTION_COMPONENT_QUOTE_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_SAFETY_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED",
         "CANDIDATE_ATTRIBUTION_INVALID",
@@ -526,6 +530,9 @@ def _classify_cycle_reconstruction_error(
 
     if message.startswith("observer candidate ") and " assembly failed:" in message:
         detail = message.split(" assembly failed:", 1)[1]
+        regime_code = _classify_regime_reconstruction_detail(detail)
+        if regime_code is not None:
+            return regime_code
         if any(
             token in detail
             for token in (
@@ -573,6 +580,44 @@ def _classify_cycle_reconstruction_error(
         return "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED"
 
     return "CYCLE_RECONSTRUCTION_FAILED"
+
+
+def _classify_regime_reconstruction_detail(detail: str) -> str | None:
+    canonical = detail.strip().lower()
+
+    if "aggregate regime consumed evidence is not inside the requested window" in canonical:
+        return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED"
+
+    replay_prefix = "observer aggregate regime replay failed:"
+    if replay_prefix in canonical:
+        nested = canonical.split(replay_prefix, 1)[1]
+        if any(
+            token in nested
+            for token in (
+                "safety",
+                "critical data",
+                "mint state",
+                "holder",
+                "authority",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED"
+        if any(
+            token in nested
+            for token in (
+                "market",
+                "snapshot",
+                "price",
+                "liquidity",
+                "volume",
+                "pair",
+                "candidate",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED"
+        return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED"
+
+    return None
 
 
 def _emit_progress(
