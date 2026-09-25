@@ -71,6 +71,7 @@ class MintStateAcceptanceSample:
     decision_as_of_unix_ms: int
     mint_observed_at_unix_ms: int | None
     previous_mint_observed_at_unix_ms: int | None
+    next_mint_observed_at_unix_ms: int | None = None
 
     def __post_init__(self) -> None:
         _require_positive_int("candidate_id", self.candidate_id)
@@ -83,6 +84,10 @@ class MintStateAcceptanceSample:
         _require_optional_non_negative_int(
             "previous_mint_observed_at_unix_ms",
             self.previous_mint_observed_at_unix_ms,
+        )
+        _require_optional_non_negative_int(
+            "next_mint_observed_at_unix_ms",
+            self.next_mint_observed_at_unix_ms,
         )
 
 
@@ -123,19 +128,35 @@ def evaluate_mint_state_acceptance_samples(
     )
 
     missing = 0
+    missing_later_observed = 0
+    missing_unresolved = 0
     stale = 0
     invalid = 0
     max_selected_age: int | None = None
+    max_missing_followup_delay: int | None = None
     proactive_transitions: set[tuple[int, int, int]] = set()
 
     for sample in samples:
         current = sample.mint_observed_at_unix_ms
         previous = sample.previous_mint_observed_at_unix_ms
+        next_mint = sample.next_mint_observed_at_unix_ms
 
         if current is None:
             missing += 1
             if previous is not None:
                 invalid += 1
+            if next_mint is None:
+                missing_unresolved += 1
+            elif next_mint <= sample.decision_as_of_unix_ms:
+                invalid += 1
+            else:
+                missing_later_observed += 1
+                followup_delay_ms = next_mint - sample.decision_as_of_unix_ms
+                max_missing_followup_delay = (
+                    followup_delay_ms
+                    if max_missing_followup_delay is None
+                    else max(max_missing_followup_delay, followup_delay_ms)
+                )
             continue
         if current > sample.decision_as_of_unix_ms:
             invalid += 1
@@ -178,9 +199,12 @@ def evaluate_mint_state_acceptance_samples(
         "selected_observation_count": len(samples),
         "proactive_refresh_count": len(proactive_transitions),
         "selected_missing_mint_count": missing,
+        "selected_missing_mint_later_observed_count": missing_later_observed,
+        "selected_missing_mint_unresolved_count": missing_unresolved,
         "selected_stale_mint_count": stale,
         "invalid_observation_count": invalid,
         "max_selected_mint_age_ms": max_selected_age,
+        "max_selected_missing_mint_followup_delay_ms": max_missing_followup_delay,
     }
 
 
@@ -334,11 +358,12 @@ def analyze_mint_state_acceptance(
                 mint = candidate.mint
                 _emit_progress(progress_callback, "MINT_STATE_READ")
                 try:
-                    current, previous_mint = _mint_state_times(
+                    current, previous_mint, next_mint = _mint_state_times(
                         connection,
                         candidate_id=candidate_id,
                         mint=mint,
                         as_of_unix_ms=checkpoint.state_as_of_unix_ms,
+                        followup_through_unix_ms=window_end_unix_ms,
                     )
                 except sqlite3.Error as error:
                     raise MintStateAcceptanceError(
@@ -356,6 +381,7 @@ def analyze_mint_state_acceptance(
                         decision_as_of_unix_ms=checkpoint.state_as_of_unix_ms,
                         mint_observed_at_unix_ms=current,
                         previous_mint_observed_at_unix_ms=previous_mint,
+                        next_mint_observed_at_unix_ms=next_mint,
                     )
                 )
 
@@ -424,7 +450,8 @@ def _mint_state_times(
     candidate_id: int,
     mint: str,
     as_of_unix_ms: int,
-) -> tuple[int | None, int | None]:
+    followup_through_unix_ms: int,
+) -> tuple[int | None, int | None, int | None]:
     rows = connection.execute(
         """SELECT state.observed_at_unix_ms
            FROM token_mint_states AS state
@@ -438,21 +465,51 @@ def _mint_state_times(
            LIMIT 2""",
         (candidate_id, mint, as_of_unix_ms),
     ).fetchall()
-    if not rows:
-        return None, None
-    current = _sqlite_non_negative_int(
-        rows[0]["observed_at_unix_ms"],
-        "mint observed_at_unix_ms",
-    )
-    previous = (
+    if rows:
+        current = _sqlite_non_negative_int(
+            rows[0]["observed_at_unix_ms"],
+            "mint observed_at_unix_ms",
+        )
+        previous = (
+            None
+            if len(rows) == 1
+            else _sqlite_non_negative_int(
+                rows[1]["observed_at_unix_ms"],
+                "previous mint observed_at_unix_ms",
+            )
+        )
+        return current, previous, None
+
+    if followup_through_unix_ms <= as_of_unix_ms:
+        return None, None, None
+    followup_row = connection.execute(
+        """SELECT state.observed_at_unix_ms
+           FROM token_mint_states AS state
+           JOIN token_candidates AS candidate
+             ON candidate.id = state.candidate_id
+           WHERE state.candidate_id = ?
+             AND candidate.mint = ?
+             AND state.provider = 'helius'
+             AND state.observed_at_unix_ms > ?
+             AND state.observed_at_unix_ms <= ?
+           ORDER BY state.observed_at_unix_ms ASC, state.id ASC
+           LIMIT 1""",
+        (
+            candidate_id,
+            mint,
+            as_of_unix_ms,
+            followup_through_unix_ms,
+        ),
+    ).fetchone()
+    next_mint = (
         None
-        if len(rows) == 1
+        if followup_row is None
         else _sqlite_non_negative_int(
-            rows[1]["observed_at_unix_ms"],
-            "previous mint observed_at_unix_ms",
+            followup_row["observed_at_unix_ms"],
+            "next mint observed_at_unix_ms",
         )
     )
-    return current, previous
+    return None, None, next_mint
 
 
 def _connect_read_only(path: Path) -> sqlite3.Connection:
