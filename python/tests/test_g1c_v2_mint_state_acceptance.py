@@ -98,6 +98,50 @@ def test_missing_or_b1_stale_selected_mint_fails() -> None:
     assert stale["selected_stale_mint_count"] == 1
 
 
+def test_missing_mint_followup_is_diagnostic_only_and_still_fails() -> None:
+    sample = MintStateAcceptanceSample(
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        next_mint_observed_at_unix_ms=2_025_000,
+    )
+
+    result = evaluate_mint_state_acceptance_samples(
+        (sample,),
+        max_critical_data_age_ms=900_000,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["selected_missing_mint_count"] == 1
+    assert result["selected_missing_mint_later_observed_count"] == 1
+    assert result["selected_missing_mint_unresolved_count"] == 0
+    assert result["max_selected_missing_mint_followup_delay_ms"] == 25_000
+
+
+def test_missing_mint_without_bounded_followup_is_unresolved() -> None:
+    sample = MintStateAcceptanceSample(
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        next_mint_observed_at_unix_ms=None,
+    )
+
+    result = evaluate_mint_state_acceptance_samples(
+        (sample,),
+        max_critical_data_age_ms=900_000,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["selected_missing_mint_count"] == 1
+    assert result["selected_missing_mint_later_observed_count"] == 0
+    assert result["selected_missing_mint_unresolved_count"] == 1
+    assert result["max_selected_missing_mint_followup_delay_ms"] is None
+
+
 def test_future_mint_row_never_satisfies_historical_selection() -> None:
     result = evaluate_mint_state_acceptance_samples(
         (
@@ -127,6 +171,49 @@ def test_refresh_transitions_are_counted_once_across_reused_decisions() -> None:
 
     assert result["selected_observation_count"] == 2
     assert result["proactive_refresh_count"] == 1
+
+
+def test_mint_state_followup_lookup_is_bounded_by_acceptance_window() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE token_candidates (
+            id INTEGER PRIMARY KEY,
+            mint TEXT NOT NULL
+        );
+        CREATE TABLE token_mint_states (
+            id INTEGER PRIMARY KEY,
+            candidate_id INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            observed_at_unix_ms INTEGER NOT NULL
+        );
+        INSERT INTO token_candidates (id, mint) VALUES (7, 'MintSeven');
+        INSERT INTO token_mint_states
+            (id, candidate_id, provider, observed_at_unix_ms)
+        VALUES
+            (1, 7, 'helius', 2025000),
+            (2, 7, 'helius', 2050000);
+        """
+    )
+
+    inside = acceptance._mint_state_times(
+        connection,
+        candidate_id=7,
+        mint="MintSeven",
+        as_of_unix_ms=2_000_000,
+        followup_through_unix_ms=2_030_000,
+    )
+    before = acceptance._mint_state_times(
+        connection,
+        candidate_id=7,
+        mint="MintSeven",
+        as_of_unix_ms=2_000_000,
+        followup_through_unix_ms=2_020_000,
+    )
+
+    assert inside == (None, None, 2_025_000)
+    assert before == (None, None, None)
 
 
 def test_historical_analyzer_replays_selected_candidates_without_mutating_database(

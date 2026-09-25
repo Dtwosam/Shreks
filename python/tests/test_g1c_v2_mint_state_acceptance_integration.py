@@ -243,3 +243,36 @@ def test_production_verifier_distinguishes_control_failure_from_behavioral_faile
     )
     assert counters_index < failed_index < physical_failed_index
     assert "exit 1" in shell_text[failed_index : physical_failed_index + 180]
+
+
+def test_behavioral_failed_reports_bounded_missing_mint_followup_diagnostics() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    validation_start = workflow.index('MINT_ACCEPTANCE_VALIDATION="$(')
+    validation_end = workflow.index(
+        'mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"',
+        validation_start,
+    )
+    validation_text = workflow[validation_start:validation_end]
+
+    for required in (
+        '"selected_missing_mint_later_observed_count"',
+        '"selected_missing_mint_unresolved_count"',
+        'max_selected_missing_mint_followup_delay_ms',
+    ):
+        assert required in validation_text
+
+    shell_text = workflow[validation_end : validation_end + 4200]
+    for required in (
+        "g1c_v2_mint_state_missing_later_observed=",
+        "g1c_v2_mint_state_missing_unresolved=",
+        "g1c_v2_mint_state_max_missing_followup_delay_ms=",
+    ):
+        assert required in shell_text
+
+    for forbidden in (
+        "g1c_v2_mint_state_missing_candidate_id=",
+        "g1c_v2_mint_state_missing_mint=",
+        "g1c_v2_mint_state_missing_observed_at=",
+    ):
+        assert forbidden not in shell_text
