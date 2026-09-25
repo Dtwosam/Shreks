@@ -358,6 +358,7 @@ def _process_one_request(
         runtime_status = _read_paper_evidence_runtime_status(
             runtime_status_path,
             expected_owner_uid=os.getuid(),
+            expected_release_sha=observed_release_sha,
             now_unix_ms=now_unix_ms,
             expected_evidence_cycle_interval_ms=evidence_cycle_interval_ms,
             expected_mint_state_max_age_ms=max_age_ms,
@@ -393,11 +394,19 @@ def _read_paper_evidence_runtime_status(
     path: Path,
     *,
     expected_owner_uid: int,
+    expected_release_sha: str,
     now_unix_ms: int,
     expected_evidence_cycle_interval_ms: int,
     expected_mint_state_max_age_ms: int,
     expected_mint_state_refresh_age_ms: int,
 ) -> dict[str, object]:
+    if (
+        not isinstance(expected_release_sha, str)
+        or _SOURCE_SHA_RE.fullmatch(expected_release_sha) is None
+    ):
+        raise MintStateAcceptanceControlError(
+            "expected release SHA is invalid"
+        )
     for name, value in (
         ("expected_owner_uid", expected_owner_uid),
         ("now_unix_ms", now_unix_ms),
@@ -495,6 +504,7 @@ def _read_paper_evidence_runtime_status(
             "PAPER evidence runtime status must contain one object"
         )
     expected_keys = {
+        "release_source_sha",
         "schema_name",
         "schema_version",
         "state",
@@ -523,6 +533,10 @@ def _read_paper_evidence_runtime_status(
     if text != _canonical_json(document) + "\n":
         raise MintStateAcceptanceControlError(
             "PAPER evidence runtime status is not canonical JSON"
+        )
+    if document["release_source_sha"] != expected_release_sha:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status release binding mismatch"
         )
     if document["schema_name"] != _RUNTIME_STATUS_SCHEMA_NAME:
         raise MintStateAcceptanceControlError(
