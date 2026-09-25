@@ -337,3 +337,25 @@ def test_binding_decode_rejects_tamper_and_writer_never_overwrites(tmp_path: Pat
             discovery_result_path=source,
             destination=destination,
         )
+
+
+def test_discovery_authority_binding_runbook_pins_exact_verified_release() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    runbook = (repo_root / "deploy" / "release" / "README.md").read_text(
+        encoding="utf-8"
+    )
+
+    heading = "### Bind one compatible FL9 V2 discovery authority"
+    assert heading in runbook
+    section = runbook.split(heading, 1)[1].split("\n### ", 1)[0]
+
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'BINDING="' in section
+    assert 'sudo test ! -e "$BINDING"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
+    assert 'sudo "$CURRENT_RELEASE/.venv/bin/shreks-fl9-v2-discovery-authority-bind"' in section
