@@ -82,6 +82,16 @@ def test_fast_lane_has_no_fl9_v2_scoring_authority_control_path() -> None:
         "frozen compatibility/regression baselines"
         in master
     )
+    assert (
+        "deterministic scores, and current setup engines remain useful as "
+        "baselines/features/challengers"
+        not in master
+    )
+    assert (
+        "The existing deterministic score is retained as an interpretable "
+        "baseline/feature"
+        not in master
+    )
 
     assert "## FL9 — Learned continuous action policy" in build_order
     assert "Evaluate `BUY`, `SKIP`, `HOLD`, `REDUCE`, and `SELL`" in build_order
@@ -97,3 +107,5 @@ def test_fast_lane_has_no_fl9_v2_scoring_authority_control_path() -> None:
         "not an extensible trading architecture"
         in build_order
     )
+    assert "SCORING_AUTHORITY=" not in build_order
+    assert "SCORING_CONTROL_PATH=FORBIDDEN" in build_order
