@@ -229,6 +229,44 @@ def test_preparation_must_still_have_no_scoring_authority(
         )
 
 
+def test_authority_decoder_rejects_tampered_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_path = tmp_path / "request.json"
+    request_payload = b'{"request":"exact"}\n'
+    request_path.write_bytes(request_payload)
+    evidence_destination = tmp_path / "evidence"
+    preparation_path = _write_preparation(
+        tmp_path,
+        request_path=request_path,
+        request_payload=request_payload,
+        evidence_destination=evidence_destination,
+    )
+    monkeypatch.setattr(
+        scoring_authority,
+        "decode_fast_first_champion_v2_host_request",
+        lambda _payload: _request_identity(evidence_destination),
+    )
+
+    result = scoring_authority.decide_fl9_v2_scoring_authority(
+        request_preparation_path=preparation_path,
+        decision="AUTHORIZE_ONE_SCORING_RUN",
+        decision_reason="reviewed exact request",
+        destination=tmp_path / "authority.json",
+    )
+    tampered = dict(result)
+    tampered["quote_provider"] = "tampered"
+
+    with pytest.raises(
+        scoring_authority.FL9V2ScoringAuthorityError,
+        match="fingerprint",
+    ):
+        scoring_authority.decode_fl9_v2_scoring_authority(
+            _canonical(tampered)
+        )
+
+
 def test_authority_writer_never_overwrites_existing_destination(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
