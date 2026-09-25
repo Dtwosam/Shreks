@@ -145,6 +145,63 @@ def test_v1_manifest_preserves_legacy_environment_and_derives_safety_freshness(t
     assert derived is not original
 
 
+def test_launcher_binds_resolved_binary_to_immutable_release_sha(
+    tmp_path: Path,
+) -> None:
+    manifest_path = tmp_path / "paper-campaign.json"
+    manifest_path.write_bytes(_v2_manifest_bytes())
+    source_sha = "1" * 40
+    binary = (
+        tmp_path
+        / "opt"
+        / "shreks"
+        / "releases"
+        / source_sha
+        / "target"
+        / "release"
+        / "shreks-paper-evidence"
+    )
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"binary")
+    binary.chmod(0o755)
+    captured: dict[str, object] = {}
+
+    def fake_execve(path: str, argv: tuple[str, ...], environment: dict[str, str]):
+        captured["path"] = path
+        captured["argv"] = argv
+        captured["environment"] = environment
+        return object()
+
+    with pytest.raises(PaperEvidenceRuntimeLauncherError, match="returned unexpectedly"):
+        launch_paper_evidence(
+            manifest_path=manifest_path,
+            binary_path=binary,
+            environment=_legacy_environment(),
+            execve=fake_execve,
+        )
+
+    assert captured["path"] == str(binary.resolve())
+    environment = captured["environment"]
+    assert isinstance(environment, dict)
+    assert environment["SHREKS_PAPER_EVIDENCE_RELEASE_SOURCE_SHA"] == source_sha
+
+
+def test_launcher_rejects_non_release_binary_before_exec(tmp_path: Path) -> None:
+    manifest_path = tmp_path / "paper-campaign.json"
+    manifest_path.write_bytes(_v2_manifest_bytes())
+    binary = tmp_path / "shreks-paper-evidence"
+    binary.write_bytes(b"binary")
+    binary.chmod(0o755)
+
+    with pytest.raises(PaperEvidenceRuntimeLauncherError, match="immutable release SHA"):
+        launch_paper_evidence(
+            manifest_path=manifest_path,
+            binary_path=binary,
+            environment=_legacy_environment(),
+            execve=lambda *_args: pytest.fail("unbound binary must not execute"),
+        )
+
+
 def test_tampered_v2_manifest_fails_closed_before_exec(tmp_path: Path) -> None:
     manifest_path = tmp_path / "paper-campaign.json"
     document = json.loads(_v2_manifest_bytes())

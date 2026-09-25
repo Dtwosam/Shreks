@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 import os
 from pathlib import Path
+import re
 import sys
 
 from shreks_brain.observer_campaign.runtime_manifest import (
@@ -16,6 +17,8 @@ _DEFAULT_BINARY_PATH = Path(
     "/opt/shreks/current/target/release/shreks-paper-evidence"
 )
 _MANIFEST_PATH_ENV = "SHREKS_PAPER_CAMPAIGN_MANIFEST_PATH"
+_RELEASE_SOURCE_SHA_ENV = "SHREKS_PAPER_EVIDENCE_RELEASE_SOURCE_SHA"
+_RELEASE_SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
 Execve = Callable[[str, tuple[str, ...], dict[str, str]], object]
 
@@ -97,6 +100,9 @@ def launch_paper_evidence(
     )
 
     binary = _resolve_executable(binary_path)
+    derived_environment[_RELEASE_SOURCE_SHA_ENV] = _release_source_sha_from_executable(
+        binary
+    )
     argv = (str(binary),)
     try:
         execve(str(binary), argv, derived_environment)
@@ -136,6 +142,22 @@ def _resolve_executable(raw_path: str | Path) -> Path:
         raise PaperEvidenceRuntimeLauncherError(
             "PAPER evidence executable could not be resolved"
         ) from error
+
+
+
+
+
+def _release_source_sha_from_executable(binary: Path) -> str:
+    parts = binary.parts
+    for index, part in enumerate(parts[:-1]):
+        if part != "releases" or index + 1 >= len(parts):
+            continue
+        candidate = parts[index + 1]
+        if _RELEASE_SOURCE_SHA_RE.fullmatch(candidate) is not None:
+            return candidate
+    raise PaperEvidenceRuntimeLauncherError(
+        "PAPER evidence executable is not bound to an immutable release SHA"
+    )
 
 
 def _read_stable_regular_file(

@@ -45,6 +45,15 @@ _MAX_RESULT_BYTES: Final = 65_536
 _MAX_REQUEST_AGE_MS: Final = 300_000
 _MAX_FUTURE_SKEW_MS: Final = 30_000
 _MAX_WINDOW_MS: Final = 240 * 60_000
+_RUNTIME_STATUS_PATH: Final = Path(
+    "/var/lib/shreks/telemetry/paper-evidence-status.json"
+)
+_RUNTIME_STATUS_SCHEMA_NAME: Final = "shreks.paper_evidence_runtime_status"
+_RUNTIME_STATUS_SCHEMA_VERSION: Final = 1
+_MAX_RUNTIME_STATUS_BYTES: Final = 16_384
+_RUNTIME_STATUS_MODE: Final = 0o600
+_RUNTIME_STATUS_FUTURE_SKEW_MS: Final = 30_000
+_RUNTIME_STATUS_MAX_CYCLES_AGE: Final = 4
 _REQUEST_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 _SOURCE_SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 
@@ -62,6 +71,7 @@ def process_pending_mint_state_acceptance_requests(
     expected_owner_uid: int | None = None,
     expected_marker_directory_owner_uid: int = 0,
     evidence_cycle_interval_ms: int | None = None,
+    runtime_status_path: Path = _RUNTIME_STATUS_PATH,
     now_unix_ms: int | None = None,
     max_requests: int = 4,
 ) -> tuple[dict[str, object], ...]:
@@ -118,6 +128,7 @@ def process_pending_mint_state_acceptance_requests(
             current_release_link=Path(current_release_link),
             expected_owner_uid=owner_uid,
             evidence_cycle_interval_ms=interval_ms,
+            runtime_status_path=Path(runtime_status_path),
             now_unix_ms=now_ms,
         )
         for path in markers
@@ -241,6 +252,7 @@ def _process_one_request(
     current_release_link: Path,
     expected_owner_uid: int,
     evidence_cycle_interval_ms: int,
+    runtime_status_path: Path,
     now_unix_ms: int,
 ) -> dict[str, object]:
     fallback_id = _request_id_from_name(marker_path.name)
@@ -327,6 +339,40 @@ def _process_one_request(
             message="mint-state acceptance analysis failed closed",
         )
 
+    max_age_ms = analysis.get("max_critical_data_age_ms")
+    refresh_age_ms = analysis.get("mint_state_refresh_age_ms")
+    if (
+        isinstance(max_age_ms, bool)
+        or not isinstance(max_age_ms, int)
+        or isinstance(refresh_age_ms, bool)
+        or not isinstance(refresh_age_ms, int)
+    ):
+        return _failure_result(
+            request_id=request_id,
+            expected_release_sha=expected_release_sha,
+            observed_release_sha=observed_release_sha,
+            error_code="ANALYSIS_FAILED",
+            message="mint-state acceptance analysis failed closed",
+        )
+    try:
+        runtime_status = _read_paper_evidence_runtime_status(
+            runtime_status_path,
+            expected_owner_uid=os.getuid(),
+            expected_release_sha=observed_release_sha,
+            now_unix_ms=now_unix_ms,
+            expected_evidence_cycle_interval_ms=evidence_cycle_interval_ms,
+            expected_mint_state_max_age_ms=max_age_ms,
+            expected_mint_state_refresh_age_ms=refresh_age_ms,
+        )
+    except MintStateAcceptanceControlError:
+        return _failure_result(
+            request_id=request_id,
+            expected_release_sha=expected_release_sha,
+            observed_release_sha=observed_release_sha,
+            error_code="RUNTIME_STATUS_FAILED",
+            message="PAPER evidence runtime status failed closed",
+        )
+
     return {
         "schema_name": CONTROL_RESULT_SCHEMA_NAME,
         "schema_version": CONTROL_RESULT_SCHEMA_VERSION,
@@ -335,12 +381,280 @@ def _process_one_request(
         "observed_release_sha": observed_release_sha,
         "status": analysis["status"],
         "analysis": analysis,
+        "runtime_status": runtime_status,
         "observation_authority": "READ_ONLY",
         "manifest_rotation_authority": "NOT_GRANTED",
         "scoring_authority": "NOT_GRANTED",
         "paper_promotion_authority": "BLOCKED",
         "live_authority": "DISABLED",
     }
+
+
+def _read_paper_evidence_runtime_status(
+    path: Path,
+    *,
+    expected_owner_uid: int,
+    expected_release_sha: str,
+    now_unix_ms: int,
+    expected_evidence_cycle_interval_ms: int,
+    expected_mint_state_max_age_ms: int,
+    expected_mint_state_refresh_age_ms: int,
+) -> dict[str, object]:
+    if (
+        not isinstance(expected_release_sha, str)
+        or _SOURCE_SHA_RE.fullmatch(expected_release_sha) is None
+    ):
+        raise MintStateAcceptanceControlError(
+            "expected release SHA is invalid"
+        )
+    for name, value in (
+        ("expected_owner_uid", expected_owner_uid),
+        ("now_unix_ms", now_unix_ms),
+        (
+            "expected_evidence_cycle_interval_ms",
+            expected_evidence_cycle_interval_ms,
+        ),
+        ("expected_mint_state_max_age_ms", expected_mint_state_max_age_ms),
+        (
+            "expected_mint_state_refresh_age_ms",
+            expected_mint_state_refresh_age_ms,
+        ),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise MintStateAcceptanceControlError(
+                f"{name} must be a non-negative integer"
+            )
+    if expected_evidence_cycle_interval_ms == 0:
+        raise MintStateAcceptanceControlError(
+            "expected evidence interval must be positive"
+        )
+
+    try:
+        before = path.lstat()
+    except OSError as error:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status is unavailable"
+        ) from error
+    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status must be a regular non-symlink file"
+        )
+    if before.st_uid != expected_owner_uid:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status owner is untrusted"
+        )
+    if stat.S_IMODE(before.st_mode) != _RUNTIME_STATUS_MODE:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status mode must be 0600"
+        )
+    if before.st_size < 2 or before.st_size > _MAX_RUNTIME_STATUS_BYTES:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status size is invalid"
+        )
+
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags)
+        try:
+            opened = os.fstat(fd)
+            payload = os.read(fd, _MAX_RUNTIME_STATUS_BYTES + 1)
+            after = os.fstat(fd)
+        finally:
+            os.close(fd)
+    except OSError as error:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status could not be read safely"
+        ) from error
+    identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    )
+    if identity != (
+        opened.st_dev,
+        opened.st_ino,
+        opened.st_size,
+        opened.st_mtime_ns,
+    ) or identity != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status changed while being read"
+        )
+    if len(payload) != before.st_size:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status size changed while being read"
+        )
+
+    try:
+        text = payload.decode("utf-8")
+        document = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status JSON is invalid"
+        ) from error
+    if not isinstance(document, dict):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status must contain one object"
+        )
+    expected_keys = {
+        "release_source_sha",
+        "schema_name",
+        "schema_version",
+        "state",
+        "process_started_at_unix_ms",
+        "generated_at_unix_ms",
+        "completed_cycle_count",
+        "cycle_as_of_unix_ms",
+        "evidence_cycle_interval_ms",
+        "mint_state_max_age_ms",
+        "mint_state_refresh_age_ms",
+        "provider_failures_last_cycle",
+        "helius_requests_attempted",
+        "helius_requests_limit",
+        "helius_requests_remaining",
+        "helius_budget_exhausted",
+        "candidates_selected_last_cycle",
+        "mint_states_stored_last_cycle",
+        "observation_authority",
+        "paper_promotion_authority",
+        "live_authority",
+    }
+    if set(document) != expected_keys:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status keys do not match schema"
+        )
+    if text != _canonical_json(document) + "\n":
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status is not canonical JSON"
+        )
+    if document["release_source_sha"] != expected_release_sha:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status release binding mismatch"
+        )
+    if document["schema_name"] != _RUNTIME_STATUS_SCHEMA_NAME:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status schema is unsupported"
+        )
+    if document["schema_version"] != _RUNTIME_STATUS_SCHEMA_VERSION:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status schema version is unsupported"
+        )
+    if document["state"] != "CYCLE_COMPLETE":
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status has no completed cycle"
+        )
+    if document["observation_authority"] != "DERIVED_OPERATIONAL":
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status observation authority is invalid"
+        )
+    if document["paper_promotion_authority"] != "BLOCKED":
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status promotion authority is invalid"
+        )
+    if document["live_authority"] != "DISABLED":
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status LIVE authority is invalid"
+        )
+
+    integer_keys = (
+        "process_started_at_unix_ms",
+        "generated_at_unix_ms",
+        "completed_cycle_count",
+        "cycle_as_of_unix_ms",
+        "evidence_cycle_interval_ms",
+        "mint_state_max_age_ms",
+        "mint_state_refresh_age_ms",
+        "provider_failures_last_cycle",
+        "helius_requests_attempted",
+        "helius_requests_limit",
+        "helius_requests_remaining",
+        "candidates_selected_last_cycle",
+        "mint_states_stored_last_cycle",
+    )
+    for key in integer_keys:
+        value = document[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise MintStateAcceptanceControlError(
+                f"PAPER evidence runtime status {key} is invalid"
+            )
+    if type(document["helius_budget_exhausted"]) is not bool:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status budget flag is invalid"
+        )
+
+    process_started_at = document["process_started_at_unix_ms"]
+    generated_at = document["generated_at_unix_ms"]
+    cycle_as_of = document["cycle_as_of_unix_ms"]
+    completed_cycles = document["completed_cycle_count"]
+    if completed_cycles < 1:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status completed cycle count is invalid"
+        )
+    if not (
+        process_started_at <= cycle_as_of <= generated_at
+    ):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status cycle time is invalid"
+        )
+    if generated_at > now_unix_ms + _RUNTIME_STATUS_FUTURE_SKEW_MS:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status is future-dated"
+        )
+    maximum_age_ms = (
+        expected_evidence_cycle_interval_ms * _RUNTIME_STATUS_MAX_CYCLES_AGE
+    )
+    if generated_at < now_unix_ms - maximum_age_ms:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status is stale"
+        )
+
+    if (
+        document["evidence_cycle_interval_ms"]
+        != expected_evidence_cycle_interval_ms
+    ):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status interval does not match authority"
+        )
+    if document["mint_state_max_age_ms"] != expected_mint_state_max_age_ms:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status max age does not match authority"
+        )
+    if (
+        document["mint_state_refresh_age_ms"]
+        != expected_mint_state_refresh_age_ms
+    ):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status refresh age does not match authority"
+        )
+    if document["provider_failures_last_cycle"] != 0:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status provider failures are nonzero"
+        )
+
+    attempted = document["helius_requests_attempted"]
+    limit = document["helius_requests_limit"]
+    remaining = document["helius_requests_remaining"]
+    exhausted = document["helius_budget_exhausted"]
+    if limit <= 0 or attempted > limit or remaining != limit - attempted:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status Helius budget is inconsistent"
+        )
+    if exhausted != (attempted >= limit):
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status Helius budget flag is inconsistent"
+        )
+    if exhausted or remaining <= 0:
+        raise MintStateAcceptanceControlError(
+            "PAPER evidence runtime status Helius budget is exhausted"
+        )
+    return document
 
 
 def _read_request(

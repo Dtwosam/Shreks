@@ -14,6 +14,10 @@ fn paper_evidence_binary_wires_only_the_bounded_read_only_evidence_path() {
         "with_chain_provider",
         "run_paper_evidence_cycle",
         "request_usage",
+        "PaperEvidenceRuntimeStatus::started",
+        "completed_cycle",
+        "write_paper_evidence_runtime_status",
+        "PAPER_EVIDENCE_RUNTIME_STATUS_PATH",
         "tokio::time::sleep",
         "tokio::signal::ctrl_c",
     ] {
@@ -49,6 +53,8 @@ fn paper_evidence_binary_logs_counts_and_budget_state_not_provider_keys() {
     assert!(source.contains("helius_requests_limit"));
     assert!(source.contains("helius_requests_remaining"));
     assert!(source.contains("helius_budget_exhausted"));
+    assert!(source.contains("runtime status write: failed"));
+    assert!(source.contains("runtime status update: invalid"));
 
     for line in source.lines().filter(|line| line.contains("eprintln!")) {
         assert!(!line.contains("api_key"), "credential accessor appeared in log statement");
