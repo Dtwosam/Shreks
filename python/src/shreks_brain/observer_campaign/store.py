@@ -312,7 +312,7 @@ class ObserverCampaignStore:
             for candidate_row in candidates:
                 try:
                     candidate = _candidate_from_row(candidate_row)
-                except (sqlite3.Error, TypeError, ValueError) as error:
+                except (TypeError, ValueError) as error:
                     raise ObserverCampaignReadError(
                         "observer aggregate regime candidate replay failed"
                     ) from error
@@ -368,7 +368,7 @@ class ObserverCampaignStore:
                         safety_observed_at is not None
                         and safety_observed_at > window_started_at
                     )
-                except (sqlite3.Error, TypeError, ValueError) as error:
+                except (ObserverCampaignReadError, TypeError, ValueError) as error:
                     raise ObserverCampaignReadError(
                         "observer aggregate regime safety replay failed"
                     ) from error
@@ -396,7 +396,7 @@ class ObserverCampaignStore:
                         entry_quote is not None
                         and entry_quote.quoted_at_unix_ms > window_started_at
                     )
-                except (sqlite3.Error, TypeError, ValueError) as error:
+                except (ObserverCampaignReadError, TypeError, ValueError) as error:
                     raise ObserverCampaignReadError(
                         "observer aggregate regime quote replay failed"
                     ) from error
@@ -415,15 +415,17 @@ class ObserverCampaignStore:
         finally:
             connection.close()
 
-        source_observed_at = (
-            min(consumed_timestamps) if consumed_timestamps else as_of_unix_ms
-        )
-        if source_observed_at <= window_started_at:
-            raise ObserverCampaignReadError(
-                "aggregate regime consumed evidence is not inside the requested window"
-            )
-
         try:
+            source_observed_at = (
+                min(consumed_timestamps)
+                if consumed_timestamps
+                else as_of_unix_ms
+            )
+            if source_observed_at <= window_started_at:
+                raise ObserverCampaignReadError(
+                    "aggregate regime consumed evidence is not inside the requested window"
+                )
+
             return RegimeMarketWindow(
                 as_of_unix_ms=as_of_unix_ms,
                 source_observed_at_unix_ms=source_observed_at,
@@ -433,7 +435,9 @@ class ObserverCampaignStore:
                 median_liquidity_usd=_complete_median(liquidity_values),
                 median_volume_m5_usd=_complete_median(volume_values),
             )
-        except (sqlite3.Error, TypeError, ValueError) as error:
+        except ObserverCampaignReadError:
+            raise
+        except (TypeError, ValueError) as error:
             raise ObserverCampaignReadError(
                 "observer aggregate regime finalize replay failed"
             ) from error
