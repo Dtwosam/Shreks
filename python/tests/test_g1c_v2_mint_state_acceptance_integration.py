@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import textwrap
 
 import pytest
 
@@ -162,3 +164,29 @@ def test_mint_acceptance_timeout_reports_only_sanitized_progress_stage() -> None
         "cat /var/lib/shreks",
     ):
         assert forbidden not in timeout_text
+
+
+def test_production_verifier_remote_script_is_valid_bash() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+    lines = workflow.splitlines()
+    start = next(
+        index
+        for index, line in enumerate(lines)
+        if "<<'REMOTE' | tee \"$VERIFY_LOG\"" in line
+    )
+    end = next(
+        index
+        for index in range(start + 1, len(lines))
+        if lines[index] == "          REMOTE"
+    )
+    remote_script = textwrap.dedent("\n".join(lines[start + 1 : end])) + "\n"
+
+    completed = subprocess.run(
+        ["bash", "-n"],
+        input=remote_script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
