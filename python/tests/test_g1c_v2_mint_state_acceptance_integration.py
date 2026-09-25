@@ -190,3 +190,24 @@ def test_production_verifier_remote_script_is_valid_bash() -> None:
     )
 
     assert completed.returncode == 0, completed.stderr
+
+
+def test_mint_acceptance_timeout_reports_sanitized_reconstruction_substage() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    timeout_start = workflow.index(
+        "g1c_v2_mint_state_acceptance_status=TIMEOUT"
+    )
+    timeout_text = workflow[timeout_start : timeout_start + 9000]
+
+    for required in (
+        "CYCLE_RECONSTRUCTION_SELECTION",
+        "CYCLE_RECONSTRUCTION_MARKET",
+        "CYCLE_RECONSTRUCTION_QUOTE",
+        "CYCLE_RECONSTRUCTION_SAFETY_FEATURES",
+        "CYCLE_RECONSTRUCTION_REGIME",
+        "CYCLE_RECONSTRUCTION_RISK",
+        "CYCLE_RECONSTRUCTION_FINALIZE",
+        "CYCLE_RECONSTRUCTION_AGGREGATION",
+    ):
+        assert required in timeout_text

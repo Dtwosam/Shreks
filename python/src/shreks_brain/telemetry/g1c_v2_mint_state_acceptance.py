@@ -308,6 +308,14 @@ def analyze_mint_state_acceptance(
                     quote_usd_valuation_mode=quote_mode,
                     recent_performance=manifest.recent_performance,
                     global_risk_halt=manifest.global_risk_halt,
+                    progress_callback=(
+                        None
+                        if progress_callback is None
+                        else lambda stage: _emit_progress(
+                            progress_callback,
+                            f"CYCLE_RECONSTRUCTION_{stage}",
+                        )
+                    ),
                 )
             except ObserverCampaignCoordinatorError as error:
                 raise MintStateAcceptanceError(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields, is_dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -285,6 +286,7 @@ def assemble_observer_paper_cycle(
     quote_usd_valuation_mode: str | None = None,
     recent_performance: RecentStrategyPerformance | None = None,
     global_risk_halt: bool,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[PaperCycleInput, ObserverPaperCycleAudit]:
     if type(state) is not PaperLoopState:
         raise ObserverPaperAssemblyError("state must be a PaperLoopState")
@@ -322,6 +324,7 @@ def assemble_observer_paper_cycle(
         campaign_store = ObserverCampaignStore(database_path)
 
         candidate_id = bundle.entry_quote_identity.candidate_id
+        _emit_progress(progress_callback, "MARKET")
         window = market_store.load_window(
             candidate_id,
             as_of_unix_ms,
@@ -337,6 +340,7 @@ def assemble_observer_paper_cycle(
                 "entry quote candidate mint attribution does not match observer candidate"
             )
 
+        _emit_progress(progress_callback, "QUOTE")
         entry_identity = bundle.entry_quote_identity
         exit_identity = _exit_identity(window.candidate.mint, bundle)
         entry_evidence = campaign_store.latest_paper_quote(
@@ -407,6 +411,7 @@ def assemble_observer_paper_cycle(
                 quote_asset_usd_per_token=quote_asset_usd_per_token,
             )
 
+        _emit_progress(progress_callback, "SAFETY_FEATURES")
         safety_inputs = build_safety_inputs(
             window,
             safety_store,
@@ -432,6 +437,7 @@ def assemble_observer_paper_cycle(
             )
         )
 
+        _emit_progress(progress_callback, "REGIME")
         regime_market = campaign_store.build_regime_market_window(
             as_of_unix_ms,
             bundle.regime_read_policy,
@@ -444,6 +450,7 @@ def assemble_observer_paper_cycle(
             bundle.regime_policy,
             recent_performance,
         )
+        _emit_progress(progress_callback, "RISK")
         risk_context = build_observer_risk_context(
             state,
             window,
@@ -453,6 +460,7 @@ def assemble_observer_paper_cycle(
             environment,
         )
 
+        _emit_progress(progress_callback, "FINALIZE")
         entry_candidate = PaperEntryCandidate(
             mint=window.candidate.mint,
             features=features,
@@ -756,3 +764,11 @@ def _require_sha256(name: str, value: object) -> None:
         int(value, 16)
     except ValueError as error:
         raise ValueError(f"{name} must be a lowercase SHA-256 hex string") from error
+
+
+def _emit_progress(
+    callback: Callable[[str], None] | None,
+    stage: str,
+) -> None:
+    if callback is not None:
+        callback(stage)

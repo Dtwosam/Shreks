@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 import hashlib
 import json
@@ -478,6 +479,7 @@ def assemble_observer_paper_campaign_cycle(
     quote_usd_valuation_mode: str | None = None,
     recent_performance: RecentStrategyPerformance | None = None,
     global_risk_halt: bool,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[PaperCycleInput, ObserverPaperCampaignCycleAudit]:
     if type(state) is not PaperLoopState:
         raise ObserverCampaignCoordinatorError("state must be an exact PaperLoopState")
@@ -516,6 +518,7 @@ def assemble_observer_paper_campaign_cycle(
     if state.pending_entry is not None:
         required_mints += (state.pending_entry.intent.mint,)
 
+    _emit_progress(progress_callback, "SELECTION")
     required = store.resolve_required_mints(
         tuple(dict.fromkeys(required_mints)),
         as_of_unix_ms=as_of_unix_ms,
@@ -558,6 +561,7 @@ def assemble_observer_paper_campaign_cycle(
                 ),
                 recent_performance=recent_performance,
                 global_risk_halt=global_risk_halt,
+                progress_callback=progress_callback,
             )
         except ValueError as error:
             raise ObserverCampaignCoordinatorError(
@@ -575,6 +579,7 @@ def assemble_observer_paper_campaign_cycle(
             (candidate, component_cycle, component_audit.paper_cycle_fingerprint)
         )
 
+    _emit_progress(progress_callback, "AGGREGATION")
     entries_by_mint: dict[str, PaperEntryCandidate] = {}
     exits_by_id: dict[str, PaperExitObservation] = {}
     quotes_by_mint: dict[str, PaperQuote] = {}
@@ -1126,3 +1131,10 @@ def _coordinator_idempotent_replay_result(
             ),
         ),
     )
+
+def _emit_progress(
+    callback: Callable[[str], None] | None,
+    stage: str,
+) -> None:
+    if callback is not None:
+        callback(stage)
