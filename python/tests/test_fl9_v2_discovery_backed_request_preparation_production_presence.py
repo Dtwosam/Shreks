@@ -81,3 +81,12 @@ def test_fl9_v2_discovery_backed_request_prepare_has_read_only_production_presen
     assert "paper_promotion_authority=BLOCKED" in section
     assert "live_authority=DISABLED" in section
     assert "does not execute scoring or model fitting" in section
+    assert 'EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"' in section
+    assert 'CURRENT_SHA="$(basename "$CURRENT_RELEASE")"' in section
+    assert 'test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'MANIFEST_SHA="$(' in section
+    assert 'test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"' in section
+    assert 'sudo test ! -e "$REQUEST"' in section
+    assert 'sudo test ! -e "$EVIDENCE"' in section
+    assert 'sudo test ! -e "$PREPARATION"' in section
+    assert 'test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"' in section
