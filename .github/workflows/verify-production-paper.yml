@@ -1018,6 +1018,8 @@ jobs:
           runtime_status = document.get("runtime_status")
           if not isinstance(runtime_status, dict):
               raise SystemExit("mint acceptance runtime status is missing")
+          if runtime_status.get("release_source_sha") != expected_sha:
+              raise SystemExit("PAPER evidence runtime status release binding mismatch")
           if runtime_status.get("schema_name") != "shreks.paper_evidence_runtime_status":
               raise SystemExit("PAPER evidence runtime status schema mismatch")
           if runtime_status.get("schema_version") != 1:
