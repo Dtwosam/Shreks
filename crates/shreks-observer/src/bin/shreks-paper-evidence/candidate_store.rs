@@ -207,7 +207,8 @@ impl EvidenceCandidateStore {
 
         let candidates =
             collect_candidates(rows, current_market_cutoff, as_of_unix_ms)?;
-        let mut eligible: Vec<(u8, EvidenceProbeCandidate)> = Vec::new();
+        validate_required_table(&self.connection, MINT_STATE_REQUIRED_COLUMNS)?;
+        let mut eligible: Vec<(u8, u8, EvidenceProbeCandidate)> = Vec::new();
 
         for candidate in candidates {
             let Some((current_observed_at_unix_ms, pair_created_at_unix_ms)) =
@@ -237,7 +238,18 @@ impl EvidenceCandidateStore {
                     1
                 };
 
+            let mint_state_priority = if has_mint_state_at_or_before(
+                &self.connection,
+                candidate.candidate_id,
+                as_of_unix_ms,
+            )? {
+                1
+            } else {
+                0
+            };
+
             eligible.push((
+                mint_state_priority,
                 age_priority,
                 EvidenceProbeCandidate {
                     candidate_id: candidate.candidate_id,
@@ -247,21 +259,25 @@ impl EvidenceCandidateStore {
             ));
         }
 
-        eligible.sort_by(|(left_priority, left), (right_priority, right)| {
-            left_priority
-                .cmp(right_priority)
-                .then_with(|| {
-                    right
-                        .latest_market_observed_at_unix_ms
-                        .cmp(&left.latest_market_observed_at_unix_ms)
-                })
-                .then_with(|| left.candidate_id.cmp(&right.candidate_id))
-        });
+        eligible.sort_by(
+            |(left_mint_priority, left_age_priority, left),
+             (right_mint_priority, right_age_priority, right)| {
+                left_mint_priority
+                    .cmp(right_mint_priority)
+                    .then_with(|| left_age_priority.cmp(right_age_priority))
+                    .then_with(|| {
+                        right
+                            .latest_market_observed_at_unix_ms
+                            .cmp(&left.latest_market_observed_at_unix_ms)
+                    })
+                    .then_with(|| left.candidate_id.cmp(&right.candidate_id))
+            },
+        );
 
         Ok(eligible
             .into_iter()
             .take(limit)
-            .map(|(_, candidate)| candidate)
+            .map(|(_, _, candidate)| candidate)
             .collect())
     }
 
@@ -346,6 +362,29 @@ impl EvidenceCandidateStore {
         Ok(found.is_some())
     }
 }
+
+fn has_mint_state_at_or_before(
+    connection: &Connection,
+    candidate_id: i64,
+    as_of_unix_ms: i64,
+) -> Result<bool, EvidenceCandidateStoreError> {
+    let found = connection
+        .query_row(
+            r#"SELECT 1
+               FROM token_mint_states
+               WHERE candidate_id = ?1
+                 AND provider = 'helius'
+                 AND observed_at_unix_ms <= ?2
+               ORDER BY observed_at_unix_ms DESC
+               LIMIT 1"#,
+            params![candidate_id, as_of_unix_ms],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(EvidenceCandidateStoreError::Sqlite)?;
+    Ok(found.is_some())
+}
+
 
 fn current_market_snapshot_metadata(
     connection: &Connection,
