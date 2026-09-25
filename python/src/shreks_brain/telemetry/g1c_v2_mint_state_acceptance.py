@@ -8,6 +8,7 @@ import sqlite3
 from shreks_brain.observer_campaign.coordinator import (
     ObserverCampaignCoordinatorError,
     assemble_observer_paper_campaign_cycle,
+    select_observer_paper_campaign_candidates,
 )
 from shreks_brain.observer_campaign.runtime_manifest import (
     ObserverPaperCampaignRuntimeManifestError,
@@ -301,16 +302,13 @@ def analyze_mint_state_acceptance(
             quote_mode = None if quote_policy is None else quote_policy.mode.value
             _emit_progress(progress_callback, "CYCLE_RECONSTRUCTION")
             try:
-                _cycle, audit = assemble_observer_paper_campaign_cycle(
+                selected = select_observer_paper_campaign_candidates(
                     database,
                     previous_state,
                     checkpoint.state_as_of_unix_ms,
                     manifest.policy_bundle,
-                    manifest.risk_environment,
                     manifest.selection_policy,
                     quote_usd_valuation_mode=quote_mode,
-                    recent_performance=manifest.recent_performance,
-                    global_risk_halt=manifest.global_risk_halt,
                     progress_callback=(
                         None
                         if progress_callback is None
@@ -331,16 +329,9 @@ def analyze_mint_state_acceptance(
                     code="CYCLE_RECONSTRUCTION_FAILED",
                 ) from error
 
-            if len(audit.selected_candidate_ids) != len(audit.selected_mints):
-                raise MintStateAcceptanceError(
-                    "historical PAPER candidate attribution is inconsistent",
-                    code="CANDIDATE_ATTRIBUTION_INVALID",
-                )
-            for candidate_id, mint in zip(
-                audit.selected_candidate_ids,
-                audit.selected_mints,
-                strict=True,
-            ):
+            for candidate in selected:
+                candidate_id = candidate.candidate_id
+                mint = candidate.mint
                 _emit_progress(progress_callback, "MINT_STATE_READ")
                 try:
                     current, previous_mint = _mint_state_times(
