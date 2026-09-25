@@ -61,12 +61,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )
     .with_chain_provider(chain_provider);
 
+    let release_source_sha = std::env::var("SHREKS_PAPER_EVIDENCE_RELEASE_SOURCE_SHA")
+        .map_err(|_| io::Error::other("PAPER evidence release source SHA is unavailable"))?;
     let process_started_at_unix_ms = unix_time_ms()?;
     let evidence_cycle_interval_ms =
         i64::try_from(config.cycle_interval.as_millis()).map_err(|_| {
             io::Error::other("PAPER evidence cycle interval exceeds i64 milliseconds")
         })?;
     let mut runtime_status = PaperEvidenceRuntimeStatus::started(
+        &release_source_sha,
         process_started_at_unix_ms,
         evidence_cycle_interval_ms,
         config.mint_state_max_age_ms,
