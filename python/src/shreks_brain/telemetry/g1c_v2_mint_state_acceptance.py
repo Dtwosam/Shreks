@@ -32,6 +32,14 @@ _ERROR_CODES = frozenset(
         "CHECKPOINT_SEQUENCE_INVALID",
         "CHECKPOINT_TIME_INVALID",
         "CYCLE_RECONSTRUCTION_FAILED",
+        "CYCLE_RECONSTRUCTION_REQUIRED_MINT_FAILED",
+        "CYCLE_RECONSTRUCTION_CANDIDATE_SELECTION_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_MARKET_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_QUOTE_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_SAFETY_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED",
+        "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED",
         "CANDIDATE_ATTRIBUTION_INVALID",
         "MINT_STATE_READ_FAILED",
         "MINT_STATE_VALUE_INVALID",
@@ -297,7 +305,12 @@ def analyze_mint_state_acceptance(
                     recent_performance=manifest.recent_performance,
                     global_risk_halt=manifest.global_risk_halt,
                 )
-            except (ObserverCampaignCoordinatorError, OSError, TypeError, ValueError) as error:
+            except ObserverCampaignCoordinatorError as error:
+                raise MintStateAcceptanceError(
+                    "historical PAPER candidate reconstruction failed",
+                    code=_classify_cycle_reconstruction_error(error),
+                ) from error
+            except (OSError, TypeError, ValueError) as error:
                 raise MintStateAcceptanceError(
                     "historical PAPER candidate reconstruction failed",
                     code="CYCLE_RECONSTRUCTION_FAILED",
@@ -488,6 +501,78 @@ def _require_positive_int(name: str, value: int) -> None:
     _require_non_negative_int(name, value)
     if value == 0:
         raise MintStateAcceptanceError(f"{name} must be positive")
+
+
+def _classify_cycle_reconstruction_error(
+    error: ObserverCampaignCoordinatorError,
+) -> str:
+    message = str(error).strip().lower()
+
+    if (
+        message.startswith("required observer candidate")
+        or message.startswith("required observer candidate read failed")
+        or message.startswith("required observer candidate evidence is invalid")
+    ):
+        return "CYCLE_RECONSTRUCTION_REQUIRED_MINT_FAILED"
+
+    if (
+        message.startswith("recent observer candidate")
+        or message.startswith("observer campaign recent-candidate")
+        or message.startswith("observer campaign quote-identity")
+        or message.startswith("observer campaign database missing")
+        or message.startswith("observer campaign schema")
+    ):
+        return "CYCLE_RECONSTRUCTION_CANDIDATE_SELECTION_FAILED"
+
+    if message.startswith("observer candidate ") and " assembly failed:" in message:
+        detail = message.split(" assembly failed:", 1)[1]
+        if any(
+            token in detail
+            for token in (
+                "quote",
+                "valuation",
+                "route",
+                "token decimal",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_QUOTE_FAILED"
+        if any(
+            token in detail
+            for token in (
+                "safety",
+                "critical data",
+                "mint state",
+                "holder",
+                "authority",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_SAFETY_FAILED"
+        if "regime" in detail:
+            return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FAILED"
+        if any(
+            token in detail
+            for token in (
+                "market",
+                "snapshot",
+                "price",
+                "liquidity",
+                "pair",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_MARKET_FAILED"
+        return "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED"
+
+    if (
+        message.startswith("aggregate paper cycle")
+        or message.startswith("component paper cycle")
+        or message.startswith("entry score reconstruction")
+        or message.startswith("conflicting duplicate")
+        or "resolved to conflicting identities" in message
+        or "entry ordering supports" in message
+    ):
+        return "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED"
+
+    return "CYCLE_RECONSTRUCTION_FAILED"
 
 
 def _emit_progress(
