@@ -42,6 +42,7 @@ shreks-g1c-v2-paper-manifest-manager-status = "shreks_brain.g1c_v2_paper_manifes
 shreks-g1c-v2-paper-manifest-rotation-readiness = "shreks_brain.g1c_v2_paper_manifest_rotation_readiness:main"
 shreks-fl9-v2-discovery-authority-bind = "shreks_brain.fl9_v2_discovery_authority_binding:main"
 shreks-fl9-v2-discovery-backed-request-prepare = "shreks_brain.fl9_v2_discovery_backed_request_preparation:main"
+shreks-fl9-v2-scoring-authority-decide = "shreks_brain.fl9_v2_scoring_authority:main"
 # Legacy module remains sealed for helper/unit-test compatibility; production
 # execution is routed through the cohort-bounded runner below.
 # shreks-fl9-v2-first-champion = "shreks_brain.fast_first_champion_v2.host_run:main"
