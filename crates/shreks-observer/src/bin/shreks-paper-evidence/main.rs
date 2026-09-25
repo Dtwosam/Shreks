@@ -1,10 +1,12 @@
 mod candidate_store;
 mod config;
 mod cycle;
+mod status;
 
 use std::{
     error::Error,
     io,
+    path::Path,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,6 +14,11 @@ use std::{
 use candidate_store::EvidenceCandidateStore;
 use config::PaperEvidenceRuntimeConfig;
 use cycle::run_paper_evidence_cycle;
+use status::{
+    write_paper_evidence_runtime_status,
+    PaperEvidenceRuntimeStatus,
+    PAPER_EVIDENCE_RUNTIME_STATUS_PATH,
+};
 use shreks_observer::SafetyEvidenceCollector;
 use shreks_providers::{
     helius::HeliusProvider,
@@ -53,6 +60,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         vec![quote_provider],
     )
     .with_chain_provider(chain_provider);
+
+    let process_started_at_unix_ms = unix_time_ms()?;
+    let evidence_cycle_interval_ms =
+        i64::try_from(config.cycle_interval.as_millis()).map_err(|_| {
+            io::Error::other("PAPER evidence cycle interval exceeds i64 milliseconds")
+        })?;
+    let mut runtime_status = PaperEvidenceRuntimeStatus::started(
+        process_started_at_unix_ms,
+        evidence_cycle_interval_ms,
+        config.mint_state_max_age_ms,
+        config.mint_state_refresh_age_ms(),
+        config.helius_max_requests_per_process,
+    )?;
+    publish_runtime_status(&runtime_status);
+    let mut completed_cycle_count = 0_u64;
 
     eprintln!(
         "Shreks paper evidence starting: db={} interval={}s lookback={}ms max_candidates={} holder_refresh={}s mint_state_max_age={}ms mint_state_refresh_age={}ms helius_request_limit={} probe_policy={} providers=helius+jupiter",
@@ -100,6 +122,27 @@ async fn main() -> Result<(), Box<dyn Error>> {
             helius_usage.exhausted,
         );
 
+        completed_cycle_count = completed_cycle_count.saturating_add(1);
+        let generated_at_unix_ms = unix_time_ms()?;
+        match runtime_status.completed_cycle(
+            generated_at_unix_ms,
+            completed_cycle_count,
+            as_of_unix_ms,
+            provider_failures,
+            helius_usage.attempted,
+            helius_requests_limit,
+            helius_requests_remaining,
+            helius_usage.exhausted,
+            report.candidates_selected,
+            report.mint_states_stored,
+        ) {
+            Ok(updated) => {
+                runtime_status = updated;
+                publish_runtime_status(&runtime_status);
+            }
+            Err(_) => eprintln!("Shreks paper evidence runtime status update: invalid"),
+        }
+
         tokio::select! {
             signal = tokio::signal::ctrl_c() => {
                 signal?;
@@ -112,6 +155,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     eprintln!("Shreks paper evidence stopped");
     Ok(())
 }
+
+fn publish_runtime_status(status: &PaperEvidenceRuntimeStatus) {
+    if write_paper_evidence_runtime_status(
+        Path::new(PAPER_EVIDENCE_RUNTIME_STATUS_PATH),
+        status,
+    )
+    .is_err()
+    {
+        eprintln!("Shreks paper evidence runtime status write: failed");
+    }
+}
+
 
 fn unix_time_ms() -> Result<i64, io::Error> {
     let elapsed = SystemTime::now()
