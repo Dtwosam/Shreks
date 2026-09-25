@@ -32,6 +32,7 @@ fn temp_status_path(label: &str) -> PathBuf {
 fn runtime_status_is_secret_free_canonical_mode_0600_and_atomically_replaceable() {
     let path = temp_status_path("canonical");
     let started = PaperEvidenceRuntimeStatus::started(
+        "1111111111111111111111111111111111111111",
         1_000_000,
         60_000,
         900_000,
@@ -56,6 +57,10 @@ fn runtime_status_is_secret_free_canonical_mode_0600_and_atomically_replaceable(
     assert_eq!(
         document["schema_version"],
         PAPER_EVIDENCE_RUNTIME_STATUS_SCHEMA_VERSION
+    );
+    assert_eq!(
+        document["release_source_sha"],
+        "1111111111111111111111111111111111111111"
     );
     assert_eq!(document["state"], "STARTED");
     assert_eq!(document["process_started_at_unix_ms"], 1_000_000);
@@ -119,6 +124,17 @@ fn runtime_status_is_secret_free_canonical_mode_0600_and_atomically_replaceable(
 #[test]
 fn runtime_status_rejects_inconsistent_budget_and_time() {
     assert!(PaperEvidenceRuntimeStatus::started(
+        "NOT-A-SHA",
+        1_000_000,
+        60_000,
+        900_000,
+        540_000,
+        500,
+    )
+    .is_err());
+
+    assert!(PaperEvidenceRuntimeStatus::started(
+        "1111111111111111111111111111111111111111",
         1_000_000,
         60_000,
         900_000,
@@ -128,6 +144,7 @@ fn runtime_status_rejects_inconsistent_budget_and_time() {
     .is_err());
 
     let started = PaperEvidenceRuntimeStatus::started(
+        "1111111111111111111111111111111111111111",
         1_000_000,
         60_000,
         900_000,
