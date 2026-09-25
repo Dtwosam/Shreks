@@ -1,6 +1,6 @@
 use std::{fs, path::{Path, PathBuf}, process, time::{SystemTime, UNIX_EPOCH}};
 
-use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, VenueId};
+use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, TokenMintState, VenueId};
 use shreks_storage::ShreksDb;
 
 #[path = "../src/bin/shreks-paper-evidence/candidate_store.rs"]
@@ -145,6 +145,73 @@ fn fresh_launch_candidates_prioritize_entry_window_then_too_young_and_exclude_ex
     assert_eq!(selected[1].candidate_id, too_young);
     assert_eq!(selected[1].mint, "MintTooYoung");
     assert!(selected.iter().all(|item| item.candidate_id != expired));
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn fresh_launch_candidates_prioritize_missing_mint_first_hydration_before_limit() {
+    const AS_OF: i64 = 2_000_000;
+    const MARKET_LOOKBACK_MS: i64 = 60_000;
+    const MAX_PAIR_AGE_MS: i64 = 1_800_000;
+    const PREFERRED_MIN_PAIR_AGE_MS: i64 = 60_000;
+
+    let root = unique_test_dir("mint-first-hydration");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let mature_a = db.upsert_candidate(&candidate("MintMatureA", 100)).unwrap();
+    let mature_b = db.upsert_candidate(&candidate("MintMatureB", 200)).unwrap();
+    let prewarm = db.upsert_candidate(&candidate("MintPrewarm", 300)).unwrap();
+
+    db.insert_market_snapshot(
+        mature_a,
+        &snapshot("MintMatureA", AS_OF - 100, AS_OF - 600_000),
+    ).unwrap();
+    db.insert_market_snapshot(
+        mature_b,
+        &snapshot("MintMatureB", AS_OF - 200, AS_OF - 500_000),
+    ).unwrap();
+    db.insert_market_snapshot(
+        prewarm,
+        &snapshot("MintPrewarm", AS_OF - 300, AS_OF - 30_000),
+    ).unwrap();
+
+    for (candidate_id, mint, slot) in [
+        (mature_a, "MintMatureA", 101_u64),
+        (mature_b, "MintMatureB", 102_u64),
+    ] {
+        db.insert_mint_state(
+            candidate_id,
+            &TokenMintState {
+                provider: ProviderId::Helius,
+                mint: mint.to_owned(),
+                owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+                supply: 1_000_000_000,
+                decimals: 6,
+                mint_authority: None,
+                freeze_authority: None,
+                slot,
+                observed_at_unix_ms: AS_OF - 1_000,
+            },
+        ).unwrap();
+    }
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store.fresh_launch_candidates(
+        AS_OF,
+        MARKET_LOOKBACK_MS,
+        MAX_PAIR_AGE_MS,
+        PREFERRED_MIN_PAIR_AGE_MS,
+        &dex_sources(),
+        WSOL,
+        2,
+    ).unwrap();
+
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].candidate_id, prewarm);
+    assert!(selected.iter().any(|item| item.candidate_id == prewarm));
 
     cleanup_dir(&root);
 }
