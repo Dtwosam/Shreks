@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
+import shreks_brain.telemetry.g1c_v2_mint_state_acceptance as acceptance
+from shreks_brain.observer_campaign.coordinator import ObserverCampaignCoordinatorError
 from shreks_brain.observer_campaign.runtime import (
     bootstrap_observer_paper_campaign_runtime,
 )
 from shreks_brain.telemetry.g1c_v2_mint_state_acceptance import (
     analyze_mint_state_acceptance,
+    MintStateAcceptanceError,
     MintStateAcceptanceSample,
     derive_mint_state_refresh_age_ms,
     evaluate_mint_state_acceptance_samples,
@@ -174,3 +179,66 @@ def test_historical_analyzer_replays_selected_candidates_without_mutating_databa
     assert result["selected_missing_mint_count"] == 0
     assert result["selected_stale_mint_count"] == 0
     assert config.observer_database_path.stat().st_mtime_ns == before_mtime
+
+
+
+def _one_checkpoint_runtime(tmp_path):
+    from test_observer_campaign_runner import AS_OF
+    from test_observer_campaign_runtime import _runtime_config
+
+    config = _runtime_config(tmp_path, max_cycles=1)
+    runner = bootstrap_observer_paper_campaign_runtime(config).runner
+    runner.run_cycle(AS_OF, AS_OF)
+    return config, AS_OF
+
+
+def test_historical_analyzer_classifies_cycle_reconstruction_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+
+    def fail_reconstruction(*_args, **_kwargs):
+        raise ObserverCampaignCoordinatorError("secret candidate reconstruction detail")
+
+    monkeypatch.setattr(
+        acceptance,
+        "assemble_observer_paper_campaign_cycle",
+        fail_reconstruction,
+    )
+
+    with pytest.raises(MintStateAcceptanceError) as captured:
+        analyze_mint_state_acceptance(
+            config.observer_database_path,
+            config.manifest_path,
+            window_start_unix_ms=as_of - 1,
+            window_end_unix_ms=as_of,
+            evidence_cycle_interval_ms=60_000,
+        )
+
+    assert captured.value.code == "CYCLE_RECONSTRUCTION_FAILED"
+    assert "secret candidate reconstruction detail" not in str(captured.value)
+
+
+def test_historical_analyzer_classifies_mint_state_read_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+
+    def fail_mint_read(*_args, **_kwargs):
+        raise sqlite3.OperationalError("secret SQLite detail")
+
+    monkeypatch.setattr(acceptance, "_mint_state_times", fail_mint_read)
+
+    with pytest.raises(MintStateAcceptanceError) as captured:
+        analyze_mint_state_acceptance(
+            config.observer_database_path,
+            config.manifest_path,
+            window_start_unix_ms=as_of - 1,
+            window_end_unix_ms=as_of,
+            evidence_cycle_interval_ms=60_000,
+        )
+
+    assert captured.value.code == "MINT_STATE_READ_FAILED"
+    assert "secret SQLite detail" not in str(captured.value)

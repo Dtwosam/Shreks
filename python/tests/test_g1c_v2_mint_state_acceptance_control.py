@@ -209,7 +209,10 @@ def test_analysis_failure_is_sanitized(
     current = _release_tree(tmp_path)
 
     def fail(*_args, **_kwargs):
-        raise MintStateAcceptanceError("secret path and provider detail")
+        raise MintStateAcceptanceError(
+            "secret path and provider detail",
+            code="CYCLE_RECONSTRUCTION_FAILED",
+        )
 
     monkeypatch.setattr(control, "analyze_mint_state_acceptance", fail)
 
@@ -226,7 +229,7 @@ def test_analysis_failure_is_sanitized(
 
     encoded = json.dumps(result)
     assert result["status"] == "FAILED"
-    assert result["error"]["code"] == "ANALYSIS_FAILED"
+    assert result["error"]["code"] == "ANALYSIS_CYCLE_RECONSTRUCTION_FAILED"
     assert "secret path" not in encoded
 
 
