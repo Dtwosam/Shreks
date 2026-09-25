@@ -1,6 +1,6 @@
 use std::{fs, path::{Path, PathBuf}, process, time::{SystemTime, UNIX_EPOCH}};
 
-use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, VenueId};
+use shreks_core::{DiscoveredToken, PairMarketData, ProviderId, TokenMintState, VenueId};
 use shreks_storage::ShreksDb;
 
 #[path = "../src/bin/shreks-paper-evidence/candidate_store.rs"]
@@ -92,6 +92,138 @@ fn snapshot_with_quote(
 
 fn dex_sources() -> Vec<String> {
     vec!["dexscreener".to_owned()]
+}
+
+fn helius_mint_state(mint: &str, observed_at_unix_ms: i64) -> TokenMintState {
+    TokenMintState {
+        provider: ProviderId::Helius,
+        mint: mint.to_owned(),
+        owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+        supply: 1_000_000_000,
+        decimals: 6,
+        mint_authority: None,
+        freeze_authority: None,
+        slot: 123,
+        observed_at_unix_ms,
+    }
+}
+
+
+#[test]
+fn fresh_launch_candidates_prioritize_missing_mint_before_hydrated_age_class() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("missing-mint-priority");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let hydrated_newer = db
+        .upsert_candidate(&candidate("MintHydratedNewer", 100))
+        .unwrap();
+    let hydrated_older = db
+        .upsert_candidate(&candidate("MintHydratedOlder", 200))
+        .unwrap();
+    let missing_too_young = db
+        .upsert_candidate(&candidate("MintMissingTooYoung", 300))
+        .unwrap();
+
+    db.insert_market_snapshot(
+        hydrated_newer,
+        &snapshot("MintHydratedNewer", AS_OF - 1_000, AS_OF - 600_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        hydrated_older,
+        &snapshot("MintHydratedOlder", AS_OF - 2_000, AS_OF - 500_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        missing_too_young,
+        &snapshot("MintMissingTooYoung", AS_OF - 3_000, AS_OF - 30_000),
+    )
+    .unwrap();
+    db.insert_mint_state(
+        hydrated_newer,
+        &helius_mint_state("MintHydratedNewer", AS_OF - 5_000),
+    )
+    .unwrap();
+    db.insert_mint_state(
+        hydrated_older,
+        &helius_mint_state("MintHydratedOlder", AS_OF - 5_000),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            WSOL,
+            2,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 2);
+    assert_eq!(selected[0].candidate_id, missing_too_young);
+    assert_eq!(selected[0].mint, "MintMissingTooYoung");
+    assert_eq!(selected[1].candidate_id, hydrated_newer);
+
+    cleanup_dir(&root);
+}
+
+#[test]
+fn future_helius_mint_state_does_not_satisfy_first_hydration_readiness() {
+    const AS_OF: i64 = 2_000_000;
+
+    let root = unique_test_dir("future-mint-readiness");
+    let db_path = root.join("shreks.db");
+    let db = ShreksDb::open(&db_path).unwrap();
+
+    let hydrated = db.upsert_candidate(&candidate("MintHydrated", 100)).unwrap();
+    let future_only = db.upsert_candidate(&candidate("MintFutureOnly", 200)).unwrap();
+    db.insert_market_snapshot(
+        hydrated,
+        &snapshot("MintHydrated", AS_OF - 1_000, AS_OF - 600_000),
+    )
+    .unwrap();
+    db.insert_market_snapshot(
+        future_only,
+        &snapshot("MintFutureOnly", AS_OF - 2_000, AS_OF - 30_000),
+    )
+    .unwrap();
+    db.insert_mint_state(
+        hydrated,
+        &helius_mint_state("MintHydrated", AS_OF - 5_000),
+    )
+    .unwrap();
+    db.insert_mint_state(
+        future_only,
+        &helius_mint_state("MintFutureOnly", AS_OF + 1),
+    )
+    .unwrap();
+    drop(db);
+
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let selected = store
+        .fresh_launch_candidates(
+            AS_OF,
+            60_000,
+            1_800_000,
+            60_000,
+            &dex_sources(),
+            WSOL,
+            1,
+        )
+        .unwrap();
+
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].candidate_id, future_only);
+
+    cleanup_dir(&root);
 }
 
 #[test]
