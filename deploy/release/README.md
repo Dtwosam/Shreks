@@ -1752,6 +1752,84 @@ live_authority=DISABLED
 
 This ceremony does not execute scoring or model fitting. It does not publish champion evidence, promote PAPER, create risk intent, access wallets, sign or submit transactions, or enable LIVE. Preserve and review the canonical request plus preparation receipt separately before any later scoring decision.
 
+### Decide one discovery-backed FL9 V2 scoring authority
+
+Only after production verification proves the scoring-authority CLI/module belong to the exact active immutable release may a trusted administrator create one write-once scoring-authority decision for an exact reviewed discovery-backed request preparation.
+
+This ceremony creates authority metadata only. It does not execute the prepared V2 host request.
+
+Use only one reviewed existing preparation receipt and one new non-existing authority destination.
+
+```sh
+set -euo pipefail
+
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+PREPARATION="<exact-reviewed-discovery-backed-request-preparation.json>"
+AUTHORITY_DIR="/root/shreks-fl9-v2-scoring-authority"
+AUTHORITY="$AUTHORITY_DIR/scoring-authority.json"
+DECISION="<AUTHORIZE_ONE_SCORING_RUN-or-REJECT_SCORING_RUN>"
+DECISION_REASON="<explicit-reviewed-decision-reason>"
+
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
+case "$DECISION" in
+  AUTHORIZE_ONE_SCORING_RUN|REJECT_SCORING_RUN) ;;
+  *)
+    echo "unsupported scoring-authority decision" >&2
+    exit 2
+    ;;
+esac
+test -n "$DECISION_REASON"
+
+sudo install -d -o root -g root -m 0700 "$AUTHORITY_DIR"
+sudo test ! -e "$AUTHORITY"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fl9-v2-scoring-authority-decide" \
+  --request-preparation "$PREPARATION" \
+  --decision "$DECISION" \
+  --decision-reason "$DECISION_REASON" \
+  --destination "$AUTHORITY"
+
+sudo cat "$AUTHORITY"
+```
+
+For an authorized decision, the resulting artifact remains bounded to exactly one authenticated request and its exact evidence destination:
+
+```text
+execution_scope=ONE_REQUEST_ONE_DESTINATION
+scoring_authority=EXPLICIT_DISCOVERY_BOUND_SINGLE_RUN
+model_fitting_authority=EXPLICIT_DISCOVERY_BOUND_SINGLE_RUN
+champion_publication_authority=SCORING_EVIDENCE_ONLY
+paper_promotion_authority=BLOCKED
+live_authority=DISABLED
+```
+
+A `REJECT_SCORING_RUN` artifact grants no scoring, model-fitting, or champion-publication authority.
+
+The authority artifact does not itself run scoring/model fitting, publish PAPER, create risk intent, access wallets, construct/sign/submit transactions, or enable LIVE. A later separately reviewed execution bridge must authenticate this artifact and the exact request before any scoring/model-fitting process may run.
+
+
 ## Rollback
 
 For rollback, select an earlier GitHub Release tag that was previously sealed and verified, then dispatch `Deploy verified Shreks release` with that earlier tag. The same local verification, strict transport, host verification, staging, and health gates apply to rollback; there is no separate bypass path.
