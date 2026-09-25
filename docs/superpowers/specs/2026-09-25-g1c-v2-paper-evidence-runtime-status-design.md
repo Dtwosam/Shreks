@@ -53,6 +53,7 @@ The deploy verifier never reads the file directly.
 The status document contains only secret-free operational values:
 
 - schema name/version;
+- exact immutable release source SHA injected by the release-local Python launcher;
 - state: `STARTED` or `CYCLE_COMPLETE`;
 - process start timestamp;
 - generated timestamp;
@@ -103,6 +104,7 @@ The control validates:
 - mode `0600`;
 - bounded size and stable read;
 - exact schema/key set;
+- status release source SHA equals the exact active immutable release binding;
 - `CYCLE_COMPLETE` with at least one completed cycle;
 - generated timestamp is not future-dated and is recent relative to the
   configured evidence cadence;
