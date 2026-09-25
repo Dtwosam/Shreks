@@ -242,3 +242,33 @@ def test_historical_analyzer_classifies_mint_state_read_failure(
 
     assert captured.value.code == "MINT_STATE_READ_FAILED"
     assert "secret SQLite detail" not in str(captured.value)
+
+
+def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
+    config, as_of = _one_checkpoint_runtime(tmp_path)
+    stages: list[str] = []
+
+    analyze_mint_state_acceptance(
+        config.observer_database_path,
+        config.manifest_path,
+        window_start_unix_ms=as_of - 1,
+        window_end_unix_ms=as_of,
+        evidence_cycle_interval_ms=60_000,
+        progress_callback=stages.append,
+    )
+
+    assert stages[0] == "MANIFEST_VALIDATION"
+    assert "DATABASE_OPEN" in stages
+    assert "CHECKPOINT_WINDOW_READ" in stages
+    assert "CHECKPOINT_DECODE" in stages
+    assert "CYCLE_RECONSTRUCTION" in stages
+    assert stages[-1] == "ANALYSIS_COMPLETE"
+    assert set(stages) <= {
+        "MANIFEST_VALIDATION",
+        "DATABASE_OPEN",
+        "CHECKPOINT_WINDOW_READ",
+        "CHECKPOINT_DECODE",
+        "CYCLE_RECONSTRUCTION",
+        "MINT_STATE_READ",
+        "ANALYSIS_COMPLETE",
+    }
