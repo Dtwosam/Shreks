@@ -94,7 +94,6 @@ def evaluate_mint_state_acceptance_samples(
     *,
     max_critical_data_age_ms: int,
     evidence_cycle_interval_ms: int,
-    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     if not isinstance(samples, tuple) or any(
         type(sample) is not MintStateAcceptanceSample for sample in samples
@@ -176,6 +175,7 @@ def analyze_mint_state_acceptance(
     window_start_unix_ms: int,
     window_end_unix_ms: int,
     evidence_cycle_interval_ms: int,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     _require_non_negative_int("window_start_unix_ms", window_start_unix_ms)
     _require_non_negative_int("window_end_unix_ms", window_end_unix_ms)
