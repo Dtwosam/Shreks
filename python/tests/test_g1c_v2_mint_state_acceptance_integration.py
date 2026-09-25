@@ -98,3 +98,37 @@ def test_production_verifier_treats_hold_as_nonfatal_and_failed_as_terminal() ->
 
     assert "exit 1" not in hold_text
     assert "exit 1" in failed_text
+
+
+def test_mint_acceptance_timeout_emits_bounded_control_diagnostics() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    timeout_start = workflow.index(
+        "g1c_v2_mint_state_acceptance_status=TIMEOUT"
+    )
+    timeout_text = workflow[timeout_start : timeout_start + 2600]
+
+    for required in (
+        "mint_acceptance_timeout_diagnostics=begin",
+        "systemctl show shreks-telemetry.timer",
+        "-p LastTriggerUSec",
+        "-p NextElapseUSecRealtime",
+        "systemctl show shreks-telemetry.service",
+        "-p ExecMainStatus",
+        "mint_acceptance_marker_present=",
+        "mint_acceptance_marker=",
+        "mint_acceptance_result_exchange=",
+        "mint_acceptance_result_file=",
+        "journalctl -u shreks-telemetry.service",
+        "mint_acceptance_timeout_diagnostics=end",
+    ):
+        assert required in timeout_text
+
+    for forbidden in (
+        "cat /var/lib/shreks",
+        "sqlite3.connect",
+        "paper-evidence-status.json",
+        "sudo ",
+        "setfacl",
+    ):
+        assert forbidden not in timeout_text

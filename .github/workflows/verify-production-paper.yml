@@ -930,6 +930,47 @@ jobs:
           done
           if [[ -z "$MINT_ACCEPTANCE_RESULT" ]]; then
             echo 'g1c_v2_mint_state_acceptance_status=TIMEOUT'
+            echo 'mint_acceptance_timeout_diagnostics=begin'
+            systemctl show shreks-telemetry.timer \
+              -p ActiveState \
+              -p SubState \
+              -p LastTriggerUSec \
+              -p NextElapseUSecRealtime \
+              --no-pager || true
+            systemctl show shreks-telemetry.service \
+              -p ActiveState \
+              -p SubState \
+              -p Result \
+              -p ExecMainCode \
+              -p ExecMainStatus \
+              -p ExecMainStartTimestamp \
+              -p ExecMainExitTimestamp \
+              --no-pager || true
+            printf 'mint_acceptance_marker_directory_lstat=%s\n' "$(
+              stat -c 'type=%F mode=%a owner_uid=%u owner_gid=%g' /dev/shm 2>/dev/null \
+                || printf 'unavailable'
+            )"
+            MINT_MARKER_DIRECTORY_RESOLVED="$(readlink -f /dev/shm 2>/dev/null || true)"
+            printf 'mint_acceptance_marker_directory_resolved=%s\n' "${MINT_MARKER_DIRECTORY_RESOLVED:-unavailable}"
+            stat -Lc 'mint_acceptance_marker_directory_target=type=%F mode=%a owner_uid=%u owner_gid=%g' /dev/shm 2>/dev/null || true
+            if test -e "$MINT_MARKER"; then
+              echo 'mint_acceptance_marker_present=yes'
+              stat -c 'mint_acceptance_marker=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$MINT_MARKER" || true
+            else
+              echo 'mint_acceptance_marker_present=no'
+            fi
+            if test -d "$MINT_RESULT_DIR"; then
+              stat -c 'mint_acceptance_result_exchange=%n mode=%a owner_uid=%u owner_gid=%g' "$MINT_RESULT_DIR" || true
+            else
+              echo 'mint_acceptance_result_exchange=absent'
+            fi
+            if test -e "$MINT_RESULT_FILE"; then
+              stat -c 'mint_acceptance_result_file=%n mode=%a owner_uid=%u owner_gid=%g size=%s mtime_unix=%Y' "$MINT_RESULT_FILE" || true
+            else
+              echo 'mint_acceptance_result_file=absent'
+            fi
+            journalctl -u shreks-telemetry.service -o cat --since '-5 min' --no-pager 2>&1 || true
+            echo 'mint_acceptance_timeout_diagnostics=end'
             cleanup_mint_acceptance
             exit 1
           fi
