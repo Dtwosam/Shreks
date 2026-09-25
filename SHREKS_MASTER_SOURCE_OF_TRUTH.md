@@ -6,7 +6,7 @@
 **System type:** Autonomous memecoin trading system  
 **Architecture:** Rust Fast Lane + Python research/learning/control plane  
 **Status:** Fast Lane trading-core rebuild authorized; LIVE trading remains disabled  
-**Last updated:** 2026-08-30
+**Last updated:** 2026-09-25
 
 ---
 
@@ -469,6 +469,31 @@ Continue holding while the expected value of holding remains superior to reducin
 
 ### 9.7 Legacy setups
 Fresh Launch Continuation, First Pullback, Graduation/Breakout, deterministic scores, and current setup engines remain useful as baselines/features/challengers. They are **no longer the sole gateway to entry**.
+
+
+### 9.8 Baseline/commissioning interpretation guardrail
+
+Legacy deterministic setup/score/decision paths are **baselines, commissioning tools, features, and challengers**. They are not the intended final market-intelligence authority.
+
+This includes runtime identities or policy families such as:
+
+- `fresh-launch-paper-v1`,
+- `commissioning-challenger`,
+- deterministic B1-B9 safety/setup/score/decision/risk chains,
+- hand-authored confirmation counts, score weights, momentum thresholds, and fixed token-quality gates.
+
+When diagnosing PAPER or runtime behavior:
+
+1. first identify the active strategy/model/candidate authority and whether approved learned champion inference is actually participating in action selection;
+2. do **not** interpret zero trades, repeated `WATCH`/`REJECT`, or threshold failures from a commissioning/baseline path as evidence that Shreks' learned intelligence concluded there was no opportunity;
+3. do **not** respond to inactivity by casually tuning fixed score, momentum, range-position, confirmation-count, or token-level liquidity thresholds unless the task is explicitly baseline calibration and supported by point-in-time outcome evidence;
+4. preserve hard safety/risk/execution invariants, but treat predictive market relationships as evidence to be learned, validated, and promoted through the champion/challenger process;
+5. prefer trade-specific executability constraints (credible route, exit capacity, price impact, slippage, latency, and expected value for intended size) over universal token-quality heuristics when the latter are not hard safety requirements.
+
+A commissioning PAPER campaign may be useful for plumbing, evidence, accounting, recovery, and execution validation while still being **the wrong authority for judging whether the learning system understands the market**.
+
+Future project/debugging work must never conflate a deterministic commissioning challenger with the target learned trading architecture.
+
 
 ---
 
