@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
+import shreks_brain.observer_campaign.store as campaign_store
 from shreks_brain.observer_campaign.models import ObserverRegimeReadPolicy
-from shreks_brain.observer_campaign.store import ObserverCampaignStore
+from shreks_brain.observer_campaign.store import (
+    ObserverCampaignReadError,
+    ObserverCampaignStore,
+)
 from shreks_brain.observer_safety import ObserverSafetyProbeIdentity
 from shreks_brain.safety import SafetyPolicy
 
@@ -347,3 +353,44 @@ def test_regime_window_skips_snapshot_with_future_pair_creation_time(tmp_path):
     assert window.executable_candidate_count == 1
     assert window.median_liquidity_usd == 75.0
     assert window.median_volume_m5_usd == 7.5
+
+
+@pytest.mark.parametrize(
+    ("patch_target", "expected_message"),
+    (
+        ("_candidate_from_row", "observer aggregate regime candidate replay failed"),
+        ("_market_snapshot_from_row", "observer aggregate regime market replay failed"),
+        ("build_safety_inputs", "observer aggregate regime safety replay failed"),
+        ("latest_paper_quote", "observer aggregate regime quote replay failed"),
+        ("_complete_median", "observer aggregate regime finalize replay failed"),
+    ),
+)
+def test_regime_replay_failures_are_stage_sanitized(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_target: str,
+    expected_message: str,
+) -> None:
+    path = tmp_path / "observer.db"
+    _seed_regime_fixture(path)
+    store = ObserverCampaignStore(path)
+
+    def fail(*_args, **_kwargs):
+        raise ValueError("secret regime replay detail")
+
+    if patch_target == "latest_paper_quote":
+        monkeypatch.setattr(ObserverCampaignStore, patch_target, fail)
+    else:
+        monkeypatch.setattr(campaign_store, patch_target, fail)
+
+    with pytest.raises(ObserverCampaignReadError) as captured:
+        store.build_regime_market_window(
+            AS_OF,
+            _regime_policy(),
+            _safety_policy(),
+            _safety_probe(),
+            global_risk_halt=False,
+        )
+
+    assert str(captured.value) == expected_message
+    assert "secret" not in str(captured.value)
