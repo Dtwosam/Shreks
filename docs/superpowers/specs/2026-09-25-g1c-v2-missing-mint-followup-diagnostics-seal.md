@@ -3,7 +3,8 @@
 **Date:** 2026-09-25  
 **Integration SHA:** `cb02ccb088afe48a6e2987eaad95771dd442a984`  
 **PR:** #512  
-**RED CI:** `36169764396`  
+**Initial RED CI:** `36169764396`  
+**Bounded-lookup RED CI:** `36170087616`  
 **Feature-head GREEN CI:** `36170181385`  
 **Merged-main CI:** `36170458120`
 
@@ -108,6 +109,23 @@ The Python failures were exactly the missing behavior:
 3. the protected verifier did not validate or print those counters.
 
 The RED run otherwise passed 3,756 Python tests.
+
+Bounded-lookup RED head:
+
+`f0de95ffb2d2612e75544d906c60e234b38386cb`
+
+Bounded-lookup RED CI `36170087616`:
+
+- Python: expected FAIL;
+- Rust: PASS;
+- repository safety: PASS;
+- ARM64 release build: PASS.
+
+That RED added the exact missing boundary proof: `_mint_state_times` did not yet
+accept a bounded `followup_through_unix_ms`, so post-decision evidence could not
+be explicitly constrained to the authorized acceptance window. The run failed
+on that new lookup contract plus the still-unimplemented aggregate diagnostics,
+while the other canonical gates remained green.
 
 Final feature head:
 
