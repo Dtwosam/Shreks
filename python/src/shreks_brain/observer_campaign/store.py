@@ -294,79 +294,113 @@ class ObserverCampaignStore:
 
         connection = self._connect()
         try:
-            candidates = connection.execute(
-                """SELECT
-                       id, mint, pair_address, discovery_source,
-                       discovered_at_unix_ms, venue
-                   FROM token_candidates
-                   WHERE discovered_at_unix_ms <= ?
-                   ORDER BY id ASC""",
-                (as_of_unix_ms,),
-            ).fetchall()
+            try:
+                candidates = connection.execute(
+                    """SELECT
+                           id, mint, pair_address, discovery_source,
+                           discovered_at_unix_ms, venue
+                       FROM token_candidates
+                       WHERE discovered_at_unix_ms <= ?
+                       ORDER BY id ASC""",
+                    (as_of_unix_ms,),
+                ).fetchall()
+            except (sqlite3.Error, TypeError, ValueError) as error:
+                raise ObserverCampaignReadError(
+                    "observer aggregate regime candidate replay failed"
+                ) from error
 
             for candidate_row in candidates:
-                candidate = _candidate_from_row(candidate_row)
-                market_row = self._select_regime_market_row(
-                    connection,
-                    candidate.candidate_id,
-                    minimum_market_time,
-                    as_of_unix_ms,
-                    policy.source_priority,
-                )
-                if market_row is None:
-                    continue
-                current = _market_snapshot_from_row(market_row)
-                market_window = ObservedMarketWindow(
-                    schema_version=OBSERVER_MARKET_SCHEMA_VERSION,
-                    policy_version=policy.version,
-                    candidate=candidate,
-                    as_of_unix_ms=as_of_unix_ms,
-                    selected_source=current.source,
-                    selected_pair_address=current.pair_address,
-                    current=current,
-                    one_minute_ago=None,
-                    five_minutes_ago=None,
-                    fifteen_minutes_ago=None,
-                    pair_created_at_unix_ms=current.pair_created_at_unix_ms,
-                    local_high_price_usd=None,
-                    local_low_price_usd=None,
-                )
+                try:
+                    candidate = _candidate_from_row(candidate_row)
+                except (sqlite3.Error, TypeError, ValueError) as error:
+                    raise ObserverCampaignReadError(
+                        "observer aggregate regime candidate replay failed"
+                    ) from error
+
+                try:
+                    market_row = self._select_regime_market_row(
+                        connection,
+                        candidate.candidate_id,
+                        minimum_market_time,
+                        as_of_unix_ms,
+                        policy.source_priority,
+                    )
+                    if market_row is None:
+                        continue
+                    current = _market_snapshot_from_row(market_row)
+                    market_window = ObservedMarketWindow(
+                        schema_version=OBSERVER_MARKET_SCHEMA_VERSION,
+                        policy_version=policy.version,
+                        candidate=candidate,
+                        as_of_unix_ms=as_of_unix_ms,
+                        selected_source=current.source,
+                        selected_pair_address=current.pair_address,
+                        current=current,
+                        one_minute_ago=None,
+                        five_minutes_ago=None,
+                        fifteen_minutes_ago=None,
+                        pair_created_at_unix_ms=current.pair_created_at_unix_ms,
+                        local_high_price_usd=None,
+                        local_low_price_usd=None,
+                    )
+                except (sqlite3.Error, TypeError, ValueError) as error:
+                    raise ObserverCampaignReadError(
+                        "observer aggregate regime market replay failed"
+                    ) from error
+
                 selected_windows.append(market_window)
                 liquidity_values.append(current.liquidity_usd)
                 volume_values.append(current.volume_m5_usd)
                 consumed_timestamps.append(current.observed_at_unix_ms)
 
-                safety_inputs = build_safety_inputs(
-                    market_window,
-                    safety_store,
-                    safety_probe_identity,
-                    global_risk_halt,
-                )
-                assessment = assess_safety(safety_inputs, safety_policy)
-                safety_observed_at = safety_inputs.critical_data_observed_at_unix_ms
-                safety_inside_window = (
-                    safety_observed_at is not None
-                    and safety_observed_at > window_started_at
-                )
+                try:
+                    safety_inputs = build_safety_inputs(
+                        market_window,
+                        safety_store,
+                        safety_probe_identity,
+                        global_risk_halt,
+                    )
+                    assessment = assess_safety(safety_inputs, safety_policy)
+                    safety_observed_at = (
+                        safety_inputs.critical_data_observed_at_unix_ms
+                    )
+                    safety_inside_window = (
+                        safety_observed_at is not None
+                        and safety_observed_at > window_started_at
+                    )
+                except (sqlite3.Error, TypeError, ValueError) as error:
+                    raise ObserverCampaignReadError(
+                        "observer aggregate regime safety replay failed"
+                    ) from error
+
                 if safety_inside_window:
                     consumed_timestamps.append(safety_observed_at)
 
-                entry_identity = ObserverPaperQuoteIdentity(
-                    candidate_id=candidate.candidate_id,
-                    purpose=ObserverPaperQuotePurpose.ENTRY,
-                    provider="jupiter",
-                    probe_policy_version=policy.entry_probe_policy_version,
-                    input_mint=policy.quote_asset_mint,
-                    output_mint=candidate.mint,
-                    taker=policy.taker,
-                    input_amount=policy.entry_input_amount,
-                    slippage_bps=policy.slippage_bps,
-                )
-                entry_quote = self.latest_paper_quote(entry_identity, as_of_unix_ms)
-                entry_quote_inside_window = (
-                    entry_quote is not None
-                    and entry_quote.quoted_at_unix_ms > window_started_at
-                )
+                try:
+                    entry_identity = ObserverPaperQuoteIdentity(
+                        candidate_id=candidate.candidate_id,
+                        purpose=ObserverPaperQuotePurpose.ENTRY,
+                        provider="jupiter",
+                        probe_policy_version=policy.entry_probe_policy_version,
+                        input_mint=policy.quote_asset_mint,
+                        output_mint=candidate.mint,
+                        taker=policy.taker,
+                        input_amount=policy.entry_input_amount,
+                        slippage_bps=policy.slippage_bps,
+                    )
+                    entry_quote = self.latest_paper_quote(
+                        entry_identity,
+                        as_of_unix_ms,
+                    )
+                    entry_quote_inside_window = (
+                        entry_quote is not None
+                        and entry_quote.quoted_at_unix_ms > window_started_at
+                    )
+                except (sqlite3.Error, TypeError, ValueError) as error:
+                    raise ObserverCampaignReadError(
+                        "observer aggregate regime quote replay failed"
+                    ) from error
+
                 if entry_quote_inside_window:
                     consumed_timestamps.append(entry_quote.quoted_at_unix_ms)
 
@@ -378,12 +412,6 @@ class ObserverCampaignStore:
                     and entry_quote.route_available
                 ):
                     executable_candidate_count += 1
-        except ObserverCampaignReadError:
-            raise
-        except (sqlite3.Error, TypeError, ValueError) as error:
-            raise ObserverCampaignReadError(
-                f"observer aggregate regime replay failed: {error}"
-            ) from error
         finally:
             connection.close()
 
@@ -395,15 +423,20 @@ class ObserverCampaignStore:
                 "aggregate regime consumed evidence is not inside the requested window"
             )
 
-        return RegimeMarketWindow(
-            as_of_unix_ms=as_of_unix_ms,
-            source_observed_at_unix_ms=source_observed_at,
-            window_started_at_unix_ms=window_started_at,
-            candidate_count=len(selected_windows),
-            executable_candidate_count=executable_candidate_count,
-            median_liquidity_usd=_complete_median(liquidity_values),
-            median_volume_m5_usd=_complete_median(volume_values),
-        )
+        try:
+            return RegimeMarketWindow(
+                as_of_unix_ms=as_of_unix_ms,
+                source_observed_at_unix_ms=source_observed_at,
+                window_started_at_unix_ms=window_started_at,
+                candidate_count=len(selected_windows),
+                executable_candidate_count=executable_candidate_count,
+                median_liquidity_usd=_complete_median(liquidity_values),
+                median_volume_m5_usd=_complete_median(volume_values),
+            )
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise ObserverCampaignReadError(
+                "observer aggregate regime finalize replay failed"
+            ) from error
 
     def _connect(self) -> sqlite3.Connection:
         database_uri = f"{self._database_path.as_uri()}?mode=ro"
