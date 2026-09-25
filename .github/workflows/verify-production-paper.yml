@@ -1150,6 +1150,8 @@ jobs:
               "selected_observation_count",
               "proactive_refresh_count",
               "selected_missing_mint_count",
+              "selected_missing_mint_later_observed_count",
+              "selected_missing_mint_unresolved_count",
               "selected_stale_mint_count",
               "invalid_observation_count",
               "reconstructed_checkpoint_count",
@@ -1163,6 +1165,21 @@ jobs:
               isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 0
           ):
               raise SystemExit("mint acceptance max selected age is invalid")
+          max_missing_followup_delay = analysis.get(
+              "max_selected_missing_mint_followup_delay_ms"
+          )
+          if max_missing_followup_delay is not None and (
+              isinstance(max_missing_followup_delay, bool)
+              or not isinstance(max_missing_followup_delay, int)
+              or max_missing_followup_delay < 0
+          ):
+              raise SystemExit("mint acceptance max missing follow-up delay is invalid")
+          if (
+              analysis["selected_missing_mint_later_observed_count"]
+              + analysis["selected_missing_mint_unresolved_count"]
+              != analysis["selected_missing_mint_count"]
+          ):
+              raise SystemExit("mint acceptance missing mint diagnostics are inconsistent")
 
           runtime_status = document.get("runtime_status")
           if not isinstance(runtime_status, dict):
@@ -1221,10 +1238,17 @@ jobs:
           print(analysis["selected_observation_count"])
           print(analysis["proactive_refresh_count"])
           print(analysis["selected_missing_mint_count"])
+          print(analysis["selected_missing_mint_later_observed_count"])
+          print(analysis["selected_missing_mint_unresolved_count"])
           print(analysis["selected_stale_mint_count"])
           print(analysis["invalid_observation_count"])
           print(analysis["reconstructed_checkpoint_count"])
           print("none" if max_age is None else max_age)
+          print(
+              "none"
+              if max_missing_followup_delay is None
+              else max_missing_followup_delay
+          )
           print(runtime_status["completed_cycle_count"])
           print(runtime_status["provider_failures_last_cycle"])
           print(runtime_status["helius_requests_attempted"])
@@ -1246,16 +1270,19 @@ jobs:
           printf 'g1c_v2_mint_state_selected_observations=%s\n' "${MINT_ACCEPTANCE_LINES[1]:-0}"
           printf 'g1c_v2_mint_state_proactive_refreshes=%s\n' "${MINT_ACCEPTANCE_LINES[2]:-0}"
           printf 'g1c_v2_mint_state_missing_selected=%s\n' "${MINT_ACCEPTANCE_LINES[3]:-0}"
-          printf 'g1c_v2_mint_state_stale_selected=%s\n' "${MINT_ACCEPTANCE_LINES[4]:-0}"
-          printf 'g1c_v2_mint_state_invalid_observations=%s\n' "${MINT_ACCEPTANCE_LINES[5]:-0}"
-          printf 'g1c_v2_mint_state_reconstructed_checkpoints=%s\n' "${MINT_ACCEPTANCE_LINES[6]:-0}"
-          printf 'g1c_v2_mint_state_max_selected_age_ms=%s\n' "${MINT_ACCEPTANCE_LINES[7]:-none}"
-          printf 'g1c_v2_paper_evidence_completed_cycles=%s\n' "${MINT_ACCEPTANCE_LINES[8]:-0}"
-          printf 'g1c_v2_paper_evidence_provider_failures_last_cycle=%s\n' "${MINT_ACCEPTANCE_LINES[9]:-unknown}"
-          printf 'g1c_v2_helius_requests_attempted=%s\n' "${MINT_ACCEPTANCE_LINES[10]:-unknown}"
-          printf 'g1c_v2_helius_requests_limit=%s\n' "${MINT_ACCEPTANCE_LINES[11]:-unknown}"
-          printf 'g1c_v2_helius_requests_remaining=%s\n' "${MINT_ACCEPTANCE_LINES[12]:-unknown}"
-          printf 'g1c_v2_helius_budget_exhausted=%s\n' "${MINT_ACCEPTANCE_LINES[13]:-unknown}"
+          printf 'g1c_v2_mint_state_missing_later_observed=%s\n' "${MINT_ACCEPTANCE_LINES[4]:-0}"
+          printf 'g1c_v2_mint_state_missing_unresolved=%s\n' "${MINT_ACCEPTANCE_LINES[5]:-0}"
+          printf 'g1c_v2_mint_state_stale_selected=%s\n' "${MINT_ACCEPTANCE_LINES[6]:-0}"
+          printf 'g1c_v2_mint_state_invalid_observations=%s\n' "${MINT_ACCEPTANCE_LINES[7]:-0}"
+          printf 'g1c_v2_mint_state_reconstructed_checkpoints=%s\n' "${MINT_ACCEPTANCE_LINES[8]:-0}"
+          printf 'g1c_v2_mint_state_max_selected_age_ms=%s\n' "${MINT_ACCEPTANCE_LINES[9]:-none}"
+          printf 'g1c_v2_mint_state_max_missing_followup_delay_ms=%s\n' "${MINT_ACCEPTANCE_LINES[10]:-none}"
+          printf 'g1c_v2_paper_evidence_completed_cycles=%s\n' "${MINT_ACCEPTANCE_LINES[11]:-0}"
+          printf 'g1c_v2_paper_evidence_provider_failures_last_cycle=%s\n' "${MINT_ACCEPTANCE_LINES[12]:-unknown}"
+          printf 'g1c_v2_helius_requests_attempted=%s\n' "${MINT_ACCEPTANCE_LINES[13]:-unknown}"
+          printf 'g1c_v2_helius_requests_limit=%s\n' "${MINT_ACCEPTANCE_LINES[14]:-unknown}"
+          printf 'g1c_v2_helius_requests_remaining=%s\n' "${MINT_ACCEPTANCE_LINES[15]:-unknown}"
+          printf 'g1c_v2_helius_budget_exhausted=%s\n' "${MINT_ACCEPTANCE_LINES[16]:-unknown}"
           if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]; then
             echo 'g1c_v2_mint_state_physical_acceptance=FAILED'
             cleanup_mint_acceptance
