@@ -46,13 +46,13 @@ Preserve:
 - dashboard/telemetry/operator controls,
 - restart/recovery and backup work.
 
-Legacy Fresh Launch, Graduation/Breakout, First Pullback, deterministic scoring, and the existing PAPER campaign remain useful as **baselines, research signals, and compatibility tests**. They no longer define the sole trading path.
+Legacy Fresh Launch, Graduation/Breakout, First Pullback, and the existing PAPER campaign remain useful as commissioning, regression, and historical comparison surfaces. Legacy deterministic score artifacts are frozen comparison fixtures, not an extensible trading architecture.
 
 The following old assumptions are superseded:
 
 - token suspicion/manipulation is not an automatic strategy-level veto,
-- a high deterministic score is not sufficient to trigger a buy,
-- entry is not “take any acceptable quote after score approval,”
+- score approval is not a valid target control boundary and no new score-to-trade or score-to-promotion path may be added,
+- action selection compares executable `BUY`, `SKIP`, `HOLD`, `REDUCE`, and `SELL` value rather than waiting for a score threshold,
 - action decisions are not tied to fixed checkpoint timers,
 - Python is not required to sit in the latency-critical decision loop,
 - DEX Screener snapshots are not sufficient for 1–10 second trading.
@@ -554,6 +554,22 @@ The same ordered event stream, code version, configuration, and champion artifac
 ## 4.8 Evidence before optimization
 Do not add infrastructure or complexity until profiling shows the current design is insufficient.
 
+## 4.9 No scoring control path
+Any implementation slice that introduces scoring authority, score-gated action approval, or a score-to-trade control path is architecture drift and must be rejected before implementation.
+
+Do not add new score thresholds, scoring-request authority, scoring-execution bridges, score-backed champion approval, or score-backed PAPER/LIVE promotion. Legacy deterministic score artifacts may remain only as frozen regression/history fixtures. Reuse useful raw point-in-time signals directly rather than extending a score layer.
+
+The active decision path is:
+
+`event/state -> future-path forecasts -> execution economics -> expected net value -> BUY/SKIP/HOLD/REDUCE/SELL comparison -> independent risk authority`
+
+## 4.10 The self-improvement loop must close
+Fresh market observation plus PAPER outcomes, eventual LIVE outcomes, and counterfactual alternatives must feed point-in-time-safe datasets for repeated challenger training.
+
+Training challengers may be automated and repeated as trustworthy evidence accumulates. A challenger becomes the production champion only after chronological evaluation, realistic replay, PAPER/shadow proof, and the explicit versioned promotion gate.
+
+The objective of every learning cycle is improved **net expectancy/account growth after realistic costs, latency, capacity, and risk**, not a larger score or better classification metric in isolation.
+
 ---
 
 # 5. BUILD DISCIPLINE
@@ -564,16 +580,17 @@ For every implementation slice:
 2. read this build order,
 3. identify the active FL phase,
 4. inspect current repository code/interfaces before designing replacements,
-5. write a focused spec/plan for multi-step changes,
-6. write RED tests first,
-7. prove RED fails for the intended reason,
-8. implement the smallest correct behavior,
-9. run focused GREEN tests,
-10. run full relevant CI including Rust/Python/repository-safety/ARM64 where applicable,
-11. inspect the diff for architecture drift,
-12. merge only with verified evidence,
-13. obtain physical VPS evidence whenever runtime behavior changes,
-14. update durable docs when architecture/build sequencing changes.
+5. reject the slice before implementation if it introduces a scoring authority, score-gated trade/promotion path, or otherwise conflicts with the forecast/net-EV/action architecture,
+6. write a focused spec/plan for multi-step changes,
+7. write RED tests first,
+8. prove RED fails for the intended reason,
+9. implement the smallest correct behavior,
+10. run focused GREEN tests,
+11. run full relevant CI including Rust/Python/repository-safety/ARM64 where applicable,
+12. inspect the diff for architecture drift,
+13. merge only with verified evidence,
+14. obtain physical VPS evidence whenever runtime behavior changes,
+15. update durable docs when architecture/build sequencing changes.
 
 Never claim a phase complete without exact verification evidence.
 
@@ -666,7 +683,7 @@ Current authority remains:
 
 ```text
 MANIFEST_ROTATION_AUTHORITY=NOT_GRANTED
-SCORING_AUTHORITY=NOT_GRANTED
+SCORING_CONTROL_PATH=FORBIDDEN
 MODEL_FITTING_AUTHORITY=NOT_GRANTED
 PAPER_PROMOTION=BLOCKED
 LIVE=DISABLED
@@ -696,6 +713,6 @@ Do not build prematurely:
 
 The build is complete only when Shreks can:
 
-`capture event -> reconstruct state -> forecast paths -> calculate executable net EV -> choose BUY/SKIP/HOLD/REDUCE/SELL -> enforce risk -> realistically PAPER execute -> learn counterfactuals -> prove edge -> run reliably on VPS -> promote deliberately -> trade LIVE with tiny controlled capital`
+`capture event -> reconstruct state -> forecast paths -> calculate executable net EV -> choose BUY/SKIP/HOLD/REDUCE/SELL -> enforce risk -> realistically PAPER execute -> record actual + counterfactual outcomes -> train challengers -> chronological replay -> PAPER/shadow prove edge -> promote proven champion -> run reliably on VPS -> trade LIVE with tiny controlled capital -> feed outcomes back into learning`
 
 Until then, LIVE TRADING REMAINS DISABLED.
