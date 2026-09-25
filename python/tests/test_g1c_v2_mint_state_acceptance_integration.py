@@ -207,8 +207,34 @@ def test_mint_acceptance_timeout_reports_sanitized_reconstruction_substage() -> 
         "CYCLE_RECONSTRUCTION_QUOTE",
         "CYCLE_RECONSTRUCTION_SAFETY_FEATURES",
         "CYCLE_RECONSTRUCTION_REGIME",
+        "CYCLE_RECONSTRUCTION_REGIME_CANDIDATE_SCAN",
+        "CYCLE_RECONSTRUCTION_REGIME_MARKET",
+        "CYCLE_RECONSTRUCTION_REGIME_SAFETY",
+        "CYCLE_RECONSTRUCTION_REGIME_ENTRY_QUOTE",
+        "CYCLE_RECONSTRUCTION_REGIME_FINALIZE",
         "CYCLE_RECONSTRUCTION_RISK",
         "CYCLE_RECONSTRUCTION_FINALIZE",
         "CYCLE_RECONSTRUCTION_AGGREGATION",
     ):
         assert required in timeout_text
+
+def test_mint_acceptance_failed_result_reports_sanitized_progress_stage() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    failed_start = workflow.index(
+        'if [[ "$MINT_ACCEPTANCE_STATUS" == "FAILED" ]]'
+    )
+    failed_text = workflow[failed_start : failed_start + 9000]
+
+    assert "g1c_v2_mint_state_acceptance_progress_stage=%s" in failed_text
+    assert "shreks.g1c_v2_mint_state_acceptance_progress" in failed_text
+
+    for forbidden in (
+        "candidate_id",
+        "selected_mints",
+        "payload_json",
+        "sqlite3.connect",
+        "cat /var/lib/shreks",
+    ):
+        assert forbidden not in failed_text
+
