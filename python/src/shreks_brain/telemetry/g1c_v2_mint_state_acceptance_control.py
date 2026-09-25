@@ -34,14 +34,18 @@ CONTROL_RESULT_SCHEMA_NAME: Final = (
     "shreks.g1c_v2_mint_state_acceptance_control_result"
 )
 CONTROL_RESULT_SCHEMA_VERSION: Final = 1
+PROGRESS_SCHEMA_NAME: Final = "shreks.g1c_v2_mint_state_acceptance_progress"
+PROGRESS_SCHEMA_VERSION: Final = 1
 _MARKER_PREFIX: Final = "shreks-g1c-v2-mint-state-acceptance."
 _MARKER_SUFFIX: Final = ".request"
 _RESULT_EXCHANGE_SUFFIX: Final = ".result.d"
 _RESULT_FILENAME: Final = "result.json"
+_PROGRESS_FILENAME: Final = "progress.json"
 _RESULT_EXCHANGE_MODE: Final = 0o733
 _RESULT_FILE_MODE: Final = 0o644
 _MAX_MARKER_BYTES: Final = 4096
 _MAX_RESULT_BYTES: Final = 65_536
+_MAX_PROGRESS_BYTES: Final = 4_096
 _MAX_REQUEST_AGE_MS: Final = 300_000
 _MAX_FUTURE_SKEW_MS: Final = 30_000
 _MAX_WINDOW_MS: Final = 240 * 60_000
@@ -56,6 +60,21 @@ _RUNTIME_STATUS_FUTURE_SKEW_MS: Final = 30_000
 _RUNTIME_STATUS_MAX_CYCLES_AGE: Final = 4
 _REQUEST_ID_RE: Final = re.compile(r"^[A-Za-z0-9._-]{1,96}$")
 _SOURCE_SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
+_PROGRESS_STAGES: Final = frozenset(
+    {
+        "REQUEST_ACCEPTED",
+        "RUNTIME_AUTHORITY_RESOLVED",
+        "MANIFEST_VALIDATION",
+        "DATABASE_OPEN",
+        "CHECKPOINT_WINDOW_READ",
+        "CHECKPOINT_DECODE",
+        "CYCLE_RECONSTRUCTION",
+        "MINT_STATE_READ",
+        "ANALYSIS_COMPLETE",
+        "RUNTIME_STATUS_VALIDATION",
+        "RESULT_READY",
+    }
+)
 _ANALYSIS_STAGE_CODES: Final = frozenset(
     {
         "MANIFEST_VALIDATION_FAILED",
@@ -248,6 +267,131 @@ def publish_mint_state_acceptance_control_result(
     return True
 
 
+def publish_mint_state_acceptance_progress(
+    *,
+    request_id: str,
+    expected_release_sha: str,
+    stage: str,
+    generated_at_unix_ms: int,
+    marker_directory: Path = Path("/dev/shm"),
+    expected_exchange_owner_uid: int | None = None,
+) -> bool:
+    if (
+        not isinstance(request_id, str)
+        or _REQUEST_ID_RE.fullmatch(request_id) is None
+    ):
+        raise MintStateAcceptanceControlError("progress request_id is invalid")
+    if (
+        not isinstance(expected_release_sha, str)
+        or _SOURCE_SHA_RE.fullmatch(expected_release_sha) is None
+    ):
+        raise MintStateAcceptanceControlError(
+            "progress expected release SHA is invalid"
+        )
+    if stage not in _PROGRESS_STAGES:
+        raise MintStateAcceptanceControlError(
+            "progress stage is unsupported"
+        )
+    if (
+        isinstance(generated_at_unix_ms, bool)
+        or not isinstance(generated_at_unix_ms, int)
+        or generated_at_unix_ms < 0
+    ):
+        raise MintStateAcceptanceControlError(
+            "progress timestamp is invalid"
+        )
+
+    exchange_owner_uid = (
+        pwd.getpwnam("shreks-deploy").pw_uid
+        if expected_exchange_owner_uid is None
+        else expected_exchange_owner_uid
+    )
+    if (
+        isinstance(exchange_owner_uid, bool)
+        or not isinstance(exchange_owner_uid, int)
+        or exchange_owner_uid < 0
+    ):
+        raise ValueError("expected_exchange_owner_uid must be non-negative")
+
+    exchange = (
+        Path(marker_directory)
+        / f"{_MARKER_PREFIX}{request_id}{_RESULT_EXCHANGE_SUFFIX}"
+    )
+    try:
+        metadata = exchange.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        raise MintStateAcceptanceControlError(
+            "progress exchange could not be inspected"
+        ) from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise MintStateAcceptanceControlError(
+            "progress exchange must be a real directory"
+        )
+    if metadata.st_uid != exchange_owner_uid:
+        raise MintStateAcceptanceControlError(
+            "progress exchange owner is untrusted"
+        )
+    if stat.S_IMODE(metadata.st_mode) != _RESULT_EXCHANGE_MODE:
+        raise MintStateAcceptanceControlError(
+            "progress exchange mode must be 0733"
+        )
+
+    document = {
+        "schema_name": PROGRESS_SCHEMA_NAME,
+        "schema_version": PROGRESS_SCHEMA_VERSION,
+        "request_id": request_id,
+        "expected_release_sha": expected_release_sha,
+        "stage": stage,
+        "generated_at_unix_ms": generated_at_unix_ms,
+    }
+    payload = (_canonical_json(document) + "\n").encode("utf-8")
+    if len(payload) > _MAX_PROGRESS_BYTES:
+        raise MintStateAcceptanceControlError(
+            "progress receipt exceeds size bound"
+        )
+
+    destination = exchange / _PROGRESS_FILENAME
+    temporary = exchange / (
+        f".progress.{os.getpid()}.{time.time_ns()}.tmp"
+    )
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(temporary, flags, 0o600)
+        try:
+            offset = 0
+            while offset < len(payload):
+                written = os.write(fd, payload[offset:])
+                if written <= 0:
+                    raise OSError("short write")
+                offset += written
+            os.fsync(fd)
+            os.fchmod(fd, _RESULT_FILE_MODE)
+        finally:
+            os.close(fd)
+        os.replace(temporary, destination)
+    except OSError as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise MintStateAcceptanceControlError(
+            "progress receipt could not be published safely"
+        ) from error
+
+    if _read_exchange_result(
+        destination,
+        expected_owner_uid=os.getuid(),
+    ) != payload:
+        raise MintStateAcceptanceControlError(
+            "published progress receipt verification failed"
+        )
+    return True
+
+
 def emit_mint_state_acceptance_control_result(
     result: dict[str, object],
     *,
@@ -319,6 +463,21 @@ def _process_one_request(
             message="mint-state acceptance request is future-dated",
         )
 
+    def publish_progress(stage: str) -> None:
+        try:
+            publish_mint_state_acceptance_progress(
+                request_id=request_id,
+                expected_release_sha=expected_release_sha,
+                stage=stage,
+                generated_at_unix_ms=time.time_ns() // 1_000_000,
+                marker_directory=marker_path.parent,
+                expected_exchange_owner_uid=expected_owner_uid,
+            )
+        except Exception:
+            return
+
+    publish_progress("REQUEST_ACCEPTED")
+
     resolved_database_path = database_path
     resolved_manifest_path = manifest_path
     if resolved_database_path is None or resolved_manifest_path is None:
@@ -337,6 +496,7 @@ def _process_one_request(
         if resolved_manifest_path is None:
             resolved_manifest_path = runtime_config.manifest_path
 
+    publish_progress("RUNTIME_AUTHORITY_RESOLVED")
     try:
         analysis = analyze_mint_state_acceptance(
             resolved_database_path,
@@ -344,6 +504,7 @@ def _process_one_request(
             window_start_unix_ms=request["window_start_unix_ms"],
             window_end_unix_ms=request["window_end_unix_ms"],
             evidence_cycle_interval_ms=evidence_cycle_interval_ms,
+            progress_callback=publish_progress,
         )
     except MintStateAcceptanceError as error:
         stage_code = (
@@ -386,6 +547,7 @@ def _process_one_request(
             error_code="ANALYSIS_FAILED",
             message="mint-state acceptance analysis failed closed",
         )
+    publish_progress("RUNTIME_STATUS_VALIDATION")
     try:
         runtime_status = _read_paper_evidence_runtime_status(
             runtime_status_path,
@@ -405,6 +567,7 @@ def _process_one_request(
             message="PAPER evidence runtime status failed closed",
         )
 
+    publish_progress("RESULT_READY")
     return {
         "schema_name": CONTROL_RESULT_SCHEMA_NAME,
         "schema_version": CONTROL_RESULT_SCHEMA_VERSION,

@@ -286,3 +286,64 @@ def test_idle_control_needs_no_paper_interval_or_deploy_user(
         marker_directory=marker_directory,
         expected_marker_directory_owner_uid=os.getuid(),
     ) == ()
+
+
+def test_progress_receipt_is_canonical_release_bound_and_replaceable(
+    tmp_path: Path,
+) -> None:
+    exchange = tmp_path / (
+        f"shreks-g1c-v2-mint-state-acceptance.{REQUEST_ID}.result.d"
+    )
+    exchange.mkdir(mode=0o733)
+    exchange.chmod(0o733)
+
+    assert control.publish_mint_state_acceptance_progress(
+        request_id=REQUEST_ID,
+        expected_release_sha=SHA,
+        stage="CHECKPOINT_WINDOW_READ",
+        generated_at_unix_ms=NOW,
+        marker_directory=tmp_path,
+        expected_exchange_owner_uid=os.getuid(),
+    )
+
+    path = exchange / "progress.json"
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert document == {
+        "expected_release_sha": SHA,
+        "generated_at_unix_ms": NOW,
+        "request_id": REQUEST_ID,
+        "schema_name": "shreks.g1c_v2_mint_state_acceptance_progress",
+        "schema_version": 1,
+        "stage": "CHECKPOINT_WINDOW_READ",
+    }
+    assert path.stat().st_mode & 0o777 == 0o644
+
+    assert control.publish_mint_state_acceptance_progress(
+        request_id=REQUEST_ID,
+        expected_release_sha=SHA,
+        stage="CYCLE_RECONSTRUCTION",
+        generated_at_unix_ms=NOW + 1,
+        marker_directory=tmp_path,
+        expected_exchange_owner_uid=os.getuid(),
+    )
+    updated = json.loads(path.read_text(encoding="utf-8"))
+    assert updated["stage"] == "CYCLE_RECONSTRUCTION"
+    assert updated["generated_at_unix_ms"] == NOW + 1
+
+
+def test_progress_receipt_rejects_unsupported_stage(tmp_path: Path) -> None:
+    exchange = tmp_path / (
+        f"shreks-g1c-v2-mint-state-acceptance.{REQUEST_ID}.result.d"
+    )
+    exchange.mkdir(mode=0o733)
+    exchange.chmod(0o733)
+
+    with pytest.raises(control.MintStateAcceptanceControlError, match="stage"):
+        control.publish_mint_state_acceptance_progress(
+            request_id=REQUEST_ID,
+            expected_release_sha=SHA,
+            stage="SECRET_DYNAMIC_STAGE",
+            generated_at_unix_ms=NOW,
+            marker_directory=tmp_path,
+            expected_exchange_owner_uid=os.getuid(),
+        )

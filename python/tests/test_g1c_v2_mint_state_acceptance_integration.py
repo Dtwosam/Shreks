@@ -106,7 +106,7 @@ def test_mint_acceptance_timeout_emits_bounded_control_diagnostics() -> None:
     timeout_start = workflow.index(
         "g1c_v2_mint_state_acceptance_status=TIMEOUT"
     )
-    timeout_text = workflow[timeout_start : timeout_start + 2600]
+    timeout_text = workflow[timeout_start : timeout_start + 9000]
 
     for required in (
         "mint_acceptance_timeout_diagnostics=begin",
@@ -130,5 +130,35 @@ def test_mint_acceptance_timeout_emits_bounded_control_diagnostics() -> None:
         "paper-evidence-status.json",
         "sudo ",
         "setfacl",
+    ):
+        assert forbidden not in timeout_text
+
+
+def test_mint_acceptance_timeout_reports_only_sanitized_progress_stage() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    timeout_start = workflow.index(
+        "g1c_v2_mint_state_acceptance_status=TIMEOUT"
+    )
+    timeout_text = workflow[timeout_start : timeout_start + 9000]
+
+    assert 'MINT_PROGRESS_FILE="$MINT_RESULT_DIR/progress.json"' in workflow
+
+    for required in (
+        "shreks.g1c_v2_mint_state_acceptance_progress",
+        "g1c_v2_mint_state_acceptance_progress_stage=%s",
+        "g1c_v2_mint_state_acceptance_progress_generated_at_unix_ms=%s",
+        "CHECKPOINT_WINDOW_READ",
+        "CYCLE_RECONSTRUCTION",
+        "MINT_STATE_READ",
+    ):
+        assert required in timeout_text
+
+    for forbidden in (
+        "candidate_id",
+        "selected_mints",
+        "payload_json",
+        "sqlite3.connect",
+        "cat /var/lib/shreks",
     ):
         assert forbidden not in timeout_text
