@@ -113,17 +113,36 @@ However, the following are **not automatic token-level vetoes** merely because t
 Those are normally **features** that may imply ride, fade, smaller size, shorter hold, faster exit, or skip.
 
 ### 2.7 Risk authority cannot be bypassed
-No score, forecast, model, wallet signal, or Fast Lane strategy can bypass hard capital/risk invariants.
+No forecast, model, wallet signal, legacy compatibility output, or Fast Lane strategy can bypass hard capital/risk invariants.
 
-### 2.8 Learning cannot silently self-promote
-The live runtime may continuously update market state and predictions from incoming events, but it may not rewrite its own approved model weights/strategy parameters and silently deploy them.
+### 2.8 Learning must continuously improve Shreks without silent self-promotion
+Shreks is intended to keep learning from fresh market observation, PAPER outcomes, LIVE outcomes when LIVE is legitimately authorized, and counterfactual alternatives.
 
-New models/policies are challengers. They must pass chronological evaluation, replay, and PAPER/shadow proof before explicit promotion.
+The canonical self-improvement loop is:
 
-### 2.9 Secrets never enter source control or ChatGPT
+`OBSERVE -> LABEL -> TRAIN CHALLENGER -> CHRONOLOGICAL REPLAY -> PAPER/SHADOW -> COMPARE NET EXPECTANCY/RISK/COST/LATENCY -> PROMOTE PROVEN CHAMPION -> RUN -> RECORD ACTUAL + COUNTERFACTUAL OUTCOMES -> RETRAIN`
+
+Training may run repeatedly and automatically as fresh, trustworthy evidence accumulates. The restriction is on unproven deployment, not on Shreks learning or training new challengers.
+
+New models/policies are challengers. They must be evaluated on point-in-time-safe chronological evidence, replayed under realistic execution economics, and proven in PAPER/shadow operation before they may replace the approved champion.
+
+The runtime may continuously update market state and predictions from incoming events, but it may not silently rewrite and deploy its own approved model weights or policy. Promotion is a separate, versioned, auditable proof gate; passing that gate is not a score threshold.
+
+### 2.9 No scoring control path
+Scoring is not part of Shreks' target trading-intelligence or promotion architecture.
+
+No new scoring subsystem, scoring authority, score threshold, or score-gated approval path may be introduced for action selection, challenger approval, champion promotion, PAPER promotion, risk authority, or LIVE enablement.
+
+The target control path is always based on point-in-time market state, future-path forecasts, realistic execution economics, expected net value, direct comparison of `BUY` / `SKIP` / `HOLD` / `REDUCE` / `SELL`, and the independent risk engine.
+
+Existing legacy deterministic score artifacts may remain only as frozen compatibility/regression baselines needed to reproduce history or compare old behavior. They must not be extended, retrained, promoted, granted new authority, used to gate trading or promotion, or treated as learned challengers. If a raw signal that once fed a legacy score remains useful, use that point-in-time signal directly rather than routing it through the score output.
+
+Any proposal whose control flow is effectively `score -> approve/authorize -> trade/promote` is architecture drift and must be rejected before implementation.
+
+### 2.10 Secrets never enter source control or ChatGPT
 Never commit or paste wallet private keys, seed phrases, or unrestricted production secrets.
 
-### 2.10 Everything important is auditable
+### 2.11 Everything important is auditable
 For every material opportunity/action, preserve enough information to reconstruct:
 
 - events/state Shreks saw,
@@ -468,12 +487,13 @@ Learn what typically happens after specific wallets/cohorts act. Coordinated/man
 Continue holding while the expected value of holding remains superior to reducing/selling and risk limits remain satisfied. No fixed five-minute stop.
 
 ### 9.7 Legacy setups
-Fresh Launch Continuation, First Pullback, Graduation/Breakout, deterministic scores, and current setup engines remain useful as baselines/features/challengers. They are **no longer the sole gateway to entry**.
+Fresh Launch Continuation, First Pullback, Graduation/Breakout, legacy setup engines, and historical deterministic-score artifacts may remain only for historical reproducibility, commissioning/regression checks, and comparison against the target Fast Lane system.
 
+Legacy score outputs are not target features, challengers, approval gates, or trading authority. If an underlying raw point-in-time signal is still useful, consume that signal directly rather than passing it through a legacy score.
 
 ### 9.8 Baseline/commissioning interpretation guardrail
 
-Legacy deterministic setup/score/decision paths are **baselines, commissioning tools, features, and challengers**. They are not the intended final market-intelligence authority.
+Legacy deterministic setup/decision paths may be used as commissioning and regression fixtures. Legacy deterministic score artifacts are frozen historical comparison surfaces only. Neither is the intended market-intelligence authority, and neither may grow into a new scoring control plane.
 
 This includes runtime identities or policy families such as:
 
@@ -499,7 +519,7 @@ Future project/debugging work must never conflate a deterministic commissioning 
 
 ## 10. Forecast, Decision, and Entry-Price Engine
 
-The existing deterministic score is retained as an interpretable baseline/feature. **A high score alone must not trigger a buy.**
+Existing legacy deterministic score artifacts may remain only as frozen compatibility/regression baselines. They are outside the target decision engine and must not be extended, promoted, granted authority, or used as an input gate for action selection. Reuse useful underlying point-in-time signals directly; do not route new trading logic through a score.
 
 The target decision sequence is:
 

@@ -63,13 +63,49 @@ def test_fast_lane_has_no_fl9_v2_scoring_authority_control_path() -> None:
         "RECORD -> LEARN"
         in master
     )
+    assert "### 2.9 No scoring control path" in master
+    assert (
+        "OBSERVE -> LABEL -> TRAIN CHALLENGER -> CHRONOLOGICAL REPLAY -> "
+        "PAPER/SHADOW -> COMPARE NET EXPECTANCY/RISK/COST/LATENCY -> "
+        "PROMOTE PROVEN CHAMPION -> RUN -> RECORD ACTUAL + COUNTERFACTUAL "
+        "OUTCOMES -> RETRAIN"
+        in master
+    )
+    assert "Training may run repeatedly and automatically" in master
+    assert (
+        "No new scoring subsystem, scoring authority, score threshold, or "
+        "score-gated approval path may be introduced"
+        in master
+    )
+    assert (
+        "Existing legacy deterministic score artifacts may remain only as "
+        "frozen compatibility/regression baselines"
+        in master
+    )
+    assert (
+        "deterministic scores, and current setup engines remain useful as "
+        "baselines/features/challengers"
+        not in master
+    )
+    assert (
+        "The existing deterministic score is retained as an interpretable "
+        "baseline/feature"
+        not in master
+    )
+
     assert "## FL9 — Learned continuous action policy" in build_order
     assert "Evaluate `BUY`, `SKIP`, `HOLD`, `REDUCE`, and `SELL`" in build_order
-
-    # Legacy deterministic scoring is preserved only as a baseline/research signal.
+    assert "## 4.9 No scoring control path" in build_order
     assert (
-        "Legacy Fresh Launch, Graduation/Breakout, First Pullback, deterministic "
-        "scoring, and the existing PAPER campaign remain useful as **baselines, "
-        "research signals, and compatibility tests**."
+        "Any implementation slice that introduces scoring authority, "
+        "score-gated action approval, or a score-to-trade control path is "
+        "architecture drift"
         in build_order
     )
+    assert (
+        "Legacy deterministic score artifacts are frozen comparison fixtures, "
+        "not an extensible trading architecture"
+        in build_order
+    )
+    assert "SCORING_AUTHORITY=" not in build_order
+    assert "SCORING_CONTROL_PATH=FORBIDDEN" in build_order
