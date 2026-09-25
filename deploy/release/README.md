@@ -1620,12 +1620,18 @@ The binding is evidence only. It does not authorize model fitting, a V2 scoring 
 
 Only after production verification proves the discovery-backed preparation CLI/module belong to the exact active immutable release may a trusted administrator prepare a fresh canonical V2 request bound to the exact reviewed discovery authority.
 
-Use only reviewed existing evidence and new non-existing destinations:
+Use only reviewed existing evidence and new non-existing destinations.
+
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification
+run that authorized this ceremony. Do not substitute the latest repository commit,
+latest release tag, or an unverified active release.
 
 ```sh
 set -euo pipefail
 
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
 CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 BINDING="<exact-reviewed-discovery-authority-binding.json>"
 PROOF="<exact-proof-workspace>"
 DB="/var/lib/shreks/shreks.db"
@@ -1634,6 +1640,25 @@ HYDRATION="<exact-reviewed-hydration-policy.json>"
 OVERLAY="<exact-reviewed-training-economics-overlay>"
 COST_POLICY="<exact-reviewed-training-execution-cost-policy.json>"
 EVALUATION_POLICY="<exact-reviewed-test-evaluation-policy.json>"
+
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
 
 PREP_DIR="/root/shreks-fl9-v2-discovery-backed-request"
 REQUEST="$PREP_DIR/v2-first-champion-request.json"
@@ -1648,9 +1673,11 @@ TRAINING_POLICY_VERSION="<explicit-reviewed-training-policy-version>"
 REASON="<explicit-reviewed-reason>"
 
 sudo install -d -o root -g root -m 0700 "$PREP_DIR"
-test ! -e "$REQUEST"
-test ! -e "$EVIDENCE"
-test ! -e "$PREPARATION"
+sudo test ! -e "$REQUEST"
+sudo test ! -e "$EVIDENCE"
+sudo test ! -e "$PREPARATION"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
 
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-fl9-v2-discovery-backed-request-prepare" \
   --discovery-authority-binding "$BINDING" \
