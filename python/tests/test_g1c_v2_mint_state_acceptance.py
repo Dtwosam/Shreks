@@ -375,6 +375,10 @@ def test_historical_analyzer_classifies_reconstruction_family_without_leaking_de
             "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
         ),
         (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: observer paper quote read failed: stored paper quote route labels are invalid",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
+        ),
+        (
             "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: opaque secret detail",
             "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
         ),

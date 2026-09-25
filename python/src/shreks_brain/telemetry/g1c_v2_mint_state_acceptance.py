@@ -41,6 +41,7 @@ _ERROR_CODES = frozenset(
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_WINDOW_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
+        "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_COMPONENT_OTHER_FAILED",
         "CYCLE_RECONSTRUCTION_AGGREGATION_FAILED",
@@ -610,6 +611,18 @@ def _classify_regime_reconstruction_detail(detail: str) -> str | None:
             )
         ):
             return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED"
+        if any(
+            token in nested
+            for token in (
+                "quote",
+                "route",
+                "slippage",
+                "input amount",
+                "output amount",
+                "probe policy",
+            )
+        ):
+            return "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED"
         if any(
             token in nested
             for token in (
