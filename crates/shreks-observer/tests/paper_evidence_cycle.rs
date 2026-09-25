@@ -307,6 +307,65 @@ async fn cycle_collects_exact_bidirectional_evidence_for_selected_candidates_onl
 }
 
 #[tokio::test]
+async fn cycle_uses_bounded_slot_for_missing_mint_first_hydration() {
+    let root = unique_test_dir("missing-mint-priority");
+    let db_path = root.join("shreks.db");
+    let seed = ShreksDb::open(&db_path).unwrap();
+    let hydrated = seed
+        .upsert_candidate(&candidate("MintHydrated", 100))
+        .unwrap();
+    let missing = seed
+        .upsert_candidate(&candidate("MintMissing", 100))
+        .unwrap();
+    seed.insert_market_snapshot(hydrated, &snapshot("MintHydrated", 9_900))
+        .unwrap();
+    seed.insert_market_snapshot(missing, &snapshot("MintMissing", 9_800))
+        .unwrap();
+    seed.insert_mint_state(
+        hydrated,
+        &TokenMintState {
+            provider: ProviderId::Helius,
+            mint: "MintHydrated".to_owned(),
+            owner_program: "Tokenkeg1111111111111111111111111111111111".to_owned(),
+            supply: 1_000_000_000,
+            decimals: 6,
+            mint_authority: None,
+            freeze_authority: None,
+            slot: 100,
+            observed_at_unix_ms: 9_900,
+        },
+    )
+    .unwrap();
+    drop(seed);
+
+    let config = runtime_config(&db_path, 1);
+    let store = EvidenceCandidateStore::open(&db_path).unwrap();
+    let chain_requests = Arc::new(Mutex::new(Vec::new()));
+    let collector = SafetyEvidenceCollector::new(
+        ShreksDb::open(&db_path).unwrap(),
+        vec![],
+        vec![],
+    )
+    .with_chain_provider(Arc::new(RecordingChainProvider {
+        requests: Arc::clone(&chain_requests),
+    }));
+
+    let report = run_paper_evidence_cycle(&store, &collector, &config, 10_000)
+        .await
+        .unwrap();
+
+    assert_eq!(report.candidates_selected, 1);
+    assert_eq!(report.mint_states_stored, 1);
+    assert_eq!(report.chain_provider_failures, 0);
+    assert_eq!(
+        chain_requests.lock().unwrap().as_slice(),
+        &["MintMissing".to_owned()]
+    );
+
+    cleanup_dir(&root);
+}
+
+#[tokio::test]
 async fn stale_existing_mint_state_is_refreshed_for_selected_candidate() {
     let root = unique_test_dir("stale-mint-refresh");
     let db_path = root.join("shreks.db");
