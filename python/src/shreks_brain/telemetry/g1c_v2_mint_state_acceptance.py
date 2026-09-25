@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import sqlite3
@@ -93,6 +94,7 @@ def evaluate_mint_state_acceptance_samples(
     *,
     max_critical_data_age_ms: int,
     evidence_cycle_interval_ms: int,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, object]:
     if not isinstance(samples, tuple) or any(
         type(sample) is not MintStateAcceptanceSample for sample in samples
@@ -185,6 +187,7 @@ def analyze_mint_state_acceptance(
         "evidence_cycle_interval_ms", evidence_cycle_interval_ms
     )
 
+    _emit_progress(progress_callback, "MANIFEST_VALIDATION")
     try:
         database = _require_existing_file(database_path, "observer database")
     except MintStateAcceptanceError as error:
@@ -209,6 +212,7 @@ def analyze_mint_state_acceptance(
             code="MANIFEST_VALIDATION_FAILED",
         ) from error
 
+    _emit_progress(progress_callback, "DATABASE_OPEN")
     try:
         connection = _connect_read_only(database)
     except MintStateAcceptanceError as error:
@@ -217,6 +221,7 @@ def analyze_mint_state_acceptance(
             code="DATABASE_OPEN_FAILED",
         ) from error
     try:
+        _emit_progress(progress_callback, "CHECKPOINT_WINDOW_READ")
         try:
             previous_row = connection.execute(
             """SELECT sequence, state_as_of_unix_ms, payload_sha256, payload_json
@@ -256,6 +261,7 @@ def analyze_mint_state_acceptance(
             previous_state = manifest.initial_state
             previous_sequence = 0
         else:
+            _emit_progress(progress_callback, "CHECKPOINT_DECODE")
             previous = _decode_checkpoint_row(previous_row)
             previous_state = previous.state
             previous_sequence = previous.sequence
@@ -263,6 +269,7 @@ def analyze_mint_state_acceptance(
         samples: list[MintStateAcceptanceSample] = []
         reconstructed_checkpoints = 0
         for row in rows:
+            _emit_progress(progress_callback, "CHECKPOINT_DECODE")
             checkpoint = _decode_checkpoint_row(row)
             if checkpoint.sequence != previous_sequence + 1:
                 raise MintStateAcceptanceError(
@@ -277,6 +284,7 @@ def analyze_mint_state_acceptance(
 
             quote_policy = manifest.quote_usd_valuation_policy
             quote_mode = None if quote_policy is None else quote_policy.mode.value
+            _emit_progress(progress_callback, "CYCLE_RECONSTRUCTION")
             try:
                 _cycle, audit = assemble_observer_paper_campaign_cycle(
                     database,
@@ -305,6 +313,7 @@ def analyze_mint_state_acceptance(
                 audit.selected_mints,
                 strict=True,
             ):
+                _emit_progress(progress_callback, "MINT_STATE_READ")
                 try:
                     current, previous_mint = _mint_state_times(
                         connection,
@@ -342,6 +351,7 @@ def analyze_mint_state_acceptance(
             ),
             evidence_cycle_interval_ms=evidence_cycle_interval_ms,
         )
+        _emit_progress(progress_callback, "ANALYSIS_COMPLETE")
         return {
             **result,
             "paper_run_id": manifest.paper_run_id,
@@ -478,3 +488,15 @@ def _require_positive_int(name: str, value: int) -> None:
     _require_non_negative_int(name, value)
     if value == 0:
         raise MintStateAcceptanceError(f"{name} must be positive")
+
+
+def _emit_progress(
+    callback: Callable[[str], None] | None,
+    stage: str,
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(stage)
+    except Exception:
+        return
