@@ -379,6 +379,26 @@ def test_historical_analyzer_classifies_reconstruction_family_without_leaking_de
             "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
         ),
         (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime candidate replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_CANDIDATE_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime market replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_MARKET_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime safety replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_SAFETY_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime quote replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
+        ),
+        (
+            "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime finalize replay failed",
+            "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_FINALIZE_FAILED",
+        ),
+        (
             "observer candidate 49 assembly failed: observer paper cycle assembly failed: observer aggregate regime replay failed: opaque secret detail",
             "CYCLE_RECONSTRUCTION_COMPONENT_REGIME_OTHER_FAILED",
         ),
