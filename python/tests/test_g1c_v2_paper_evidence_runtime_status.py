@@ -93,6 +93,7 @@ def test_runtime_status_accepts_fresh_cycle_complete_operational_evidence(
         ({"generated_at_unix_ms": NOW + 30_001}, "future"),
         (
             {
+                "process_started_at_unix_ms": NOW - 300_000,
                 "generated_at_unix_ms": NOW - 240_001,
                 "cycle_as_of_unix_ms": NOW - 240_001,
             },
