@@ -511,6 +511,7 @@ def assemble_observer_paper_campaign_cycle(
     except ValueError as error:
         raise ObserverCampaignCoordinatorError(str(error)) from error
 
+    _emit_progress(progress_callback, "STORE_INIT")
     store = ObserverCampaignCandidateStore(database_path)
     required_mints = tuple(
         managed.exit_state.mint for managed in state.managed_positions

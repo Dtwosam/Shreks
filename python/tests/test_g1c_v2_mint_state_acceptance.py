@@ -262,6 +262,7 @@ def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
     assert "CHECKPOINT_WINDOW_READ" in stages
     assert "CHECKPOINT_DECODE" in stages
     assert "CYCLE_RECONSTRUCTION" in stages
+    assert "CYCLE_RECONSTRUCTION_STORE_INIT" in stages
     assert stages[-1] == "ANALYSIS_COMPLETE"
     assert set(stages) <= {
         "MANIFEST_VALIDATION",
@@ -269,6 +270,7 @@ def test_historical_analyzer_emits_bounded_progress_stages(tmp_path) -> None:
         "CHECKPOINT_WINDOW_READ",
         "CHECKPOINT_DECODE",
         "CYCLE_RECONSTRUCTION",
+        "CYCLE_RECONSTRUCTION_STORE_INIT",
         "CYCLE_RECONSTRUCTION_SELECTION",
         "CYCLE_RECONSTRUCTION_MARKET",
         "CYCLE_RECONSTRUCTION_QUOTE",
