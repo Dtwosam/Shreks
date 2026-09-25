@@ -974,87 +974,87 @@ jobs:
             if test -e "$MINT_PROGRESS_FILE"; then
               MINT_PROGRESS_VALIDATION="$(
                 /opt/shreks/current/.venv/bin/python - "$MINT_PROGRESS_FILE" "$SHREKS_UID" "$MINT_REQUEST_ID" "$EXPECTED_SHA" <<'PY' 2>/dev/null || true
-            import json
-            import os
-            import stat
-            import sys
+          import json
+          import os
+          import stat
+          import sys
 
-            path, expected_uid_raw, request_id, expected_sha = sys.argv[1:]
-            expected_uid = int(expected_uid_raw)
-            before = os.lstat(path)
-            if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
-                raise SystemExit(3)
-            if before.st_uid != expected_uid or stat.S_IMODE(before.st_mode) != 0o644:
-                raise SystemExit(3)
-            if before.st_size < 2 or before.st_size > 4096:
-                raise SystemExit(3)
-            flags = os.O_RDONLY
-            if hasattr(os, "O_NOFOLLOW"):
-                flags |= os.O_NOFOLLOW
-            fd = os.open(path, flags)
-            try:
-                opened = os.fstat(fd)
-                payload = os.read(fd, 4097)
-                after = os.fstat(fd)
-            finally:
-                os.close(fd)
-            identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            identity_opened = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
-            identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-            if identity_before != identity_opened or identity_opened != identity_after:
-                raise SystemExit(3)
-            if len(payload) != before.st_size:
-                raise SystemExit(3)
-            text = payload.decode("utf-8")
-            document = json.loads(text)
-            canonical = json.dumps(
-                document,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-                allow_nan=False,
-            ) + "\n"
-            if text != canonical:
-                raise SystemExit(3)
-            if set(document) != {
-                "schema_name",
-                "schema_version",
-                "request_id",
-                "expected_release_sha",
-                "stage",
-                "generated_at_unix_ms",
-            }:
-                raise SystemExit(3)
-            if document.get("schema_name") != "shreks.g1c_v2_mint_state_acceptance_progress":
-                raise SystemExit(3)
-            if document.get("schema_version") != 1:
-                raise SystemExit(3)
-            if document.get("request_id") != request_id:
-                raise SystemExit(3)
-            if document.get("expected_release_sha") != expected_sha:
-                raise SystemExit(3)
-            allowed_stages = {
-                "REQUEST_ACCEPTED",
-                "RUNTIME_AUTHORITY_RESOLVED",
-                "MANIFEST_VALIDATION",
-                "DATABASE_OPEN",
-                "CHECKPOINT_WINDOW_READ",
-                "CHECKPOINT_DECODE",
-                "CYCLE_RECONSTRUCTION",
-                "MINT_STATE_READ",
-                "ANALYSIS_COMPLETE",
-                "RUNTIME_STATUS_VALIDATION",
-                "RESULT_READY",
-            }
-            stage = document.get("stage")
-            generated_at = document.get("generated_at_unix_ms")
-            if stage not in allowed_stages:
-                raise SystemExit(3)
-            if isinstance(generated_at, bool) or not isinstance(generated_at, int) or generated_at < 0:
-                raise SystemExit(3)
-            print(stage)
-            print(generated_at)
-            PY
+          path, expected_uid_raw, request_id, expected_sha = sys.argv[1:]
+          expected_uid = int(expected_uid_raw)
+          before = os.lstat(path)
+          if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+              raise SystemExit(3)
+          if before.st_uid != expected_uid or stat.S_IMODE(before.st_mode) != 0o644:
+              raise SystemExit(3)
+          if before.st_size < 2 or before.st_size > 4096:
+              raise SystemExit(3)
+          flags = os.O_RDONLY
+          if hasattr(os, "O_NOFOLLOW"):
+              flags |= os.O_NOFOLLOW
+          fd = os.open(path, flags)
+          try:
+              opened = os.fstat(fd)
+              payload = os.read(fd, 4097)
+              after = os.fstat(fd)
+          finally:
+              os.close(fd)
+          identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+          identity_opened = (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns)
+          identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+          if identity_before != identity_opened or identity_opened != identity_after:
+              raise SystemExit(3)
+          if len(payload) != before.st_size:
+              raise SystemExit(3)
+          text = payload.decode("utf-8")
+          document = json.loads(text)
+          canonical = json.dumps(
+              document,
+              sort_keys=True,
+              separators=(",", ":"),
+              ensure_ascii=False,
+              allow_nan=False,
+          ) + "\n"
+          if text != canonical:
+              raise SystemExit(3)
+          if set(document) != {
+              "schema_name",
+              "schema_version",
+              "request_id",
+              "expected_release_sha",
+              "stage",
+              "generated_at_unix_ms",
+          }:
+              raise SystemExit(3)
+          if document.get("schema_name") != "shreks.g1c_v2_mint_state_acceptance_progress":
+              raise SystemExit(3)
+          if document.get("schema_version") != 1:
+              raise SystemExit(3)
+          if document.get("request_id") != request_id:
+              raise SystemExit(3)
+          if document.get("expected_release_sha") != expected_sha:
+              raise SystemExit(3)
+          allowed_stages = {
+              "REQUEST_ACCEPTED",
+              "RUNTIME_AUTHORITY_RESOLVED",
+              "MANIFEST_VALIDATION",
+              "DATABASE_OPEN",
+              "CHECKPOINT_WINDOW_READ",
+              "CHECKPOINT_DECODE",
+              "CYCLE_RECONSTRUCTION",
+              "MINT_STATE_READ",
+              "ANALYSIS_COMPLETE",
+              "RUNTIME_STATUS_VALIDATION",
+              "RESULT_READY",
+          }
+          stage = document.get("stage")
+          generated_at = document.get("generated_at_unix_ms")
+          if stage not in allowed_stages:
+              raise SystemExit(3)
+          if isinstance(generated_at, bool) or not isinstance(generated_at, int) or generated_at < 0:
+              raise SystemExit(3)
+          print(stage)
+          print(generated_at)
+          PY
               )"
               if [[ -n "$MINT_PROGRESS_VALIDATION" ]]; then
                 mapfile -t MINT_PROGRESS_LINES <<<"$MINT_PROGRESS_VALIDATION"
