@@ -796,28 +796,6 @@ jobs:
           systemctl is-active --quiet shreks-telemetry.timer
           echo 'g1c_v2_mint_state_acceptance_bridge=available'
 
-          PAPER_EVIDENCE_JOURNAL="$(journalctl -u shreks-paper-evidence.service -o cat -n 5000 --no-pager 2>&1)"
-          if ! printf '%s\n' "$PAPER_EVIDENCE_JOURNAL" \
-            | grep -F 'Shreks paper evidence starting:' \
-            | grep -F 'mint_state_max_age=900000ms' \
-            | grep -F 'mint_state_refresh_age=540000ms' >/dev/null; then
-            echo 'g1c_v2_mint_state_runtime_thresholds=mismatch'
-            exit 1
-          fi
-          echo 'g1c_v2_mint_state_runtime_thresholds=matched'
-          RECENT_EVIDENCE_CYCLES="$(printf '%s\n' "$JOURNAL" | grep -F 'Shreks paper evidence cycle:' || true)"
-          printf 'g1c_v2_recent_evidence_cycle_lines=%s\n' "$(printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -c . || true)"
-          if printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -Eq 'provider_failures=[1-9][0-9]*'; then
-            echo 'g1c_v2_recent_provider_failures=nonzero'
-            exit 1
-          fi
-          echo 'g1c_v2_recent_provider_failures=zero_or_no_recent_cycle'
-          if printf '%s\n' "$RECENT_EVIDENCE_CYCLES" | grep -Fq 'helius_budget_exhausted=true'; then
-            echo 'g1c_v2_helius_budget_exhausted=true'
-            exit 1
-          fi
-          echo 'g1c_v2_helius_budget_exhausted=false_or_no_recent_cycle'
-
           SHREKS_UID="$(id -u shreks)"
           [[ "$SHREKS_UID" =~ ^[0-9]+$ ]] || exit 2
           MINT_REQUEST_ID="${REQUEST_ID}-mint"
@@ -1036,6 +1014,58 @@ jobs:
               isinstance(max_age, bool) or not isinstance(max_age, int) or max_age < 0
           ):
               raise SystemExit("mint acceptance max selected age is invalid")
+
+          runtime_status = document.get("runtime_status")
+          if not isinstance(runtime_status, dict):
+              raise SystemExit("mint acceptance runtime status is missing")
+          if runtime_status.get("schema_name") != "shreks.paper_evidence_runtime_status":
+              raise SystemExit("PAPER evidence runtime status schema mismatch")
+          if runtime_status.get("schema_version") != 1:
+              raise SystemExit("PAPER evidence runtime status schema version mismatch")
+          if runtime_status.get("state") != "CYCLE_COMPLETE":
+              raise SystemExit("PAPER evidence runtime status has no completed cycle")
+          if runtime_status.get("observation_authority") != "DERIVED_OPERATIONAL":
+              raise SystemExit("PAPER evidence runtime status authority mismatch")
+          if runtime_status.get("paper_promotion_authority") != "BLOCKED":
+              raise SystemExit("PAPER evidence runtime status promotion authority mismatch")
+          if runtime_status.get("live_authority") != "DISABLED":
+              raise SystemExit("PAPER evidence runtime status LIVE authority mismatch")
+          if runtime_status.get("evidence_cycle_interval_ms") != 60000:
+              raise SystemExit("PAPER evidence runtime status interval mismatch")
+          if runtime_status.get("mint_state_max_age_ms") != 900000:
+              raise SystemExit("PAPER evidence runtime status max age mismatch")
+          if runtime_status.get("mint_state_refresh_age_ms") != 540000:
+              raise SystemExit("PAPER evidence runtime status refresh age mismatch")
+          if runtime_status.get("provider_failures_last_cycle") != 0:
+              raise SystemExit("PAPER evidence runtime status provider failures are nonzero")
+          if runtime_status.get("helius_budget_exhausted") is not False:
+              raise SystemExit("PAPER evidence runtime status Helius budget is exhausted")
+
+          runtime_count_keys = (
+              "completed_cycle_count",
+              "helius_requests_attempted",
+              "helius_requests_limit",
+              "helius_requests_remaining",
+              "candidates_selected_last_cycle",
+              "mint_states_stored_last_cycle",
+          )
+          for key in runtime_count_keys:
+              value = runtime_status.get(key)
+              if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                  raise SystemExit(f"PAPER evidence runtime status {key} is invalid")
+          if runtime_status["completed_cycle_count"] < 1:
+              raise SystemExit("PAPER evidence runtime status cycle count is invalid")
+          if runtime_status["helius_requests_limit"] < 1:
+              raise SystemExit("PAPER evidence runtime status Helius limit is invalid")
+          if runtime_status["helius_requests_remaining"] < 1:
+              raise SystemExit("PAPER evidence runtime status Helius remaining budget is invalid")
+          if (
+              runtime_status["helius_requests_attempted"]
+              + runtime_status["helius_requests_remaining"]
+              != runtime_status["helius_requests_limit"]
+          ):
+              raise SystemExit("PAPER evidence runtime status Helius budget is inconsistent")
+
           print(status)
           print(analysis["selected_observation_count"])
           print(analysis["proactive_refresh_count"])
@@ -1044,6 +1074,12 @@ jobs:
           print(analysis["invalid_observation_count"])
           print(analysis["reconstructed_checkpoint_count"])
           print("none" if max_age is None else max_age)
+          print(runtime_status["completed_cycle_count"])
+          print(runtime_status["provider_failures_last_cycle"])
+          print(runtime_status["helius_requests_attempted"])
+          print(runtime_status["helius_requests_limit"])
+          print(runtime_status["helius_requests_remaining"])
+          print(str(runtime_status["helius_budget_exhausted"]).lower())
           PY
           )"
           mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"
@@ -1062,6 +1098,12 @@ jobs:
           printf 'g1c_v2_mint_state_invalid_observations=%s\n' "${MINT_ACCEPTANCE_LINES[5]:-0}"
           printf 'g1c_v2_mint_state_reconstructed_checkpoints=%s\n' "${MINT_ACCEPTANCE_LINES[6]:-0}"
           printf 'g1c_v2_mint_state_max_selected_age_ms=%s\n' "${MINT_ACCEPTANCE_LINES[7]:-none}"
+          printf 'g1c_v2_paper_evidence_completed_cycles=%s\n' "${MINT_ACCEPTANCE_LINES[8]:-0}"
+          printf 'g1c_v2_paper_evidence_provider_failures_last_cycle=%s\n' "${MINT_ACCEPTANCE_LINES[9]:-unknown}"
+          printf 'g1c_v2_helius_requests_attempted=%s\n' "${MINT_ACCEPTANCE_LINES[10]:-unknown}"
+          printf 'g1c_v2_helius_requests_limit=%s\n' "${MINT_ACCEPTANCE_LINES[11]:-unknown}"
+          printf 'g1c_v2_helius_requests_remaining=%s\n' "${MINT_ACCEPTANCE_LINES[12]:-unknown}"
+          printf 'g1c_v2_helius_budget_exhausted=%s\n' "${MINT_ACCEPTANCE_LINES[13]:-unknown}"
           if [[ "$MINT_ACCEPTANCE_STATUS" == "HOLD_INSUFFICIENT_EVIDENCE" ]]; then
             echo 'g1c_v2_mint_state_physical_acceptance=HOLD'
           else
