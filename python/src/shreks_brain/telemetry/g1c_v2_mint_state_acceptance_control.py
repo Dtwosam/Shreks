@@ -582,6 +582,74 @@ def _process_one_request(
             message="PAPER evidence runtime status failed closed",
         )
 
+    requested_window_start = request["window_start_unix_ms"]
+    requested_window_end = request["window_end_unix_ms"]
+    process_started_at = runtime_status["process_started_at_unix_ms"]
+    effective_window_start = max(
+        requested_window_start,
+        process_started_at,
+    )
+    if effective_window_start > requested_window_end:
+        return _failure_result(
+            request_id=request_id,
+            expected_release_sha=expected_release_sha,
+            observed_release_sha=observed_release_sha,
+            error_code="RELEASE_WINDOW_EMPTY",
+            message="mint-state acceptance release window is empty",
+        )
+
+    if effective_window_start > requested_window_start:
+        try:
+            analysis = analyze_mint_state_acceptance(
+                resolved_database_path,
+                resolved_manifest_path,
+                window_start_unix_ms=effective_window_start,
+                window_end_unix_ms=requested_window_end,
+                evidence_cycle_interval_ms=evidence_cycle_interval_ms,
+                progress_callback=None,
+            )
+        except MintStateAcceptanceError as error:
+            stage_code = (
+                error.code
+                if error.code in _ANALYSIS_STAGE_CODES
+                else None
+            )
+            return _failure_result(
+                request_id=request_id,
+                expected_release_sha=expected_release_sha,
+                observed_release_sha=observed_release_sha,
+                error_code=(
+                    f"ANALYSIS_{stage_code}"
+                    if stage_code is not None
+                    else "ANALYSIS_FAILED"
+                ),
+                message="mint-state acceptance analysis failed closed",
+            )
+        except (OSError, TypeError, ValueError):
+            return _failure_result(
+                request_id=request_id,
+                expected_release_sha=expected_release_sha,
+                observed_release_sha=observed_release_sha,
+                error_code="ANALYSIS_FAILED",
+                message="mint-state acceptance analysis failed closed",
+            )
+
+        if (
+            analysis.get("max_critical_data_age_ms")
+            != runtime_status["mint_state_max_age_ms"]
+            or analysis.get("mint_state_refresh_age_ms")
+            != runtime_status["mint_state_refresh_age_ms"]
+            or analysis.get("evidence_cycle_interval_ms")
+            != runtime_status["evidence_cycle_interval_ms"]
+        ):
+            return _failure_result(
+                request_id=request_id,
+                expected_release_sha=expected_release_sha,
+                observed_release_sha=observed_release_sha,
+                error_code="ANALYSIS_RUNTIME_AUTHORITY_MISMATCH",
+                message="mint-state acceptance runtime authority mismatch",
+            )
+
     publish_progress("RESULT_READY")
     return {
         "schema_name": CONTROL_RESULT_SCHEMA_NAME,
