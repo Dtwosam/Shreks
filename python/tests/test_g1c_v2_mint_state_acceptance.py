@@ -230,7 +230,7 @@ def test_historical_analyzer_classifies_cycle_reconstruction_failure(
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
@@ -369,7 +369,7 @@ def test_historical_analyzer_classifies_reconstruction_family_without_leaking_de
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
@@ -448,7 +448,7 @@ def test_historical_analyzer_refines_regime_reconstruction_family_without_leakin
 
     monkeypatch.setattr(
         acceptance,
-        "assemble_observer_paper_campaign_cycle",
+        "select_observer_paper_campaign_candidates",
         fail_reconstruction,
     )
 
