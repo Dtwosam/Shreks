@@ -390,6 +390,46 @@ def test_control_surfaces_only_allowlisted_reconstruction_family(
     assert "provider detail" not in encoded
 
 
+def test_control_surfaces_only_allowlisted_regime_quote_reconstruction_family(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker_directory = tmp_path / "markers"
+    marker_directory.mkdir()
+    _write_request(marker_directory)
+    current = _release_tree(tmp_path)
+
+    def fail(*_args, **_kwargs):
+        raise MintStateAcceptanceError(
+            "secret regime quote detail",
+            code="CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED",
+        )
+
+    monkeypatch.setattr(control, "analyze_mint_state_acceptance", fail)
+
+    result = control.process_pending_mint_state_acceptance_requests(
+        marker_directory=marker_directory,
+        database_path=tmp_path / "protected.sqlite",
+        manifest_path=tmp_path / "paper-campaign.json",
+        current_release_link=current,
+        expected_owner_uid=os.getuid(),
+        expected_marker_directory_owner_uid=os.getuid(),
+        evidence_cycle_interval_ms=60_000,
+        now_unix_ms=NOW,
+    )[0]
+
+    encoded = json.dumps(result)
+    assert result["status"] == "FAILED"
+    assert (
+        result["error"]["code"]
+        == "ANALYSIS_CYCLE_RECONSTRUCTION_COMPONENT_REGIME_QUOTE_FAILED"
+    )
+    assert result["error"]["message"] == (
+        "mint-state acceptance analysis failed closed"
+    )
+    assert "secret regime quote" not in encoded
+
+
 def test_control_surfaces_only_allowlisted_regime_reconstruction_family(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
