@@ -201,6 +201,7 @@ def test_mint_acceptance_timeout_reports_sanitized_reconstruction_substage() -> 
     timeout_text = workflow[timeout_start : timeout_start + 9000]
 
     for required in (
+        "CYCLE_RECONSTRUCTION_STORE_INIT",
         "CYCLE_RECONSTRUCTION_SELECTION",
         "CYCLE_RECONSTRUCTION_MARKET",
         "CYCLE_RECONSTRUCTION_QUOTE",
