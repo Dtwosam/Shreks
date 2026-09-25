@@ -1596,14 +1596,51 @@ Older deployed releases that do not contain `shreks_brain.telemetry.fl9_v2_disco
 
 ### Bind one compatible FL9 V2 discovery authority
 
-When the protected verifier returns a canonical `FOUND_COMPATIBLE` discovery-control result, preserve that exact JSON document as a regular file and bind it before preparing any later proof/request:
+When the protected verifier returns a canonical `FOUND_COMPATIBLE` discovery-control result, preserve that exact JSON document as a regular file and bind it before preparing any later proof/request.
+
+Set `EXPECTED_RELEASE_SHA` only from the exact successful production-verification
+run that produced the reviewed discovery result. Do not substitute the latest
+repository commit, latest release tag, or an unverified active release.
 
 ```sh
-cd /opt/shreks/current
+set -euo pipefail
 
-.venv/bin/shreks-fl9-v2-discovery-authority-bind \
-  --discovery-result '<exact-canonical-discovery-result.json>' \
-  --destination '<new-nonexistent-binding.json>'
+EXPECTED_RELEASE_SHA="<exact-production-verified-release-sha>"
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+DISCOVERY_RESULT="<exact-canonical-discovery-result.json>"
+BINDING_DIR="/root/shreks-fl9-v2-discovery-authority-binding"
+BINDING="$BINDING_DIR/discovery-authority-binding.json"
+
+if [[ ! "$EXPECTED_RELEASE_SHA" =~ ^[0-9a-f]{40}$ || ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "release identity is invalid" >&2
+  exit 2
+fi
+test "$CURRENT_SHA" = "$EXPECTED_RELEASE_SHA"
+
+MANIFEST_SHA="$(
+  python3 - "$CURRENT_RELEASE" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+release = Path(sys.argv[1])
+with (release / "RELEASE_MANIFEST.json").open(encoding="utf-8") as handle:
+    print(json.load(handle)["source_sha"])
+PY
+)"
+test "$MANIFEST_SHA" = "$EXPECTED_RELEASE_SHA"
+
+sudo install -d -o root -g root -m 0700 "$BINDING_DIR"
+sudo test ! -e "$BINDING"
+
+test "$(readlink -f /opt/shreks/current)" = "$CURRENT_RELEASE"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fl9-v2-discovery-authority-bind" \
+  --discovery-result "$DISCOVERY_RESULT" \
+  --destination "$BINDING"
+
+sudo cat "$BINDING"
 ```
 
 If more than one compatible runtime-manifest candidate is present, the binder refuses to choose. Supply the exact selected runtime-manifest fingerprint explicitly:
