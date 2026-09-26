@@ -47,7 +47,8 @@ Reduction evidence binds one target exposure fraction to one exact quote.
 
 All route evidence must:
 
-- match the feature row market;
+- use the exact runtime-manifest quote provider;
+- match the feature row market and manifest quote mint;
 - be observed no earlier than the decision timestamp;
 - be observed no later than the supplied evaluation timestamp;
 - use the exact decision executable reference price when executable;
