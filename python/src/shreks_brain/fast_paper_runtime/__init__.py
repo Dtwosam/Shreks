@@ -64,6 +64,7 @@ from .shadow_ledger import (
     save_fast_paper_shadow_ledger_checkpoint,
 )
 from .shadow_service_execution import (
+    consume_fast_paper_shadow_service_execution_source_record,
     run_fast_paper_shadow_service_execution,
 )
 from .shadow_runtime_state import (
@@ -167,6 +168,7 @@ __all__ = (
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
     "run_fast_paper_shadow_batch",
+    "consume_fast_paper_shadow_service_execution_source_record",
     "run_fast_paper_shadow_service_execution",
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
