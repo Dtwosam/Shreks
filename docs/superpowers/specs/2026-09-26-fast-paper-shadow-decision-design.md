@@ -102,7 +102,7 @@ The adapter:
 1. verifies all runtime manifest bindings;
 2. builds exactly one campaign decision request from the canonical feature row;
 3. invokes the existing release-local `shreks-fast-campaign-decision` through
-   the existing offline runner;
+   the existing offline runner with an explicit 30-second timeout;
 4. re-verifies manifest bindings after the subprocess returns;
 5. requires exact champion version/fingerprint alignment;
 6. requires exact request/result identity and policy version;
