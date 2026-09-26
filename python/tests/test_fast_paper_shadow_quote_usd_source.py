@@ -18,7 +18,7 @@ from shreks_brain.fast_paper_runtime import (
     write_fast_paper_shadow_quote_usd_source_record,
 )
 
-from test_fast_paper_shadow_decision import _record
+from test_fast_paper_shadow_decision import _manifest, _record
 from test_fast_paper_shadow_executor import _evidence_for, _runtime_fixture
 
 
@@ -115,7 +115,7 @@ def test_quote_usd_source_rejects_decision_manifest_drift(
     _manifest, evidence, usd = _fixture(monkeypatch, tmp_path)
     other_root = tmp_path / "other-runtime"
     other_root.mkdir()
-    other_manifest, *_rest = _runtime_fixture(other_root)
+    other_manifest = _manifest(other_root)
 
     with pytest.raises(ValueError, match="manifest|fingerprint|decision"):
         build_fast_paper_shadow_quote_usd_source_record(
