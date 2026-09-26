@@ -76,6 +76,10 @@ from .shadow_service_execution_bootstrap import (
 from .shadow_service_execution_cycle import (
     run_fast_paper_shadow_service_execution_cycle,
 )
+from .shadow_service_coordinator import (
+    FastPaperShadowServiceCoordinatorResult,
+    run_fast_paper_shadow_service_coordinated_cycle,
+)
 from .shadow_runtime_state import (
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
@@ -146,6 +150,7 @@ __all__ = (
     "FastPaperShadowRuntimeState",
     "FastPaperShadowServiceExecutionBootstrap",
     "FastPaperShadowServiceExecutionConfig",
+    "FastPaperShadowServiceCoordinatorResult",
     "FastPaperShadowQuoteReadPolicy",
     "FastPaperShadowQuoteUsdEvidence",
     "FastPaperShadowReductionRead",
@@ -183,6 +188,7 @@ __all__ = (
     "consume_fast_paper_shadow_service_execution_source_record",
     "run_fast_paper_shadow_service_execution",
     "run_fast_paper_shadow_service_execution_cycle",
+    "run_fast_paper_shadow_service_coordinated_cycle",
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
