@@ -243,6 +243,50 @@ def build_fast_paper_shadow_runtime_state(
         raise ValueError(
             "paper_checkpoint must be exact FastPaperCheckpointRecord"
         )
+    latest = _require_latest_checkpoint(
+        manifest,
+        binding,
+        expected=paper_checkpoint,
+    )
+    return _build_fast_paper_shadow_runtime_state_for_checkpoint(
+        binding,
+        latest,
+        market_positions=market_positions,
+        execution_policy_fingerprint_sha256=(
+            execution_policy_fingerprint_sha256
+        ),
+        pending_buy=pending_buy,
+        last_processed_source_sequence=last_processed_source_sequence,
+        last_processed_source_event_id=last_processed_source_event_id,
+        last_processed_decision_evidence_fingerprint_sha256=(
+            last_processed_decision_evidence_fingerprint_sha256
+        ),
+    )
+
+
+def _build_fast_paper_shadow_runtime_state_for_checkpoint(
+    binding: FastPaperShadowLedgerBinding,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    *,
+    market_positions: tuple[FastPaperShadowMarketPosition, ...],
+    execution_policy_fingerprint_sha256: str,
+    pending_buy: FastPaperShadowPendingBuy | None = None,
+    last_processed_source_sequence: int | None = None,
+    last_processed_source_event_id: str | None = None,
+    last_processed_decision_evidence_fingerprint_sha256: str | None = None,
+) -> FastPaperShadowRuntimeState:
+    if type(binding) is not FastPaperShadowLedgerBinding:
+        raise ValueError(
+            "binding must be exact FastPaperShadowLedgerBinding"
+        )
+    if type(paper_checkpoint) is not FastPaperCheckpointRecord:
+        raise ValueError(
+            "paper_checkpoint must be exact FastPaperCheckpointRecord"
+        )
+    if paper_checkpoint.run_id != binding.run_id:
+        raise ValueError(
+            "shadow runtime paper checkpoint run_id does not match ledger binding"
+        )
     _require_sha256(
         "execution_policy_fingerprint_sha256",
         execution_policy_fingerprint_sha256,
@@ -265,11 +309,6 @@ def build_fast_paper_shadow_runtime_state(
             "market_positions must contain exact FastPaperShadowMarketPosition values"
         )
 
-    latest = _require_latest_checkpoint(
-        manifest,
-        binding,
-        expected=paper_checkpoint,
-    )
     canonical_positions = tuple(
         sorted(
             market_positions,
@@ -277,11 +316,11 @@ def build_fast_paper_shadow_runtime_state(
         )
     )
     _validate_market_positions(
-        latest,
+        paper_checkpoint,
         canonical_positions,
     )
     _validate_pending_buy(
-        latest,
+        paper_checkpoint,
         pending_buy,
         canonical_positions,
     )
@@ -295,8 +334,8 @@ def build_fast_paper_shadow_runtime_state(
         "execution_policy_fingerprint_sha256": (
             execution_policy_fingerprint_sha256
         ),
-        "paper_checkpoint_sequence": latest.sequence,
-        "paper_checkpoint_payload_sha256": latest.payload_sha256,
+        "paper_checkpoint_sequence": paper_checkpoint.sequence,
+        "paper_checkpoint_payload_sha256": paper_checkpoint.payload_sha256,
         "pending_buy": pending_buy,
         "market_positions": canonical_positions,
         "last_processed_source_sequence": (
@@ -316,7 +355,6 @@ def build_fast_paper_shadow_runtime_state(
         **values,
         state_fingerprint_sha256=fingerprint,
     )
-
 
 def fast_paper_shadow_decision_position(
     state: FastPaperShadowRuntimeState,
@@ -374,7 +412,7 @@ def save_fast_paper_shadow_runtime_state(
             "shadow runtime state creation time cannot precede paper checkpoint state"
         )
 
-    payload = _canonical(_state_document(state))
+    payload = _encode_fast_paper_shadow_runtime_state_payload(state)
     payload_sha256 = hashlib.sha256(
         payload.encode("utf-8")
     ).hexdigest()
@@ -722,6 +760,26 @@ def _validate_market_positions(
             raise ValueError(
                 "shadow runtime mapping mint does not match canonical position mint"
             )
+
+
+def _encode_fast_paper_shadow_runtime_state_payload(
+    state: FastPaperShadowRuntimeState,
+) -> str:
+    if type(state) is not FastPaperShadowRuntimeState:
+        raise ValueError(
+            "state must be exact FastPaperShadowRuntimeState"
+        )
+    return _canonical(_state_document(state))
+
+
+def _decode_fast_paper_shadow_runtime_state_payload(
+    payload: str,
+) -> FastPaperShadowRuntimeState:
+    if not isinstance(payload, str):
+        raise ValueError(
+            "shadow runtime state payload must be text"
+        )
+    return _decode_state(payload)
 
 
 def _state_document(
