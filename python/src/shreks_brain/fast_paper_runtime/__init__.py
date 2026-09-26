@@ -66,6 +66,7 @@ from .shadow_ledger import (
 from .shadow_service_execution import (
     consume_fast_paper_shadow_service_execution_source_record,
     run_fast_paper_shadow_service_execution,
+    run_fast_paper_shadow_service_pending_buy_retry,
 )
 from .shadow_service_execution_bootstrap import (
     FastPaperShadowServiceExecutionBootstrap,
@@ -201,6 +202,7 @@ __all__ = (
     "run_fast_paper_shadow_batch",
     "consume_fast_paper_shadow_service_execution_source_record",
     "run_fast_paper_shadow_service_execution",
+    "run_fast_paper_shadow_service_pending_buy_retry",
     "run_fast_paper_shadow_service_execution_cycle",
     "run_fast_paper_shadow_service_coordinated_cycle",
     "materialize_fast_paper_shadow_execution_evidence",

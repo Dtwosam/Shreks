@@ -22,7 +22,11 @@ from .shadow_execution_source import (
     read_fast_paper_shadow_execution_input_source_record,
     write_fast_paper_shadow_execution_input_source_record,
 )
-from .shadow_executor import execute_fast_paper_shadow_decision
+from .shadow_executor import (
+    FastPaperShadowPendingBuyRetryInput,
+    execute_fast_paper_shadow_decision,
+    retry_fast_paper_shadow_pending_buy,
+)
 from .shadow_ledger import (
     FastPaperShadowLedgerBinding,
     load_latest_fast_paper_shadow_ledger_checkpoint,
@@ -102,6 +106,40 @@ def consume_fast_paper_shadow_service_execution_source_record(
         source_directory=source_directory,
         committed_at_unix_ms=committed_at_unix_ms,
         expected_record=None,
+    )
+
+
+
+
+
+def run_fast_paper_shadow_service_pending_buy_retry(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    retry: FastPaperShadowPendingBuyRetryInput,
+    *,
+    committed_at_unix_ms: int,
+) -> FastPaperShadowCommitResult:
+    checkpoint, runtime_state = _load_exact_latest_pair(
+        manifest,
+        binding,
+    )
+    transition = retry_fast_paper_shadow_pending_buy(
+        manifest,
+        execution_policy,
+        binding,
+        checkpoint,
+        runtime_state,
+        retry,
+    )
+    return commit_fast_paper_shadow_transition_atomically(
+        manifest,
+        binding,
+        checkpoint,
+        runtime_state,
+        transition,
+        sequence=checkpoint.sequence + 1,
+        created_at_unix_ms=committed_at_unix_ms,
     )
 
 
