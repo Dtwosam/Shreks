@@ -318,6 +318,19 @@ def run_fast_paper_shadow_service_cycle(
             candidate_id = _resolve_candidate_id(
                 bootstrap.manifest.observer_database_path,
                 mint=record.mint,
+                quote_mint=record.quote_mint,
+                provider=bootstrap.manifest.quote_provider,
+                probe_policy_version=bootstrap.policy.probe_policy_version,
+                taker=bootstrap.policy.taker,
+                slippage_bps=bootstrap.policy.slippage_bps,
+                entry_input_amount_raw=(
+                    bootstrap.policy.entry_input_amount_raw
+                ),
+                decision_observed_at_unix_ms=(
+                    record.decision_observed_at_unix_ms
+                ),
+                evaluated_at_unix_ms=evaluated_at_unix_ms,
+                max_quote_age_ms=bootstrap.policy.max_quote_age_ms,
             )
             read_policy = FastPaperShadowQuoteReadPolicy(
                 version=bootstrap.policy.route_evidence_version,
@@ -483,6 +496,16 @@ def _validate_service_paths(
             "shadow checkpoint must stay inside the dedicated shadow directory"
         )
 
+    for protected_source in (
+        config.manifest_path,
+        config.policy_path,
+    ):
+        source = protected_source.expanduser().resolve(strict=False)
+        if _is_within(source, root):
+            raise ValueError(
+                "shadow runtime authority files must stay outside the writable shadow directory"
+            )
+
     observer = Path(manifest.observer_database_path).expanduser().resolve(
         strict=False
     )
@@ -503,14 +526,30 @@ def _validate_service_paths(
 def _verify_observer_candidate_table(path_value: str) -> None:
     connection = _open_observer_database(path_value)
     try:
-        rows = connection.execute(
-            "PRAGMA table_info(token_candidates)"
-        ).fetchall()
-        columns = {str(row["name"]) for row in rows}
-        if not {"id", "mint"}.issubset(columns):
-            raise ValueError(
-                "observer database token_candidates schema is incompatible"
-            )
+        required = {
+            "token_candidates": {"id", "mint"},
+            "paper_quote_snapshots": {
+                "candidate_id",
+                "purpose",
+                "provider",
+                "probe_policy_version",
+                "input_mint",
+                "output_mint",
+                "taker",
+                "input_amount",
+                "slippage_bps",
+                "quoted_at_unix_ms",
+            },
+        }
+        for table, expected in required.items():
+            rows = connection.execute(
+                f"PRAGMA table_info({table})"
+            ).fetchall()
+            columns = {str(row["name"]) for row in rows}
+            if not expected.issubset(columns):
+                raise ValueError(
+                    f"observer database {table} schema is incompatible"
+                )
     finally:
         connection.close()
 
@@ -519,22 +558,71 @@ def _resolve_candidate_id(
     path_value: str,
     *,
     mint: str,
+    quote_mint: str,
+    provider: str,
+    probe_policy_version: str,
+    taker: str,
+    slippage_bps: int,
+    entry_input_amount_raw: int,
+    decision_observed_at_unix_ms: int,
+    evaluated_at_unix_ms: int,
+    max_quote_age_ms: int,
 ) -> int:
-    _require_text("mint", mint)
+    for name, value in (
+        ("mint", mint),
+        ("quote_mint", quote_mint),
+        ("provider", provider),
+        ("probe_policy_version", probe_policy_version),
+        ("taker", taker),
+    ):
+        _require_text(name, value)
+
+    earliest = max(
+        decision_observed_at_unix_ms,
+        evaluated_at_unix_ms - max_quote_age_ms,
+    )
     connection = _open_observer_database(path_value)
     try:
         rows = connection.execute(
-            "SELECT id FROM token_candidates WHERE mint = ? ORDER BY id ASC",
-            (mint,),
+            """
+            SELECT DISTINCT q.candidate_id
+            FROM paper_quote_snapshots AS q
+            JOIN token_candidates AS c
+              ON c.id = q.candidate_id
+            WHERE c.mint = ?
+              AND q.purpose = 'entry'
+              AND q.provider = ?
+              AND q.probe_policy_version = ?
+              AND q.input_mint = ?
+              AND q.output_mint = ?
+              AND q.taker = ?
+              AND q.input_amount = ?
+              AND q.slippage_bps = ?
+              AND q.quoted_at_unix_ms >= ?
+              AND q.quoted_at_unix_ms <= ?
+            ORDER BY q.candidate_id ASC
+            """,
+            (
+                mint,
+                provider,
+                probe_policy_version,
+                quote_mint,
+                mint,
+                taker,
+                str(entry_input_amount_raw),
+                slippage_bps,
+                earliest,
+                evaluated_at_unix_ms,
+            ),
         ).fetchall()
     finally:
         connection.close()
 
     if len(rows) != 1:
         raise ValueError(
-            "shadow feature mint candidate attribution is missing or ambiguous"
+            "shadow entry quote candidate attribution is missing or ambiguous"
         )
-    value = rows[0]["id"]
+    value = rows[0]["candidate_id"]
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError("shadow feature candidate id is invalid")
     return value
