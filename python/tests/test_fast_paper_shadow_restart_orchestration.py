@@ -284,6 +284,9 @@ def test_shadow_batch_writes_evidence_before_cursor_and_binds_feature_record(
 
     files = tuple((tmp_path / "shadow-evidence").glob("*.json"))
     assert len(files) == 1
+    assert not tuple(
+        (tmp_path / "shadow-evidence").glob(".*.tmp-*")
+    )
     assert "shadow-cycle" not in files[0].name
     evidence = read_fast_paper_shadow_decision_evidence(files[0])
     assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 2
@@ -322,6 +325,9 @@ def test_shadow_batch_evidence_fsync_failure_leaves_no_partial_artifact_or_curso
 
     assert calls == ["shadow-cycle:0"]
     assert not tuple((tmp_path / "shadow-evidence").glob("*.json"))
+    assert not tuple(
+        (tmp_path / "shadow-evidence").glob(".*.tmp-*")
+    )
     assert not Path(manifest.checkpoint_path).exists()
 
 
