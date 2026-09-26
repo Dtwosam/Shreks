@@ -636,6 +636,52 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     )
 
 
+def test_shadow_executor_rejects_stale_in_memory_checkpoint_pair(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint, posture = _runtime_fixture(
+        tmp_path,
+        zero_latency=True,
+    )
+    record = _record()
+    evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        record,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_020,
+        entry_observed_at=20_010,
+        exit_observed_at=20_015,
+    )
+    transition = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint,
+        posture,
+        _source(record, evidence),
+    )
+    _persist(
+        manifest,
+        binding,
+        transition,
+        sequence=1,
+        created_at=20_020,
+    )
+
+    with pytest.raises(ValueError, match="latest durable|latest.*checkpoint|stale"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            policy,
+            binding,
+            checkpoint,
+            posture,
+            _source(record, evidence),
+        )
+
+
 def test_shadow_executor_rejects_checkpoint_policy_value_drift(
     monkeypatch,
     tmp_path: Path,
