@@ -25,6 +25,7 @@ from .feed import fetch_fast_paper_runtime_feature_batch
 from .models import FastPaperRuntimeManifest, FastPaperRuntimeState
 from .persisted_quotes import (
     FastPaperShadowQuoteReadPolicy,
+    FastPaperShadowReductionRead,
     resolve_fast_paper_shadow_cycle_input,
 )
 from .shadow_cycle import run_fast_paper_shadow_batch
@@ -292,6 +293,13 @@ def run_fast_paper_shadow_service_cycle(
     position_resolver: (
         Callable[[Any], FastCampaignDecisionPosition] | None
     ) = None,
+    reduction_read_resolver: (
+        Callable[
+            [Any, FastCampaignDecisionPosition],
+            tuple[FastPaperShadowReductionRead, ...],
+        ]
+        | None
+    ) = None,
 ) -> tuple[FastPaperShadowServiceBootstrap, int]:
     if type(bootstrap) is not FastPaperShadowServiceBootstrap:
         raise FastPaperShadowServiceError(
@@ -321,6 +329,11 @@ def run_fast_paper_shadow_service_cycle(
             position = _resolve_service_position(
                 record,
                 position_resolver,
+            )
+            reduction_reads = _resolve_service_reduction_reads(
+                record,
+                position,
+                reduction_read_resolver,
             )
             candidate_id = _resolve_candidate_id(
                 bootstrap.manifest.observer_database_path,
@@ -352,7 +365,7 @@ def run_fast_paper_shadow_service_cycle(
                     bootstrap.policy.exit_input_amount_raw
                 ),
                 max_quote_age_ms=bootstrap.policy.max_quote_age_ms,
-                reduction_reads=(),
+                reduction_reads=reduction_reads,
             )
             cycle_input = resolve_fast_paper_shadow_cycle_input(
                 bootstrap.manifest,
@@ -686,6 +699,42 @@ def _resolve_service_position(
             "shadow service position resolver must return exact FastCampaignDecisionPosition"
         )
     return position
+
+
+def _resolve_service_reduction_reads(
+    record: Any,
+    position: FastCampaignDecisionPosition,
+    resolver: (
+        Callable[
+            [Any, FastCampaignDecisionPosition],
+            tuple[FastPaperShadowReductionRead, ...],
+        ]
+        | None
+    ),
+) -> tuple[FastPaperShadowReductionRead, ...]:
+    if resolver is None:
+        return ()
+    try:
+        reads = resolver(record, position)
+    except Exception as exc:
+        raise FastPaperShadowServiceError(
+            "shadow service reduction-read resolver failed"
+        ) from exc
+    if (
+        not isinstance(reads, tuple)
+        or not all(
+            type(value) is FastPaperShadowReductionRead
+            for value in reads
+        )
+    ):
+        raise ValueError(
+            "shadow service reduction-read resolver must return a tuple of exact FastPaperShadowReductionRead values"
+        )
+    if position.kind == "FLAT" and reads:
+        raise ValueError(
+            "FLAT shadow service posture cannot carry reduction reads"
+        )
+    return reads
 
 
 def _runtime_timestamp(
