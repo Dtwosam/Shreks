@@ -208,14 +208,16 @@ def write_fast_paper_runtime_manifest(
         raise FileExistsError("Fast PAPER runtime manifest destination already exists")
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = _canonical(_manifest_document(manifest))
+    created = False
     try:
         with destination.open("x", encoding="utf-8") as handle:
+            created = True
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
         destination.chmod(0o600)
     except Exception:
-        if destination.exists() and not destination.is_dir():
+        if created and destination.exists() and not destination.is_dir():
             destination.unlink(missing_ok=True)
         raise
 
