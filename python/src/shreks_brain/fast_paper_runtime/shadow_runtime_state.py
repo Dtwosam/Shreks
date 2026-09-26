@@ -30,6 +30,7 @@ _STATE_KEYS = frozenset(
         "schema_name",
         "schema_version",
         "binding_fingerprint_sha256",
+        "execution_policy_fingerprint_sha256",
         "paper_checkpoint_sequence",
         "paper_checkpoint_payload_sha256",
         "pending_buy",
@@ -105,6 +106,7 @@ class FastPaperShadowRuntimeState:
     schema_name: str
     schema_version: int
     binding_fingerprint_sha256: str
+    execution_policy_fingerprint_sha256: str
     paper_checkpoint_sequence: int
     paper_checkpoint_payload_sha256: str
     pending_buy: FastPaperShadowPendingBuy | None
@@ -130,6 +132,10 @@ class FastPaperShadowRuntimeState:
         _require_sha256(
             "binding_fingerprint_sha256",
             self.binding_fingerprint_sha256,
+        )
+        _require_sha256(
+            "execution_policy_fingerprint_sha256",
+            self.execution_policy_fingerprint_sha256,
         )
         _require_non_negative_int(
             "paper_checkpoint_sequence",
@@ -219,6 +225,7 @@ def build_fast_paper_shadow_runtime_state(
     paper_checkpoint: FastPaperCheckpointRecord,
     *,
     market_positions: tuple[FastPaperShadowMarketPosition, ...],
+    execution_policy_fingerprint_sha256: str,
     pending_buy: FastPaperShadowPendingBuy | None = None,
     last_processed_source_sequence: int | None = None,
     last_processed_source_event_id: str | None = None,
@@ -236,6 +243,10 @@ def build_fast_paper_shadow_runtime_state(
         raise ValueError(
             "paper_checkpoint must be exact FastPaperCheckpointRecord"
         )
+    _require_sha256(
+        "execution_policy_fingerprint_sha256",
+        execution_policy_fingerprint_sha256,
+    )
     if (
         pending_buy is not None
         and type(pending_buy) is not FastPaperShadowPendingBuy
@@ -280,6 +291,9 @@ def build_fast_paper_shadow_runtime_state(
         "schema_version": FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
         "binding_fingerprint_sha256": (
             binding.binding_fingerprint_sha256
+        ),
+        "execution_policy_fingerprint_sha256": (
+            execution_policy_fingerprint_sha256
         ),
         "paper_checkpoint_sequence": latest.sequence,
         "paper_checkpoint_payload_sha256": latest.payload_sha256,
@@ -402,14 +416,33 @@ def save_fast_paper_shadow_runtime_state(
                 "shadow runtime state checkpoint sequence collision"
             )
 
-        previous = connection.execute(
+        previous_row = connection.execute(
             f"""
-            SELECT MAX(paper_checkpoint_sequence)
+            SELECT paper_checkpoint_sequence, payload_json
             FROM {_TABLE_NAME}
             WHERE run_id = ?
+            ORDER BY paper_checkpoint_sequence DESC
+            LIMIT 1
             """,
             (binding.run_id,),
-        ).fetchone()[0]
+        ).fetchone()
+        previous = None if previous_row is None else previous_row[0]
+        if previous_row is not None:
+            previous_payload = previous_row[1]
+            if not isinstance(previous_payload, str):
+                connection.rollback()
+                raise ValueError(
+                    "previous shadow runtime state payload must be text"
+                )
+            previous_state = _decode_state(previous_payload)
+            if (
+                previous_state.execution_policy_fingerprint_sha256
+                != state.execution_policy_fingerprint_sha256
+            ):
+                connection.rollback()
+                raise ValueError(
+                    "shadow runtime execution policy fingerprint cannot change within a run"
+                )
         if (
             previous is not None
             and state.paper_checkpoint_sequence < previous
@@ -701,7 +734,13 @@ def _state_document(
             "binding_fingerprint_sha256": (
                 state.binding_fingerprint_sha256
             ),
-            "paper_checkpoint_sequence": (
+            "execution_policy_fingerprint_sha256": (
+                state.execution_policy_fingerprint_sha256
+            ),
+            "execution_policy_fingerprint_sha256": (
+            values["execution_policy_fingerprint_sha256"]
+        ),
+        "paper_checkpoint_sequence": (
                 state.paper_checkpoint_sequence
             ),
             "paper_checkpoint_payload_sha256": (
@@ -744,6 +783,9 @@ def _fingerprint_material(
         "schema_version": values["schema_version"],
         "binding_fingerprint_sha256": (
             values["binding_fingerprint_sha256"]
+        ),
+        "execution_policy_fingerprint_sha256": (
+            values["execution_policy_fingerprint_sha256"]
         ),
         "paper_checkpoint_sequence": (
             values["paper_checkpoint_sequence"]
@@ -807,7 +849,13 @@ def _state_document_without_fingerprint(
             "binding_fingerprint_sha256": (
                 state.binding_fingerprint_sha256
             ),
-            "paper_checkpoint_sequence": (
+            "execution_policy_fingerprint_sha256": (
+                state.execution_policy_fingerprint_sha256
+            ),
+            "execution_policy_fingerprint_sha256": (
+            values["execution_policy_fingerprint_sha256"]
+        ),
+        "paper_checkpoint_sequence": (
                 state.paper_checkpoint_sequence
             ),
             "paper_checkpoint_payload_sha256": (
@@ -925,6 +973,9 @@ def _decode_state(payload: str) -> FastPaperShadowRuntimeState:
             schema_version=document["schema_version"],
             binding_fingerprint_sha256=(
                 document["binding_fingerprint_sha256"]
+            ),
+            execution_policy_fingerprint_sha256=(
+                document["execution_policy_fingerprint_sha256"]
             ),
             paper_checkpoint_sequence=(
                 document["paper_checkpoint_sequence"]
