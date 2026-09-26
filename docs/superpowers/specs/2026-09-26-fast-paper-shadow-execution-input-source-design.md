@@ -27,6 +27,9 @@ Every record binds:
 - exact Fast PAPER runtime manifest fingerprint;
 - exact Fast PAPER shadow execution-policy fingerprint;
 - exact learned shadow decision-evidence fingerprint;
+- exact durable Fast PAPER checkpoint sequence;
+- exact durable Fast PAPER checkpoint payload SHA-256;
+- exact learned shadow runtime-state fingerprint;
 - source event identity;
 - decision evaluation timestamp;
 - source observation timestamp, which may not be later than evaluation;
@@ -72,7 +75,16 @@ Reads:
 - recompute the record fingerprint;
 - reconstruct exact typed values;
 - rerun `FastPaperShadowExecutionInput` invariants;
-- require exact current manifest, execution policy and decision evidence.
+- require exact current manifest, execution policy and decision evidence;
+- require the caller's current checkpoint sequence/payload fingerprint and
+  learned runtime-state fingerprint to equal the values captured by the source
+  record.
+
+This durable-state binding is required because BUY input may contain a
+ledger-derived `RiskContext`. A source record created against one checkpoint
+must fail closed after the isolated ledger or learned posture advances, even
+when the learned decision and execution-policy fingerprints are otherwise
+unchanged.
 
 ## Authority boundary
 
