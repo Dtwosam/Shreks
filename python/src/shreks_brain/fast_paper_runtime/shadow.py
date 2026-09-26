@@ -827,6 +827,171 @@ def _validate_evidence_internal(
         raise ValueError(
             "shadow evidence decision exposure does not match position"
         )
+
+    quotes = (
+        evidence.entry_quote,
+        evidence.exit_quote,
+        *(item.quote for item in evidence.reduction_quotes),
+    )
+    for quote in quotes:
+        if not (
+            evidence.as_of_unix_ms
+            <= quote.observed_at_unix_ms
+            <= evidence.evaluated_at_unix_ms
+        ):
+            raise ValueError(
+                "shadow evidence quote chronology is incompatible"
+            )
+        if not evidence.market_key.endswith(
+            f":{quote.mint}:{quote.quote_mint}"
+        ):
+            raise ValueError(
+                "shadow evidence quote market attribution mismatch"
+            )
+
+    executable_references = tuple(
+        quote.reference_price_quote
+        for quote in quotes
+        if quote.state == _EXECUTABLE
+    )
+    if executable_references:
+        reference = executable_references[0]
+        assert reference is not None
+        if any(
+            value is None
+            or not math.isclose(
+                value,
+                reference,
+                rel_tol=1e-12,
+                abs_tol=1e-15,
+            )
+            for value in executable_references
+        ):
+            raise ValueError(
+                "shadow evidence executable quote reference prices drift"
+            )
+
+    expected_entry_cost = (
+        _execution_cost_bps(
+            evidence.entry_quote,
+            direction="BUY",
+        )
+        if evidence.entry_quote.state == _EXECUTABLE
+        else None
+    )
+    expected_exit_cost = (
+        _execution_cost_bps(
+            evidence.exit_quote,
+            direction="SELL",
+        )
+        if evidence.exit_quote.state == _EXECUTABLE
+        else None
+    )
+    if not _optional_close(
+        evidence.entry_execution_cost_bps,
+        expected_entry_cost,
+    ):
+        raise ValueError(
+            "shadow evidence entry execution cost mismatch"
+        )
+    if not _optional_close(
+        evidence.exit_execution_cost_bps,
+        expected_exit_cost,
+    ):
+        raise ValueError(
+            "shadow evidence exit execution cost mismatch"
+        )
+
+    if evidence.position.kind == "FLAT" and evidence.reduction_quotes:
+        raise ValueError(
+            "FLAT shadow evidence cannot carry reduction quotes"
+        )
+    expected_reduce = tuple(
+        FastCampaignReduceExecutionCost(
+            target_exposure_fraction=item.target_exposure_fraction,
+            execution_cost_bps=_execution_cost_bps(
+                item.quote,
+                direction="SELL",
+            ),
+        )
+        for item in evidence.reduction_quotes
+        if item.quote.state == _EXECUTABLE
+    )
+    if evidence.position.kind == "OPEN":
+        current = evidence.position.current_exposure_fraction
+        assert current is not None
+        if any(
+            item.target_exposure_fraction >= current
+            for item in evidence.reduction_quotes
+        ):
+            raise ValueError(
+                "shadow evidence reduction target is not below current exposure"
+            )
+
+    constraints = evidence.constraints
+    expected_sell_executable = (
+        evidence.exit_quote.state == _EXECUTABLE
+    )
+    expected_buy_allowed = (
+        evidence.entry_quote.state == _EXECUTABLE
+        and expected_sell_executable
+        and constraints.max_exposure_fraction > 0.0
+    )
+    if constraints.buy_economically_allowed != expected_buy_allowed:
+        raise ValueError(
+            "shadow evidence BUY executability constraint mismatch"
+        )
+    if constraints.sell_executable != expected_sell_executable:
+        raise ValueError(
+            "shadow evidence SELL executability constraint mismatch"
+        )
+    normalized_exit_cost = (
+        0.0 if expected_exit_cost is None else expected_exit_cost
+    )
+    if not math.isclose(
+        constraints.expected_future_exit_cost_bps,
+        normalized_exit_cost,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            "shadow evidence future exit cost constraint mismatch"
+        )
+    if not math.isclose(
+        constraints.sell_now_cost_bps,
+        normalized_exit_cost,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    ):
+        raise ValueError(
+            "shadow evidence current sell cost constraint mismatch"
+        )
+    if len(constraints.reduce_execution_costs) != len(expected_reduce):
+        raise ValueError(
+            "shadow evidence reduction execution-cost population mismatch"
+        )
+    for actual, expected in zip(
+        constraints.reduce_execution_costs,
+        expected_reduce,
+    ):
+        if (
+            not math.isclose(
+                actual.target_exposure_fraction,
+                expected.target_exposure_fraction,
+                rel_tol=1e-12,
+                abs_tol=1e-15,
+            )
+            or not math.isclose(
+                actual.execution_cost_bps,
+                expected.execution_cost_bps,
+                rel_tol=1e-12,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ValueError(
+                "shadow evidence reduction execution cost mismatch"
+            )
+
     _validate_results_fingerprint(
         champion_version=evidence.champion_version,
         champion_fingerprint_sha256=(
@@ -1152,6 +1317,20 @@ def _execution_cost_bps(
         raise ValueError("unsupported shadow execution-cost direction")
     _require_non_negative_finite("execution_cost_bps", value)
     return value
+
+
+def _optional_close(
+    left: float | None,
+    right: float | None,
+) -> bool:
+    if left is None or right is None:
+        return left is right
+    return math.isclose(
+        left,
+        right,
+        rel_tol=1e-12,
+        abs_tol=1e-12,
+    )
 
 
 def _canonical(value: object) -> str:
