@@ -87,7 +87,7 @@ Cursor identity is explicit:
 A non-empty cursor must match the exact persisted canonical event or the batch
 fails closed.
 
-## Binary
+## Binary and immutable transport
 
 Add release-local:
 
@@ -99,6 +99,16 @@ It accepts:
 
 It opens the database read-only and prints exactly one canonical JSON batch to
 stdout.
+
+The historical `shreks.fast_proof_tools` v1 three-tool package is an immutable
+compatibility surface and must remain exactly unchanged. The runtime feature
+exporter therefore travels in a separate nested wheel package:
+
+`shreks_brain/_sealed_fast_runtime_tools/`
+
+with `shreks.fast_runtime_tools` v1 binding exact source SHA, platform, tool
+name, size, tool SHA-256, and manifest fingerprint. Private materialization
+writes the executable as owner-only `0700` and rejects drift.
 
 It has no provider, signer, transaction, PAPER-ledger, training-label, score, or
 LIVE authority.
