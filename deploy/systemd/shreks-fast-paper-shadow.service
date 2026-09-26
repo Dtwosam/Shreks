@@ -11,7 +11,7 @@ Type=simple
 User=shreks
 Group=shreks
 WorkingDirectory=/opt/shreks/current
-EnvironmentFile=/etc/shreks/shreks.env
+EnvironmentFile=/etc/shreks/fast-paper-shadow.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/bin/test -d /var/lib/shreks/fast-paper-shadow
 ExecStartPre=/usr/bin/test -w /var/lib/shreks/fast-paper-shadow
