@@ -26,6 +26,39 @@ from test_fast_paper_shadow_execution_input import (
 )
 
 
+_CHECKPOINT_SEQUENCE = 7
+_CHECKPOINT_SHA256 = "c" * 64
+_RUNTIME_STATE_SHA256 = "d" * 64
+
+
+def _build(manifest, policy, source, *, source_observed_at_unix_ms):
+    return build_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        policy,
+        source,
+        paper_checkpoint_sequence=_CHECKPOINT_SEQUENCE,
+        paper_checkpoint_payload_sha256=_CHECKPOINT_SHA256,
+        shadow_runtime_state_fingerprint_sha256=_RUNTIME_STATE_SHA256,
+        source_observed_at_unix_ms=source_observed_at_unix_ms,
+    )
+
+
+def _read(manifest, policy, evidence, directory, **changes):
+    values = {
+        "paper_checkpoint_sequence": _CHECKPOINT_SEQUENCE,
+        "paper_checkpoint_payload_sha256": _CHECKPOINT_SHA256,
+        "shadow_runtime_state_fingerprint_sha256": _RUNTIME_STATE_SHA256,
+    }
+    values.update(changes)
+    return read_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        policy,
+        evidence,
+        directory,
+        **values,
+    )
+
+
 def _buy_source(monkeypatch, tmp_path: Path):
     manifest, record, evidence = _shadow_evidence(
         monkeypatch,
@@ -51,7 +84,7 @@ def test_execution_input_source_is_exact_write_once_and_round_trips(
         monkeypatch,
         tmp_path,
     )
-    record = build_fast_paper_shadow_execution_input_source_record(
+    record = _build(
         manifest,
         policy,
         source,
@@ -78,6 +111,12 @@ def test_execution_input_source_is_exact_write_once_and_round_trips(
         record.decision_evidence_fingerprint_sha256
         == evidence.evidence_fingerprint_sha256
     )
+    assert record.paper_checkpoint_sequence == _CHECKPOINT_SEQUENCE
+    assert record.paper_checkpoint_payload_sha256 == _CHECKPOINT_SHA256
+    assert (
+        record.shadow_runtime_state_fingerprint_sha256
+        == _RUNTIME_STATE_SHA256
+    )
     assert len(record.record_fingerprint_sha256) == 64
 
     directory = tmp_path / "execution-inputs"
@@ -89,7 +128,7 @@ def test_execution_input_source_is_exact_write_once_and_round_trips(
     assert path.name == f"{evidence.evidence_fingerprint_sha256}.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
-    restored = read_fast_paper_shadow_execution_input_source_record(
+    restored = _read(
         manifest,
         policy,
         evidence,
@@ -115,7 +154,7 @@ def test_execution_input_source_rejects_future_source_and_binding_drift(
     )
 
     with pytest.raises(ValueError, match="future|observation|evaluation"):
-        build_fast_paper_shadow_execution_input_source_record(
+        _build(
             manifest,
             policy,
             source,
@@ -124,7 +163,7 @@ def test_execution_input_source_rejects_future_source_and_binding_drift(
 
     directory = tmp_path / "execution-inputs"
     directory.mkdir()
-    record = build_fast_paper_shadow_execution_input_source_record(
+    record = _build(
         manifest,
         policy,
         source,
@@ -136,7 +175,7 @@ def test_execution_input_source_rejects_future_source_and_binding_drift(
     )
 
     with pytest.raises(ValueError, match="policy|fingerprint"):
-        read_fast_paper_shadow_execution_input_source_record(
+        _read(
             manifest,
             replace(
                 policy,
@@ -151,11 +190,58 @@ def test_execution_input_source_rejects_future_source_and_binding_drift(
         decision_latency_ns=evidence.decision_latency_ns + 1,
     )
     with pytest.raises(ValueError, match="decision|fingerprint|source"):
-        read_fast_paper_shadow_execution_input_source_record(
+        _read(
             manifest,
             policy,
             drifted_evidence,
             directory,
+        )
+
+
+def test_execution_input_source_rejects_stale_checkpoint_or_posture_binding(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, policy, evidence, source = _buy_source(
+        monkeypatch,
+        tmp_path,
+    )
+    record = _build(
+        manifest,
+        policy,
+        source,
+        source_observed_at_unix_ms=evidence.evaluated_at_unix_ms,
+    )
+    directory = tmp_path / "execution-inputs"
+    directory.mkdir()
+    write_fast_paper_shadow_execution_input_source_record(
+        record,
+        directory,
+    )
+
+    with pytest.raises(ValueError, match="checkpoint|sequence"):
+        _read(
+            manifest,
+            policy,
+            evidence,
+            directory,
+            paper_checkpoint_sequence=_CHECKPOINT_SEQUENCE + 1,
+        )
+    with pytest.raises(ValueError, match="checkpoint|fingerprint"):
+        _read(
+            manifest,
+            policy,
+            evidence,
+            directory,
+            paper_checkpoint_payload_sha256="e" * 64,
+        )
+    with pytest.raises(ValueError, match="runtime-state|fingerprint"):
+        _read(
+            manifest,
+            policy,
+            evidence,
+            directory,
+            shadow_runtime_state_fingerprint_sha256="f" * 64,
         )
 
 
@@ -187,7 +273,7 @@ def test_execution_input_source_rejects_tamper_unknown_fields_and_symlink(
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="unknown|missing|canonical"):
-        read_fast_paper_shadow_execution_input_source_record(
+        _read(
             manifest,
             policy,
             evidence,
@@ -236,7 +322,7 @@ def test_execution_input_source_supports_action_compatible_non_buy_records(
                 else _usd(record)
             ),
         )
-        built = build_fast_paper_shadow_execution_input_source_record(
+        built = _build(
             manifest,
             policy,
             source,
@@ -248,7 +334,7 @@ def test_execution_input_source_supports_action_compatible_non_buy_records(
             built,
             directory,
         )
-        restored = read_fast_paper_shadow_execution_input_source_record(
+        restored = _read(
             manifest,
             policy,
             evidence,
