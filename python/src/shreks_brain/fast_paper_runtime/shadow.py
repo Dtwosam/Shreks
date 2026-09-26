@@ -453,6 +453,17 @@ def evaluate_fast_paper_shadow_decision(
     )
 
 
+def validate_fast_paper_shadow_decision_evidence(
+    evidence: FastPaperShadowDecisionEvidence,
+) -> None:
+    if type(evidence) is not FastPaperShadowDecisionEvidence:
+        raise ValueError(
+            "evidence must be exact FastPaperShadowDecisionEvidence"
+        )
+    _validate_evidence_internal(evidence)
+    _validate_evidence_fingerprint(evidence)
+
+
 def write_fast_paper_shadow_decision_evidence(
     evidence: FastPaperShadowDecisionEvidence,
     destination: str | Path,
