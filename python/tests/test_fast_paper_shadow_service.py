@@ -75,12 +75,14 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
     policy = service.FastPaperShadowServicePolicy(**_policy_document())
     manifest = SimpleNamespace(
         observer_database_path=str(tmp_path / "observer.sqlite3"),
+        quote_provider="jupiter",
     )
     state = object()
     next_state = object()
     record = SimpleNamespace(
         decision_observed_at_unix_ms=1_000,
         mint="Mint111",
+        quote_mint="Quote111",
     )
     bootstrap = service.FastPaperShadowServiceBootstrap(
         manifest=manifest,
@@ -178,7 +180,8 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
     assert captured["maximum_decisions"] == 8
     identity = captured["candidate_identity"]
     assert identity["mint"] == "Mint111"
-    assert identity["provider"] is manifest.quote_provider
+    assert identity["provider"] == manifest.quote_provider
+    assert identity["quote_mint"] == "Quote111"
     assert identity["probe_policy_version"] == "probe-v1"
     assert identity["entry_input_amount_raw"] == 100_000
     assert identity["decision_observed_at_unix_ms"] == 1_000
