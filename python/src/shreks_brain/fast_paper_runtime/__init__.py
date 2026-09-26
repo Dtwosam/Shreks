@@ -13,6 +13,11 @@ from .feed import (
     FastPaperRuntimeFeatureBatch,
     fetch_fast_paper_runtime_feature_batch,
 )
+from .persisted_quotes import (
+    FastPaperShadowQuoteReadPolicy,
+    FastPaperShadowReductionRead,
+    resolve_fast_paper_shadow_cycle_input,
+)
 from .shadow_cycle import (
     FastPaperShadowCycleInput,
     run_fast_paper_shadow_batch,
@@ -50,6 +55,8 @@ __all__ = (
     "FastPaperRuntimeState",
     "FastPaperRuntimeFeatureBatch",
     "FastPaperShadowCycleInput",
+    "FastPaperShadowQuoteReadPolicy",
+    "FastPaperShadowReductionRead",
     "FastPaperShadowDecisionEvidence",
     "FastPaperShadowQuoteEvidence",
     "FastPaperShadowReductionQuote",
@@ -61,6 +68,7 @@ __all__ = (
     "write_fast_paper_runtime_manifest",
     "write_fast_paper_runtime_state",
     "fetch_fast_paper_runtime_feature_batch",
+    "resolve_fast_paper_shadow_cycle_input",
     "evaluate_fast_paper_shadow_decision",
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
