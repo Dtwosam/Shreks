@@ -84,7 +84,9 @@ For each input:
    SHA-256 digest of source identity;
 2. if the evidence file is absent:
    - evaluate through the merged shadow-decision function;
-   - write and fsync the canonical mode-0600 evidence artifact;
+   - write and fsync a mode-0600 same-directory temporary artifact;
+   - atomically hard-link the complete artifact into its final write-once name;
+   - fsync the evidence directory before cursor advancement;
 3. if the evidence file already exists:
    - read it;
    - require exact replay compatibility with the current input and manifest;
