@@ -295,10 +295,7 @@ def _decision_input(
         record=record,
         position=position,
         constraints=constraints,
-        evaluated_at_unix_ms=max(
-            evaluated_at_unix_ms,
-            record.decision_observed_at_unix_ms,
-        ),
+        evaluated_at_unix_ms=evaluated_at_unix_ms,
         quote_state=_text(raw["quote_state"], "quote_state"),
     )
 
