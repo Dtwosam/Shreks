@@ -273,6 +273,10 @@ def execute_fast_paper_shadow_decision(
         raise ValueError(
             "learned shadow execution requires a material assessed Fast PAPER event"
         )
+    if evidence.as_of_unix_ms < paper_checkpoint.state.as_of_unix_ms:
+        raise ValueError(
+            "new learned shadow decision predates the durable execution state"
+        )
     _require_new_decision_order(shadow_state, evidence.source_sequence)
     _require_learned_posture(shadow_state, source)
     if evidence.decision.action == "BUY":
@@ -365,6 +369,7 @@ def retry_fast_paper_shadow_pending_buy(
         manifest,
         approval,
         retry,
+        minimum_observed_at_unix_ms=paper_checkpoint.state.as_of_unix_ms,
     )
 
     result = execute_fast_paper_buy(
@@ -1205,6 +1210,8 @@ def _validate_pending_retry_quote(
     manifest: FastPaperRuntimeManifest,
     approval: FastPaperBuyApproval,
     retry: FastPaperShadowPendingBuyRetryInput,
+    *,
+    minimum_observed_at_unix_ms: int,
 ) -> None:
     quote = retry.quote
     usd = retry.quote_usd_evidence
@@ -1227,6 +1234,14 @@ def _validate_pending_retry_quote(
     if quote.observed_at_unix_ms < approval.decision_at_unix_ms:
         raise ValueError(
             "pending BUY retry quote predates original learned decision"
+        )
+    if quote.observed_at_unix_ms < minimum_observed_at_unix_ms:
+        raise ValueError(
+            "pending BUY retry quote predates the durable pending checkpoint"
+        )
+    if usd.observed_at_unix_ms < minimum_observed_at_unix_ms:
+        raise ValueError(
+            "pending BUY retry USD evidence predates the durable pending checkpoint"
         )
 
 
