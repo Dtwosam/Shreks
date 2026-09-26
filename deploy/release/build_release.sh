@@ -167,9 +167,6 @@ verify_fast_proof_tools_wheel(
         "shreks-fast-entry-authority": Path(
             "target/release/shreks-fast-entry-authority"
         ),
-        "export_fast_runtime_features": Path(
-            "target/release/export_fast_runtime_features"
-        ),
     },
 )
 PY
