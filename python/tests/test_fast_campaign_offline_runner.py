@@ -143,7 +143,32 @@ def test_offline_learned_prefix_runner_uses_exact_canonical_request(
     assert captured["request_payload"] == encode_fast_campaign_decision_batch(batch)
     assert captured["kwargs"]["shell"] is False
     assert captured["kwargs"]["capture_output"] is True
+    assert captured["kwargs"]["timeout"] is None
     assert result.decisions[0].source_event_id == request.source_event_id
+
+
+def test_offline_learned_runner_rejects_invalid_timeout(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "campaign-decision"
+    champion = tmp_path / "champion.json"
+    binary.write_text("binary", encoding="utf-8")
+    champion.write_text("champion", encoding="utf-8")
+    request = build_fast_campaign_decision_request(
+        feature_record(0, 1.0),
+        FastCampaignDecisionPosition(kind="FLAT"),
+        _constraints(),
+    )
+    batch = build_fast_campaign_decision_batch(_policy(), (request,))
+
+    for value in (0, -1, float("inf"), True):
+        with pytest.raises(ValueError, match="timeout"):
+            evaluate_fast_campaign_decision_batch_offline(
+                binary_path=binary,
+                champion_path=champion,
+                batch=batch,
+                timeout_seconds=value,
+            )
 
 
 def test_offline_learned_prefix_runner_rejects_result_population_mismatch(

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 import subprocess
 import tempfile
@@ -17,9 +18,18 @@ def evaluate_fast_campaign_decision_batch_offline(
     binary_path: str | Path,
     champion_path: str | Path,
     batch: FastCampaignDecisionBatch,
+    timeout_seconds: float | None = None,
 ) -> FastCampaignDecisionResults:
     if type(batch) is not FastCampaignDecisionBatch:
         raise ValueError("batch must be exact FastCampaignDecisionBatch")
+    if timeout_seconds is not None:
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(float(timeout_seconds))
+            or float(timeout_seconds) <= 0.0
+        ):
+            raise ValueError("timeout_seconds must be positive and finite or None")
     binary = _source_file(binary_path, "binary_path")
     champion = _source_file(champion_path, "champion_path")
     payload = encode_fast_campaign_decision_batch(batch)
@@ -36,13 +46,19 @@ def evaluate_fast_campaign_decision_batch_offline(
             handle.write(payload)
             request_path = Path(handle.name)
 
-        completed = subprocess.run(
-            [str(binary), str(champion), str(request_path)],
-            shell=False,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            completed = subprocess.run(
+                [str(binary), str(champion), str(request_path)],
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "offline learned campaign decision process timed out"
+            ) from exc
         if completed.returncode != 0:
             stderr = completed.stderr[-2_000:].strip()
             detail = f": {stderr}" if stderr else ""
