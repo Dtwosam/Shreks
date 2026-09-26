@@ -273,6 +273,12 @@ def execute_fast_paper_shadow_decision(
         )
     _require_new_decision_order(shadow_state, evidence.source_sequence)
     _require_learned_posture(shadow_state, source)
+    if evidence.decision.action == "BUY":
+        _require_new_buy_mint_available(
+            paper_checkpoint.state.ledger,
+            shadow_state,
+            evidence.entry_quote.mint,
+        )
 
     point = materialize_fast_paper_shadow_execution_evidence(
         manifest,
@@ -893,6 +899,28 @@ def _require_learned_posture(
         )
 
 
+def _require_new_buy_mint_available(
+    ledger: PaperLedger,
+    shadow_state: FastPaperShadowRuntimeState,
+    mint: str,
+) -> None:
+    if any(
+        position.state is PaperPositionState.OPEN
+        and position.mint == mint
+        for position in ledger.positions
+    ):
+        raise ValueError(
+            "new shadow BUY mint is already OPEN in the isolated PAPER ledger"
+        )
+    if any(
+        mapping.mint == mint
+        for mapping in shadow_state.market_positions
+    ):
+        raise ValueError(
+            "new shadow BUY mint already has durable learned OPEN posture"
+        )
+
+
 def _paper_state(
     base: FastPaperRuntimeState,
     *,
@@ -1182,20 +1210,6 @@ def _validate_pending_retry_quote(
         raise ValueError(
             "pending BUY retry quote predates original learned decision"
         )
-    if quote.state == "EXECUTABLE":
-        reference = quote.reference_price_quote
-        if (
-            reference is None
-            or not math.isclose(
-                reference,
-                approval.decision_executable_entry_price_quote,
-                rel_tol=_REL_TOL,
-                abs_tol=1e-15,
-            )
-        ):
-            raise ValueError(
-                "pending BUY retry reference price provenance mismatch"
-            )
 
 
 def _canonical_mappings(
