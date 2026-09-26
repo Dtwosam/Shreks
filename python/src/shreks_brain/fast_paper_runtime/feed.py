@@ -167,9 +167,28 @@ def fetch_fast_paper_runtime_feature_batch(
         "batch_fingerprint_sha256",
         document["batch_fingerprint_sha256"],
     )
-    material = dict(document)
-    claimed_fingerprint = material.pop("batch_fingerprint_sha256")
-    if _sha256_canonical(material) != claimed_fingerprint:
+    claimed_fingerprint = document["batch_fingerprint_sha256"]
+    fingerprint_material = {
+        "schema_name": document["schema_name"],
+        "schema_version": document["schema_version"],
+        "after_cursor": document["after_cursor"],
+        "snapshot_max_sequence": snapshot_max_sequence,
+        "record_identities": [
+            {
+                "decision_sequence": record.decision_sequence,
+                "decision_signature": record.decision_signature,
+                "decision_ordinal": record.decision_ordinal,
+                "decision_observed_at_unix_ms": (
+                    record.decision_observed_at_unix_ms
+                ),
+                "mint": record.mint,
+                "quote_mint": record.quote_mint,
+                "venue": record.venue,
+            }
+            for record in records
+        ],
+    }
+    if _sha256_canonical(fingerprint_material) != claimed_fingerprint:
         raise ValueError("runtime feature batch fingerprint mismatch")
 
     next_cursor = state.cursor
