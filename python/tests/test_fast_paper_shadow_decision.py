@@ -243,10 +243,17 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
         lambda path: _fake_champion(manifest),
     )
 
-    def fake_evaluate(*, binary_path, champion_path, batch):
+    def fake_evaluate(
+        *,
+        binary_path,
+        champion_path,
+        batch,
+        timeout_seconds=None,
+    ):
         captured["binary_path"] = Path(binary_path)
         captured["champion_path"] = Path(champion_path)
         captured["batch"] = batch
+        captured["timeout_seconds"] = timeout_seconds
         return _result(manifest, batch.decisions[0])
 
     monkeypatch.setattr(
@@ -276,6 +283,7 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
     constraints = request.constraints
     assert captured["binary_path"] == Path(manifest.decision_binary_path)
     assert captured["champion_path"] == Path(manifest.champion_path)
+    assert captured["timeout_seconds"] == 30.0
     assert constraints.buy_economically_allowed is True
     assert constraints.expected_future_exit_cost_bps == pytest.approx(200.0)
     assert constraints.sell_executable is True
@@ -389,8 +397,15 @@ def test_shadow_decision_disables_buy_when_exit_route_is_unavailable(
         lambda path: _fake_champion(manifest),
     )
 
-    def fake_evaluate(*, binary_path, champion_path, batch):
+    def fake_evaluate(
+        *,
+        binary_path,
+        champion_path,
+        batch,
+        timeout_seconds=None,
+    ):
         captured["constraints"] = batch.decisions[0].constraints
+        captured["timeout_seconds"] = timeout_seconds
         request = batch.decisions[0]
         decision = FastCampaignDecisionResult(
             source_event_id=request.source_event_id,
