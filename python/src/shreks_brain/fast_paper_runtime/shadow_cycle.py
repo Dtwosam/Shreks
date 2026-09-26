@@ -259,10 +259,8 @@ def _prepare_evidence_directory(
         raise ValueError(
             "shadow evidence directory must remain a regular directory"
         )
-    try:
-        os.chmod(root, 0o700)
-    except OSError:
-        raise
+    os.chmod(root, 0o700)
+    _fsync_directory(root.parent)
     return root
 
 
@@ -395,6 +393,17 @@ def _require_replay_compatible(
         raise ValueError(
             "shadow replay quote provider does not match manifest"
         )
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _cursor_for_record(
