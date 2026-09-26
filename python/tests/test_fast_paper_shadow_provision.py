@@ -84,6 +84,13 @@ def _patch_authority(monkeypatch, manifest):
         "read_fast_paper_runtime_manifest",
         lambda _path: manifest,
     )
+    monkeypatch.setattr(
+        provision,
+        "read_fast_paper_shadow_service_policy",
+        lambda _path: SimpleNamespace(
+            route_evidence_version=manifest.route_evidence_version,
+        ),
+    )
     decision_bootstrap = SimpleNamespace(
         manifest=manifest,
         policy=object(),
