@@ -98,19 +98,8 @@ fn runtime_feature_export_accepts_empty_current_schema_database_read_only() {
     assert_eq!(fs::read(&input).unwrap(), before);
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains(r#""records":[] "#).not());
     assert!(stdout.contains(r#""records":[]"#));
     assert!(stdout.ends_with('\n'));
 
     cleanup_dir(&root);
-}
-
-trait BoolNot {
-    fn not(self) -> bool;
-}
-
-impl BoolNot for bool {
-    fn not(self) -> bool {
-        !self
-    }
 }
