@@ -150,6 +150,7 @@ def provision_fast_paper_shadow(
         for directory in (
             decision_config.evidence_directory,
             execution_config.source_directory,
+            supervisor_config.quote_usd_source_directory,
             supervisor_config.reduction_source_directory,
             supervisor_config.pending_buy_retry_source_directory,
         ):
@@ -269,6 +270,7 @@ def _validate_root_separation(
         for path in (
             config.decision_config.evidence_directory,
             config.execution_config.source_directory,
+            config.quote_usd_source_directory,
             config.reduction_source_directory,
             config.pending_buy_retry_source_directory,
         )
