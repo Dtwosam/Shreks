@@ -26,7 +26,12 @@ from shreks_brain.fast_paper import (
     execute_fast_paper_buy,
     run_fast_paper_event,
 )
-from shreks_brain.paper import PaperLedger, PaperPosition, PaperPositionState
+from shreks_brain.paper import (
+    PaperLedger,
+    PaperPosition,
+    PaperPositionState,
+    PaperQuoteState,
+)
 from shreks_brain.paper_validation import (
     FAST_PAPER_RUNTIME_STATE_VERSION,
     FastPaperCheckpointRecord,
@@ -564,8 +569,7 @@ def _execute_position_action(
     shadow_state,
     assessment,
 ) -> FastPaperShadowExecutionTransition:
-    quote = point.quote
-    if quote is None:
+    if point.quote is None:
         raise ValueError(
             "materialized OPEN-position action evidence is missing quote"
         )
@@ -580,6 +584,13 @@ def _execute_position_action(
     action_state = _position_state(
         base_state,
         mapping.position_id,
+    )
+    quote = _position_execution_quote_evidence(
+        source,
+        point.quote,
+        action_state,
+        position,
+        mapping.current_exposure_fraction,
     )
     target_quantity = _position_exit_quantity(
         source,
@@ -903,6 +914,90 @@ def _paper_state(
     )
 
 
+def _position_execution_quote_evidence(
+    source: FastPaperShadowExecutionInput,
+    selected_quote: FastCampaignPaperQuoteEvidence,
+    action_state,
+    position: PaperPosition,
+    current_exposure: float,
+) -> FastCampaignPaperQuoteEvidence:
+    pending = action_state.pending_exit
+    fresh_action = source.decision_evidence.decision.action
+    if pending is None:
+        return selected_quote
+    if pending.assessment.action is FastPaperAction.SELL:
+        return _campaign_quote_from_shadow(
+            source.decision_evidence.exit_quote,
+            source.quote_usd_evidence,
+        )
+    if fresh_action == "SELL":
+        return selected_quote
+    if pending.assessment.action is not FastPaperAction.REDUCE:
+        raise ValueError(
+            "shadow executor pending exit action is unsupported"
+        )
+    exit_quantity = pending.target_base_quantity
+    if exit_quantity is None:
+        raise ValueError(
+            "pending REDUCE is missing base-quantity authority"
+        )
+    target_exposure = current_exposure * (
+        1.0 - exit_quantity / position.quantity
+    )
+    if (
+        not math.isfinite(target_exposure)
+        or target_exposure <= 0.0
+        or target_exposure >= current_exposure
+    ):
+        raise ValueError(
+            "pending REDUCE cannot reconstruct learned target exposure"
+        )
+    matches = tuple(
+        item.quote
+        for item in source.decision_evidence.reduction_quotes
+        if math.isclose(
+            item.target_exposure_fraction,
+            target_exposure,
+            rel_tol=_REL_TOL,
+            abs_tol=1e-15,
+        )
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            "pending REDUCE requires exactly one fresh target-sized reduction quote"
+        )
+    return _campaign_quote_from_shadow(
+        matches[0],
+        source.quote_usd_evidence,
+    )
+
+
+def _campaign_quote_from_shadow(
+    value: FastPaperShadowQuoteEvidence,
+    usd: FastPaperShadowQuoteUsdEvidence | None,
+) -> FastCampaignPaperQuoteEvidence:
+    if usd is None:
+        raise ValueError(
+            "OPEN-position execution requires explicit quote/USD evidence"
+        )
+    if usd.quote_mint != value.quote_mint:
+        raise ValueError(
+            "position quote/USD mint attribution mismatch"
+        )
+    return FastCampaignPaperQuoteEvidence(
+        provider=value.provider,
+        mint=value.mint,
+        quote_mint=value.quote_mint,
+        observed_at_unix_ms=value.observed_at_unix_ms,
+        state=PaperQuoteState(value.state),
+        reference_price_quote=value.reference_price_quote,
+        execution_price_quote=value.execution_price_quote,
+        quoted_base_quantity=value.quoted_base_quantity,
+        available_base_quantity=value.available_base_quantity,
+        quote_to_usd_rate=usd.quote_to_usd_rate,
+    )
+
+
 def _position_exit_quantity(
     source: FastPaperShadowExecutionInput,
     position: PaperPosition,
@@ -1046,8 +1141,6 @@ def _buy_quote_from_shadow(
     value: FastPaperShadowQuoteEvidence,
     quote_to_usd_rate: float,
 ) -> FastPaperBuyQuote:
-    from shreks_brain.paper import PaperQuoteState
-
     return FastPaperBuyQuote(
         provider=value.provider,
         mint=value.mint,
