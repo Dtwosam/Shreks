@@ -97,15 +97,23 @@ def test_supervisor_loads_existing_configs_and_source_directories(
     }
     captured: dict[str, object] = {}
 
+    def load_decision(supplied):
+        captured["decision_env"] = supplied
+        return decision
+
+    def load_execution(supplied):
+        captured["execution_env"] = supplied
+        return execution
+
     monkeypatch.setattr(
         supervisor,
         "load_fast_paper_shadow_service_config",
-        lambda supplied: captured.setdefault("decision_env", supplied) or decision,
+        load_decision,
     )
     monkeypatch.setattr(
         supervisor,
         "load_fast_paper_shadow_service_execution_config",
-        lambda supplied: captured.setdefault("execution_env", supplied) or execution,
+        load_execution,
     )
 
     config = supervisor.load_fast_paper_shadow_supervisor_config(env)
@@ -129,10 +137,14 @@ def test_supervisor_preflight_authenticates_both_bootstraps_without_cycle(
     execution = _execution_bootstrap()
     captured: dict[str, object] = {}
 
+    def bootstrap_decision(supplied):
+        captured["decision_config"] = supplied
+        return decision
+
     monkeypatch.setattr(
         supervisor,
         "bootstrap_fast_paper_shadow_service",
-        lambda supplied: captured.setdefault("decision_config", supplied) or decision,
+        bootstrap_decision,
     )
     monkeypatch.setattr(
         supervisor,
