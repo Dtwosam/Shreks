@@ -28,6 +28,16 @@ from .shadow_ledger import (
     load_latest_fast_paper_shadow_ledger_checkpoint,
     save_fast_paper_shadow_ledger_checkpoint,
 )
+from .shadow_runtime_state import (
+    FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
+    FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
+    FastPaperShadowMarketPosition,
+    FastPaperShadowRuntimeState,
+    build_fast_paper_shadow_runtime_state,
+    fast_paper_shadow_decision_position,
+    load_latest_fast_paper_shadow_runtime_state,
+    save_fast_paper_shadow_runtime_state,
+)
 from .shadow_cycle import (
     FastPaperShadowCycleInput,
     run_fast_paper_shadow_batch,
@@ -61,6 +71,8 @@ __all__ = (
     "FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_VERSION",
+    "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME",
+    "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION",
     "FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION",
     "FastPaperRuntimeCursor",
     "FastPaperRuntimeManifest",
@@ -68,6 +80,8 @@ __all__ = (
     "FastPaperRuntimeFeatureBatch",
     "FastPaperShadowCycleInput",
     "FastPaperShadowLedgerBinding",
+    "FastPaperShadowMarketPosition",
+    "FastPaperShadowRuntimeState",
     "FastPaperShadowQuoteReadPolicy",
     "FastPaperShadowReductionRead",
     "FastPaperShadowDecisionEvidence",
@@ -75,6 +89,7 @@ __all__ = (
     "FastPaperShadowReductionQuote",
     "build_fast_paper_runtime_manifest",
     "build_fast_paper_shadow_ledger_binding",
+    "build_fast_paper_shadow_runtime_state",
     "build_initial_fast_paper_shadow_ledger_state",
     "build_fast_paper_runtime_state",
     "read_fast_paper_runtime_manifest",
@@ -88,7 +103,10 @@ __all__ = (
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
     "run_fast_paper_shadow_batch",
+    "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
     "load_latest_fast_paper_shadow_ledger_checkpoint",
+    "load_latest_fast_paper_shadow_runtime_state",
     "save_fast_paper_shadow_ledger_checkpoint",
+    "save_fast_paper_shadow_runtime_state",
 )
