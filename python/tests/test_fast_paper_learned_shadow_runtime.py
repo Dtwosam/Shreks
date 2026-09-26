@@ -19,13 +19,15 @@ from shreks_brain.fast_champion import (
     build_fast_forecast_champion,
     write_fast_forecast_champion,
 )
-from shreks_brain.fast_paper_runtime import (
+from shreks_brain.fast_paper_runtime import build_fast_paper_runtime_manifest
+from shreks_brain.fast_paper_runtime.shadow import (
     FAST_PAPER_SHADOW_EVIDENCE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_EVIDENCE_SCHEMA_VERSION,
     FastPaperShadowDecisionInput,
-    FastPaperShadowEvidenceStore,
-    build_fast_paper_runtime_manifest,
     evaluate_fast_paper_shadow_batch,
+)
+from shreks_brain.fast_paper_runtime.shadow_store import (
+    FastPaperShadowEvidenceStore,
 )
 
 
