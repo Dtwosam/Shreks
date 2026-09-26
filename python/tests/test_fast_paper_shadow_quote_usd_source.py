@@ -112,7 +112,7 @@ def test_quote_usd_source_rejects_decision_manifest_drift(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    _manifest, evidence, usd = _fixture(monkeypatch, tmp_path)
+    original_manifest, evidence, usd = _fixture(monkeypatch, tmp_path)
     other_root = tmp_path / "other-runtime"
     other_root.mkdir()
     other_manifest = _manifest(other_root)
