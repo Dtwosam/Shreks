@@ -63,6 +63,11 @@ class FastPaperShadowMarketPosition:
             "current_exposure_fraction",
             self.current_exposure_fraction,
         )
+        object.__setattr__(
+            self,
+            "current_exposure_fraction",
+            float(self.current_exposure_fraction),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,7 +88,11 @@ class FastPaperShadowRuntimeState:
             raise ValueError(
                 "shadow runtime state schema_name is incompatible"
             )
-        if self.schema_version != FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version
+            != FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION
+        ):
             raise ValueError(
                 "shadow runtime state schema_version is incompatible"
             )
@@ -484,10 +493,19 @@ def load_latest_fast_paper_shadow_runtime_state(
             "shadow runtime state creation time precedes paper checkpoint state"
         )
 
+    latest_after = load_latest_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+    )
+    if latest_after is None or latest_after != latest:
+        raise ValueError(
+            "paper checkpoint advanced while shadow runtime state was loading"
+        )
+
     _validate_state_against_checkpoint(
         state,
         binding,
-        latest,
+        latest_after,
     )
     return state
 
