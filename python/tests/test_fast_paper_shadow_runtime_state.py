@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+import shreks_brain.fast_paper_runtime.shadow_runtime_state as runtime_state
 from shreks_brain.fast_paper import FastPaperPositionActionPolicy
 from shreks_brain.paper import PaperFillPolicy, PaperPositionState
 from shreks_brain.paper_validation import (
@@ -175,6 +176,22 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
     assert posture.kind == "OPEN"
     assert posture.current_exposure_fraction == 0.5
 
+    full_mapping = FastPaperShadowMarketPosition(
+        market_key=MARKET_KEY,
+        position_id=position.position_id,
+        mint=position.mint,
+        current_exposure_fraction=1,
+    )
+    assert type(full_mapping.current_exposure_fraction) is float
+    assert full_mapping.current_exposure_fraction == 1.0
+    full_state = build_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        checkpoint,
+        market_positions=(full_mapping,),
+    )
+    assert len(full_state.state_fingerprint_sha256) == 64
+
     with pytest.raises(ValueError, match="OPEN|mapping|position"):
         build_fast_paper_shadow_runtime_state(
             manifest,
@@ -316,6 +333,52 @@ def test_shadow_runtime_state_fails_closed_on_torn_paper_checkpoint(
             manifest,
             binding,
         )
+
+
+def test_shadow_runtime_state_detects_checkpoint_advance_during_load(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, checkpoint = _database_fixture(tmp_path)
+    state = build_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        checkpoint,
+        market_positions=(),
+    )
+    save_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        state,
+        created_at_unix_ms=checkpoint.created_at_unix_ms,
+    )
+    advanced = save_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+        checkpoint.state,
+        sequence=1,
+        created_at_unix_ms=checkpoint.created_at_unix_ms + 1,
+    )
+
+    calls = 0
+
+    def staged_checkpoint(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return checkpoint if calls == 1 else advanced
+
+    monkeypatch.setattr(
+        runtime_state,
+        "load_latest_fast_paper_shadow_ledger_checkpoint",
+        staged_checkpoint,
+    )
+
+    with pytest.raises(ValueError, match="advanced|loading|checkpoint"):
+        load_latest_fast_paper_shadow_runtime_state(
+            manifest,
+            binding,
+        )
+    assert calls == 2
 
 
 def test_shadow_runtime_state_detects_payload_tamper(tmp_path: Path) -> None:
