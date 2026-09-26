@@ -434,7 +434,7 @@ def test_persisted_quote_resolver_fails_closed_on_stale_missing_or_conflicting_e
             """
             INSERT INTO token_mint_states
                 (id, candidate_id, decimals, observed_at_unix_ms)
-            VALUES (2, 7, 7, 1_995)
+            VALUES (2, 7, 7, 1995)
             """
         )
         connection.commit()
