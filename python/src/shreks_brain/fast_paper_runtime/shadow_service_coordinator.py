@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Callable
 
 from shreks_brain.fast_campaign import FastCampaignDecisionPosition
 from shreks_brain.research.fast_training_features import FastTrainingFeatureRecord
 
 from .persisted_quotes import FastPaperShadowReductionRead
+from .shadow_reduction_source import (
+    read_fast_paper_shadow_reduction_source_record,
+)
 from .shadow_runtime_state import fast_paper_shadow_decision_position
 from .shadow_service import (
     FastPaperShadowServiceBootstrap,
@@ -58,6 +62,7 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         ]
         | None
     ) = None,
+    reduction_source_directory: Path | None = None,
     committed_at_unix_ms: int,
 ) -> FastPaperShadowServiceCoordinatorResult:
     if type(decision_bootstrap) is not FastPaperShadowServiceBootstrap:
@@ -79,6 +84,13 @@ def run_fast_paper_shadow_service_coordinated_cycle(
     ):
         raise ValueError(
             "committed_at_unix_ms must be a non-negative integer"
+        )
+    if (
+        reduction_read_resolver is not None
+        and reduction_source_directory is not None
+    ):
+        raise ValueError(
+            "coordinator accepts either reduction_read_resolver or reduction_source_directory, not both"
         )
 
     manifest = decision_bootstrap.manifest
@@ -129,11 +141,32 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         )
 
     state = execution_bootstrap.runtime_state
+    resolved_reduction_source_directory = None
+    if reduction_source_directory is not None:
+        if not isinstance(reduction_source_directory, Path):
+            raise ValueError(
+                "reduction_source_directory must be Path"
+            )
+        if (
+            reduction_source_directory.is_symlink()
+            or not reduction_source_directory.is_dir()
+        ):
+            raise ValueError(
+                "reduction source directory must be an existing regular non-symlink directory"
+            )
+        resolved_reduction_source_directory = (
+            reduction_source_directory.resolve(strict=True)
+        )
+
     if state.pending_buy is not None:
         raise ValueError(
             "coordinator cannot produce a new decision while pending BUY exists"
         )
-    if state.market_positions and reduction_read_resolver is None:
+    if (
+        state.market_positions
+        and reduction_read_resolver is None
+        and resolved_reduction_source_directory is None
+    ):
         raise ValueError(
             "coordinator OPEN learned posture requires explicit reduction quote authority"
         )
@@ -152,12 +185,43 @@ def run_fast_paper_shadow_service_coordinated_cycle(
             market_key,
         )
 
+    def source_reduction_read_resolver(
+        record: FastTrainingFeatureRecord,
+        position: FastCampaignDecisionPosition,
+    ) -> tuple[FastPaperShadowReductionRead, ...]:
+        market_key = f"{record.venue}:{record.mint}:{record.quote_mint}"
+        expected_position = fast_paper_shadow_decision_position(
+            state,
+            market_key,
+        )
+        if position != expected_position:
+            raise ValueError(
+                "coordinator reduction source posture does not match durable execution state"
+            )
+        if position.kind == "FLAT":
+            return ()
+        if resolved_reduction_source_directory is None:
+            raise ValueError(
+                "coordinator OPEN posture is missing reduction source authority"
+            )
+        source_record = read_fast_paper_shadow_reduction_source_record(
+            manifest,
+            execution_bootstrap.binding,
+            execution_bootstrap.checkpoint,
+            state,
+            market_key,
+            resolved_reduction_source_directory,
+        )
+        return source_record.reduction_reads
+
     cycle_kwargs = {
         "clock_unix_ms": clock_unix_ms,
         "position_resolver": position_resolver,
     }
     if reduction_read_resolver is not None:
         cycle_kwargs["reduction_read_resolver"] = reduction_read_resolver
+    elif resolved_reduction_source_directory is not None:
+        cycle_kwargs["reduction_read_resolver"] = source_reduction_read_resolver
     updated, produced = run_fast_paper_shadow_service_cycle(
         decision_bootstrap,
         bounded_config,
