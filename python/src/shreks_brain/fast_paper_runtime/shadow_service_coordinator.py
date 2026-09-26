@@ -8,6 +8,7 @@ from shreks_brain.fast_campaign import FastCampaignDecisionPosition
 from shreks_brain.research.fast_training_features import FastTrainingFeatureRecord
 
 from .persisted_quotes import FastPaperShadowReductionRead
+from .shadow_executor import FastPaperShadowPendingBuyRetryInput
 from .shadow_reduction_source import (
     read_fast_paper_shadow_reduction_source_record,
 )
@@ -16,6 +17,9 @@ from .shadow_service import (
     FastPaperShadowServiceBootstrap,
     FastPaperShadowServiceConfig,
     run_fast_paper_shadow_service_cycle,
+)
+from .shadow_service_execution import (
+    run_fast_paper_shadow_service_pending_buy_retry,
 )
 from .shadow_service_execution_bootstrap import (
     FastPaperShadowServiceExecutionBootstrap,
@@ -63,6 +67,13 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         | None
     ) = None,
     reduction_source_directory: Path | None = None,
+    pending_buy_retry_resolver: (
+        Callable[
+            [FastPaperShadowServiceExecutionBootstrap],
+            FastPaperShadowPendingBuyRetryInput | None,
+        ]
+        | None
+    ) = None,
     committed_at_unix_ms: int,
 ) -> FastPaperShadowServiceCoordinatorResult:
     if type(decision_bootstrap) is not FastPaperShadowServiceBootstrap:
@@ -141,6 +152,51 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         )
 
     state = execution_bootstrap.runtime_state
+    if state.pending_buy is not None:
+        if pending_buy_retry_resolver is None:
+            raise ValueError(
+                "coordinator pending BUY requires explicit retry authority"
+            )
+        retry = pending_buy_retry_resolver(execution_bootstrap)
+        if retry is None:
+            return FastPaperShadowServiceCoordinatorResult(
+                decision_bootstrap=decision_bootstrap,
+                execution_bootstrap=execution_bootstrap,
+                decisions_produced=0,
+                executions_committed=0,
+            )
+
+        previous_checkpoint_sequence = execution_bootstrap.checkpoint.sequence
+        run_fast_paper_shadow_service_pending_buy_retry(
+            manifest,
+            execution_bootstrap.binding,
+            execution_bootstrap.execution_policy,
+            retry,
+            committed_at_unix_ms=committed_at_unix_ms,
+        )
+        refreshed = bootstrap_fast_paper_shadow_service_execution(
+            manifest,
+            execution_config,
+        )
+        if (
+            refreshed.checkpoint.sequence
+            != previous_checkpoint_sequence + 1
+        ):
+            raise ValueError(
+                "pending BUY retry checkpoint did not advance exactly once"
+            )
+        refreshed_sequence = _execution_sequence(refreshed)
+        if refreshed_sequence != execution_sequence:
+            raise ValueError(
+                "pending BUY retry changed learned execution cursor"
+            )
+        return FastPaperShadowServiceCoordinatorResult(
+            decision_bootstrap=decision_bootstrap,
+            execution_bootstrap=refreshed,
+            decisions_produced=0,
+            executions_committed=1,
+        )
+
     resolved_reduction_source_directory = None
     if reduction_source_directory is not None:
         if not isinstance(reduction_source_directory, Path):
@@ -156,11 +212,6 @@ def run_fast_paper_shadow_service_coordinated_cycle(
             )
         resolved_reduction_source_directory = (
             reduction_source_directory.resolve(strict=True)
-        )
-
-    if state.pending_buy is not None:
-        raise ValueError(
-            "coordinator cannot produce a new decision while pending BUY exists"
         )
     if (
         state.market_positions
