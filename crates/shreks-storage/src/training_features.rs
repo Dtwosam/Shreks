@@ -330,7 +330,18 @@ struct FastRuntimeFeatureBatchMaterial<'a> {
     schema_version: u16,
     after_cursor: &'a Option<FastRuntimeFeatureCursor>,
     snapshot_max_sequence: u64,
-    records: &'a [FastTrainingFeatureRecord],
+    record_identities: Vec<FastRuntimeFeatureIdentity<'a>>,
+}
+
+#[derive(Serialize)]
+struct FastRuntimeFeatureIdentity<'a> {
+    decision_sequence: u64,
+    decision_signature: &'a str,
+    decision_ordinal: u32,
+    decision_observed_at_unix_ms: i64,
+    mint: &'a str,
+    quote_mint: &'a str,
+    venue: &'a str,
 }
 
 #[derive(Debug, Clone)]
@@ -922,7 +933,18 @@ fn runtime_feature_batch_fingerprint(
         schema_version: FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION,
         after_cursor,
         snapshot_max_sequence,
-        records,
+        record_identities: records
+            .iter()
+            .map(|record| FastRuntimeFeatureIdentity {
+                decision_sequence: record.decision_sequence,
+                decision_signature: &record.decision_signature,
+                decision_ordinal: record.decision_ordinal,
+                decision_observed_at_unix_ms: record.decision_observed_at_unix_ms,
+                mint: &record.mint,
+                quote_mint: &record.quote_mint,
+                venue: &record.venue,
+            })
+            .collect(),
     };
     let value = serde_json::to_value(material).map_err(|error| {
         StorageError::InvalidData(format!(
