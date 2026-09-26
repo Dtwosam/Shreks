@@ -63,6 +63,9 @@ from .shadow_ledger import (
     load_latest_fast_paper_shadow_ledger_checkpoint,
     save_fast_paper_shadow_ledger_checkpoint,
 )
+from .shadow_service_execution import (
+    run_fast_paper_shadow_service_execution,
+)
 from .shadow_runtime_state import (
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
@@ -164,6 +167,7 @@ __all__ = (
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
     "run_fast_paper_shadow_batch",
+    "run_fast_paper_shadow_service_execution",
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
