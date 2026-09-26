@@ -18,6 +18,11 @@ from .persisted_quotes import (
     FastPaperShadowReductionRead,
     resolve_fast_paper_shadow_cycle_input,
 )
+from .shadow_commit import (
+    FAST_PAPER_SHADOW_COMMIT_VERSION,
+    FastPaperShadowCommitResult,
+    commit_fast_paper_shadow_transition_atomically,
+)
 from .shadow_execution_input import (
     FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_NAME,
     FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_VERSION,
@@ -88,6 +93,7 @@ __all__ = (
     "FAST_PAPER_RUNTIME_SCHEMA_VERSION",
     "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_NAME",
     "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION",
+    "FAST_PAPER_SHADOW_COMMIT_VERSION",
     "FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_VERSION",
@@ -101,6 +107,7 @@ __all__ = (
     "FastPaperRuntimeManifest",
     "FastPaperRuntimeState",
     "FastPaperRuntimeFeatureBatch",
+    "FastPaperShadowCommitResult",
     "FastPaperShadowCycleInput",
     "FastPaperShadowExecutionInput",
     "FastPaperShadowExecutionPolicy",
@@ -117,6 +124,7 @@ __all__ = (
     "FastPaperShadowQuoteEvidence",
     "FastPaperShadowReductionQuote",
     "build_fast_paper_runtime_manifest",
+    "commit_fast_paper_shadow_transition_atomically",
     "build_fast_paper_shadow_execution_policy",
     "build_fast_paper_shadow_runtime_state_from_transition",
     "build_fast_paper_shadow_ledger_binding",
