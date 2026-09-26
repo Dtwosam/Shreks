@@ -16,7 +16,7 @@ For each bounded cycle the service must:
 
 1. authenticate the exact `FastPaperRuntimeManifest` and current runtime state;
 2. fetch unseen canonical `FastTrainingFeatureRecord` rows with `fetch_fast_paper_runtime_feature_batch(...)`;
-3. resolve the exact observer candidate id for each record mint from the manifest-bound observer database using read-only/query-only SQLite and reject missing or ambiguous attribution;
+3. resolve the exact observer candidate id from persisted ENTRY quote evidence matching the record mint/quote mint, manifest provider, service quote identity, decision chronology, and freshness window using read-only/query-only SQLite; reject missing or ambiguous attribution;
 4. construct a `FastPaperShadowQuoteReadPolicy` from one canonical service policy;
 5. call `resolve_fast_paper_shadow_cycle_input(...)` so ENTRY/EXIT economics come only from persisted observer quote evidence;
 6. evaluate each row as a FLAT entry-opportunity shadow posture in this slice;
