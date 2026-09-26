@@ -38,6 +38,7 @@ FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 1
 
 _EXECUTABLE = "EXECUTABLE"
 _UNAVAILABLE = "UNAVAILABLE"
+_SHADOW_DECISION_TIMEOUT_SECONDS = 30.0
 _ACTIVE_FORECAST_TARGETS = (
     FastForecastTarget.ENDPOINT_COST_ADJUSTED_RETURN_BPS,
     FastForecastTarget.ENDPOINT_RETURN_BPS,
@@ -358,6 +359,7 @@ def evaluate_fast_paper_shadow_decision(
         binary_path=manifest.decision_binary_path,
         champion_path=manifest.champion_path,
         batch=batch,
+        timeout_seconds=_SHADOW_DECISION_TIMEOUT_SECONDS,
     )
     finished = time.monotonic_ns()
     if finished < started:
