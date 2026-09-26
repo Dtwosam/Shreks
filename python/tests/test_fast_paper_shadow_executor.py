@@ -89,6 +89,9 @@ def _runtime_fixture(tmp_path: Path, *, zero_latency: bool = False):
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=(
+            policy.policy_fingerprint_sha256
+        ),
         pending_buy=None,
     )
     save_fast_paper_shadow_runtime_state(
@@ -246,6 +249,9 @@ def test_shadow_runtime_v2_binds_pending_buy_target_to_checkpoint(
             binding,
             checkpoint,
             market_positions=(),
+            execution_policy_fingerprint_sha256=(
+                policy.policy_fingerprint_sha256
+            ),
             pending_buy=pending,
         )
 
@@ -600,6 +606,9 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         binding,
         checkpoint_delayed,
         market_positions=posture1.market_positions,
+        execution_policy_fingerprint_sha256=(
+            posture1.execution_policy_fingerprint_sha256
+        ),
         pending_buy=None,
         last_processed_source_sequence=posture1.last_processed_source_sequence,
         last_processed_source_event_id=posture1.last_processed_source_event_id,
@@ -772,10 +781,31 @@ def test_shadow_executor_rejects_checkpoint_policy_value_drift(
         ),
         position_action_policy=policy.position_action_policy,
     )
-    with pytest.raises(ValueError, match="fill policy|checkpoint"):
+    with pytest.raises(ValueError, match="execution policy|fingerprint|fill policy|checkpoint"):
         execute_fast_paper_shadow_decision(
             manifest,
             drifted,
+            binding,
+            checkpoint,
+            posture,
+            _source(record, evidence),
+        )
+
+    risk_drifted = build_fast_paper_shadow_execution_policy(
+        manifest,
+        risk_policy=replace(
+            policy.risk_policy,
+            max_notional_per_position_usd=(
+                policy.risk_policy.max_notional_per_position_usd + 1.0
+            ),
+        ),
+        fill_policy=policy.fill_policy,
+        position_action_policy=policy.position_action_policy,
+    )
+    with pytest.raises(ValueError, match="execution policy|fingerprint|risk"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            risk_drifted,
             binding,
             checkpoint,
             posture,
