@@ -20,6 +20,7 @@ FAST_PROOF_TOOL_NAMES = (
     "export_fast_training_features",
     "shreks-fast-campaign-decision",
     "shreks-fast-entry-authority",
+    "export_fast_runtime_features",
 )
 
 _SUPPORTED_PLATFORMS = frozenset(
