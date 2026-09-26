@@ -303,6 +303,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FastPaperRuntimeManifest",
         "FastPaperRuntimeState",
         "FastPaperRuntimeFeatureBatch",
+        "FastPaperShadowCycleInput",
         "FastPaperShadowDecisionEvidence",
         "FastPaperShadowQuoteEvidence",
         "FastPaperShadowReductionQuote",
@@ -317,6 +318,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "evaluate_fast_paper_shadow_decision",
         "read_fast_paper_shadow_decision_evidence",
         "write_fast_paper_shadow_decision_evidence",
+        "run_fast_paper_shadow_batch",
     )
 
     package_root = Path(runtime.__file__).resolve().parent

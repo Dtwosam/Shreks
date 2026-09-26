@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any
 
@@ -27,6 +28,7 @@ from shreks_brain.fast_champion import read_fast_forecast_champion
 from shreks_brain.fast_learning import FastForecastTarget
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureRecord,
+    feature_logical_fingerprint_sha256,
 )
 
 from .codec import verify_fast_paper_runtime_bindings
@@ -34,7 +36,7 @@ from .models import FastPaperRuntimeManifest
 
 
 FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME = "shreks.fast_paper_shadow_decision"
-FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 1
+FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 2
 
 _EXECUTABLE = "EXECUTABLE"
 _UNAVAILABLE = "UNAVAILABLE"
@@ -55,6 +57,7 @@ _TOP_KEYS = frozenset(
         "champion_version",
         "champion_fingerprint_sha256",
         "action_policy_version",
+        "feature_record_fingerprint_sha256",
         "source_event_id",
         "market_key",
         "source_sequence",
@@ -180,6 +183,7 @@ class FastPaperShadowDecisionEvidence:
     champion_version: str
     champion_fingerprint_sha256: str
     action_policy_version: int
+    feature_record_fingerprint_sha256: str
     source_event_id: str
     market_key: str
     source_sequence: int
@@ -214,6 +218,10 @@ class FastPaperShadowDecisionEvidence:
         )
         _require_positive_int(
             "action_policy_version", self.action_policy_version
+        )
+        _require_sha256(
+            "feature_record_fingerprint_sha256",
+            self.feature_record_fingerprint_sha256,
         )
         _require_non_empty("source_event_id", self.source_event_id)
         _require_non_empty("market_key", self.market_key)
@@ -417,6 +425,9 @@ def evaluate_fast_paper_shadow_decision(
             manifest.champion_fingerprint_sha256
         ),
         "action_policy_version": manifest.action_policy.version,
+        "feature_record_fingerprint_sha256": (
+            feature_logical_fingerprint_sha256((record,))
+        ),
         "source_event_id": request.source_event_id,
         "market_key": request.market_key,
         "source_sequence": request.source_sequence,
@@ -457,24 +468,35 @@ def write_fast_paper_shadow_decision_evidence(
             "shadow decision evidence destination already exists"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = _canonical(_document(evidence)) + "\n"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    descriptor = os.open(path, flags, 0o600)
+    payload = (_canonical(_document(evidence)) + "\n").encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.tmp-",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    published = False
     try:
-        with os.fdopen(
-            descriptor,
-            "w",
-            encoding="utf-8",
-            newline="",
-        ) as handle:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
             descriptor = -1
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-    finally:
+
+        os.link(temporary, path, follow_symlinks=False)
+        published = True
+        os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
+
+        temporary.unlink()
+        _fsync_directory(path.parent)
+    except Exception:
         if descriptor >= 0:
             os.close(descriptor)
-    os.chmod(path, 0o600)
+        if published:
+            path.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def read_fast_paper_shadow_decision_evidence(
@@ -546,6 +568,9 @@ def read_fast_paper_shadow_decision_evidence(
             "champion_fingerprint_sha256"
         ],
         action_policy_version=document["action_policy_version"],
+        feature_record_fingerprint_sha256=document[
+            "feature_record_fingerprint_sha256"
+        ],
         source_event_id=document["source_event_id"],
         market_key=document["market_key"],
         source_sequence=document["source_sequence"],
@@ -1038,6 +1063,7 @@ def _validate_evidence_fingerprint(
             "champion_version",
             "champion_fingerprint_sha256",
             "action_policy_version",
+            "feature_record_fingerprint_sha256",
             "source_event_id",
             "market_key",
             "source_sequence",
@@ -1075,6 +1101,7 @@ def _document(
             "champion_version",
             "champion_fingerprint_sha256",
             "action_policy_version",
+            "feature_record_fingerprint_sha256",
             "source_event_id",
             "market_key",
             "source_sequence",
@@ -1115,6 +1142,9 @@ def _evidence_material(
             "champion_fingerprint_sha256"
         ],
         "action_policy_version": values["action_policy_version"],
+        "feature_record_fingerprint_sha256": values[
+            "feature_record_fingerprint_sha256"
+        ],
         "source_event_id": values["source_event_id"],
         "market_key": values["market_key"],
         "source_sequence": values["source_sequence"],
@@ -1340,6 +1370,17 @@ def _execution_cost_bps(
         raise ValueError("unsupported shadow execution-cost direction")
     _require_non_negative_finite("execution_cost_bps", value)
     return value
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _optional_close(

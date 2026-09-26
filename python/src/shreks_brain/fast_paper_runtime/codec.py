@@ -352,6 +352,7 @@ def write_fast_paper_runtime_state(
             raise ValueError("Fast PAPER runtime state destination became a symlink")
         os.replace(temporary, destination)
         destination.chmod(0o600)
+        _fsync_directory(destination.parent)
     except Exception:
         if fd >= 0:
             os.close(fd)
@@ -555,6 +556,17 @@ def _policy_from_document(value: object) -> FastCampaignContinuousActionPolicy:
         )
     except (TypeError, ValueError) as exc:
         raise ValueError("Fast PAPER runtime action policy is incompatible") from exc
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _load_canonical_document(path: Path, label: str) -> dict[str, Any]:

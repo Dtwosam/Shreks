@@ -13,6 +13,10 @@ from .feed import (
     FastPaperRuntimeFeatureBatch,
     fetch_fast_paper_runtime_feature_batch,
 )
+from .shadow_cycle import (
+    FastPaperShadowCycleInput,
+    run_fast_paper_shadow_batch,
+)
 from .shadow import (
     FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME,
     FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION,
@@ -45,6 +49,7 @@ __all__ = (
     "FastPaperRuntimeManifest",
     "FastPaperRuntimeState",
     "FastPaperRuntimeFeatureBatch",
+    "FastPaperShadowCycleInput",
     "FastPaperShadowDecisionEvidence",
     "FastPaperShadowQuoteEvidence",
     "FastPaperShadowReductionQuote",
@@ -59,4 +64,5 @@ __all__ = (
     "evaluate_fast_paper_shadow_decision",
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
+    "run_fast_paper_shadow_batch",
 )
