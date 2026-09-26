@@ -146,6 +146,11 @@ def test_coordinator_flat_posture_does_not_read_reduction_source(
         "bootstrap_fast_paper_shadow_service_execution",
         lambda *_args: execution_bootstrap,
     )
+    monkeypatch.setattr(
+        coordinator,
+        "fast_paper_shadow_decision_position",
+        lambda *_args: FastCampaignDecisionPosition(kind="FLAT"),
+    )
     source_directory = tmp_path / "reduction-sources"
     source_directory.mkdir()
     monkeypatch.setattr(
