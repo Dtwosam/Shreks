@@ -9,6 +9,10 @@ from shreks_brain.research.fast_training_features import FastTrainingFeatureReco
 
 from .persisted_quotes import FastPaperShadowReductionRead
 from .shadow_executor import FastPaperShadowPendingBuyRetryInput
+from .shadow_pending_buy_retry_source import (
+    _record_filename as _pending_buy_retry_source_record_filename,
+    read_fast_paper_shadow_pending_buy_retry_source_record,
+)
 from .shadow_reduction_source import (
     read_fast_paper_shadow_reduction_source_record,
 )
@@ -74,6 +78,7 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         ]
         | None
     ) = None,
+    pending_buy_retry_source_directory: Path | None = None,
     committed_at_unix_ms: int,
 ) -> FastPaperShadowServiceCoordinatorResult:
     if type(decision_bootstrap) is not FastPaperShadowServiceBootstrap:
@@ -102,6 +107,13 @@ def run_fast_paper_shadow_service_coordinated_cycle(
     ):
         raise ValueError(
             "coordinator accepts either reduction_read_resolver or reduction_source_directory, not both"
+        )
+    if (
+        pending_buy_retry_resolver is not None
+        and pending_buy_retry_source_directory is not None
+    ):
+        raise ValueError(
+            "coordinator accepts either pending_buy_retry_resolver or pending_buy_retry_source_directory, not both"
         )
 
     manifest = decision_bootstrap.manifest
@@ -153,11 +165,55 @@ def run_fast_paper_shadow_service_coordinated_cycle(
 
     state = execution_bootstrap.runtime_state
     if state.pending_buy is not None:
-        if pending_buy_retry_resolver is None:
+        retry = None
+        if pending_buy_retry_resolver is not None:
+            retry = pending_buy_retry_resolver(execution_bootstrap)
+        elif pending_buy_retry_source_directory is not None:
+            source_directory = pending_buy_retry_source_directory
+            if not isinstance(source_directory, Path):
+                raise ValueError(
+                    "pending_buy_retry_source_directory must be Path"
+                )
+            if source_directory.is_symlink() or not source_directory.is_dir():
+                raise ValueError(
+                    "pending BUY retry source directory must be an existing regular non-symlink directory"
+                )
+            source_directory = source_directory.resolve(strict=True)
+            source_path = source_directory / (
+                _pending_buy_retry_source_record_filename(
+                    state.state_fingerprint_sha256,
+                    state.pending_buy.source_event_id,
+                )
+            )
+            if source_path.is_symlink():
+                raise ValueError(
+                    "pending BUY retry source record path must not be a symlink"
+                )
+            if not source_path.exists():
+                return FastPaperShadowServiceCoordinatorResult(
+                    decision_bootstrap=decision_bootstrap,
+                    execution_bootstrap=execution_bootstrap,
+                    decisions_produced=0,
+                    executions_committed=0,
+                )
+            if not source_path.is_file():
+                raise ValueError(
+                    "pending BUY retry source record path must identify a regular file"
+                )
+            record = read_fast_paper_shadow_pending_buy_retry_source_record(
+                manifest,
+                execution_bootstrap.binding,
+                execution_bootstrap.execution_policy,
+                execution_bootstrap.checkpoint,
+                state,
+                source_directory,
+            )
+            retry = record.retry_input
+        else:
             raise ValueError(
                 "coordinator pending BUY requires explicit retry authority"
             )
-        retry = pending_buy_retry_resolver(execution_bootstrap)
+
         if retry is None:
             return FastPaperShadowServiceCoordinatorResult(
                 decision_bootstrap=decision_bootstrap,
