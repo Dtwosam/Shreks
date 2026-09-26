@@ -332,10 +332,15 @@ def evaluate_fast_paper_shadow_decision(
         raise ValueError("force_sell must be bool")
 
     verify_fast_paper_runtime_bindings(manifest)
+    if record.quote_mint != manifest.quote_mint:
+        raise ValueError(
+            "shadow feature row quote mint does not match runtime manifest"
+        )
     _validate_champion_chronology(manifest, record)
 
     constraints, entry_cost, exit_cost = _constraints_from_quotes(
         record,
+        expected_provider=manifest.quote_provider,
         position=position,
         evaluated_at_unix_ms=evaluated_at_unix_ms,
         max_exposure_fraction=max_exposure_fraction,
@@ -573,6 +578,7 @@ def read_fast_paper_shadow_decision_evidence(
 def _constraints_from_quotes(
     record: FastTrainingFeatureRecord,
     *,
+    expected_provider: str,
     position: FastCampaignDecisionPosition,
     evaluated_at_unix_ms: int,
     max_exposure_fraction: float,
@@ -585,12 +591,14 @@ def _constraints_from_quotes(
         record,
         entry_quote,
         evaluated_at_unix_ms=evaluated_at_unix_ms,
+        expected_provider=expected_provider,
         direction="ENTRY",
     )
     _validate_quote(
         record,
         exit_quote,
         evaluated_at_unix_ms=evaluated_at_unix_ms,
+        expected_provider=expected_provider,
         direction="EXIT",
     )
     if position.kind == "FLAT" and reduction_quotes:
@@ -621,6 +629,7 @@ def _constraints_from_quotes(
             record,
             item.quote,
             evaluated_at_unix_ms=evaluated_at_unix_ms,
+            expected_provider=expected_provider,
             direction="REDUCE",
         )
         if position.kind != "OPEN":
@@ -669,8 +678,13 @@ def _validate_quote(
     quote: FastPaperShadowQuoteEvidence,
     *,
     evaluated_at_unix_ms: int,
+    expected_provider: str,
     direction: str,
 ) -> None:
+    if quote.provider != expected_provider:
+        raise ValueError(
+            f"shadow {direction} quote provider does not match runtime manifest"
+        )
     if quote.mint != record.mint:
         raise ValueError(
             f"shadow {direction} quote mint mismatch"
@@ -835,6 +849,13 @@ def _validate_evidence_internal(
         evidence.exit_quote,
         *(item.quote for item in evidence.reduction_quotes),
     )
+    if any(
+        quote.provider != evidence.entry_quote.provider
+        for quote in quotes
+    ):
+        raise ValueError(
+            "shadow evidence quote providers are inconsistent"
+        )
     for quote in quotes:
         if not (
             evidence.as_of_unix_ms
