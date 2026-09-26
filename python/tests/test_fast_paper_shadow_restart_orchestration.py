@@ -117,6 +117,7 @@ def _record(index: int, *, signature: str = "shadow-cycle"):
     )
     return replace(
         base,
+        decision_ordinal=index,
         decision_executable_entry_price_quote=1.0,
     )
 
