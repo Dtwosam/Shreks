@@ -382,6 +382,39 @@ def test_shadow_decision_rejects_future_quote_and_future_trained_champion(
         )
 
 
+def test_shadow_decision_rejects_quote_provider_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import shreks_brain.fast_paper_runtime.shadow as shadow
+
+    manifest = _manifest(tmp_path)
+    record = _record()
+    monkeypatch.setattr(
+        shadow,
+        "read_fast_forecast_champion",
+        lambda path: _fake_champion(manifest),
+    )
+    drifted = replace(
+        _quote(record, observed_at=20_010, execution_price=1.01),
+        provider="unexpected-provider",
+    )
+    with pytest.raises(ValueError, match="provider.*manifest"):
+        evaluate_fast_paper_shadow_decision(
+            manifest,
+            record,
+            FastCampaignDecisionPosition(kind="FLAT"),
+            evaluated_at_unix_ms=20_020,
+            max_exposure_fraction=0.5,
+            entry_quote=drifted,
+            exit_quote=_quote(
+                record,
+                observed_at=20_015,
+                execution_price=0.98,
+            ),
+        )
+
+
 def test_shadow_decision_disables_buy_when_exit_route_is_unavailable(
     monkeypatch,
     tmp_path: Path,
