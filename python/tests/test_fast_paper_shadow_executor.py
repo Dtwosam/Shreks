@@ -321,6 +321,8 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
         quote=replace(
             evidence.entry_quote,
             observed_at_unix_ms=20_150,
+            reference_price_quote=1.02,
+            execution_price_quote=1.03,
         ),
         risk_context=_risk(20_200),
         quote_usd_evidence=_usd(record, observed_at=20_190),
@@ -382,6 +384,71 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
             checkpoint2,
             posture2,
             tampered_source,
+        )
+
+
+def test_new_buy_rejects_same_mint_under_different_market_key(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint, posture = _runtime_fixture(
+        tmp_path,
+        zero_latency=True,
+    )
+    base = _record()
+    buy_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        base,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_020,
+        entry_observed_at=20_010,
+        exit_observed_at=20_015,
+    )
+    bought = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint,
+        posture,
+        _source(base, buy_evidence),
+    )
+    checkpoint1, posture1 = _persist(
+        manifest,
+        binding,
+        bought,
+        sequence=1,
+        created_at=20_020,
+    )
+
+    alternate = replace(
+        _record_at(
+            base,
+            signature="shadow-event-alt-market",
+            sequence=2,
+            at=20_300,
+        ),
+        venue="pump_swap",
+    )
+    alternate_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        alternate,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_320,
+        entry_observed_at=20_310,
+        exit_observed_at=20_315,
+    )
+    with pytest.raises(ValueError, match="mint.*OPEN|already OPEN|durable learned"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            policy,
+            binding,
+            checkpoint1,
+            posture1,
+            _source(alternate, alternate_evidence),
         )
 
 
