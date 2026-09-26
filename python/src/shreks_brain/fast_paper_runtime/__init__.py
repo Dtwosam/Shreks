@@ -97,6 +97,9 @@ from .shadow_reduction_source import (
     read_fast_paper_shadow_reduction_source_record,
     write_fast_paper_shadow_reduction_source_record,
 )
+from .shadow_skip_source_publisher import (
+    run_fast_paper_shadow_skip_source_publisher_cycle,
+)
 from .shadow_runtime_state import (
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
@@ -219,6 +222,7 @@ __all__ = (
     "run_fast_paper_shadow_service_pending_buy_retry",
     "run_fast_paper_shadow_service_execution_cycle",
     "run_fast_paper_shadow_service_coordinated_cycle",
+    "run_fast_paper_shadow_skip_source_publisher_cycle",
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
