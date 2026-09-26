@@ -334,6 +334,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "commit_fast_paper_shadow_transition_atomically",
         "build_fast_paper_shadow_execution_input_source_record",
         "build_fast_paper_shadow_execution_policy",
+        "produce_fast_paper_shadow_execution_input_source_record",
         "build_fast_paper_shadow_runtime_state_from_transition",
         "build_fast_paper_shadow_ledger_binding",
         "build_fast_paper_shadow_runtime_state",
