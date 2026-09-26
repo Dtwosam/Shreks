@@ -132,8 +132,8 @@ class FastPaperShadowServiceConfig:
             "policy_path",
             "evidence_directory",
         ):
-            if type(getattr(self, name)) is not Path:
-                raise ValueError(f"{name} must be exact Path")
+            if not isinstance(getattr(self, name), Path):
+                raise ValueError(f"{name} must be Path")
         if (
             isinstance(self.cycle_interval_seconds, bool)
             or not isinstance(self.cycle_interval_seconds, (int, float))
