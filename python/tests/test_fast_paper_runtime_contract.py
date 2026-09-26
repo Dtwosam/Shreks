@@ -362,6 +362,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "run_fast_paper_shadow_batch",
         "consume_fast_paper_shadow_service_execution_source_record",
         "run_fast_paper_shadow_service_execution",
+        "run_fast_paper_shadow_service_execution_cycle",
         "materialize_fast_paper_shadow_execution_evidence",
         "fast_paper_shadow_decision_position",
         "initialize_fast_paper_shadow_ledger_database",
