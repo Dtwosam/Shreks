@@ -353,3 +353,86 @@ def test_systemd_runs_coordinated_supervisor_and_packages_complete_env_example()
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY",
     ):
         assert f"{name}=" in payload
+
+
+
+def test_supervisor_publishes_skip_source_before_coordinator(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    for name in (
+        "decision",
+        "execution-sources",
+        "reduction-sources",
+        "retry-sources",
+    ):
+        (tmp_path / name).mkdir()
+    config = _config(tmp_path)
+    before = supervisor.FastPaperShadowSupervisorBootstrap(
+        decision_bootstrap=_decision_bootstrap(),
+        execution_bootstrap=_execution_bootstrap(),
+    )
+    order: list[str] = []
+
+    def publish(
+        manifest,
+        execution_bootstrap,
+        *,
+        decision_evidence_directory,
+    ):
+        order.append("publish")
+        assert manifest is before.decision_bootstrap.manifest
+        assert execution_bootstrap is before.execution_bootstrap
+        assert (
+            decision_evidence_directory
+            == config.decision_config.evidence_directory
+        )
+        return 1
+
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_skip_source_publisher_cycle",
+        publish,
+        raising=False,
+    )
+
+    result = FastPaperShadowServiceCoordinatorResult(
+        decision_bootstrap=before.decision_bootstrap,
+        execution_bootstrap=before.execution_bootstrap,
+        decisions_produced=0,
+        executions_committed=1,
+    )
+
+    def coordinated(*_args, **_kwargs):
+        order.append("coordinate")
+        return result
+
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_service_coordinated_cycle",
+        coordinated,
+    )
+
+    updated, produced, committed = (
+        supervisor.run_fast_paper_shadow_supervisor_cycle(
+            before,
+            config,
+            clock_unix_ms=lambda: 25_000,
+        )
+    )
+
+    assert order == ["publish", "coordinate"]
+    assert updated.execution_bootstrap is before.execution_bootstrap
+    assert produced == 0
+    assert committed == 1
+
+
+def test_supervisor_only_orchestrates_skip_source_publication() -> None:
+    payload = Path(supervisor.__file__).read_text(encoding="utf-8")
+    assert "run_fast_paper_shadow_skip_source_publisher_cycle" in payload
+    for forbidden in (
+        "FastPaperShadowExecutionInput(",
+        "produce_fast_paper_shadow_execution_input_source_record(",
+        "write_fast_paper_shadow_execution_input_source_record(",
+    ):
+        assert forbidden not in payload
