@@ -62,15 +62,20 @@ def _evidence(
         decision_slot=base.decision_slot + sequence,
         snapshot_as_of_unix_ms=20_000 + sequence,
     )
+    position = (
+        FastCampaignDecisionPosition(kind="FLAT")
+        if action in {"BUY", "SKIP"}
+        else FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        )
+    )
     return _evidence_for(
         monkeypatch,
         manifest,
         record,
         action=action,
-        position=FastCampaignDecisionPosition(
-            kind="OPEN",
-            current_exposure_fraction=0.5,
-        ),
+        position=position,
         evaluated_at=20_020 + sequence,
         entry_observed_at=20_010 + sequence,
         exit_observed_at=20_015 + sequence,
