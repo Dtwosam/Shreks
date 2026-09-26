@@ -108,12 +108,14 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
             )
         ),
     )
+    def candidate_id(_path, **identity):
+        captured.update(candidate_identity=identity)
+        return 17
+
     monkeypatch.setattr(
         service,
         "_resolve_candidate_id",
-        lambda _path, mint: (
-            captured.update(candidate_mint=mint) or 17
-        ),
+        candidate_id,
     )
 
     cycle_input = object()
@@ -174,7 +176,13 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
     assert updated.state is next_state
     assert captured["fetch_state"] is state
     assert captured["maximum_decisions"] == 8
-    assert captured["candidate_mint"] == "Mint111"
+    identity = captured["candidate_identity"]
+    assert identity["mint"] == "Mint111"
+    assert identity["provider"] is manifest.quote_provider
+    assert identity["probe_policy_version"] == "probe-v1"
+    assert identity["entry_input_amount_raw"] == 100_000
+    assert identity["decision_observed_at_unix_ms"] == 1_000
+    assert identity["evaluated_at_unix_ms"] == 1_050
     assert captured["position"].kind == "FLAT"
     read_policy = captured["read_policy"]
     assert read_policy.candidate_id == 17
