@@ -7,8 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 import shreks_brain.fast_paper_runtime.shadow_supervisor as supervisor
+from shreks_brain.fast_paper_runtime.shadow_service import (
+    FastPaperShadowServiceConfig,
+)
 from shreks_brain.fast_paper_runtime.shadow_service_coordinator import (
     FastPaperShadowServiceCoordinatorResult,
+)
+from shreks_brain.fast_paper_runtime.shadow_service_execution_bootstrap import (
+    FastPaperShadowServiceExecutionConfig,
 )
 
 
@@ -23,15 +29,21 @@ _ENV_EXAMPLE = (
 
 
 def _decision_config(tmp_path: Path):
-    return SimpleNamespace(
-        cycle_interval_seconds=2.0,
+    return FastPaperShadowServiceConfig(
+        manifest_path=(tmp_path / "manifest.json").resolve(),
+        policy_path=(tmp_path / "service-policy.json").resolve(),
         evidence_directory=(tmp_path / "decision").resolve(),
+        cycle_interval_seconds=2.0,
+        maximum_decisions=8,
     )
 
 
 def _execution_config(tmp_path: Path):
-    return SimpleNamespace(
+    return FastPaperShadowServiceExecutionConfig(
+        execution_policy_path=(tmp_path / "execution-policy.json").resolve(),
         source_directory=(tmp_path / "execution-sources").resolve(),
+        ledger_database_path=(tmp_path / "ledger.sqlite3").resolve(),
+        run_id="shadow-run-1",
     )
 
 
