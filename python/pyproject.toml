@@ -57,6 +57,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "shreks_brain._sealed_fast_tools" = ["*.bin", "manifest.json"]
+"shreks_brain._sealed_fast_runtime_tools" = ["*.bin", "manifest.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
