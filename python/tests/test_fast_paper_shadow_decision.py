@@ -299,6 +299,36 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
     with pytest.raises(FileExistsError):
         write_fast_paper_shadow_decision_evidence(evidence, destination)
 
+    tampered_document = json.loads(
+        destination.read_text(encoding="utf-8")
+    )
+    tampered_document["constraints"]["sell_now_cost_bps"] = 999.0
+    material = dict(tampered_document)
+    material.pop("evidence_fingerprint_sha256")
+    tampered_document["evidence_fingerprint_sha256"] = hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    tampered = tmp_path / "shadow-decision-tampered.json"
+    tampered.write_text(
+        json.dumps(
+            tampered_document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="sell cost constraint|mismatch"):
+        read_fast_paper_shadow_decision_evidence(tampered)
+
 
 def test_shadow_decision_rejects_future_quote_and_future_trained_champion(
     monkeypatch,
