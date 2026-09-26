@@ -40,9 +40,13 @@ from .shadow_execution_input import (
     FastPaperShadowExecutionInput,
     FastPaperShadowExecutionPolicy,
     FastPaperShadowQuoteUsdEvidence,
+    build_fast_paper_shadow_execution_policy,
     materialize_fast_paper_shadow_execution_evidence,
 )
-from .shadow_ledger import FastPaperShadowLedgerBinding
+from .shadow_ledger import (
+    FastPaperShadowLedgerBinding,
+    build_fast_paper_shadow_ledger_binding,
+)
 from .shadow_runtime_state import (
     FastPaperShadowMarketPosition,
     FastPaperShadowPendingBuy,
@@ -195,11 +199,15 @@ class FastPaperShadowExecutionTransition:
 def execute_fast_paper_shadow_decision(
     manifest: FastPaperRuntimeManifest,
     execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
     paper_checkpoint: FastPaperCheckpointRecord,
     shadow_state: FastPaperShadowRuntimeState,
     source: FastPaperShadowExecutionInput,
 ) -> FastPaperShadowExecutionTransition:
-    _require_checkpoint_pair(
+    _require_authority_bindings(
+        manifest,
+        execution_policy,
+        binding,
         paper_checkpoint,
         shadow_state,
     )
@@ -310,11 +318,15 @@ def execute_fast_paper_shadow_decision(
 def retry_fast_paper_shadow_pending_buy(
     manifest: FastPaperRuntimeManifest,
     execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
     paper_checkpoint: FastPaperCheckpointRecord,
     shadow_state: FastPaperShadowRuntimeState,
     retry: FastPaperShadowPendingBuyRetryInput,
 ) -> FastPaperShadowExecutionTransition:
-    _require_checkpoint_pair(
+    _require_authority_bindings(
+        manifest,
+        execution_policy,
+        binding,
         paper_checkpoint,
         shadow_state,
     )
@@ -694,6 +706,60 @@ def _transition(
         last_processed_source_sequence=last_sequence,
         last_processed_source_event_id=last_event_id,
         last_processed_decision_evidence_fingerprint_sha256=last_fingerprint,
+    )
+
+
+def _require_authority_bindings(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
+    checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+) -> None:
+    if type(manifest) is not FastPaperRuntimeManifest:
+        raise ValueError(
+            "manifest must be exact FastPaperRuntimeManifest"
+        )
+    if type(execution_policy) is not FastPaperShadowExecutionPolicy:
+        raise ValueError(
+            "execution_policy must be exact FastPaperShadowExecutionPolicy"
+        )
+    if type(binding) is not FastPaperShadowLedgerBinding:
+        raise ValueError(
+            "binding must be exact FastPaperShadowLedgerBinding"
+        )
+    expected_policy = build_fast_paper_shadow_execution_policy(
+        manifest,
+        risk_policy=execution_policy.risk_policy,
+        fill_policy=execution_policy.fill_policy,
+        position_action_policy=(
+            execution_policy.position_action_policy
+        ),
+    )
+    if execution_policy != expected_policy:
+        raise ValueError(
+            "shadow executor execution policy does not authenticate against runtime manifest"
+        )
+    expected_binding = build_fast_paper_shadow_ledger_binding(
+        manifest,
+        run_id=binding.run_id,
+        database_path=binding.database_path,
+    )
+    if binding != expected_binding:
+        raise ValueError(
+            "shadow executor ledger binding does not authenticate against runtime manifest"
+        )
+    if shadow_state.binding_fingerprint_sha256 != binding.binding_fingerprint_sha256:
+        raise ValueError(
+            "shadow executor learned posture binding fingerprint mismatch"
+        )
+    if checkpoint.run_id != binding.run_id:
+        raise ValueError(
+            "shadow executor paper checkpoint run_id does not match ledger binding"
+        )
+    _require_checkpoint_pair(
+        checkpoint,
+        shadow_state,
     )
 
 
