@@ -292,6 +292,39 @@ def test_shadow_batch_writes_evidence_before_cursor_and_binds_feature_record(
     )
 
 
+def test_shadow_batch_evidence_fsync_failure_leaves_no_partial_artifact_or_cursor(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import shreks_brain.fast_paper_runtime.shadow as shadow
+
+    manifest = _manifest(tmp_path)
+    initial = build_fast_paper_runtime_state(manifest, cursor=None)
+    item = _cycle_input(_record(0))
+    calls = []
+    _install_shadow_decision_stubs(monkeypatch, manifest, calls)
+
+    monkeypatch.setattr(
+        shadow,
+        "_fsync_directory",
+        lambda path: (_ for _ in ()).throw(
+            OSError("simulated evidence directory fsync failure")
+        ),
+    )
+
+    with pytest.raises(OSError, match="evidence directory fsync failure"):
+        run_fast_paper_shadow_batch(
+            manifest,
+            initial,
+            (item,),
+            evidence_directory=tmp_path / "shadow-evidence",
+        )
+
+    assert calls == ["shadow-cycle:0"]
+    assert not tuple((tmp_path / "shadow-evidence").glob("*.json"))
+    assert not Path(manifest.checkpoint_path).exists()
+
+
 def test_shadow_batch_reuses_durable_evidence_after_checkpoint_failure(
     monkeypatch,
     tmp_path: Path,
