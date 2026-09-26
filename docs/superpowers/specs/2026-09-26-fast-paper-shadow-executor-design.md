@@ -40,8 +40,13 @@ the learned target exposure is not part of that approval. Without separately
 persisting the target, a BUY that fills after restart cannot reconstruct the
 truthful learned OPEN posture.
 
-Therefore the learned posture companion state advances to schema version 2 and
-adds one optional exact `FastPaperShadowPendingBuy` value containing:
+Therefore the learned posture companion state advances to schema version 2.
+Every v2 state also pins the complete
+`FastPaperShadowExecutionPolicy.policy_fingerprint_sha256` for the run, so
+risk/fill/position parameters cannot change across restart while retaining the
+same manifest policy versions.
+
+The v2 state adds one optional exact `FastPaperShadowPendingBuy` value containing:
 
 - market key;
 - mint;
@@ -103,6 +108,11 @@ closes.
 - persisted FL7.4 pending exit is passed back into the sealed position executor;
 - processed intent keys remain owned by `PaperLedger`;
 - no duplicate BUY/REDUCE/SELL may be created by exact replay.
+
+The companion runtime-state writer rejects any attempt to change the pinned
+execution-policy fingerprint within an existing run. The executor additionally
+requires the supplied execution policy to match that durable fingerprint before
+any economic action or retry.
 
 The existing companion-state torn-write detector remains authoritative. This
 slice returns checkpoint-ready state but does not add service-level atomic
