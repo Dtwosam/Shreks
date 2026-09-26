@@ -529,7 +529,6 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
 ) -> None:
     manifest, binding, policy, checkpoint, posture = _runtime_fixture(
         tmp_path,
-        zero_latency=True,
     )
     base = _record()
 
@@ -539,9 +538,9 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         base,
         action="BUY",
         position=FastCampaignDecisionPosition(kind="FLAT"),
-        evaluated_at=20_020,
-        entry_observed_at=20_010,
-        exit_observed_at=20_015,
+        evaluated_at=20_200,
+        entry_observed_at=20_150,
+        exit_observed_at=20_155,
     )
     bought = execute_fast_paper_shadow_decision(
         manifest,
@@ -558,7 +557,7 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         binding,
         bought,
         sequence=1,
-        created_at=20_020,
+        created_at=20_200,
     )
 
     record2 = _record_at(
@@ -581,54 +580,13 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         exit_observed_at=20_315,
         reduction_observed_at=20_312,
     )
-    # Restore latency for the exit so the selected REDUCE becomes pending.
-    delayed_policy = build_fast_paper_shadow_execution_policy(
-        manifest,
-        risk_policy=policy.risk_policy,
-        fill_policy=replace(policy.fill_policy, assumed_latency_ms=100),
-        position_action_policy=policy.position_action_policy,
-    )
-    # Runtime checkpoint policies are pinned; use a checkpoint state with the
-    # same manifest version and delayed policy value before this decision.
-    delayed_state = replace(
-        checkpoint1.state,
-        fill_policy=delayed_policy.fill_policy,
-    )
-    checkpoint_delayed = save_fast_paper_shadow_ledger_checkpoint(
-        manifest,
-        binding,
-        delayed_state,
-        sequence=2,
-        created_at_unix_ms=20_021,
-    )
-    posture_delayed = build_fast_paper_shadow_runtime_state(
-        manifest,
-        binding,
-        checkpoint_delayed,
-        market_positions=posture1.market_positions,
-        execution_policy_fingerprint_sha256=(
-            posture1.execution_policy_fingerprint_sha256
-        ),
-        pending_buy=None,
-        last_processed_source_sequence=posture1.last_processed_source_sequence,
-        last_processed_source_event_id=posture1.last_processed_source_event_id,
-        last_processed_decision_evidence_fingerprint_sha256=(
-            posture1.last_processed_decision_evidence_fingerprint_sha256
-        ),
-    )
-    save_fast_paper_shadow_runtime_state(
-        manifest,
-        binding,
-        posture_delayed,
-        created_at_unix_ms=20_021,
-    )
 
     reduced_pending = execute_fast_paper_shadow_decision(
         manifest,
-        delayed_policy,
+        policy,
         binding,
-        checkpoint_delayed,
-        posture_delayed,
+        checkpoint1,
+        posture1,
         _source(record2, reduce_evidence),
     )
     assert reduced_pending.position_result is not None
@@ -638,11 +596,11 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     )
     action_state = reduced_pending.next_paper_state.position_action_states[0]
     assert action_state.pending_exit is not None
-    checkpoint3, posture3 = _persist(
+    checkpoint2, posture2 = _persist(
         manifest,
         binding,
         reduced_pending,
-        sequence=3,
+        sequence=2,
         created_at=20_320,
     )
 
@@ -668,10 +626,10 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     with pytest.raises(ValueError, match="pending REDUCE|target-sized|reduction quote"):
         execute_fast_paper_shadow_decision(
             manifest,
-            delayed_policy,
+            policy,
             binding,
-            checkpoint3,
-            posture3,
+            checkpoint2,
+            posture2,
             _source(record3, hold_without_pending_target_quote),
         )
 
@@ -691,10 +649,10 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     )
     resolved = execute_fast_paper_shadow_decision(
         manifest,
-        delayed_policy,
+        policy,
         binding,
-        checkpoint3,
-        posture3,
+        checkpoint2,
+        posture2,
         _source(record3, hold_evidence),
     )
     assert resolved.position_result is not None
