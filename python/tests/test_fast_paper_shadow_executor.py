@@ -452,6 +452,71 @@ def test_new_buy_rejects_same_mint_under_different_market_key(
         )
 
 
+def test_new_decision_cannot_predate_durable_execution_state(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint, posture = _runtime_fixture(
+        tmp_path,
+        zero_latency=True,
+    )
+    base = _record()
+    buy_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        base,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_020,
+        entry_observed_at=20_010,
+        exit_observed_at=20_015,
+    )
+    bought = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint,
+        posture,
+        _source(base, buy_evidence),
+    )
+    checkpoint1, posture1 = _persist(
+        manifest,
+        binding,
+        bought,
+        sequence=1,
+        created_at=20_020,
+    )
+
+    stale = _record_at(
+        base,
+        signature="shadow-event-stale",
+        sequence=2,
+        at=20_010,
+    )
+    stale_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        stale,
+        action="HOLD",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=20_030,
+        entry_observed_at=20_020,
+        exit_observed_at=20_025,
+    )
+    with pytest.raises(ValueError, match="predates|durable execution state"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            policy,
+            binding,
+            checkpoint1,
+            posture1,
+            _source(stale, stale_evidence),
+        )
+
+
 def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quantity(
     monkeypatch,
     tmp_path: Path,
