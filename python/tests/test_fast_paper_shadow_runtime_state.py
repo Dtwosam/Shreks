@@ -35,6 +35,9 @@ from test_fast_paper_accounting_reconciliation import (
 from test_fast_paper_shadow_restart_orchestration import _manifest
 
 
+EXECUTION_POLICY_FINGERPRINT = "e" * 64
+
+
 def _fill_policy(version: str) -> PaperFillPolicy:
     return PaperFillPolicy(
         version=version,
@@ -115,6 +118,7 @@ def test_shadow_runtime_state_binds_exact_latest_paper_checkpoint(
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         last_processed_source_sequence=7,
         last_processed_source_event_id="sig-7:0",
         last_processed_decision_evidence_fingerprint_sha256="a" * 64,
@@ -125,6 +129,10 @@ def test_shadow_runtime_state_binds_exact_latest_paper_checkpoint(
     assert (
         state.binding_fingerprint_sha256
         == binding.binding_fingerprint_sha256
+    )
+    assert (
+        state.execution_policy_fingerprint_sha256
+        == EXECUTION_POLICY_FINGERPRINT
     )
     assert state.paper_checkpoint_sequence == checkpoint.sequence
     assert (
@@ -171,6 +179,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         binding,
         checkpoint,
         market_positions=(mapping,),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
     )
     posture = fast_paper_shadow_decision_position(state, MARKET_KEY)
     assert posture.kind == "OPEN"
@@ -189,6 +198,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         binding,
         checkpoint,
         market_positions=(full_mapping,),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
     )
     assert len(full_state.state_fingerprint_sha256) == 64
 
@@ -198,6 +208,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
             binding,
             checkpoint,
             market_positions=(),
+            execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         )
 
     wrong_position = FastPaperShadowMarketPosition(
@@ -212,6 +223,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
             binding,
             checkpoint,
             market_positions=(wrong_position,),
+            execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         )
 
     wrong_mint = FastPaperShadowMarketPosition(
@@ -226,6 +238,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
             binding,
             checkpoint,
             market_positions=(wrong_mint,),
+            execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         )
 
 
@@ -240,6 +253,7 @@ def test_shadow_runtime_state_rejects_partial_or_noncanonical_identity(
             binding,
             checkpoint,
             market_positions=(),
+            execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
             last_processed_source_sequence=1,
         )
 
@@ -249,6 +263,7 @@ def test_shadow_runtime_state_rejects_partial_or_noncanonical_identity(
             binding,
             checkpoint,
             market_positions=(),
+            execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
             last_processed_source_sequence=1,
             last_processed_source_event_id="event-1",
             last_processed_decision_evidence_fingerprint_sha256="not-a-sha",
@@ -264,6 +279,7 @@ def test_shadow_runtime_state_round_trip_is_idempotent_and_checkpoint_bound(
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         last_processed_source_sequence=3,
         last_processed_source_event_id="sig-3:0",
         last_processed_decision_evidence_fingerprint_sha256="b" * 64,
@@ -311,6 +327,7 @@ def test_shadow_runtime_state_fails_closed_on_torn_paper_checkpoint(
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
     )
     save_fast_paper_shadow_runtime_state(
         manifest,
@@ -345,6 +362,7 @@ def test_shadow_runtime_state_detects_checkpoint_advance_during_load(
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
     )
     save_fast_paper_shadow_runtime_state(
         manifest,
@@ -381,6 +399,47 @@ def test_shadow_runtime_state_detects_checkpoint_advance_during_load(
     assert calls == 2
 
 
+def test_shadow_runtime_state_pins_execution_policy_for_run(
+    tmp_path: Path,
+) -> None:
+    manifest, binding, checkpoint = _database_fixture(tmp_path)
+    state = build_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        checkpoint,
+        market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
+    )
+    save_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        state,
+        created_at_unix_ms=checkpoint.created_at_unix_ms,
+    )
+
+    advanced = save_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+        checkpoint.state,
+        sequence=1,
+        created_at_unix_ms=checkpoint.created_at_unix_ms + 1,
+    )
+    drifted = build_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+        advanced,
+        market_positions=(),
+        execution_policy_fingerprint_sha256="f" * 64,
+    )
+    with pytest.raises(ValueError, match="execution policy|fingerprint|change"):
+        save_fast_paper_shadow_runtime_state(
+            manifest,
+            binding,
+            drifted,
+            created_at_unix_ms=advanced.created_at_unix_ms,
+        )
+
+
 def test_shadow_runtime_state_detects_payload_tamper(tmp_path: Path) -> None:
     manifest, binding, checkpoint = _database_fixture(tmp_path)
     state = build_fast_paper_shadow_runtime_state(
@@ -388,6 +447,7 @@ def test_shadow_runtime_state_detects_payload_tamper(tmp_path: Path) -> None:
         binding,
         checkpoint,
         market_positions=(),
+        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
     )
     save_fast_paper_shadow_runtime_state(
         manifest,

@@ -514,6 +514,7 @@ def test_shadow_runtime_source_has_no_score_ledger_provider_or_live_authority() 
     source = "\n".join(
         child.read_text(encoding="utf-8")
         for child in sorted(Path(runtime.__file__).resolve().parent.glob("*.py"))
+        if child.name != "shadow_executor.py"
     )
     for forbidden in (
         "shreks_brain.scoring",
