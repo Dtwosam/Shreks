@@ -271,6 +271,7 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
     deferred = execute_fast_paper_shadow_decision(
         manifest,
         policy,
+        binding,
         checkpoint,
         posture,
         source,
@@ -326,6 +327,7 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
     filled = retry_fast_paper_shadow_pending_buy(
         manifest,
         policy,
+        binding,
         restored_checkpoint,
         restored_posture,
         retry,
@@ -351,6 +353,7 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
     replay = execute_fast_paper_shadow_decision(
         manifest,
         policy,
+        binding,
         checkpoint2,
         posture2,
         source,
@@ -386,6 +389,7 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     bought = execute_fast_paper_shadow_decision(
         manifest,
         policy,
+        binding,
         checkpoint,
         posture,
         _source(base, buy_evidence),
@@ -462,6 +466,7 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     reduced_pending = execute_fast_paper_shadow_decision(
         manifest,
         delayed_policy,
+        binding,
         checkpoint_delayed,
         posture_delayed,
         _source(record2, reduce_evidence),
@@ -503,6 +508,7 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     resolved = execute_fast_paper_shadow_decision(
         manifest,
         delayed_policy,
+        binding,
         checkpoint3,
         posture3,
         _source(record3, hold_evidence),
