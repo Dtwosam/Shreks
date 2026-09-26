@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -261,4 +262,113 @@ def test_shadow_service_failed_resolution_does_not_commit_row(
             bootstrap,
             config,
             clock_unix_ms=lambda: 1_050,
+        )
+
+
+def test_shadow_candidate_attribution_uses_exact_entry_quote_identity(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "observer.sqlite3"
+    connection = sqlite3.connect(database)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE token_candidates (
+                id INTEGER PRIMARY KEY,
+                mint TEXT NOT NULL
+            );
+            CREATE TABLE paper_quote_snapshots (
+                candidate_id INTEGER NOT NULL,
+                purpose TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                probe_policy_version TEXT NOT NULL,
+                input_mint TEXT NOT NULL,
+                output_mint TEXT NOT NULL,
+                taker TEXT NOT NULL,
+                input_amount TEXT NOT NULL,
+                slippage_bps INTEGER NOT NULL,
+                quoted_at_unix_ms INTEGER NOT NULL
+            );
+            """
+        )
+        connection.executemany(
+            "INSERT INTO token_candidates(id, mint) VALUES (?, ?)",
+            ((11, "Mint111"), (17, "Mint111")),
+        )
+        connection.executemany(
+            """
+            INSERT INTO paper_quote_snapshots(
+                candidate_id,
+                purpose,
+                provider,
+                probe_policy_version,
+                input_mint,
+                output_mint,
+                taker,
+                input_amount,
+                slippage_bps,
+                quoted_at_unix_ms
+            ) VALUES (?, 'entry', 'jupiter', 'probe-v1', 'Quote111',
+                      'Mint111', 'Taker111', ?, 75, ?)
+            """,
+            (
+                (11, "99999", 1_020),
+                (17, "100000", 1_025),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    resolved = service._resolve_candidate_id(
+        str(database),
+        mint="Mint111",
+        quote_mint="Quote111",
+        provider="jupiter",
+        probe_policy_version="probe-v1",
+        taker="Taker111",
+        slippage_bps=75,
+        entry_input_amount_raw=100_000,
+        decision_observed_at_unix_ms=1_000,
+        evaluated_at_unix_ms=1_050,
+        max_quote_age_ms=100,
+    )
+    assert resolved == 17
+
+    connection = sqlite3.connect(database)
+    try:
+        connection.execute(
+            """
+            INSERT INTO paper_quote_snapshots(
+                candidate_id,
+                purpose,
+                provider,
+                probe_policy_version,
+                input_mint,
+                output_mint,
+                taker,
+                input_amount,
+                slippage_bps,
+                quoted_at_unix_ms
+            ) VALUES (11, 'entry', 'jupiter', 'probe-v1', 'Quote111',
+                      'Mint111', 'Taker111', '100000', 75, 1030)
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(ValueError, match="missing or ambiguous"):
+        service._resolve_candidate_id(
+            str(database),
+            mint="Mint111",
+            quote_mint="Quote111",
+            provider="jupiter",
+            probe_policy_version="probe-v1",
+            taker="Taker111",
+            slippage_bps=75,
+            entry_input_amount_raw=100_000,
+            decision_observed_at_unix_ms=1_000,
+            evaluated_at_unix_ms=1_050,
+            max_quote_age_ms=100,
         )
