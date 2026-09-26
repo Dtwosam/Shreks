@@ -300,6 +300,8 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME",
         "FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_NAME",
         "FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_VERSION",
+        "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME",
+        "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION",
         "FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION",
         "FastPaperRuntimeCursor",
         "FastPaperRuntimeManifest",
@@ -307,6 +309,8 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FastPaperRuntimeFeatureBatch",
         "FastPaperShadowCycleInput",
         "FastPaperShadowLedgerBinding",
+        "FastPaperShadowMarketPosition",
+        "FastPaperShadowRuntimeState",
         "FastPaperShadowQuoteReadPolicy",
         "FastPaperShadowReductionRead",
         "FastPaperShadowDecisionEvidence",
@@ -314,6 +318,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FastPaperShadowReductionQuote",
         "build_fast_paper_runtime_manifest",
         "build_fast_paper_shadow_ledger_binding",
+        "build_fast_paper_shadow_runtime_state",
         "build_initial_fast_paper_shadow_ledger_state",
         "build_fast_paper_runtime_state",
         "read_fast_paper_runtime_manifest",
@@ -327,9 +332,12 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "read_fast_paper_shadow_decision_evidence",
         "write_fast_paper_shadow_decision_evidence",
         "run_fast_paper_shadow_batch",
+        "fast_paper_shadow_decision_position",
         "initialize_fast_paper_shadow_ledger_database",
         "load_latest_fast_paper_shadow_ledger_checkpoint",
+        "load_latest_fast_paper_shadow_runtime_state",
         "save_fast_paper_shadow_ledger_checkpoint",
+        "save_fast_paper_shadow_runtime_state",
     )
 
     package_root = Path(runtime.__file__).resolve().parent
