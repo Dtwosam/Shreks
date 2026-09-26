@@ -158,10 +158,12 @@ pub use training_economics_overlay::{
     FAST_TRAINING_ECONOMICS_OVERLAY_SCHEMA_VERSION,
 };
 pub use training_features::{
-    decode_fast_training_feature_record_json, FastTrainingFeatureExportManifest,
+    decode_fast_training_feature_record_json, encode_fast_runtime_feature_batch_json,
+    FastRuntimeFeatureBatch, FastRuntimeFeatureCursor, FastTrainingFeatureExportManifest,
     FastTrainingFeatureRecord, FastTrainingLifecycleEvent,
-    FastTrainingReserveContext, FastTrainingWindowSummary, FAST_TRAINING_FEATURE_SCHEMA_NAME,
-    FAST_TRAINING_FEATURE_SCHEMA_VERSION,
+    FastTrainingReserveContext, FastTrainingWindowSummary,
+    FAST_RUNTIME_FEATURE_BATCH_SCHEMA_NAME, FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION,
+    FAST_TRAINING_FEATURE_SCHEMA_NAME, FAST_TRAINING_FEATURE_SCHEMA_VERSION,
 };
 pub use wallet::WalletObservationWrite;
 
