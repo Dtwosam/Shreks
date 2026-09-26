@@ -523,6 +523,7 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         evaluated_at=20_530,
         entry_observed_at=20_510,
         exit_observed_at=20_520,
+        reduction_observed_at=20_521,
     )
     resolved = execute_fast_paper_shadow_decision(
         manifest,
