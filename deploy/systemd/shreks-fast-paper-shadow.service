@@ -1,0 +1,29 @@
+[Unit]
+Description=Shreks learned Fast Lane PAPER shadow runtime
+After=network-online.target shreks-observe.service shreks-paper-evidence.service
+Wants=network-online.target shreks-observe.service shreks-paper-evidence.service
+RequiresMountsFor=/var/lib/shreks /etc/shreks /opt/shreks/current
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=shreks
+Group=shreks
+WorkingDirectory=/opt/shreks/current
+EnvironmentFile=/etc/shreks/shreks.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStartPre=/usr/bin/test -d /var/lib/shreks/fast-paper-shadow
+ExecStartPre=/usr/bin/test -w /var/lib/shreks/fast-paper-shadow
+ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_runtime --preflight
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_runtime
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/shreks/fast-paper-shadow
+UMask=0077
