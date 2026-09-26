@@ -253,7 +253,7 @@ def test_execution_input_source_rejects_tamper_unknown_fields_and_symlink(
         monkeypatch,
         tmp_path,
     )
-    record = build_fast_paper_shadow_execution_input_source_record(
+    record = _build(
         manifest,
         policy,
         source,
@@ -290,7 +290,7 @@ def test_execution_input_source_rejects_tamper_unknown_fields_and_symlink(
     path.unlink()
     path.symlink_to(target)
     with pytest.raises(ValueError, match="symlink|regular"):
-        read_fast_paper_shadow_execution_input_source_record(
+        _read(
             manifest,
             policy,
             evidence,
