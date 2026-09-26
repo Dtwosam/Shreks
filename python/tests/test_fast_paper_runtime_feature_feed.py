@@ -68,9 +68,28 @@ def _executable(path: Path, content: str) -> Path:
     return path
 
 
-def _fingerprint(document: dict[str, object], field: str) -> str:
-    material = dict(document)
-    material.pop(field)
+def _fingerprint(document: dict[str, object]) -> str:
+    records = document["records"]
+    assert isinstance(records, list)
+    identities = [
+        {
+            "decision_sequence": record["decision_sequence"],
+            "decision_signature": record["decision_signature"],
+            "decision_ordinal": record["decision_ordinal"],
+            "decision_observed_at_unix_ms": record["decision_observed_at_unix_ms"],
+            "mint": record["mint"],
+            "quote_mint": record["quote_mint"],
+            "venue": record["venue"],
+        }
+        for record in records
+    ]
+    material = {
+        "schema_name": document["schema_name"],
+        "schema_version": document["schema_version"],
+        "after_cursor": document["after_cursor"],
+        "snapshot_max_sequence": document["snapshot_max_sequence"],
+        "record_identities": identities,
+    }
     encoded = json.dumps(
         material,
         sort_keys=True,
@@ -104,10 +123,7 @@ def _feature_batch_payload() -> str:
         "records": [asdict(record)],
         "batch_fingerprint_sha256": "0" * 64,
     }
-    document["batch_fingerprint_sha256"] = _fingerprint(
-        document,
-        "batch_fingerprint_sha256",
-    )
+    document["batch_fingerprint_sha256"] = _fingerprint(document)
     return json.dumps(
         document,
         sort_keys=True,
