@@ -366,6 +366,24 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
     assert replay.next_market_positions == posture2.market_positions
     assert len(checkpoint2.state.ledger.processed_intent_keys) == 1
 
+    tampered_evidence = replace(
+        source.decision_evidence,
+        decision_latency_ns=source.decision_evidence.decision_latency_ns + 1,
+    )
+    tampered_source = replace(
+        source,
+        decision_evidence=tampered_evidence,
+    )
+    with pytest.raises(ValueError, match="fingerprint"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            policy,
+            binding,
+            checkpoint2,
+            posture2,
+            tampered_source,
+        )
+
 
 def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quantity(
     monkeypatch,
@@ -525,6 +543,42 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         resolved.next_market_positions[0].current_exposure_fraction
         == pytest.approx(0.25)
     )
+
+
+def test_shadow_executor_rejects_checkpoint_policy_value_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint, posture = _runtime_fixture(tmp_path)
+    record = _record()
+    evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        record,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_020,
+        entry_observed_at=20_010,
+        exit_observed_at=20_015,
+    )
+    drifted = build_fast_paper_shadow_execution_policy(
+        manifest,
+        risk_policy=policy.risk_policy,
+        fill_policy=replace(
+            policy.fill_policy,
+            max_quote_lag_ms=policy.fill_policy.max_quote_lag_ms + 1,
+        ),
+        position_action_policy=policy.position_action_policy,
+    )
+    with pytest.raises(ValueError, match="fill policy|checkpoint"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            drifted,
+            binding,
+            checkpoint,
+            posture,
+            _source(record, evidence),
+        )
 
 
 def test_shadow_executor_source_uses_only_existing_paper_execution_authority() -> None:
