@@ -21,6 +21,7 @@ from shreks_brain.paper_validation import (
     save_fast_paper_checkpoint,
 )
 
+from .codec import verify_fast_paper_runtime_bindings
 from .models import FastPaperRuntimeManifest
 
 
@@ -363,6 +364,7 @@ def _require_manifest_binding(
         raise ValueError(
             "manifest must be exact FastPaperRuntimeManifest"
         )
+    verify_fast_paper_runtime_bindings(manifest)
     if type(binding) is not FastPaperShadowLedgerBinding:
         raise ValueError(
             "binding must be exact FastPaperShadowLedgerBinding"
@@ -452,7 +454,7 @@ def _shadow_database_path(
             "shadow ledger database path must not be a symlink"
         )
     resolved = raw.resolve(strict=False)
-    protected = {
+    protected = (
         Path(manifest.observer_database_path)
         .expanduser()
         .resolve(strict=False),
@@ -462,11 +464,17 @@ def _shadow_database_path(
         Path(manifest.checkpoint_path)
         .expanduser()
         .resolve(strict=False),
-    }
+    )
     if resolved in protected:
         raise ValueError(
             "shadow ledger database must be separate from authoritative and decision state paths"
         )
+    if raw.exists():
+        for source in protected:
+            if source.exists() and raw.samefile(source):
+                raise ValueError(
+                    "shadow ledger database must not alias a protected runtime file"
+                )
     return resolved
 
 
