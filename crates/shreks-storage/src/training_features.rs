@@ -5,6 +5,7 @@ use std::{
     path::Path,
 };
 
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shreks_core::{
