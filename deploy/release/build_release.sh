@@ -51,6 +51,7 @@ mkdir -p \
 
 cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
   --bin export_fast_training_features \
+  --bin export_fast_runtime_features \
   --bin shreks-fast-entry-authority \
   --bin shreks-fast-campaign-decision
 
@@ -84,6 +85,9 @@ stage_fast_proof_tools_package(
         ),
         "shreks-fast-entry-authority": Path(
             "target/release/shreks-fast-entry-authority"
+        ),
+        "export_fast_runtime_features": Path(
+            "target/release/export_fast_runtime_features"
         ),
     },
     destination=Path(destination),
@@ -149,6 +153,9 @@ verify_fast_proof_tools_wheel(
         ),
         "shreks-fast-entry-authority": Path(
             "target/release/shreks-fast-entry-authority"
+        ),
+        "export_fast_runtime_features": Path(
+            "target/release/export_fast_runtime_features"
         ),
     },
 )
