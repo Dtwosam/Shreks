@@ -237,6 +237,8 @@ def test_execution_source_producer_rejects_posture_and_day_start_drift(
             risk_day_started_at_unix_ms=None,
         )
 
+    buy_case = tmp_path / "buy"
+    buy_case.mkdir()
     (
         manifest,
         binding,
@@ -244,7 +246,7 @@ def test_execution_source_producer_rejects_posture_and_day_start_drift(
         checkpoint,
         posture,
         source,
-    ) = _buy_case(monkeypatch, tmp_path / "buy")
+    ) = _buy_case(monkeypatch, buy_case)
     with pytest.raises(ValueError, match="day|future|evaluation"):
         produce_fast_paper_shadow_execution_input_source_record(
             manifest,
