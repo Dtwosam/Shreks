@@ -737,10 +737,7 @@ def _state_document(
             "execution_policy_fingerprint_sha256": (
                 state.execution_policy_fingerprint_sha256
             ),
-            "execution_policy_fingerprint_sha256": (
-            values["execution_policy_fingerprint_sha256"]
-        ),
-        "paper_checkpoint_sequence": (
+            "paper_checkpoint_sequence": (
                 state.paper_checkpoint_sequence
             ),
             "paper_checkpoint_payload_sha256": (
@@ -852,10 +849,7 @@ def _state_document_without_fingerprint(
             "execution_policy_fingerprint_sha256": (
                 state.execution_policy_fingerprint_sha256
             ),
-            "execution_policy_fingerprint_sha256": (
-            values["execution_policy_fingerprint_sha256"]
-        ),
-        "paper_checkpoint_sequence": (
+            "paper_checkpoint_sequence": (
                 state.paper_checkpoint_sequence
             ),
             "paper_checkpoint_payload_sha256": (
