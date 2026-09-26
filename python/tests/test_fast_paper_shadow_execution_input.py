@@ -382,9 +382,11 @@ def test_non_buy_actions_forbid_buy_authority_and_select_exact_quote(
     tmp_path: Path,
 ) -> None:
     for action in ("HOLD", "REDUCE", "SELL"):
+        case_path = tmp_path / action.lower()
+        case_path.mkdir()
         manifest, record, evidence = _shadow_evidence(
             monkeypatch,
-            tmp_path,
+            case_path,
             action=action,
         )
         policy = _execution_policy(manifest)
