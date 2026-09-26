@@ -6,6 +6,7 @@ from typing import Callable
 from shreks_brain.fast_campaign import FastCampaignDecisionPosition
 from shreks_brain.research.fast_training_features import FastTrainingFeatureRecord
 
+from .persisted_quotes import FastPaperShadowReductionRead
 from .shadow_runtime_state import fast_paper_shadow_decision_position
 from .shadow_service import (
     FastPaperShadowServiceBootstrap,
@@ -50,6 +51,13 @@ def run_fast_paper_shadow_service_coordinated_cycle(
     execution_config: FastPaperShadowServiceExecutionConfig,
     *,
     clock_unix_ms: Callable[[], int] | None = None,
+    reduction_read_resolver: (
+        Callable[
+            [FastTrainingFeatureRecord, FastCampaignDecisionPosition],
+            tuple[FastPaperShadowReductionRead, ...],
+        ]
+        | None
+    ) = None,
     committed_at_unix_ms: int,
 ) -> FastPaperShadowServiceCoordinatorResult:
     if type(decision_bootstrap) is not FastPaperShadowServiceBootstrap:
@@ -125,9 +133,9 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         raise ValueError(
             "coordinator cannot produce a new decision while pending BUY exists"
         )
-    if state.market_positions:
+    if state.market_positions and reduction_read_resolver is None:
         raise ValueError(
-            "coordinator OPEN learned posture requires sealed reduction quote authority"
+            "coordinator OPEN learned posture requires explicit reduction quote authority"
         )
 
     bounded_config = replace(
@@ -139,21 +147,17 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         record: FastTrainingFeatureRecord,
     ) -> FastCampaignDecisionPosition:
         market_key = f"{record.venue}:{record.mint}:{record.quote_mint}"
-        position = fast_paper_shadow_decision_position(
+        return fast_paper_shadow_decision_position(
             state,
             market_key,
         )
-        if position.kind != "FLAT":
-            raise ValueError(
-                "coordinator expected FLAT posture before OPEN authority is enabled"
-            )
-        return position
 
     updated, produced = run_fast_paper_shadow_service_cycle(
         decision_bootstrap,
         bounded_config,
         clock_unix_ms=clock_unix_ms,
         position_resolver=position_resolver,
+        reduction_read_resolver=reduction_read_resolver,
     )
     if type(produced) is not int or produced not in {0, 1}:
         raise ValueError(
