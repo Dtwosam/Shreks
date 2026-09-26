@@ -34,6 +34,9 @@ from .shadow_execution_input import (
     read_fast_paper_shadow_execution_policy,
     write_fast_paper_shadow_execution_policy,
 )
+from .shadow_execution_producer import (
+    produce_fast_paper_shadow_execution_input_source_record,
+)
 from .shadow_execution_source import (
     FAST_PAPER_SHADOW_EXECUTION_INPUT_SOURCE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_EXECUTION_INPUT_SOURCE_SCHEMA_VERSION,
@@ -138,6 +141,7 @@ __all__ = (
     "commit_fast_paper_shadow_transition_atomically",
     "build_fast_paper_shadow_execution_input_source_record",
     "build_fast_paper_shadow_execution_policy",
+    "produce_fast_paper_shadow_execution_input_source_record",
     "build_fast_paper_shadow_runtime_state_from_transition",
     "build_fast_paper_shadow_ledger_binding",
     "build_fast_paper_shadow_runtime_state",
