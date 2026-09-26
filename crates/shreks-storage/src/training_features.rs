@@ -5,6 +5,7 @@ use std::{
     path::Path,
 };
 
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use shreks_core::{
@@ -17,6 +18,9 @@ use crate::{ShreksDb, StorageError, StoredFastEvent};
 
 pub const FAST_TRAINING_FEATURE_SCHEMA_NAME: &str = "shreks.fast_lane_training_features";
 pub const FAST_TRAINING_FEATURE_SCHEMA_VERSION: u16 = 1;
+pub const FAST_RUNTIME_FEATURE_BATCH_SCHEMA_NAME: &str =
+    "shreks.fast_paper_runtime_feature_batch";
+pub const FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION: u16 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FastTrainingFeatureExportManifest {
@@ -301,6 +305,45 @@ pub struct FastTrainingFeatureRecord {
     pub windows: Vec<FastTrainingWindowSummary>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FastRuntimeFeatureCursor {
+    pub decision_sequence: u64,
+    pub decision_signature: String,
+    pub decision_ordinal: u32,
+    pub decision_observed_at_unix_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct FastRuntimeFeatureBatch {
+    pub schema_name: &'static str,
+    pub schema_version: u16,
+    pub after_cursor: Option<FastRuntimeFeatureCursor>,
+    pub snapshot_max_sequence: u64,
+    pub records: Vec<FastTrainingFeatureRecord>,
+    pub batch_fingerprint_sha256: String,
+}
+
+#[derive(Serialize)]
+struct FastRuntimeFeatureBatchMaterial<'a> {
+    schema_name: &'static str,
+    schema_version: u16,
+    after_cursor: &'a Option<FastRuntimeFeatureCursor>,
+    snapshot_max_sequence: u64,
+    record_identities: Vec<FastRuntimeFeatureIdentity<'a>>,
+}
+
+#[derive(Serialize)]
+struct FastRuntimeFeatureIdentity<'a> {
+    decision_sequence: u64,
+    decision_signature: &'a str,
+    decision_ordinal: u32,
+    decision_observed_at_unix_ms: i64,
+    mint: &'a str,
+    quote_mint: &'a str,
+    venue: &'a str,
+}
+
 #[derive(Debug, Clone)]
 struct DecisionRow {
     signature: String,
@@ -375,6 +418,226 @@ impl ShreksDb {
         }
 
         let decisions = self.training_decisions(label_version)?;
+        self.feature_records_for_decisions(decisions)
+    }
+
+    pub fn fast_runtime_feature_batch(
+        &self,
+        after_cursor: Option<&FastRuntimeFeatureCursor>,
+        maximum_decisions: u64,
+    ) -> Result<FastRuntimeFeatureBatch, StorageError> {
+        if maximum_decisions == 0 {
+            return Err(StorageError::InvalidData(
+                "runtime feature maximum_decisions must be positive".to_owned(),
+            ));
+        }
+        if let Some(cursor) = after_cursor {
+            validate_runtime_cursor(cursor)?;
+        }
+        let limit = i64::try_from(maximum_decisions).map_err(|_| {
+            StorageError::InvalidData(
+                "runtime feature maximum_decisions exceeds SQLite integer range".to_owned(),
+            )
+        })?;
+
+        const SAVEPOINT: &str = "shreks_fast_runtime_feature_snapshot";
+        self.connection
+            .execute_batch(&format!("SAVEPOINT {SAVEPOINT};"))?;
+        let result = (|| {
+            let raw_max: i64 = self.connection.query_row(
+                "SELECT COALESCE(MAX(sequence), 0) FROM fast_events",
+                [],
+                |row| row.get(0),
+            )?;
+            let snapshot_max_sequence = u64::try_from(raw_max).map_err(|_| {
+                StorageError::InvalidData(
+                    "runtime feature snapshot max sequence was negative".to_owned(),
+                )
+            })?;
+
+            let after_sequence = if let Some(cursor) = after_cursor {
+                if cursor.decision_sequence > snapshot_max_sequence {
+                    return Err(StorageError::InvalidData(
+                        "runtime feature cursor is ahead of the current snapshot".to_owned(),
+                    ));
+                }
+                self.authenticate_runtime_cursor(cursor)?;
+                cursor.decision_sequence
+            } else {
+                0
+            };
+            let decisions = self.runtime_decisions_after(
+                after_sequence,
+                snapshot_max_sequence,
+                limit,
+            )?;
+            let records = self.feature_records_for_decisions(decisions)?;
+            let after_cursor = after_cursor.cloned();
+            let fingerprint = runtime_feature_batch_fingerprint(
+                &after_cursor,
+                snapshot_max_sequence,
+                &records,
+            )?;
+            Ok(FastRuntimeFeatureBatch {
+                schema_name: FAST_RUNTIME_FEATURE_BATCH_SCHEMA_NAME,
+                schema_version: FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION,
+                after_cursor,
+                snapshot_max_sequence,
+                records,
+                batch_fingerprint_sha256: fingerprint,
+            })
+        })();
+
+        match result {
+            Ok(batch) => {
+                self.connection
+                    .execute_batch(&format!("RELEASE {SAVEPOINT};"))?;
+                Ok(batch)
+            }
+            Err(error) => {
+                let rollback = self.connection.execute_batch(&format!(
+                    "ROLLBACK TO {SAVEPOINT}; RELEASE {SAVEPOINT};"
+                ));
+                if let Err(rollback_error) = rollback {
+                    return Err(StorageError::InvalidData(format!(
+                        "runtime feature batch failed: {error}; snapshot rollback also failed: {rollback_error}"
+                    )));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn authenticate_runtime_cursor(
+        &self,
+        cursor: &FastRuntimeFeatureCursor,
+    ) -> Result<(), StorageError> {
+        let sequence = i64::try_from(cursor.decision_sequence).map_err(|_| {
+            StorageError::InvalidData(
+                "runtime feature cursor sequence exceeds SQLite integer range".to_owned(),
+            )
+        })?;
+        let stored = self.connection.query_row(
+            r#"SELECT signature, ordinal, observed_at_unix_ms
+               FROM fast_events
+               WHERE sequence = ?1"#,
+            [sequence],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        ).optional()?;
+        let Some((signature, ordinal, observed_at_unix_ms)) = stored else {
+            return Err(StorageError::InvalidData(
+                "runtime feature cursor does not reference a persisted canonical event".to_owned(),
+            ));
+        };
+        let ordinal = u32::try_from(ordinal).map_err(|_| {
+            StorageError::InvalidData(
+                "runtime feature cursor stored ordinal is outside u32".to_owned(),
+            )
+        })?;
+        if signature != cursor.decision_signature
+            || ordinal != cursor.decision_ordinal
+            || observed_at_unix_ms != cursor.decision_observed_at_unix_ms
+        {
+            return Err(StorageError::InvalidData(
+                "runtime feature cursor identity does not match persisted canonical event".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn runtime_decisions_after(
+        &self,
+        after_sequence: u64,
+        snapshot_max_sequence: u64,
+        limit: i64,
+    ) -> Result<Vec<DecisionRow>, StorageError> {
+        let after_sequence = i64::try_from(after_sequence).map_err(|_| {
+            StorageError::InvalidData(
+                "runtime feature after sequence exceeds SQLite integer range".to_owned(),
+            )
+        })?;
+        let snapshot_max_sequence = i64::try_from(snapshot_max_sequence).map_err(|_| {
+            StorageError::InvalidData(
+                "runtime feature snapshot max sequence exceeds SQLite integer range".to_owned(),
+            )
+        })?;
+        let mut statement = self.connection.prepare(
+            r#"SELECT
+                   sequence, signature, ordinal, mint, quote_mint, venue,
+                   observed_at_unix_ms, price_quote
+               FROM fast_events
+               WHERE sequence > ?1 AND sequence <= ?2
+               ORDER BY sequence ASC
+               LIMIT ?3"#,
+        )?;
+        let raw = statement
+            .query_map(
+                rusqlite::params![after_sequence, snapshot_max_sequence, limit],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, f64>(7)?,
+                    ))
+                },
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        raw.into_iter()
+            .map(
+                |(sequence, signature, ordinal, mint, quote_mint, venue, observed_at, price)| {
+                    let sequence = u64::try_from(sequence).map_err(|_| {
+                        StorageError::InvalidData(
+                            "runtime feature decision sequence is outside u64".to_owned(),
+                        )
+                    })?;
+                    let ordinal = u32::try_from(ordinal).map_err(|_| {
+                        StorageError::InvalidData(
+                            "runtime feature decision ordinal is outside u32".to_owned(),
+                        )
+                    })?;
+                    if sequence == 0 || observed_at < 0 {
+                        return Err(StorageError::InvalidData(
+                            "runtime feature decision identity/time is invalid".to_owned(),
+                        ));
+                    }
+                    validate_positive_finite(price, "runtime feature decision price")?;
+                    let venue_id = parse_training_venue(&venue)?;
+                    let market = FastMarketKey::new(mint, quote_mint, venue_id)
+                        .map_err(|error| {
+                            StorageError::InvalidData(format!(
+                                "invalid runtime feature decision market: {error}"
+                            ))
+                        })?;
+                    Ok(DecisionRow {
+                        signature,
+                        ordinal,
+                        sequence,
+                        market,
+                        observed_at_unix_ms: observed_at,
+                        entry_price_quote: price,
+                        entry_total_quote: None,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    fn feature_records_for_decisions(
+        &self,
+        decisions: Vec<DecisionRow>,
+    ) -> Result<Vec<FastTrainingFeatureRecord>, StorageError> {
         if decisions.is_empty() {
             return Ok(Vec::new());
         }
@@ -415,7 +678,7 @@ impl ShreksDb {
                     if lifecycle_matches_market(lifecycle, &market) {
                         state.apply_lifecycle(lifecycle.clone()).map_err(|error| {
                             StorageError::InvalidData(format!(
-                                "training lifecycle replay failed: {error}"
+                                "Fast Lane lifecycle replay failed: {error}"
                             ))
                         })?;
                     }
@@ -423,7 +686,7 @@ impl ShreksDb {
                 }
 
                 state.apply(stored.event.clone()).map_err(|error| {
-                    StorageError::InvalidData(format!("training event replay failed: {error}"))
+                    StorageError::InvalidData(format!("Fast Lane event replay failed: {error}"))
                 })?;
 
                 while decision_index < market_decisions.len()
@@ -435,7 +698,7 @@ impl ShreksDb {
                         .snapshot(decision.observed_at_unix_ms)
                         .map_err(|error| {
                             StorageError::InvalidData(format!(
-                                "training decision snapshot failed: {error}"
+                                "Fast Lane decision snapshot failed: {error}"
                             ))
                         })?;
                     records.push(record_from_snapshot(decision, &stored, &snapshot)?);
@@ -446,7 +709,7 @@ impl ShreksDb {
             if decision_index != market_decisions.len() {
                 let missing = &market_decisions[decision_index];
                 return Err(StorageError::InvalidData(format!(
-                    "training decision '{}' ordinal {} sequence {} was not found in canonical market replay",
+                    "Fast Lane decision '{}' ordinal {} sequence {} was not found in canonical market replay",
                     missing.signature, missing.ordinal, missing.sequence
                 )));
             }
@@ -626,6 +889,86 @@ impl ShreksDb {
         }
         Ok(decisions)
     }
+}
+
+pub fn encode_fast_runtime_feature_batch_json(
+    batch: &FastRuntimeFeatureBatch,
+) -> Result<String, StorageError> {
+    if batch.schema_name != FAST_RUNTIME_FEATURE_BATCH_SCHEMA_NAME
+        || batch.schema_version != FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION
+    {
+        return Err(StorageError::InvalidData(
+            "runtime feature batch schema is incompatible".to_owned(),
+        ));
+    }
+    let expected = runtime_feature_batch_fingerprint(
+        &batch.after_cursor,
+        batch.snapshot_max_sequence,
+        &batch.records,
+    )?;
+    if expected != batch.batch_fingerprint_sha256 {
+        return Err(StorageError::InvalidData(
+            "runtime feature batch fingerprint mismatch".to_owned(),
+        ));
+    }
+    let value = serde_json::to_value(batch).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "runtime feature batch JSON encoding failed: {error}"
+        ))
+    })?;
+    serde_json::to_string(&value).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "runtime feature batch JSON encoding failed: {error}"
+        ))
+    })
+}
+
+fn runtime_feature_batch_fingerprint(
+    after_cursor: &Option<FastRuntimeFeatureCursor>,
+    snapshot_max_sequence: u64,
+    records: &[FastTrainingFeatureRecord],
+) -> Result<String, StorageError> {
+    let material = FastRuntimeFeatureBatchMaterial {
+        schema_name: FAST_RUNTIME_FEATURE_BATCH_SCHEMA_NAME,
+        schema_version: FAST_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION,
+        after_cursor,
+        snapshot_max_sequence,
+        record_identities: records
+            .iter()
+            .map(|record| FastRuntimeFeatureIdentity {
+                decision_sequence: record.decision_sequence,
+                decision_signature: &record.decision_signature,
+                decision_ordinal: record.decision_ordinal,
+                decision_observed_at_unix_ms: record.decision_observed_at_unix_ms,
+                mint: &record.mint,
+                quote_mint: &record.quote_mint,
+                venue: &record.venue,
+            })
+            .collect(),
+    };
+    let value = serde_json::to_value(material).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "runtime feature batch fingerprint encoding failed: {error}"
+        ))
+    })?;
+    let encoded = serde_json::to_vec(&value).map_err(|error| {
+        StorageError::InvalidData(format!(
+            "runtime feature batch fingerprint encoding failed: {error}"
+        ))
+    })?;
+    Ok(format!("{:x}", Sha256::digest(encoded)))
+}
+
+fn validate_runtime_cursor(cursor: &FastRuntimeFeatureCursor) -> Result<(), StorageError> {
+    if cursor.decision_sequence == 0
+        || cursor.decision_signature.trim().is_empty()
+        || cursor.decision_observed_at_unix_ms < 0
+    {
+        return Err(StorageError::InvalidData(
+            "runtime feature cursor is invalid".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 fn training_feature_replay_windows(

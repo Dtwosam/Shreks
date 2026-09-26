@@ -75,13 +75,22 @@ def _decision_binary(tmp_path: Path) -> Path:
     return path
 
 
+def _feature_feed_binary(tmp_path: Path) -> Path:
+    path = tmp_path / "export_fast_runtime_features"
+    path.write_bytes(b"fixture-fast-runtime-feature-feed\n")
+    path.chmod(0o700)
+    return path
+
+
 def _manifest(tmp_path: Path) -> FastPaperRuntimeManifest:
     champion, champion_path = _champion_path(tmp_path)
     binary_path = _decision_binary(tmp_path)
+    feed_binary_path = _feature_feed_binary(tmp_path)
     manifest = build_fast_paper_runtime_manifest(
         release_source_sha=_RELEASE_SHA,
         champion_path=champion_path,
         decision_binary_path=binary_path,
+        feature_feed_binary_path=feed_binary_path,
         action_policy=_policy(),
         state_version="fast-state-v1",
         risk_policy_version="fast-risk-v1",
@@ -115,7 +124,7 @@ def test_manifest_schema_is_exact_frozen_and_paper_only(tmp_path: Path) -> None:
     assert FAST_PAPER_RUNTIME_STATE_SCHEMA_NAME == (
         "shreks.fast_paper_runtime_state"
     )
-    assert FAST_PAPER_RUNTIME_SCHEMA_VERSION == 1
+    assert FAST_PAPER_RUNTIME_SCHEMA_VERSION == 2
     assert manifest.schema_name == FAST_PAPER_RUNTIME_MANIFEST_SCHEMA_NAME
     assert manifest.schema_version == FAST_PAPER_RUNTIME_SCHEMA_VERSION
     assert manifest.runtime_mode == "PAPER"
@@ -126,6 +135,7 @@ def test_manifest_schema_is_exact_frozen_and_paper_only(tmp_path: Path) -> None:
     assert manifest.champion_file_sha256 != manifest.champion_fingerprint_sha256
     assert Path(manifest.champion_path).is_absolute()
     assert Path(manifest.decision_binary_path).is_absolute()
+    assert Path(manifest.feature_feed_binary_path).is_absolute()
     assert Path(manifest.observer_database_path).is_absolute()
     assert Path(manifest.paper_evidence_path).is_absolute()
     assert Path(manifest.checkpoint_path).is_absolute()
@@ -223,7 +233,8 @@ def test_runtime_state_is_identity_cursor_only_and_atomically_replaceable(
 
     cursor = FastPaperRuntimeCursor(
         decision_sequence=41,
-        source_event_id="signature:0",
+        decision_signature="signature",
+        decision_ordinal=0,
         decision_observed_at_unix_ms=50_000,
     )
     advanced = build_fast_paper_runtime_state(manifest, cursor=cursor)
@@ -241,7 +252,8 @@ def test_state_codec_rejects_tamper_unknown_fields_and_symlink_destination(
         manifest,
         cursor=FastPaperRuntimeCursor(
             decision_sequence=1,
-            source_event_id="event-1",
+            decision_signature="event-1",
+            decision_ordinal=0,
             decision_observed_at_unix_ms=1_000,
         ),
     )
@@ -283,9 +295,12 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FAST_PAPER_RUNTIME_MANIFEST_SCHEMA_NAME",
         "FAST_PAPER_RUNTIME_STATE_SCHEMA_NAME",
         "FAST_PAPER_RUNTIME_SCHEMA_VERSION",
+        "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_NAME",
+        "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION",
         "FastPaperRuntimeCursor",
         "FastPaperRuntimeManifest",
         "FastPaperRuntimeState",
+        "FastPaperRuntimeFeatureBatch",
         "build_fast_paper_runtime_manifest",
         "build_fast_paper_runtime_state",
         "read_fast_paper_runtime_manifest",
@@ -293,6 +308,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "verify_fast_paper_runtime_bindings",
         "write_fast_paper_runtime_manifest",
         "write_fast_paper_runtime_state",
+        "fetch_fast_paper_runtime_feature_batch",
     )
 
     package_root = Path(runtime.__file__).resolve().parent

@@ -9,7 +9,7 @@ from shreks_brain.fast_paper import FAST_PAPER_EVENT_LOOP_VERSION
 
 FAST_PAPER_RUNTIME_MANIFEST_SCHEMA_NAME = "shreks.fast_paper_runtime_manifest"
 FAST_PAPER_RUNTIME_STATE_SCHEMA_NAME = "shreks.fast_paper_runtime_state"
-FAST_PAPER_RUNTIME_SCHEMA_VERSION = 1
+FAST_PAPER_RUNTIME_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,8 @@ class FastPaperRuntimeManifest:
     champion_file_sha256: str
     decision_binary_path: str
     decision_binary_sha256: str
+    feature_feed_binary_path: str
+    feature_feed_binary_sha256: str
     action_policy: FastCampaignContinuousActionPolicy
     feature_schema_version: int
     state_version: str
@@ -70,6 +72,7 @@ class FastPaperRuntimeManifest:
         for name in (
             "champion_path",
             "decision_binary_path",
+            "feature_feed_binary_path",
             "observer_database_path",
             "paper_evidence_path",
             "checkpoint_path",
@@ -82,6 +85,10 @@ class FastPaperRuntimeManifest:
         )
         _require_sha256("champion_file_sha256", self.champion_file_sha256)
         _require_sha256("decision_binary_sha256", self.decision_binary_sha256)
+        _require_sha256(
+            "feature_feed_binary_sha256",
+            self.feature_feed_binary_sha256,
+        )
 
         if type(self.action_policy) is not FastCampaignContinuousActionPolicy:
             raise ValueError(
@@ -105,12 +112,14 @@ class FastPaperRuntimeManifest:
 @dataclass(frozen=True, slots=True)
 class FastPaperRuntimeCursor:
     decision_sequence: int
-    source_event_id: str
+    decision_signature: str
+    decision_ordinal: int
     decision_observed_at_unix_ms: int
 
     def __post_init__(self) -> None:
         _require_positive_int("decision_sequence", self.decision_sequence)
-        _require_non_empty("source_event_id", self.source_event_id)
+        _require_non_empty("decision_signature", self.decision_signature)
+        _require_non_negative_int("decision_ordinal", self.decision_ordinal)
         _require_non_negative_int(
             "decision_observed_at_unix_ms",
             self.decision_observed_at_unix_ms,

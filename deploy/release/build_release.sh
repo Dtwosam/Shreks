@@ -9,6 +9,7 @@ PYTHON_BUILD_ROOT="${RELEASE_OUT}-python-source"
 STAGING="$RELEASE_OUT/staging"
 CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"
 FAST_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_tools"
+FAST_RUNTIME_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_runtime_tools"
 
 if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_SHA must be exactly 40 lowercase hex characters" >&2
@@ -51,6 +52,7 @@ mkdir -p \
 
 cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
   --bin export_fast_training_features \
+  --bin export_fast_runtime_features \
   --bin shreks-fast-entry-authority \
   --bin shreks-fast-campaign-decision
 
@@ -86,6 +88,21 @@ stage_fast_proof_tools_package(
             "target/release/shreks-fast-entry-authority"
         ),
     },
+    destination=Path(destination),
+)
+PY
+
+PYTHONPATH=python/src python - "$SOURCE_SHA" "$PLATFORM" "$FAST_RUNTIME_TOOLS_PACKAGE" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_runtime_tools import stage_fast_runtime_tools_package
+
+source_sha, platform, destination = sys.argv[1:]
+stage_fast_runtime_tools_package(
+    source_sha=source_sha,
+    platform=platform,
+    tool=Path("target/release/export_fast_runtime_features"),
     destination=Path(destination),
 )
 PY
@@ -151,6 +168,21 @@ verify_fast_proof_tools_wheel(
             "target/release/shreks-fast-entry-authority"
         ),
     },
+)
+PY
+
+PYTHONPATH=python/src python - "${WHEELS[0]}" "$SOURCE_SHA" "$PLATFORM" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_runtime_tools import verify_fast_runtime_tools_wheel
+
+wheel, source_sha, platform = sys.argv[1:]
+verify_fast_runtime_tools_wheel(
+    Path(wheel),
+    expected_source_sha=source_sha,
+    expected_platform=platform,
+    expected_tool=Path("target/release/export_fast_runtime_features"),
 )
 PY
 

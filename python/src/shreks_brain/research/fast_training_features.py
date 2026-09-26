@@ -216,6 +216,14 @@ class FastTrainingFeatureDataset:
     source_sha256: str
 
 
+def fast_training_feature_record_from_mapping(
+    value: object,
+) -> FastTrainingFeatureRecord:
+    if not isinstance(value, dict):
+        raise ValueError("training feature row must be a JSON object")
+    return _record_from_mapping(value)
+
+
 def read_fast_training_feature_jsonl(path: str | Path) -> FastTrainingFeatureDataset:
     source = Path(path)
     source_digest = hashlib.sha256()

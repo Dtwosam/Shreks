@@ -34,6 +34,8 @@ _MANIFEST_KEYS = frozenset(
         "champion_file_sha256",
         "decision_binary_path",
         "decision_binary_sha256",
+        "feature_feed_binary_path",
+        "feature_feed_binary_sha256",
         "action_policy",
         "feature_schema_version",
         "state_version",
@@ -84,7 +86,8 @@ _STATE_KEYS = frozenset(
 _CURSOR_KEYS = frozenset(
     {
         "decision_sequence",
-        "source_event_id",
+        "decision_signature",
+        "decision_ordinal",
         "decision_observed_at_unix_ms",
     }
 )
@@ -95,6 +98,7 @@ def build_fast_paper_runtime_manifest(
     release_source_sha: str,
     champion_path: str | Path,
     decision_binary_path: str | Path,
+    feature_feed_binary_path: str | Path,
     action_policy: FastCampaignContinuousActionPolicy,
     state_version: str,
     risk_policy_version: str,
@@ -121,6 +125,11 @@ def build_fast_paper_runtime_manifest(
         label="Fast Lane decision binary",
         executable=True,
     )
+    feature_feed_binary = _existing_regular_file(
+        feature_feed_binary_path,
+        label="Fast Lane feature feed binary",
+        executable=True,
+    )
     champion = read_fast_forecast_champion(champion_file)
     if type(action_policy) is not FastCampaignContinuousActionPolicy:
         raise ValueError(
@@ -138,6 +147,8 @@ def build_fast_paper_runtime_manifest(
         champion_file_sha256=_sha256_file(champion_file),
         decision_binary_path=str(decision_binary),
         decision_binary_sha256=_sha256_file(decision_binary),
+        feature_feed_binary_path=str(feature_feed_binary),
+        feature_feed_binary_sha256=_sha256_file(feature_feed_binary),
         action_policy=action_policy,
         feature_schema_version=champion.feature_schema_version,
         state_version=state_version,
@@ -195,6 +206,16 @@ def verify_fast_paper_runtime_bindings(
     if _sha256_file(binary_path) != manifest.decision_binary_sha256:
         raise ValueError("Fast Lane decision binary SHA-256 does not match runtime manifest")
 
+    feature_feed_path = _existing_regular_file(
+        manifest.feature_feed_binary_path,
+        label="Fast Lane feature feed binary",
+        executable=True,
+    )
+    if _sha256_file(feature_feed_path) != manifest.feature_feed_binary_sha256:
+        raise ValueError(
+            "Fast Lane feature feed binary SHA-256 does not match runtime manifest"
+        )
+
 
 def write_fast_paper_runtime_manifest(
     manifest: FastPaperRuntimeManifest,
@@ -242,6 +263,8 @@ def read_fast_paper_runtime_manifest(
             champion_file_sha256=document["champion_file_sha256"],
             decision_binary_path=document["decision_binary_path"],
             decision_binary_sha256=document["decision_binary_sha256"],
+            feature_feed_binary_path=document["feature_feed_binary_path"],
+            feature_feed_binary_sha256=document["feature_feed_binary_sha256"],
             action_policy=policy,
             feature_schema_version=document["feature_schema_version"],
             state_version=document["state_version"],
@@ -356,7 +379,8 @@ def read_fast_paper_runtime_state(
         try:
             cursor = FastPaperRuntimeCursor(
                 decision_sequence=cursor_mapping["decision_sequence"],
-                source_event_id=cursor_mapping["source_event_id"],
+                decision_signature=cursor_mapping["decision_signature"],
+                decision_ordinal=cursor_mapping["decision_ordinal"],
                 decision_observed_at_unix_ms=cursor_mapping[
                     "decision_observed_at_unix_ms"
                 ],
@@ -424,6 +448,8 @@ def _manifest_document(manifest: FastPaperRuntimeManifest) -> dict[str, Any]:
         "champion_file_sha256": manifest.champion_file_sha256,
         "decision_binary_path": manifest.decision_binary_path,
         "decision_binary_sha256": manifest.decision_binary_sha256,
+        "feature_feed_binary_path": manifest.feature_feed_binary_path,
+        "feature_feed_binary_sha256": manifest.feature_feed_binary_sha256,
         "action_policy": _policy_document(manifest.action_policy),
         "feature_schema_version": manifest.feature_schema_version,
         "state_version": manifest.state_version,
@@ -450,7 +476,8 @@ def _state_document(state: FastPaperRuntimeState) -> dict[str, Any]:
     if state.cursor is not None:
         cursor = {
             "decision_sequence": state.cursor.decision_sequence,
-            "source_event_id": state.cursor.source_event_id,
+            "decision_signature": state.cursor.decision_signature,
+            "decision_ordinal": state.cursor.decision_ordinal,
             "decision_observed_at_unix_ms": (
                 state.cursor.decision_observed_at_unix_ms
             ),

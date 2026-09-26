@@ -290,9 +290,8 @@ def test_release_build_transports_proof_tools_inside_existing_hashed_wheel_only(
 
     # Backward compatibility: old root G2 verifiers still see the historical
     # top-level allowlist. Proof tools must never become top-level release payloads.
-    assert "target/release/export_fast_training_features" not in bundle
-    assert "target/release/shreks-fast-entry-authority" not in bundle
-    assert "target/release/shreks-fast-campaign-decision" not in bundle
+    for name in FAST_PROOF_TOOL_NAMES:
+        assert f"target/release/{name}" not in bundle
 
 
 def test_transport_module_has_no_runtime_trading_or_network_authority() -> None:
