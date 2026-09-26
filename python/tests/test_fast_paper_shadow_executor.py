@@ -511,6 +511,29 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         sequence=3,
         at=20_500,
     )
+    hold_without_pending_target_quote = _evidence_for(
+        monkeypatch,
+        manifest,
+        record3,
+        action="HOLD",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=20_530,
+        entry_observed_at=20_510,
+        exit_observed_at=20_520,
+    )
+    with pytest.raises(ValueError, match="pending REDUCE|target-sized|reduction quote"):
+        execute_fast_paper_shadow_decision(
+            manifest,
+            delayed_policy,
+            binding,
+            checkpoint3,
+            posture3,
+            _source(record3, hold_without_pending_target_quote),
+        )
+
     hold_evidence = _evidence_for(
         monkeypatch,
         manifest,
