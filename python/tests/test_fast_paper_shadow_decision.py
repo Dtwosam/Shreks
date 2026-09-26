@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import hashlib
 import json
 from pathlib import Path
 import stat
@@ -158,6 +159,25 @@ def _fake_champion(manifest, *, max_training_at: int = 15_000):
     )
 
 
+def _result_fingerprint(manifest, decision) -> str:
+    material = {
+        "schema_name": "shreks.fast_campaign_decision_results",
+        "schema_version": 1,
+        "champion_version": manifest.champion_version,
+        "champion_fingerprint_sha256": manifest.champion_fingerprint_sha256,
+        "decisions": [asdict(decision)],
+    }
+    return hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _result(manifest, request):
     decision = FastCampaignDecisionResult(
         source_event_id=request.source_event_id,
@@ -194,7 +214,10 @@ def _result(manifest, request):
         champion_version=manifest.champion_version,
         champion_fingerprint_sha256=manifest.champion_fingerprint_sha256,
         decisions=(decision,),
-        batch_fingerprint_sha256="b" * 64,
+        batch_fingerprint_sha256=_result_fingerprint(
+            manifest,
+            decision,
+        ),
     )
 
 
@@ -374,7 +397,10 @@ def test_shadow_decision_disables_buy_when_exit_route_is_unavailable(
             champion_version=manifest.champion_version,
             champion_fingerprint_sha256=manifest.champion_fingerprint_sha256,
             decisions=(decision,),
-            batch_fingerprint_sha256="c" * 64,
+            batch_fingerprint_sha256=_result_fingerprint(
+                manifest,
+                decision,
+            ),
         )
 
     monkeypatch.setattr(
