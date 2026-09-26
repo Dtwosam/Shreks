@@ -28,6 +28,9 @@ from .shadow_service_execution_bootstrap import (
     bootstrap_fast_paper_shadow_service_execution,
     load_fast_paper_shadow_service_execution_config,
 )
+from .shadow_skip_source_publisher import (
+    run_fast_paper_shadow_skip_source_publisher_cycle,
+)
 
 
 _STATUS_SCHEMA_NAME = "shreks.fast_paper_shadow_supervisor_status"
@@ -158,6 +161,13 @@ def run_fast_paper_shadow_supervisor_cycle(
     clock = _wall_clock_unix_ms if clock_unix_ms is None else clock_unix_ms
     now = _clock_value(clock)
     try:
+        run_fast_paper_shadow_skip_source_publisher_cycle(
+            bootstrap.decision_bootstrap.manifest,
+            bootstrap.execution_bootstrap,
+            decision_evidence_directory=(
+                config.decision_config.evidence_directory
+            ),
+        )
         result = run_fast_paper_shadow_service_coordinated_cycle(
             bootstrap.decision_bootstrap,
             config.decision_config,

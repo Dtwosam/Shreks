@@ -28,6 +28,16 @@ _ENV_EXAMPLE = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _default_skip_source_publisher(monkeypatch):
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_skip_source_publisher_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+
+
 def _decision_config(tmp_path: Path):
     return FastPaperShadowServiceConfig(
         manifest_path=(tmp_path / "manifest.json").resolve(),
