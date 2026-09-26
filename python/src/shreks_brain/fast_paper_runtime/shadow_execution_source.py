@@ -39,6 +39,9 @@ _TOP_KEYS = frozenset(
         "manifest_fingerprint_sha256",
         "execution_policy_fingerprint_sha256",
         "decision_evidence_fingerprint_sha256",
+        "paper_checkpoint_sequence",
+        "paper_checkpoint_payload_sha256",
+        "shadow_runtime_state_fingerprint_sha256",
         "source_event_id",
         "evaluated_at_unix_ms",
         "source_observed_at_unix_ms",
@@ -104,6 +107,9 @@ class FastPaperShadowExecutionInputSourceRecord:
     manifest_fingerprint_sha256: str
     execution_policy_fingerprint_sha256: str
     decision_evidence_fingerprint_sha256: str
+    paper_checkpoint_sequence: int
+    paper_checkpoint_payload_sha256: str
+    shadow_runtime_state_fingerprint_sha256: str
     source_event_id: str
     evaluated_at_unix_ms: int
     source_observed_at_unix_ms: int
@@ -130,9 +136,15 @@ class FastPaperShadowExecutionInputSourceRecord:
             "manifest_fingerprint_sha256",
             "execution_policy_fingerprint_sha256",
             "decision_evidence_fingerprint_sha256",
+            "paper_checkpoint_payload_sha256",
+            "shadow_runtime_state_fingerprint_sha256",
             "record_fingerprint_sha256",
         ):
             _require_sha256(name, getattr(self, name))
+        _require_non_negative_int(
+            "paper_checkpoint_sequence",
+            self.paper_checkpoint_sequence,
+        )
         _require_text("source_event_id", self.source_event_id)
         _require_non_negative_int(
             "evaluated_at_unix_ms",
@@ -180,6 +192,9 @@ def build_fast_paper_shadow_execution_input_source_record(
     execution_policy: FastPaperShadowExecutionPolicy,
     source: FastPaperShadowExecutionInput,
     *,
+    paper_checkpoint_sequence: int,
+    paper_checkpoint_payload_sha256: str,
+    shadow_runtime_state_fingerprint_sha256: str,
     source_observed_at_unix_ms: int,
 ) -> FastPaperShadowExecutionInputSourceRecord:
     if type(manifest) is not FastPaperRuntimeManifest:
@@ -194,6 +209,18 @@ def build_fast_paper_shadow_execution_input_source_record(
         raise ValueError(
             "source must be exact FastPaperShadowExecutionInput"
         )
+    _require_non_negative_int(
+        "paper_checkpoint_sequence",
+        paper_checkpoint_sequence,
+    )
+    _require_sha256(
+        "paper_checkpoint_payload_sha256",
+        paper_checkpoint_payload_sha256,
+    )
+    _require_sha256(
+        "shadow_runtime_state_fingerprint_sha256",
+        shadow_runtime_state_fingerprint_sha256,
+    )
     _require_non_negative_int(
         "source_observed_at_unix_ms",
         source_observed_at_unix_ms,
@@ -226,6 +253,13 @@ def build_fast_paper_shadow_execution_input_source_record(
         ),
         "decision_evidence_fingerprint_sha256": (
             evidence.evidence_fingerprint_sha256
+        ),
+        "paper_checkpoint_sequence": paper_checkpoint_sequence,
+        "paper_checkpoint_payload_sha256": (
+            paper_checkpoint_payload_sha256
+        ),
+        "shadow_runtime_state_fingerprint_sha256": (
+            shadow_runtime_state_fingerprint_sha256
         ),
         "source_event_id": evidence.source_event_id,
         "evaluated_at_unix_ms": evidence.evaluated_at_unix_ms,
@@ -301,6 +335,10 @@ def read_fast_paper_shadow_execution_input_source_record(
     execution_policy: FastPaperShadowExecutionPolicy,
     decision_evidence: FastPaperShadowDecisionEvidence,
     directory: str | Path,
+    *,
+    paper_checkpoint_sequence: int,
+    paper_checkpoint_payload_sha256: str,
+    shadow_runtime_state_fingerprint_sha256: str,
 ) -> FastPaperShadowExecutionInputSourceRecord:
     if type(manifest) is not FastPaperRuntimeManifest:
         raise ValueError(
@@ -315,6 +353,18 @@ def read_fast_paper_shadow_execution_input_source_record(
             "decision_evidence must be exact FastPaperShadowDecisionEvidence"
         )
     validate_fast_paper_shadow_decision_evidence(decision_evidence)
+    _require_non_negative_int(
+        "paper_checkpoint_sequence",
+        paper_checkpoint_sequence,
+    )
+    _require_sha256(
+        "paper_checkpoint_payload_sha256",
+        paper_checkpoint_payload_sha256,
+    )
+    _require_sha256(
+        "shadow_runtime_state_fingerprint_sha256",
+        shadow_runtime_state_fingerprint_sha256,
+    )
 
     root = Path(directory).expanduser()
     if root.is_symlink() or not root.is_dir():
@@ -370,6 +420,15 @@ def read_fast_paper_shadow_execution_input_source_record(
             decision_evidence_fingerprint_sha256=(
                 document["decision_evidence_fingerprint_sha256"]
             ),
+            paper_checkpoint_sequence=document[
+                "paper_checkpoint_sequence"
+            ],
+            paper_checkpoint_payload_sha256=document[
+                "paper_checkpoint_payload_sha256"
+            ],
+            shadow_runtime_state_fingerprint_sha256=document[
+                "shadow_runtime_state_fingerprint_sha256"
+            ],
             source_event_id=document["source_event_id"],
             evaluated_at_unix_ms=document["evaluated_at_unix_ms"],
             source_observed_at_unix_ms=(
@@ -406,6 +465,24 @@ def read_fast_paper_shadow_execution_input_source_record(
         raise ValueError(
             "shadow execution input source decision fingerprint mismatch"
         )
+    if record.paper_checkpoint_sequence != paper_checkpoint_sequence:
+        raise ValueError(
+            "shadow execution input source checkpoint sequence mismatch"
+        )
+    if (
+        record.paper_checkpoint_payload_sha256
+        != paper_checkpoint_payload_sha256
+    ):
+        raise ValueError(
+            "shadow execution input source checkpoint fingerprint mismatch"
+        )
+    if (
+        record.shadow_runtime_state_fingerprint_sha256
+        != shadow_runtime_state_fingerprint_sha256
+    ):
+        raise ValueError(
+            "shadow execution input source runtime-state fingerprint mismatch"
+        )
     if record.source_event_id != decision_evidence.source_event_id:
         raise ValueError(
             "shadow execution input source event identity mismatch"
@@ -441,6 +518,15 @@ def _record_fingerprint(
                     "decision_evidence_fingerprint_sha256": (
                         record.decision_evidence_fingerprint_sha256
                     ),
+                    "paper_checkpoint_sequence": (
+                        record.paper_checkpoint_sequence
+                    ),
+                    "paper_checkpoint_payload_sha256": (
+                        record.paper_checkpoint_payload_sha256
+                    ),
+                    "shadow_runtime_state_fingerprint_sha256": (
+                        record.shadow_runtime_state_fingerprint_sha256
+                    ),
                     "source_event_id": record.source_event_id,
                     "evaluated_at_unix_ms": record.evaluated_at_unix_ms,
                     "source_observed_at_unix_ms": (
@@ -468,6 +554,13 @@ def _record_document(
             ),
             "decision_evidence_fingerprint_sha256": (
                 record.decision_evidence_fingerprint_sha256
+            ),
+            "paper_checkpoint_sequence": record.paper_checkpoint_sequence,
+            "paper_checkpoint_payload_sha256": (
+                record.paper_checkpoint_payload_sha256
+            ),
+            "shadow_runtime_state_fingerprint_sha256": (
+                record.shadow_runtime_state_fingerprint_sha256
             ),
             "source_event_id": record.source_event_id,
             "evaluated_at_unix_ms": record.evaluated_at_unix_ms,
@@ -503,6 +596,15 @@ def _record_document_values(
         "decision_evidence_fingerprint_sha256": (
             values["decision_evidence_fingerprint_sha256"]
         ),
+        "paper_checkpoint_sequence": values[
+            "paper_checkpoint_sequence"
+        ],
+        "paper_checkpoint_payload_sha256": values[
+            "paper_checkpoint_payload_sha256"
+        ],
+        "shadow_runtime_state_fingerprint_sha256": values[
+            "shadow_runtime_state_fingerprint_sha256"
+        ],
         "source_event_id": values["source_event_id"],
         "evaluated_at_unix_ms": values["evaluated_at_unix_ms"],
         "source_observed_at_unix_ms": (
