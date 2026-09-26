@@ -22,7 +22,7 @@ from .shadow_ledger import (
 FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME = (
     "shreks.fast_paper_shadow_runtime_state"
 )
-FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION = 1
+FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION = 2
 
 _TABLE_NAME = "fast_paper_shadow_runtime_states"
 _STATE_KEYS = frozenset(
@@ -32,11 +32,20 @@ _STATE_KEYS = frozenset(
         "binding_fingerprint_sha256",
         "paper_checkpoint_sequence",
         "paper_checkpoint_payload_sha256",
+        "pending_buy",
         "market_positions",
         "last_processed_source_sequence",
         "last_processed_source_event_id",
         "last_processed_decision_evidence_fingerprint_sha256",
         "state_fingerprint_sha256",
+    }
+)
+_PENDING_BUY_KEYS = frozenset(
+    {
+        "market_key",
+        "mint",
+        "source_event_id",
+        "target_exposure_fraction_hex",
     }
 )
 _POSITION_KEYS = frozenset(
@@ -47,6 +56,27 @@ _POSITION_KEYS = frozenset(
         "current_exposure_fraction_hex",
     }
 )
+
+
+@dataclass(frozen=True, slots=True)
+class FastPaperShadowPendingBuy:
+    market_key: str
+    mint: str
+    source_event_id: str
+    target_exposure_fraction: float
+
+    def __post_init__(self) -> None:
+        for name in ("market_key", "mint", "source_event_id"):
+            _require_text(name, getattr(self, name))
+        _require_exposure(
+            "target_exposure_fraction",
+            self.target_exposure_fraction,
+        )
+        object.__setattr__(
+            self,
+            "target_exposure_fraction",
+            float(self.target_exposure_fraction),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +107,7 @@ class FastPaperShadowRuntimeState:
     binding_fingerprint_sha256: str
     paper_checkpoint_sequence: int
     paper_checkpoint_payload_sha256: str
+    pending_buy: FastPaperShadowPendingBuy | None
     market_positions: tuple[FastPaperShadowMarketPosition, ...]
     last_processed_source_sequence: int | None
     last_processed_source_event_id: str | None
@@ -108,6 +139,13 @@ class FastPaperShadowRuntimeState:
             "paper_checkpoint_payload_sha256",
             self.paper_checkpoint_payload_sha256,
         )
+        if (
+            self.pending_buy is not None
+            and type(self.pending_buy) is not FastPaperShadowPendingBuy
+        ):
+            raise ValueError(
+                "pending_buy must be exact FastPaperShadowPendingBuy or None"
+            )
         if (
             not isinstance(self.market_positions, tuple)
             or not all(
@@ -181,6 +219,7 @@ def build_fast_paper_shadow_runtime_state(
     paper_checkpoint: FastPaperCheckpointRecord,
     *,
     market_positions: tuple[FastPaperShadowMarketPosition, ...],
+    pending_buy: FastPaperShadowPendingBuy | None = None,
     last_processed_source_sequence: int | None = None,
     last_processed_source_event_id: str | None = None,
     last_processed_decision_evidence_fingerprint_sha256: str | None = None,
@@ -196,6 +235,13 @@ def build_fast_paper_shadow_runtime_state(
     if type(paper_checkpoint) is not FastPaperCheckpointRecord:
         raise ValueError(
             "paper_checkpoint must be exact FastPaperCheckpointRecord"
+        )
+    if (
+        pending_buy is not None
+        and type(pending_buy) is not FastPaperShadowPendingBuy
+    ):
+        raise ValueError(
+            "pending_buy must be exact FastPaperShadowPendingBuy or None"
         )
     if (
         not isinstance(market_positions, tuple)
@@ -223,6 +269,11 @@ def build_fast_paper_shadow_runtime_state(
         latest,
         canonical_positions,
     )
+    _validate_pending_buy(
+        latest,
+        pending_buy,
+        canonical_positions,
+    )
 
     values = {
         "schema_name": FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
@@ -232,6 +283,7 @@ def build_fast_paper_shadow_runtime_state(
         ),
         "paper_checkpoint_sequence": latest.sequence,
         "paper_checkpoint_payload_sha256": latest.payload_sha256,
+        "pending_buy": pending_buy,
         "market_positions": canonical_positions,
         "last_processed_source_sequence": (
             last_processed_source_sequence
@@ -563,6 +615,51 @@ def _validate_state_against_checkpoint(
         checkpoint,
         state.market_positions,
     )
+    _validate_pending_buy(
+        checkpoint,
+        state.pending_buy,
+        state.market_positions,
+    )
+
+
+def _validate_pending_buy(
+    checkpoint: FastPaperCheckpointRecord,
+    pending_buy: FastPaperShadowPendingBuy | None,
+    market_positions: tuple[FastPaperShadowMarketPosition, ...],
+) -> None:
+    approval = checkpoint.state.pending_buy
+    if approval is None:
+        if pending_buy is not None:
+            raise ValueError(
+                "shadow runtime pending BUY exists without canonical checkpoint authority"
+            )
+        return
+    if pending_buy is None:
+        raise ValueError(
+            "shadow runtime pending BUY target is missing for canonical checkpoint authority"
+        )
+    expected = (
+        approval.assessment.market_key,
+        approval.mint,
+        approval.assessment.source_event_id,
+    )
+    actual = (
+        pending_buy.market_key,
+        pending_buy.mint,
+        pending_buy.source_event_id,
+    )
+    if actual != expected:
+        raise ValueError(
+            "shadow runtime pending BUY identity does not match canonical checkpoint authority"
+        )
+    if any(
+        value.market_key == pending_buy.market_key
+        or value.mint == pending_buy.mint
+        for value in market_positions
+    ):
+        raise ValueError(
+            "shadow runtime pending BUY cannot overlap an OPEN market mapping"
+        )
 
 
 def _validate_market_positions(
@@ -610,6 +707,7 @@ def _state_document(
             "paper_checkpoint_payload_sha256": (
                 state.paper_checkpoint_payload_sha256
             ),
+            "pending_buy": state.pending_buy,
             "market_positions": state.market_positions,
             "last_processed_source_sequence": (
                 state.last_processed_source_sequence
@@ -635,6 +733,7 @@ def _state_document(
 def _fingerprint_material(
     values: dict[str, object],
 ) -> dict[str, object]:
+    pending_buy = values["pending_buy"]
     positions = values["market_positions"]
     if not isinstance(positions, tuple):
         raise ValueError(
@@ -651,6 +750,18 @@ def _fingerprint_material(
         ),
         "paper_checkpoint_payload_sha256": (
             values["paper_checkpoint_payload_sha256"]
+        ),
+        "pending_buy": (
+            None
+            if pending_buy is None
+            else {
+                "market_key": pending_buy.market_key,
+                "mint": pending_buy.mint,
+                "source_event_id": pending_buy.source_event_id,
+                "target_exposure_fraction_hex": (
+                    pending_buy.target_exposure_fraction.hex()
+                ),
+            }
         ),
         "market_positions": [
             {
@@ -702,6 +813,7 @@ def _state_document_without_fingerprint(
             "paper_checkpoint_payload_sha256": (
                 state.paper_checkpoint_payload_sha256
             ),
+            "pending_buy": state.pending_buy,
             "market_positions": state.market_positions,
             "last_processed_source_sequence": (
                 state.last_processed_source_sequence
@@ -738,6 +850,38 @@ def _decode_state(payload: str) -> FastPaperShadowRuntimeState:
     if payload != _canonical(document):
         raise ValueError(
             "shadow runtime state payload must use canonical JSON"
+        )
+
+    raw_pending = document["pending_buy"]
+    pending_buy = None
+    if raw_pending is not None:
+        if (
+            not isinstance(raw_pending, dict)
+            or frozenset(raw_pending) != _PENDING_BUY_KEYS
+        ):
+            raise ValueError(
+                "shadow runtime pending BUY payload is malformed"
+            )
+        exposure_hex = raw_pending["target_exposure_fraction_hex"]
+        if not isinstance(exposure_hex, str):
+            raise ValueError(
+                "shadow runtime pending BUY exposure must use canonical float hex"
+            )
+        try:
+            target_exposure = float.fromhex(exposure_hex)
+        except ValueError as exc:
+            raise ValueError(
+                "shadow runtime pending BUY exposure hex is invalid"
+            ) from exc
+        if target_exposure.hex() != exposure_hex:
+            raise ValueError(
+                "shadow runtime pending BUY exposure hex is not canonical"
+            )
+        pending_buy = FastPaperShadowPendingBuy(
+            market_key=raw_pending["market_key"],
+            mint=raw_pending["mint"],
+            source_event_id=raw_pending["source_event_id"],
+            target_exposure_fraction=target_exposure,
         )
 
     raw_positions = document["market_positions"]
@@ -788,6 +932,7 @@ def _decode_state(payload: str) -> FastPaperShadowRuntimeState:
             paper_checkpoint_payload_sha256=(
                 document["paper_checkpoint_payload_sha256"]
             ),
+            pending_buy=pending_buy,
             market_positions=tuple(positions),
             last_processed_source_sequence=(
                 document["last_processed_source_sequence"]
