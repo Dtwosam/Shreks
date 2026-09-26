@@ -67,6 +67,12 @@ from .shadow_service_execution import (
     consume_fast_paper_shadow_service_execution_source_record,
     run_fast_paper_shadow_service_execution,
 )
+from .shadow_service_execution_bootstrap import (
+    FastPaperShadowServiceExecutionBootstrap,
+    FastPaperShadowServiceExecutionConfig,
+    bootstrap_fast_paper_shadow_service_execution,
+    load_fast_paper_shadow_service_execution_config,
+)
 from .shadow_runtime_state import (
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION,
@@ -135,6 +141,8 @@ __all__ = (
     "FastPaperShadowPendingBuy",
     "FastPaperShadowPendingBuyRetryInput",
     "FastPaperShadowRuntimeState",
+    "FastPaperShadowServiceExecutionBootstrap",
+    "FastPaperShadowServiceExecutionConfig",
     "FastPaperShadowQuoteReadPolicy",
     "FastPaperShadowQuoteUsdEvidence",
     "FastPaperShadowReductionRead",
@@ -142,6 +150,7 @@ __all__ = (
     "FastPaperShadowQuoteEvidence",
     "FastPaperShadowReductionQuote",
     "build_fast_paper_runtime_manifest",
+    "bootstrap_fast_paper_shadow_service_execution",
     "commit_fast_paper_shadow_transition_atomically",
     "build_fast_paper_shadow_execution_input_source_record",
     "build_fast_paper_shadow_execution_policy",
@@ -175,6 +184,7 @@ __all__ = (
     "initialize_fast_paper_shadow_ledger_database",
     "load_latest_fast_paper_shadow_ledger_checkpoint",
     "load_latest_fast_paper_shadow_runtime_state",
+    "load_fast_paper_shadow_service_execution_config",
     "save_fast_paper_shadow_ledger_checkpoint",
     "save_fast_paper_shadow_runtime_state",
 )
