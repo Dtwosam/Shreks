@@ -126,7 +126,7 @@ def _manifest(tmp_path: Path):
     payload = _feature_batch_payload()
     feed_binary = _executable(
         tmp_path / "export_fast_runtime_features",
-        "#!/bin/sh\nprintf '%s' "
+        "#!/bin/sh\nprintf '%b' "
         + repr(payload)
         + "\n",
     )
