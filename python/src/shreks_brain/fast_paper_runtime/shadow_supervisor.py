@@ -171,7 +171,12 @@ def run_fast_paper_shadow_supervisor_cycle(
             ),
             committed_at_unix_ms=now,
         )
-    except (OSError, TypeError, ValueError) as exc:
+    except (
+        FastPaperShadowServiceError,
+        OSError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise FastPaperShadowSupervisorError(
             "shadow supervisor coordinated cycle failed closed"
         ) from exc
