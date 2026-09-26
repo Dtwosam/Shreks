@@ -8,13 +8,13 @@ import pytest
 from fast_forecast_champion_fixtures import continuous_and_binary_sources
 from fast_forecast_fixtures import feature_record
 from shreks_brain.fast_campaign import (
-    FastCampaignActionCandidate,
     FastCampaignActionConstraints,
     FastCampaignContinuousActionPolicy,
     FastCampaignDecisionPosition,
     FastCampaignDecisionResult,
     FastCampaignDecisionResults,
 )
+from shreks_brain.fast_campaign.models import FastCampaignActionCandidate
 from shreks_brain.fast_champion import (
     build_fast_forecast_champion,
     write_fast_forecast_champion,
