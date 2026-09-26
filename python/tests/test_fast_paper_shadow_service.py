@@ -206,11 +206,13 @@ def test_shadow_service_failed_resolution_does_not_commit_row(
     policy = service.FastPaperShadowServicePolicy(**_policy_document())
     manifest = SimpleNamespace(
         observer_database_path=str(tmp_path / "observer.sqlite3"),
+        quote_provider="jupiter",
     )
     state = object()
     record = SimpleNamespace(
         decision_observed_at_unix_ms=1_000,
         mint="Mint111",
+        quote_mint="Quote111",
     )
     bootstrap = service.FastPaperShadowServiceBootstrap(
         manifest=manifest,
