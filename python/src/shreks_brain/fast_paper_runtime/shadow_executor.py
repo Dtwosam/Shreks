@@ -54,6 +54,7 @@ from .shadow_execution_input import (
 from .shadow_ledger import (
     FastPaperShadowLedgerBinding,
     build_fast_paper_shadow_ledger_binding,
+    load_latest_fast_paper_shadow_ledger_checkpoint,
 )
 from .shadow_runtime_state import (
     FastPaperShadowMarketPosition,
@@ -61,6 +62,7 @@ from .shadow_runtime_state import (
     FastPaperShadowRuntimeState,
     build_fast_paper_shadow_runtime_state,
     fast_paper_shadow_decision_position,
+    load_latest_fast_paper_shadow_runtime_state,
 )
 
 
@@ -788,6 +790,22 @@ def _require_authority_bindings(
     if checkpoint.run_id != binding.run_id:
         raise ValueError(
             "shadow executor paper checkpoint run_id does not match ledger binding"
+        )
+    latest_checkpoint = load_latest_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+    )
+    if latest_checkpoint is None or latest_checkpoint != checkpoint:
+        raise ValueError(
+            "shadow executor requires the exact latest durable paper checkpoint"
+        )
+    latest_shadow_state = load_latest_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+    )
+    if latest_shadow_state is None or latest_shadow_state != shadow_state:
+        raise ValueError(
+            "shadow executor requires the exact latest durable learned posture state"
         )
     _require_checkpoint_pair(
         checkpoint,
