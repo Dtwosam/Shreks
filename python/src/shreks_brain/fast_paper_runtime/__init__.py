@@ -81,6 +81,9 @@ from .shadow_service_coordinator import (
     FastPaperShadowServiceCoordinatorResult,
     run_fast_paper_shadow_service_coordinated_cycle,
 )
+from .shadow_open_source_publisher import (
+    run_fast_paper_shadow_open_source_publisher_cycle,
+)
 from .shadow_pending_buy_retry_source import (
     FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_SCHEMA_VERSION,
@@ -236,6 +239,7 @@ __all__ = (
     "run_fast_paper_shadow_service_pending_buy_retry",
     "run_fast_paper_shadow_service_execution_cycle",
     "run_fast_paper_shadow_service_coordinated_cycle",
+    "run_fast_paper_shadow_open_source_publisher_cycle",
     "run_fast_paper_shadow_skip_source_publisher_cycle",
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
