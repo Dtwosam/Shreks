@@ -63,6 +63,7 @@ def _execution_bootstrap(
     return SimpleNamespace(
         binding=object(),
         execution_policy=object(),
+        checkpoint=object(),
         source_directory=Path("/tmp/execution-sources"),
         runtime_state=SimpleNamespace(
             last_processed_source_sequence=sequence,
