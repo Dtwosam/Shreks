@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -128,30 +128,32 @@ def build_fast_paper_shadow_ledger_binding(
     _require_text("run_id", run_id)
     database = _shadow_database_path(manifest, database_path)
 
-    provisional = FastPaperShadowLedgerBinding(
-        schema_name=FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_NAME,
-        schema_version=FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_VERSION,
-        run_id=run_id,
-        release_source_sha=manifest.release_source_sha,
-        manifest_fingerprint_sha256=(
+    material = {
+        "schema_name": FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_NAME,
+        "schema_version": FAST_PAPER_SHADOW_LEDGER_BINDING_SCHEMA_VERSION,
+        "run_id": run_id,
+        "release_source_sha": manifest.release_source_sha,
+        "manifest_fingerprint_sha256": (
             manifest.manifest_fingerprint_sha256
         ),
-        champion_fingerprint_sha256=(
+        "champion_fingerprint_sha256": (
             manifest.champion_fingerprint_sha256
         ),
-        action_policy_version=manifest.action_policy.version,
-        state_version=manifest.state_version,
-        risk_policy_version=manifest.risk_policy_version,
-        fill_policy_version=manifest.fill_policy_version,
-        position_action_policy_version=(
+        "action_policy_version": manifest.action_policy.version,
+        "state_version": manifest.state_version,
+        "risk_policy_version": manifest.risk_policy_version,
+        "fill_policy_version": manifest.fill_policy_version,
+        "position_action_policy_version": (
             manifest.position_action_policy_version
         ),
-        database_path=str(database),
-        binding_fingerprint_sha256="0" * 64,
-    )
-    return replace(
-        provisional,
-        binding_fingerprint_sha256=_binding_fingerprint(provisional),
+        "database_path": str(database),
+    }
+    fingerprint = hashlib.sha256(
+        _canonical(material).encode("utf-8")
+    ).hexdigest()
+    return FastPaperShadowLedgerBinding(
+        **material,
+        binding_fingerprint_sha256=fingerprint,
     )
 
 
