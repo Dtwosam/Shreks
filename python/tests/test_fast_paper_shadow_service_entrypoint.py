@@ -93,11 +93,11 @@ def test_shadow_service_systemd_is_detached_from_authoritative_campaign() -> Non
     assert "Environment=PYTHONDONTWRITEBYTECODE=1" in payload
     assert (
         "ExecStartPre=/opt/shreks/current/.venv/bin/python "
-        "-m shreks_brain.fast_paper_runtime.shadow_service --preflight"
+        "-m shreks_brain.fast_paper_runtime.shadow_supervisor --preflight"
     ) in payload
     assert (
         "ExecStart=/opt/shreks/current/.venv/bin/python "
-        "-m shreks_brain.fast_paper_runtime.shadow_service"
+        "-m shreks_brain.fast_paper_runtime.shadow_supervisor"
     ) in payload
     assert "ReadWritePaths=/var/lib/shreks/fast-paper-shadow" in payload
     assert "NoNewPrivileges=true" in payload
