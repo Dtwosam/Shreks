@@ -457,6 +457,36 @@ def test_skip_materialization_has_no_execution_authority(
         )
 
 
+def test_materialization_rejects_stale_decision_evidence_fingerprint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, record, evidence = _shadow_evidence(
+        monkeypatch,
+        tmp_path,
+        action="BUY",
+    )
+    policy = _execution_policy(manifest)
+    tampered = replace(
+        evidence,
+        decision_latency_ns=evidence.decision_latency_ns + 1,
+    )
+    source = FastPaperShadowExecutionInput(
+        decision_evidence=tampered,
+        entry_authority=_entry(record),
+        risk_context=_risk(evidence.evaluated_at_unix_ms),
+        market_regime=MarketRegime.NORMAL,
+        quote_usd_evidence=_usd(record),
+    )
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        materialize_fast_paper_shadow_execution_evidence(
+            manifest,
+            policy,
+            source,
+        )
+
+
 def test_execution_input_rejects_future_usd_or_entry_price_drift(
     monkeypatch,
     tmp_path: Path,
