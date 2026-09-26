@@ -310,6 +310,7 @@ def test_deferred_buy_survives_restart_fills_once_and_exact_replay_is_noop(
         execute_fast_paper_shadow_decision(
             manifest,
             policy,
+            binding,
             restored_checkpoint,
             restored_posture,
             source,
