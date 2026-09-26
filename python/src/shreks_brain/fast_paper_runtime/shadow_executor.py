@@ -35,7 +35,10 @@ from shreks_brain.paper_validation import (
 from shreks_brain.risk import RiskContext
 
 from .models import FastPaperRuntimeManifest
-from .shadow import FastPaperShadowQuoteEvidence
+from .shadow import (
+    FastPaperShadowQuoteEvidence,
+    validate_fast_paper_shadow_decision_evidence,
+)
 from .shadow_execution_input import (
     FastPaperShadowExecutionInput,
     FastPaperShadowExecutionPolicy,
@@ -221,6 +224,7 @@ def execute_fast_paper_shadow_decision(
         )
 
     evidence = source.decision_evidence
+    validate_fast_paper_shadow_decision_evidence(evidence)
     assessment = fast_campaign_result_to_paper_assessment(
         evidence.decision,
         assessment_version=manifest.assessment_version,
@@ -752,6 +756,17 @@ def _require_authority_bindings(
     if shadow_state.binding_fingerprint_sha256 != binding.binding_fingerprint_sha256:
         raise ValueError(
             "shadow executor learned posture binding fingerprint mismatch"
+        )
+    if checkpoint.state.fill_policy != execution_policy.fill_policy:
+        raise ValueError(
+            "shadow executor fill policy conflicts with checkpoint-pinned policy"
+        )
+    if (
+        checkpoint.state.position_action_policy
+        != execution_policy.position_action_policy
+    ):
+        raise ValueError(
+            "shadow executor position-action policy conflicts with checkpoint-pinned policy"
         )
     if checkpoint.run_id != binding.run_id:
         raise ValueError(
