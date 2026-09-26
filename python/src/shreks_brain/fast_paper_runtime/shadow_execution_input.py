@@ -23,6 +23,7 @@ from .models import FastPaperRuntimeManifest
 from .shadow import (
     FastPaperShadowDecisionEvidence,
     FastPaperShadowQuoteEvidence,
+    validate_fast_paper_shadow_decision_evidence,
 )
 
 
@@ -482,6 +483,7 @@ def materialize_fast_paper_shadow_execution_evidence(
         execution_policy,
     )
     evidence = source.decision_evidence
+    validate_fast_paper_shadow_decision_evidence(evidence)
     _require_decision_binding(
         manifest,
         evidence,
