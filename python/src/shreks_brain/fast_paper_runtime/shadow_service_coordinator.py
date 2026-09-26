@@ -152,12 +152,16 @@ def run_fast_paper_shadow_service_coordinated_cycle(
             market_key,
         )
 
+    cycle_kwargs = {
+        "clock_unix_ms": clock_unix_ms,
+        "position_resolver": position_resolver,
+    }
+    if reduction_read_resolver is not None:
+        cycle_kwargs["reduction_read_resolver"] = reduction_read_resolver
     updated, produced = run_fast_paper_shadow_service_cycle(
         decision_bootstrap,
         bounded_config,
-        clock_unix_ms=clock_unix_ms,
-        position_resolver=position_resolver,
-        reduction_read_resolver=reduction_read_resolver,
+        **cycle_kwargs,
     )
     if type(produced) is not int or produced not in {0, 1}:
         raise ValueError(
