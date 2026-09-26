@@ -289,6 +289,9 @@ def run_fast_paper_shadow_service_cycle(
     config: FastPaperShadowServiceConfig,
     *,
     clock_unix_ms: Callable[[], int] | None = None,
+    position_resolver: (
+        Callable[[Any], FastCampaignDecisionPosition] | None
+    ) = None,
 ) -> tuple[FastPaperShadowServiceBootstrap, int]:
     if type(bootstrap) is not FastPaperShadowServiceBootstrap:
         raise FastPaperShadowServiceError(
@@ -314,6 +317,10 @@ def run_fast_paper_shadow_service_cycle(
             evaluated_at_unix_ms = _runtime_timestamp(
                 clock,
                 minimum=record.decision_observed_at_unix_ms,
+            )
+            position = _resolve_service_position(
+                record,
+                position_resolver,
             )
             candidate_id = _resolve_candidate_id(
                 bootstrap.manifest.observer_database_path,
@@ -350,7 +357,7 @@ def run_fast_paper_shadow_service_cycle(
             cycle_input = resolve_fast_paper_shadow_cycle_input(
                 bootstrap.manifest,
                 record,
-                FastCampaignDecisionPosition(kind="FLAT"),
+                position,
                 read_policy,
                 evaluated_at_unix_ms=evaluated_at_unix_ms,
                 max_exposure_fraction=(
@@ -660,6 +667,25 @@ def _open_observer_database(path_value: str) -> sqlite3.Connection:
         raise ValueError(
             "observer database could not be opened read-only"
         ) from exc
+
+
+def _resolve_service_position(
+    record: Any,
+    resolver: Callable[[Any], FastCampaignDecisionPosition] | None,
+) -> FastCampaignDecisionPosition:
+    if resolver is None:
+        return FastCampaignDecisionPosition(kind="FLAT")
+    try:
+        position = resolver(record)
+    except Exception as exc:
+        raise FastPaperShadowServiceError(
+            "shadow service posture resolver failed"
+        ) from exc
+    if type(position) is not FastCampaignDecisionPosition:
+        raise ValueError(
+            "shadow service position resolver must return exact FastCampaignDecisionPosition"
+        )
+    return position
 
 
 def _runtime_timestamp(
