@@ -297,10 +297,15 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FAST_PAPER_RUNTIME_SCHEMA_VERSION",
         "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_NAME",
         "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION",
+        "FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME",
+        "FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION",
         "FastPaperRuntimeCursor",
         "FastPaperRuntimeManifest",
         "FastPaperRuntimeState",
         "FastPaperRuntimeFeatureBatch",
+        "FastPaperShadowDecisionEvidence",
+        "FastPaperShadowQuoteEvidence",
+        "FastPaperShadowReductionQuote",
         "build_fast_paper_runtime_manifest",
         "build_fast_paper_runtime_state",
         "read_fast_paper_runtime_manifest",
@@ -309,6 +314,9 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "write_fast_paper_runtime_manifest",
         "write_fast_paper_runtime_state",
         "fetch_fast_paper_runtime_feature_batch",
+        "evaluate_fast_paper_shadow_decision",
+        "read_fast_paper_shadow_decision_evidence",
+        "write_fast_paper_shadow_decision_evidence",
     )
 
     package_root = Path(runtime.__file__).resolve().parent
