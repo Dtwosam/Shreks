@@ -171,17 +171,15 @@ def test_shadow_runtime_rejects_state_bound_to_another_manifest(
     env = _environment(tmp_path, manifest_path)
     config = load_fast_paper_shadow_runtime_config(env)
 
-    foreign = build_fast_paper_runtime_state(manifest, cursor=None)
-    foreign = type(foreign)(
-        schema_name=foreign.schema_name,
-        schema_version=foreign.schema_version,
-        manifest_fingerprint_sha256="f" * 64,
-        release_source_sha=foreign.release_source_sha,
-        champion_fingerprint_sha256=foreign.champion_fingerprint_sha256,
-        action_policy_version=foreign.action_policy_version,
-        cursor=foreign.cursor,
-        state_fingerprint_sha256=foreign.state_fingerprint_sha256,
+    other_root = tmp_path / "other"
+    other_root.mkdir()
+    foreign_manifest = _manifest(other_root)
+    foreign = build_fast_paper_runtime_state(
+        foreign_manifest,
+        cursor=None,
     )
     config.shadow_state_path.parent.mkdir(parents=True, exist_ok=True)
-    with pytest.raises(ValueError):
-        write_fast_paper_runtime_state(foreign, config.shadow_state_path)
+    write_fast_paper_runtime_state(foreign, config.shadow_state_path)
+
+    with pytest.raises(FastPaperShadowRuntimeError):
+        bootstrap_fast_paper_shadow_runtime(config)
