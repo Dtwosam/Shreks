@@ -209,7 +209,6 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
             checkpoint,
             market_positions=(),
             execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
-        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
         )
 
     wrong_position = FastPaperShadowMarketPosition(
@@ -255,7 +254,6 @@ def test_shadow_runtime_state_rejects_partial_or_noncanonical_identity(
             checkpoint,
             market_positions=(),
             execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
-        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
             last_processed_source_sequence=1,
         )
 
@@ -266,7 +264,6 @@ def test_shadow_runtime_state_rejects_partial_or_noncanonical_identity(
             checkpoint,
             market_positions=(),
             execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
-        execution_policy_fingerprint_sha256=EXECUTION_POLICY_FINGERPRINT,
             last_processed_source_sequence=1,
             last_processed_source_event_id="event-1",
             last_processed_decision_evidence_fingerprint_sha256="not-a-sha",
