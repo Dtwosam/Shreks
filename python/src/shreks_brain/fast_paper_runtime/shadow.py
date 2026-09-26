@@ -469,8 +469,11 @@ def write_fast_paper_shadow_decision_evidence(
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = _canonical(_document(evidence)) + "\n"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    descriptor = os.open(path, flags, 0o600)
+    descriptor = -1
+    created = False
     try:
+        descriptor = os.open(path, flags, 0o600)
+        created = True
         with os.fdopen(
             descriptor,
             "w",
@@ -481,10 +484,14 @@ def write_fast_paper_shadow_decision_evidence(
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-    finally:
+        os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
+    except Exception:
         if descriptor >= 0:
             os.close(descriptor)
-    os.chmod(path, 0o600)
+        if created:
+            path.unlink(missing_ok=True)
+        raise
 
 
 def read_fast_paper_shadow_decision_evidence(
@@ -1358,6 +1365,17 @@ def _execution_cost_bps(
         raise ValueError("unsupported shadow execution-cost direction")
     _require_non_negative_finite("execution_cost_bps", value)
     return value
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(
+        path,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+    )
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _optional_close(
