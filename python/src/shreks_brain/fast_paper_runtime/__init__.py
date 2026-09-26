@@ -31,6 +31,9 @@ from .shadow_buy_authority_source import (
     read_fast_paper_shadow_buy_authority_source_record,
     write_fast_paper_shadow_buy_authority_source_record,
 )
+from .shadow_buy_source_publisher import (
+    run_fast_paper_shadow_buy_source_publisher_cycle,
+)
 from .shadow_execution_input import (
     FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_NAME,
     FAST_PAPER_SHADOW_EXECUTION_POLICY_SCHEMA_VERSION,
@@ -253,6 +256,7 @@ __all__ = (
     "run_fast_paper_shadow_service_pending_buy_retry",
     "run_fast_paper_shadow_service_execution_cycle",
     "run_fast_paper_shadow_service_coordinated_cycle",
+    "run_fast_paper_shadow_buy_source_publisher_cycle",
     "run_fast_paper_shadow_open_source_publisher_cycle",
     "run_fast_paper_shadow_skip_source_publisher_cycle",
     "materialize_fast_paper_shadow_execution_evidence",
