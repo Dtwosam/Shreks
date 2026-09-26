@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import tempfile
 import time
 from typing import Any
 
@@ -467,30 +468,34 @@ def write_fast_paper_shadow_decision_evidence(
             "shadow decision evidence destination already exists"
         )
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = _canonical(_document(evidence)) + "\n"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    descriptor = -1
-    created = False
+    payload = (_canonical(_document(evidence)) + "\n").encode("utf-8")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.tmp-",
+        dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    published = False
     try:
-        descriptor = os.open(path, flags, 0o600)
-        created = True
-        with os.fdopen(
-            descriptor,
-            "w",
-            encoding="utf-8",
-            newline="",
-        ) as handle:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
             descriptor = -1
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+
+        os.link(temporary, path, follow_symlinks=False)
+        published = True
         os.chmod(path, 0o600)
+        _fsync_directory(path.parent)
+
+        temporary.unlink()
         _fsync_directory(path.parent)
     except Exception:
         if descriptor >= 0:
             os.close(descriptor)
-        if created:
+        if published:
             path.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
         raise
 
 
