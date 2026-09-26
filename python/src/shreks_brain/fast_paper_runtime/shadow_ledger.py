@@ -184,6 +184,16 @@ def initialize_fast_paper_shadow_ledger_database(
         raise ValueError(
             "shadow ledger database path must identify a regular file"
         )
+    if database.exists():
+        os.chmod(database, 0o600)
+    else:
+        descriptor = os.open(
+            database,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+        os.close(descriptor)
+        _fsync_directory(parent)
 
     connection = _connect(database)
     try:
