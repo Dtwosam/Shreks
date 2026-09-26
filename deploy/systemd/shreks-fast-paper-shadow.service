@@ -15,8 +15,8 @@ EnvironmentFile=/etc/shreks/fast-paper-shadow.env
 Environment=PYTHONDONTWRITEBYTECODE=1
 ExecStartPre=/usr/bin/test -d /var/lib/shreks/fast-paper-shadow
 ExecStartPre=/usr/bin/test -w /var/lib/shreks/fast-paper-shadow
-ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_service --preflight
-ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_service
+ExecStartPre=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_supervisor --preflight
+ExecStart=/opt/shreks/current/.venv/bin/python -m shreks_brain.fast_paper_runtime.shadow_supervisor
 Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s

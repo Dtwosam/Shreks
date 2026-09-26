@@ -7,8 +7,14 @@ from types import SimpleNamespace
 import pytest
 
 import shreks_brain.fast_paper_runtime.shadow_supervisor as supervisor
+from shreks_brain.fast_paper_runtime.shadow_service import (
+    FastPaperShadowServiceConfig,
+)
 from shreks_brain.fast_paper_runtime.shadow_service_coordinator import (
     FastPaperShadowServiceCoordinatorResult,
+)
+from shreks_brain.fast_paper_runtime.shadow_service_execution_bootstrap import (
+    FastPaperShadowServiceExecutionConfig,
 )
 
 
@@ -23,15 +29,21 @@ _ENV_EXAMPLE = (
 
 
 def _decision_config(tmp_path: Path):
-    return SimpleNamespace(
-        cycle_interval_seconds=2.0,
+    return FastPaperShadowServiceConfig(
+        manifest_path=(tmp_path / "manifest.json").resolve(),
+        policy_path=(tmp_path / "service-policy.json").resolve(),
         evidence_directory=(tmp_path / "decision").resolve(),
+        cycle_interval_seconds=2.0,
+        maximum_decisions=8,
     )
 
 
 def _execution_config(tmp_path: Path):
-    return SimpleNamespace(
+    return FastPaperShadowServiceExecutionConfig(
+        execution_policy_path=(tmp_path / "execution-policy.json").resolve(),
         source_directory=(tmp_path / "execution-sources").resolve(),
+        ledger_database_path=(tmp_path / "ledger.sqlite3").resolve(),
+        run_id="shadow-run-1",
     )
 
 
@@ -85,15 +97,23 @@ def test_supervisor_loads_existing_configs_and_source_directories(
     }
     captured: dict[str, object] = {}
 
+    def load_decision(supplied):
+        captured["decision_env"] = supplied
+        return decision
+
+    def load_execution(supplied):
+        captured["execution_env"] = supplied
+        return execution
+
     monkeypatch.setattr(
         supervisor,
         "load_fast_paper_shadow_service_config",
-        lambda supplied: captured.setdefault("decision_env", supplied) or decision,
+        load_decision,
     )
     monkeypatch.setattr(
         supervisor,
         "load_fast_paper_shadow_service_execution_config",
-        lambda supplied: captured.setdefault("execution_env", supplied) or execution,
+        load_execution,
     )
 
     config = supervisor.load_fast_paper_shadow_supervisor_config(env)
@@ -117,10 +137,14 @@ def test_supervisor_preflight_authenticates_both_bootstraps_without_cycle(
     execution = _execution_bootstrap()
     captured: dict[str, object] = {}
 
+    def bootstrap_decision(supplied):
+        captured["decision_config"] = supplied
+        return decision
+
     monkeypatch.setattr(
         supervisor,
         "bootstrap_fast_paper_shadow_service",
-        lambda supplied: captured.setdefault("decision_config", supplied) or decision,
+        bootstrap_decision,
     )
     monkeypatch.setattr(
         supervisor,
