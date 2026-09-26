@@ -126,6 +126,7 @@ class FastPaperShadowExecutionTransition:
     next_paper_state: FastPaperRuntimeState
     next_market_positions: tuple[FastPaperShadowMarketPosition, ...]
     next_pending_buy: FastPaperShadowPendingBuy | None
+    execution_policy_fingerprint_sha256: str
     last_processed_source_sequence: int | None
     last_processed_source_event_id: str | None
     last_processed_decision_evidence_fingerprint_sha256: str | None
@@ -181,6 +182,10 @@ class FastPaperShadowExecutionTransition:
             raise ValueError(
                 "next_pending_buy must be exact FastPaperShadowPendingBuy or None"
             )
+        _require_sha256(
+            "execution_policy_fingerprint_sha256",
+            self.execution_policy_fingerprint_sha256,
+        )
         identity = (
             self.last_processed_source_sequence,
             self.last_processed_source_event_id,
@@ -262,6 +267,9 @@ def execute_fast_paper_shadow_decision(
             paper_state=paper_checkpoint.state,
             market_positions=shadow_state.market_positions,
             pending_buy=shadow_state.pending_buy,
+            execution_policy_fingerprint_sha256=(
+                shadow_state.execution_policy_fingerprint_sha256
+            ),
             last_sequence=shadow_state.last_processed_source_sequence,
             last_event_id=shadow_state.last_processed_source_event_id,
             last_fingerprint=(
@@ -310,6 +318,9 @@ def execute_fast_paper_shadow_decision(
             source,
             next_state,
             shadow_state.market_positions,
+            execution_policy_fingerprint_sha256=(
+                shadow_state.execution_policy_fingerprint_sha256
+            ),
             pending_buy=None,
         )
 
@@ -431,6 +442,9 @@ def retry_fast_paper_shadow_pending_buy(
         paper_state=next_state,
         market_positions=_canonical_mappings(tuple(mappings)),
         pending_buy=next_pending,
+        execution_policy_fingerprint_sha256=(
+            shadow_state.execution_policy_fingerprint_sha256
+        ),
         last_sequence=shadow_state.last_processed_source_sequence,
         last_event_id=shadow_state.last_processed_source_event_id,
         last_fingerprint=(
@@ -458,6 +472,9 @@ def build_fast_paper_shadow_runtime_state_from_transition(
         binding,
         paper_checkpoint,
         market_positions=transition.next_market_positions,
+        execution_policy_fingerprint_sha256=(
+            transition.execution_policy_fingerprint_sha256
+        ),
         pending_buy=transition.next_pending_buy,
         last_processed_source_sequence=(
             transition.last_processed_source_sequence
@@ -568,6 +585,9 @@ def _execute_fresh_buy(
         source,
         next_state,
         _canonical_mappings(tuple(mappings)),
+        execution_policy_fingerprint_sha256=(
+            shadow_state.execution_policy_fingerprint_sha256
+        ),
         pending_buy=pending,
         buy_result=result,
     )
@@ -680,6 +700,9 @@ def _execute_position_action(
         source,
         next_state,
         _canonical_mappings(tuple(mappings.values())),
+        execution_policy_fingerprint_sha256=(
+            shadow_state.execution_policy_fingerprint_sha256
+        ),
         pending_buy=None,
         position_result=result,
     )
@@ -690,6 +713,7 @@ def _fresh_transition(
     paper_state,
     market_positions,
     *,
+    execution_policy_fingerprint_sha256,
     pending_buy,
     buy_result=None,
     position_result=None,
@@ -703,6 +727,9 @@ def _fresh_transition(
         paper_state=paper_state,
         market_positions=market_positions,
         pending_buy=pending_buy,
+        execution_policy_fingerprint_sha256=(
+            execution_policy_fingerprint_sha256
+        ),
         last_sequence=evidence.source_sequence,
         last_event_id=evidence.source_event_id,
         last_fingerprint=evidence.evidence_fingerprint_sha256,
@@ -718,6 +745,7 @@ def _transition(
     paper_state,
     market_positions,
     pending_buy,
+    execution_policy_fingerprint_sha256,
     last_sequence,
     last_event_id,
     last_fingerprint,
@@ -731,6 +759,9 @@ def _transition(
         next_paper_state=paper_state,
         next_market_positions=_canonical_mappings(market_positions),
         next_pending_buy=pending_buy,
+        execution_policy_fingerprint_sha256=(
+            execution_policy_fingerprint_sha256
+        ),
         last_processed_source_sequence=last_sequence,
         last_processed_source_event_id=last_event_id,
         last_processed_decision_evidence_fingerprint_sha256=last_fingerprint,
@@ -780,6 +811,13 @@ def _require_authority_bindings(
     if shadow_state.binding_fingerprint_sha256 != binding.binding_fingerprint_sha256:
         raise ValueError(
             "shadow executor learned posture binding fingerprint mismatch"
+        )
+    if (
+        shadow_state.execution_policy_fingerprint_sha256
+        != execution_policy.policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "shadow executor execution policy fingerprint conflicts with durable run state"
         )
     if checkpoint.state.fill_policy != execution_policy.fill_policy:
         raise ValueError(
