@@ -14,7 +14,10 @@ from shreks_brain.risk import RiskContext
 
 from .models import FastPaperRuntimeManifest
 from .shadow import FastPaperShadowQuoteEvidence
-from .shadow_execution_input import FastPaperShadowExecutionPolicy
+from .shadow_execution_input import (
+    FastPaperShadowExecutionPolicy,
+    build_fast_paper_shadow_execution_policy,
+)
 from .shadow_execution_source import (
     _canonical_json,
     _decode_optional_float_tag,
@@ -36,6 +39,7 @@ from .shadow_executor import (
 )
 from .shadow_ledger import (
     FastPaperShadowLedgerBinding,
+    build_fast_paper_shadow_ledger_binding,
     load_latest_fast_paper_shadow_ledger_checkpoint,
 )
 from .shadow_runtime_state import (
@@ -210,6 +214,36 @@ def build_fast_paper_shadow_pending_buy_retry_source_record(
         paper_checkpoint,
         runtime_state,
     )
+    return _build_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+        retry_input,
+        risk_day_started_at_unix_ms=risk_day_started_at_unix_ms,
+        source_observed_at_unix_ms=source_observed_at_unix_ms,
+    )
+
+
+def _build_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    runtime_state: FastPaperShadowRuntimeState,
+    retry_input: FastPaperShadowPendingBuyRetryInput,
+    *,
+    risk_day_started_at_unix_ms: int,
+    source_observed_at_unix_ms: int,
+) -> FastPaperShadowPendingBuyRetrySourceRecord:
+    _require_static_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+    )
     if type(retry_input) is not FastPaperShadowPendingBuyRetryInput:
         raise ValueError(
             "retry_input must be exact FastPaperShadowPendingBuyRetryInput"
@@ -373,6 +407,49 @@ def read_fast_paper_shadow_pending_buy_retry_source_record(
         paper_checkpoint,
         runtime_state,
     )
+    return _read_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+        directory,
+    )
+
+
+def read_fast_paper_shadow_pending_buy_retry_source_record_for_checkpoint(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    runtime_state: FastPaperShadowRuntimeState,
+    directory: str | Path,
+) -> FastPaperShadowPendingBuyRetrySourceRecord:
+    _require_static_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+    )
+    return _read_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+        directory,
+    )
+
+
+def _read_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    runtime_state: FastPaperShadowRuntimeState,
+    directory: str | Path,
+) -> FastPaperShadowPendingBuyRetrySourceRecord:
     _approval, pending = _require_pending_pair(
         paper_checkpoint,
         runtime_state,
@@ -465,7 +542,7 @@ def read_fast_paper_shadow_pending_buy_retry_source_record(
             f"shadow pending BUY retry source record content is incompatible: {exc}"
         ) from exc
 
-    expected = build_fast_paper_shadow_pending_buy_retry_source_record(
+    expected = _build_fast_paper_shadow_pending_buy_retry_source_record_for_pair(
         manifest,
         binding,
         execution_policy,
@@ -493,6 +570,64 @@ def _require_exact_latest_pair(
     paper_checkpoint: FastPaperCheckpointRecord,
     runtime_state: FastPaperShadowRuntimeState,
 ) -> None:
+    _require_static_pair(
+        manifest,
+        binding,
+        execution_policy,
+        paper_checkpoint,
+        runtime_state,
+    )
+    latest_checkpoint = load_latest_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+    )
+    if latest_checkpoint is None or latest_checkpoint != paper_checkpoint:
+        raise ValueError(
+            "shadow pending BUY retry source requires exact latest paper checkpoint"
+        )
+    latest_runtime = load_latest_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+    )
+    if latest_runtime is None or latest_runtime != runtime_state:
+        raise ValueError(
+            "shadow pending BUY retry source requires exact latest runtime state"
+        )
+    if (
+        runtime_state.binding_fingerprint_sha256
+        != binding.binding_fingerprint_sha256
+    ):
+        raise ValueError(
+            "shadow pending BUY retry source runtime binding fingerprint mismatch"
+        )
+    if (
+        runtime_state.paper_checkpoint_sequence
+        != paper_checkpoint.sequence
+        or runtime_state.paper_checkpoint_payload_sha256
+        != paper_checkpoint.payload_sha256
+    ):
+        raise ValueError(
+            "shadow pending BUY retry source checkpoint/runtime pair is torn"
+        )
+    if (
+        runtime_state.execution_policy_fingerprint_sha256
+        != execution_policy.policy_fingerprint_sha256
+    ):
+        raise ValueError(
+            "shadow pending BUY retry source execution policy fingerprint mismatch"
+        )
+
+
+
+
+
+def _require_static_pair(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    runtime_state: FastPaperShadowRuntimeState,
+) -> None:
     if type(manifest) is not FastPaperRuntimeManifest:
         raise ValueError("manifest must be exact FastPaperRuntimeManifest")
     if type(binding) is not FastPaperShadowLedgerBinding:
@@ -512,21 +647,24 @@ def _require_exact_latest_pair(
             "runtime_state must be exact FastPaperShadowRuntimeState"
         )
 
-    latest_checkpoint = load_latest_fast_paper_shadow_ledger_checkpoint(
+    expected_binding = build_fast_paper_shadow_ledger_binding(
         manifest,
-        binding,
+        run_id=binding.run_id,
+        database_path=binding.database_path,
     )
-    if latest_checkpoint is None or latest_checkpoint != paper_checkpoint:
+    if binding != expected_binding:
         raise ValueError(
-            "shadow pending BUY retry source requires exact latest paper checkpoint"
+            "shadow pending BUY retry source ledger binding does not match runtime manifest"
         )
-    latest_runtime = load_latest_fast_paper_shadow_runtime_state(
+    expected_policy = build_fast_paper_shadow_execution_policy(
         manifest,
-        binding,
+        risk_policy=execution_policy.risk_policy,
+        fill_policy=execution_policy.fill_policy,
+        position_action_policy=execution_policy.position_action_policy,
     )
-    if latest_runtime is None or latest_runtime != runtime_state:
+    if execution_policy != expected_policy:
         raise ValueError(
-            "shadow pending BUY retry source requires exact latest runtime state"
+            "shadow pending BUY retry source execution policy does not match runtime manifest"
         )
     if (
         runtime_state.binding_fingerprint_sha256
