@@ -226,6 +226,47 @@ def execute_fast_paper_shadow_decision(
         paper_checkpoint,
         shadow_state,
     )
+    return _execute_fast_paper_shadow_decision_from_authenticated_pair(
+        manifest,
+        execution_policy,
+        paper_checkpoint,
+        shadow_state,
+        source,
+    )
+
+
+def reconstruct_fast_paper_shadow_decision(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+    source: FastPaperShadowExecutionInput,
+) -> FastPaperShadowExecutionTransition:
+    """Reconstruct one authenticated historical PAPER transition without storage mutation."""
+    _require_static_authority_bindings(
+        manifest,
+        execution_policy,
+        binding,
+        paper_checkpoint,
+        shadow_state,
+    )
+    return _execute_fast_paper_shadow_decision_from_authenticated_pair(
+        manifest,
+        execution_policy,
+        paper_checkpoint,
+        shadow_state,
+        source,
+    )
+
+
+def _execute_fast_paper_shadow_decision_from_authenticated_pair(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+    source: FastPaperShadowExecutionInput,
+) -> FastPaperShadowExecutionTransition:
     if paper_checkpoint.state.pending_buy is not None:
         raise ValueError(
             "pending BUY must resolve through retry before another learned decision is consumed"
@@ -345,6 +386,7 @@ def execute_fast_paper_shadow_decision(
         shadow_state,
         assessment,
     )
+
 
 
 def retry_fast_paper_shadow_pending_buy(
@@ -811,6 +853,38 @@ def _require_authority_bindings(
     checkpoint: FastPaperCheckpointRecord,
     shadow_state: FastPaperShadowRuntimeState,
 ) -> None:
+    _require_static_authority_bindings(
+        manifest,
+        execution_policy,
+        binding,
+        checkpoint,
+        shadow_state,
+    )
+    latest_checkpoint = load_latest_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+    )
+    if latest_checkpoint is None or latest_checkpoint != checkpoint:
+        raise ValueError(
+            "shadow executor requires the exact latest durable paper checkpoint"
+        )
+    latest_shadow_state = load_latest_fast_paper_shadow_runtime_state(
+        manifest,
+        binding,
+    )
+    if latest_shadow_state is None or latest_shadow_state != shadow_state:
+        raise ValueError(
+            "shadow executor requires the exact latest durable learned posture state"
+        )
+
+
+def _require_static_authority_bindings(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
+    checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+) -> None:
     if type(manifest) is not FastPaperRuntimeManifest:
         raise ValueError(
             "manifest must be exact FastPaperRuntimeManifest"
@@ -869,22 +943,6 @@ def _require_authority_bindings(
     if checkpoint.run_id != binding.run_id:
         raise ValueError(
             "shadow executor paper checkpoint run_id does not match ledger binding"
-        )
-    latest_checkpoint = load_latest_fast_paper_shadow_ledger_checkpoint(
-        manifest,
-        binding,
-    )
-    if latest_checkpoint is None or latest_checkpoint != checkpoint:
-        raise ValueError(
-            "shadow executor requires the exact latest durable paper checkpoint"
-        )
-    latest_shadow_state = load_latest_fast_paper_shadow_runtime_state(
-        manifest,
-        binding,
-    )
-    if latest_shadow_state is None or latest_shadow_state != shadow_state:
-        raise ValueError(
-            "shadow executor requires the exact latest durable learned posture state"
         )
     _require_checkpoint_pair(
         checkpoint,

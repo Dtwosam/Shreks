@@ -15,6 +15,7 @@ from shreks_brain.paper_validation import FastPaperCheckpointRecord
 from .models import FastPaperRuntimeManifest
 from .shadow_ledger import (
     FastPaperShadowLedgerBinding,
+    load_fast_paper_shadow_ledger_checkpoint_by_sequence,
     load_latest_fast_paper_shadow_ledger_checkpoint,
 )
 
@@ -529,6 +530,113 @@ def save_fast_paper_shadow_runtime_state(
         connection.close()
 
     os.chmod(database, 0o600)
+    return state
+
+
+def load_fast_paper_shadow_runtime_state_by_checkpoint_sequence(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    *,
+    sequence: int,
+) -> FastPaperShadowRuntimeState | None:
+    if (
+        isinstance(sequence, bool)
+        or not isinstance(sequence, int)
+        or sequence < 0
+    ):
+        raise ValueError(
+            "sequence must be a non-negative integer"
+        )
+    checkpoint = load_fast_paper_shadow_ledger_checkpoint_by_sequence(
+        manifest,
+        binding,
+        sequence=sequence,
+    )
+    if checkpoint is None:
+        return None
+
+    database = _database_path(binding)
+    connection = _connect(database)
+    try:
+        _require_table(connection)
+        row = connection.execute(
+            f"""
+            SELECT
+                paper_checkpoint_sequence,
+                paper_checkpoint_payload_sha256,
+                state_schema_version,
+                created_at_unix_ms,
+                payload_sha256,
+                payload_json
+            FROM {_TABLE_NAME}
+            WHERE run_id = ? AND paper_checkpoint_sequence = ?
+            LIMIT 1
+            """,
+            (binding.run_id, sequence),
+        ).fetchone()
+    finally:
+        connection.close()
+
+    if row is None:
+        return None
+
+    stored_sequence = row[0]
+    checkpoint_sha = row[1]
+    schema_version = row[2]
+    created_at_unix_ms = row[3]
+    payload_sha256 = row[4]
+    payload = row[5]
+    _require_non_negative_int(
+        "stored paper checkpoint sequence",
+        stored_sequence,
+    )
+    _require_sha256(
+        "stored paper checkpoint payload SHA-256",
+        checkpoint_sha,
+    )
+    if schema_version != FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION:
+        raise ValueError(
+            "stored shadow runtime state schema version is incompatible"
+        )
+    _require_non_negative_int(
+        "stored shadow runtime creation time",
+        created_at_unix_ms,
+    )
+    _require_sha256(
+        "stored shadow runtime payload SHA-256",
+        payload_sha256,
+    )
+    if not isinstance(payload, str):
+        raise ValueError(
+            "stored shadow runtime state payload must be text"
+        )
+    if (
+        hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        != payload_sha256
+    ):
+        raise ValueError(
+            "shadow runtime state payload checksum mismatch"
+        )
+
+    state = _decode_state(payload)
+    if (
+        stored_sequence != sequence
+        or state.paper_checkpoint_sequence != stored_sequence
+        or state.paper_checkpoint_payload_sha256 != checkpoint_sha
+        or state.schema_version != schema_version
+    ):
+        raise ValueError(
+            "shadow runtime state row metadata does not match payload"
+        )
+    if created_at_unix_ms < checkpoint.state_as_of_unix_ms:
+        raise ValueError(
+            "shadow runtime state creation time precedes paper checkpoint state"
+        )
+    _validate_state_against_checkpoint(
+        state,
+        binding,
+        checkpoint,
+    )
     return state
 
 
