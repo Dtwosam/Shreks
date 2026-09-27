@@ -455,8 +455,8 @@ def _headroom_telemetry(count: int = 25) -> dict[str, object]:
 def _advance_proc_resources(paths, pid: int) -> None:
     pid_root = paths.proc_root / str(pid)
     fields = ["0"] * 50
-    fields[11] = "250"
-    fields[12] = "350"
+    fields[10] = "250"
+    fields[11] = "300"
     (pid_root / "stat").write_text(
         f"{pid} (python) S " + " ".join(fields) + "\n",
         encoding="utf-8",
