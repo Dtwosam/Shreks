@@ -805,18 +805,26 @@ def _verify_restart_monotonicity(
         raise FastPaperShadowPhysicalCommissionError(
             "shadow processed source sequence regressed across restart"
         )
+    if (
+        after.checkpoint_sequence == before.checkpoint_sequence
+        and after.checkpoint_payload_sha256
+        != before.checkpoint_payload_sha256
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "shadow checkpoint payload changed without sequence advancement"
+        )
     if len(after.market_position_ids) != len(set(after.market_position_ids)):
         raise FastPaperShadowPhysicalCommissionError(
             "shadow market position identities duplicated after restart"
         )
     if (
-        before.pending_buy_fingerprint_sha256 is not None
+        before.pending_buy_fingerprint_sha256
+        != after.pending_buy_fingerprint_sha256
         and after_source == before_source
-        and after.pending_buy_fingerprint_sha256
-        != before.pending_buy_fingerprint_sha256
+        and after.checkpoint_sequence == before.checkpoint_sequence
     ):
         raise FastPaperShadowPhysicalCommissionError(
-            "pending BUY identity changed without durable source advancement"
+            "pending BUY identity changed without durable advancement"
         )
 
 
