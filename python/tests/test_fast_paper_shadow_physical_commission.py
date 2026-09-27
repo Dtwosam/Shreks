@@ -47,6 +47,8 @@ def _layout(tmp_path: Path) -> physical.FastPaperShadowPhysicalCommissionPaths:
 
     proc = tmp_path / "proc"
     proc.mkdir()
+    root_private = tmp_path / "root"
+    root_private.mkdir()
 
     return physical.FastPaperShadowPhysicalCommissionPaths(
         current_link=current,
@@ -54,7 +56,8 @@ def _layout(tmp_path: Path) -> physical.FastPaperShadowPhysicalCommissionPaths:
         config_destination=config,
         target_path=target,
         shadow_root=shadow,
-        commissioning_root=shadow / "commissioning",
+        commissioning_root=root_private
+        / "shreks-fast-paper-shadow-commissioning",
         proc_root=proc,
     )
 
