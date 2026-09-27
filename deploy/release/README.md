@@ -123,6 +123,54 @@ A later trusted-administrator commissioning step must authenticate the exact act
 
 This transport grants no legacy PAPER replacement, provider-network expansion, wallet/signing authority, transaction submission, promotion authority, or LIVE enablement.
 
+### Install the dormant Fast PAPER shadow unit
+
+Only after an immutable release containing the commissioning CLI is active and
+the normal production PAPER verifier has succeeded may a trusted administrator
+install the dormant learned-shadow unit.
+
+Resolve the active release once and bind both commands to that exact SHA:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-commissioning" \
+  preflight "$CURRENT_SHA"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-commissioning" \
+  install "$CURRENT_SHA"
+```
+
+The preflight and installer independently authenticate the exact current
+release, release manifest, manifest-hashed wheel, nested commissioning
+manifest, and sealed shadow-unit bytes. The installer publishes only:
+
+```text
+/etc/systemd/system/shreks-fast-paper-shadow.service
+```
+
+with root ownership and mode `0644`. Existing exact bytes are idempotent;
+different bytes, symlinks, unsafe destination metadata, release drift, wheel
+drift, or a unit that gains target/campaign coupling fail closed.
+
+This ceremony deliberately does **not** run a systemd reload or service
+activation operation. It does not create
+`/etc/shreks/fast-paper-shadow.env`, does not create the isolated shadow
+ledger/state tree, and does not alter `shreks.target`. After installation the
+unit is still dormant. Protected configuration/state provisioning and
+physical-host acceptance are separate later commissioning steps.
+
+The command grants no production PAPER cutover, provider-network expansion,
+wallet/signing authority, transaction submission, or LIVE enablement.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
