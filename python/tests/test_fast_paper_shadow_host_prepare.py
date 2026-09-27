@@ -79,7 +79,7 @@ def _layout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     runtime.write_text("#!/bin/sh\n", encoding="utf-8")
     runtime.chmod(0o755)
     current = tmp_path / "opt" / "shreks" / "current"
-    current.parent.mkdir(parents=True)
+    current.parent.mkdir(parents=True, exist_ok=True)
     current.symlink_to(release)
 
     etc_shreks = tmp_path / "etc" / "shreks"
