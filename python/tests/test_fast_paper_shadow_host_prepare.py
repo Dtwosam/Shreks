@@ -261,6 +261,168 @@ def test_environment_requires_exact_key_set_and_production_paths(
         )
 
 
+def _authority_candidate(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
+    root = tmp_path / "authority-candidate"
+    root.mkdir()
+    payloads = {
+        "fast-paper-runtime-manifest.json": b"manifest\\n",
+        "fast-paper-shadow-service-policy.json": b"service\\n",
+        "fast-paper-shadow-execution-policy.json": b"execution\\n",
+        "fast-paper-shadow-buy-writer-policy.json": b"buy-writer\\n",
+    }
+    for name, payload in payloads.items():
+        (root / name).write_bytes(payload)
+    return root, payloads
+
+
+def test_authority_bundle_composes_existing_canonical_binding_readers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, payloads = _authority_candidate(tmp_path)
+    manifest = SimpleNamespace(
+        release_source_sha=_SHA,
+        route_evidence_version=7,
+        manifest_fingerprint_sha256="c" * 64,
+    )
+    service_policy = SimpleNamespace(route_evidence_version=7)
+    execution_policy = object()
+    buy_writer_policy = object()
+    observed: list[str] = []
+
+    monkeypatch.setattr(
+        host_prepare,
+        "read_fast_paper_runtime_manifest",
+        lambda path: observed.append(Path(path).name) or manifest,
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "verify_fast_paper_runtime_bindings",
+        lambda supplied: observed.append("runtime-bindings")
+        if supplied is manifest
+        else pytest.fail("wrong manifest"),
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "read_fast_paper_shadow_service_policy",
+        lambda path: observed.append(Path(path).name) or service_policy,
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "read_fast_paper_shadow_execution_policy",
+        lambda supplied, path: (
+            observed.append(Path(path).name)
+            or execution_policy
+            if supplied is manifest
+            else pytest.fail("wrong execution manifest")
+        ),
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "read_fast_paper_shadow_buy_writer_policy",
+        lambda path: observed.append(Path(path).name) or buy_writer_policy,
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "verify_fast_paper_shadow_buy_writer_policy_bindings",
+        lambda supplied_manifest, supplied_service, supplied_buy: (
+            observed.append("buy-bindings")
+            if (
+                supplied_manifest is manifest
+                and supplied_service is service_policy
+                and supplied_buy is buy_writer_policy
+            )
+            else pytest.fail("wrong buy binding inputs")
+        ),
+    )
+
+    bundle = host_prepare._authenticate_authority_bundle(
+        root,
+        expected_release_source_sha=_SHA,
+    )
+    assert bundle.payloads == payloads
+    assert bundle.manifest_fingerprint_sha256 == "c" * 64
+    assert observed == [
+        "fast-paper-runtime-manifest.json",
+        "runtime-bindings",
+        "fast-paper-shadow-service-policy.json",
+        "fast-paper-shadow-execution-policy.json",
+        "fast-paper-shadow-buy-writer-policy.json",
+        "buy-bindings",
+    ]
+
+
+def test_authority_preflight_and_install_are_fixed_no_replace_and_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    candidate, payloads = _authority_candidate(tmp_path)
+    bundle = SimpleNamespace(
+        payloads=payloads,
+        manifest_fingerprint_sha256="d" * 64,
+        bundle_fingerprint_sha256="e" * 64,
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "_authenticate_authority_bundle",
+        lambda *_args, **_kwargs: bundle,
+    )
+
+    preflight = host_prepare.preflight_fast_paper_shadow_host_authority(
+        expected_release_source_sha=_SHA,
+        candidate_authority_directory=candidate,
+        paths=setup["paths"],
+        runtime_executable=setup["runtime"],
+        service_uid=_UID,
+        service_gid=_GID,
+    )
+    assert preflight["state"] == "READY_TO_INSTALL_AUTHORITY"
+
+    receipt = host_prepare.install_fast_paper_shadow_host_authority(
+        expected_release_source_sha=_SHA,
+        candidate_authority_directory=candidate,
+        paths=setup["paths"],
+        runtime_executable=setup["runtime"],
+        service_uid=_UID,
+        service_gid=_GID,
+    )
+    assert receipt["state"] == "AUTHORITY_INSTALLED"
+    for name, payload in payloads.items():
+        destination = setup["config"].parent / name
+        assert destination.read_bytes() == payload
+        metadata = destination.stat()
+        assert metadata.st_uid == _UID
+        assert metadata.st_gid == _GID
+        assert stat.S_IMODE(metadata.st_mode) == 0o640
+
+    again = host_prepare.install_fast_paper_shadow_host_authority(
+        expected_release_source_sha=_SHA,
+        candidate_authority_directory=candidate,
+        paths=setup["paths"],
+        runtime_executable=setup["runtime"],
+        service_uid=_UID,
+        service_gid=_GID,
+    )
+    assert again["state"] == "AUTHORITY_ALREADY_INSTALLED"
+
+    destination = setup["config"].parent / "fast-paper-shadow-service-policy.json"
+    destination.write_bytes(b"drift")
+    destination.chmod(0o640)
+    with pytest.raises(
+        host_prepare.FastPaperShadowHostPrepareError,
+        match="different bytes",
+    ):
+        host_prepare.preflight_fast_paper_shadow_host_authority(
+            expected_release_source_sha=_SHA,
+            candidate_authority_directory=candidate,
+            paths=setup["paths"],
+            runtime_executable=setup["runtime"],
+            service_uid=_UID,
+            service_gid=_GID,
+        )
+
+
 def test_config_preflight_and_install_are_exact_no_replace_and_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
