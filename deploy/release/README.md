@@ -285,6 +285,101 @@ Do **not** run a daemon reload or activate the unit from this ceremony. Systemd
 load/start plus bounded physical shadow observation is the next separately
 authorized commissioning slice.
 
+### Physically commission the detached Fast PAPER shadow service
+
+Run this ceremony only from a trusted administrator session after the protected
+host-preparation command reports
+`READY_FOR_DORMANT_SYSTEMD_LOAD_REVIEW` for the exact active release.
+
+The normal `shreks-deploy` account is intentionally **not** granted this
+authority. Do not widen `/etc/sudoers.d/shreks-release-manager`; its only
+passwordless root command remains the verified release-manager install shape.
+
+Resolve and verify the exact active release:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+[[ "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 2
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-physical-commission" \
+  preflight "$CURRENT_SHA"
+```
+
+The first physical activation is one explicit detached start:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-physical-commission" \
+  activate "$CURRENT_SHA" --observe-seconds 60
+```
+
+That command is the bounded mutation boundary. It performs one
+`systemctl daemon-reload` followed by one
+`systemctl start shreks-fast-paper-shadow.service`, then requires the service
+to remain active, detached, non-enabled, exact-release-bound, and healthy for
+the requested observation window.
+
+It does **not** enable the unit and does not add it to `shreks.target`.
+
+A successful activation writes the canonical root-private receipt:
+
+```text
+/root/shreks-fast-paper-shadow-commissioning/activation-<release-sha>.json
+```
+
+The receipt directory is outside the service-writable shadow tree so the
+`shreks` service identity cannot rename or remove the administrator evidence.
+
+Additional read-only observation can be collected without changing service
+state:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-physical-commission" \
+  observe "$CURRENT_SHA" --observe-seconds 300
+```
+
+The observation checks exact process/release provenance, stable PID and
+automatic-restart counter, advancing canonical supervisor cycles, CPU/RSS,
+shadow-storage growth, and the private network namespace. A short healthy
+window does not require a BUY or fill; it requires the supervised learned loop
+itself to keep advancing.
+
+After activation is healthy, run the separately explicit restart reconstruction
+proof once:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-physical-commission" \
+  restart-proof "$CURRENT_SHA" --observe-seconds 60
+```
+
+This performs exactly one manual restart, requires a new MainPID and systemd
+InvocationID, requires the automatic `NRestarts` counter not to increase, then
+re-authenticates the durable isolated ledger/runtime state and rejects any
+checkpoint/source-sequence regression.
+
+A successful restart proof writes:
+
+```text
+/root/shreks-fast-paper-shadow-commissioning/restart-<release-sha>.json
+```
+
+Both successful receipts retain:
+
+```text
+shadow_enable_authority=NOT_GRANTED
+production_paper_cutover=NOT_GRANTED
+authoritative_paper_runtime=LEGACY_UNCHANGED
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+Do not use `systemctl enable`, do not add the shadow unit to
+`shreks.target`, and do not stop the legacy PAPER campaign as part of this
+ceremony. Production PAPER cutover remains a later explicit gate after real
+shadow evidence is accumulated and reviewed.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
