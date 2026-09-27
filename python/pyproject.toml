@@ -50,6 +50,7 @@ shreks-fast-paper-shadow-commissioning = "shreks_brain.fast_paper_shadow_commiss
 shreks-fast-paper-shadow-host-prepare = "shreks_brain.fast_paper_shadow_host_prepare:main"
 shreks-fast-paper-shadow-physical-commission = "shreks_brain.fast_paper_shadow_physical_commission:main"
 shreks-fast-paper-shadow-decision-telemetry = "shreks_brain.fast_paper_shadow_decision_telemetry:main"
+shreks-fast-paper-shadow-outcome-telemetry = "shreks_brain.fast_paper_shadow_outcome_telemetry:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
