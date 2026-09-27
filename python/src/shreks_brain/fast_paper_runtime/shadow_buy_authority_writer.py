@@ -45,7 +45,9 @@ def run_fast_paper_shadow_buy_authority_writer_cycle(
     regime_policy: RegimePolicy,
     safety_policy: SafetyPolicy,
     safety_probe_identity: ObserverSafetyProbeIdentity,
-    execution_economics_policy: FastDeterministicComparisonExecutionPolicy,
+    execution_economics_policies: tuple[
+        FastDeterministicComparisonExecutionPolicy, ...
+    ],
     operator_risk_control_path: str | Path,
     entry_authority_binary_path: str | Path,
     day_started_at_unix_ms: int,
@@ -70,6 +72,10 @@ def run_fast_paper_shadow_buy_authority_writer_cycle(
     _require_bootstrap_manifest_binding(
         manifest,
         execution_bootstrap,
+    )
+    economics_by_horizon = _execution_economics_by_horizon(
+        manifest,
+        execution_economics_policies,
     )
     decision_root = _require_directory(
         decision_evidence_directory,
@@ -97,6 +103,19 @@ def run_fast_paper_shadow_buy_authority_writer_cycle(
         raise ValueError(
             "BUY authority writer requires FLAT learned posture"
         )
+    selected_horizon = evidence.decision.selected_horizon_ms
+    if selected_horizon is None:
+        raise ValueError(
+            "BUY authority writer learned BUY requires selected horizon"
+        )
+    try:
+        execution_economics_policy = economics_by_horizon[
+            selected_horizon
+        ]
+    except KeyError as exc:
+        raise ValueError(
+            "BUY authority writer learned horizon lacks exact economics policy"
+        ) from exc
 
     authority_path = authority_root / (
         f"{evidence.evidence_fingerprint_sha256}.json"
@@ -214,6 +233,40 @@ def run_fast_paper_shadow_buy_authority_writer_cycle(
         return 0
     return 1
 
+
+
+
+def _execution_economics_by_horizon(
+    manifest: FastPaperRuntimeManifest,
+    policies: tuple[FastDeterministicComparisonExecutionPolicy, ...],
+) -> dict[int, FastDeterministicComparisonExecutionPolicy]:
+    if not isinstance(policies, tuple) or not policies:
+        raise ValueError(
+            "BUY authority writer execution economics policies must be a non-empty tuple"
+        )
+    by_horizon: dict[int, FastDeterministicComparisonExecutionPolicy] = {}
+    for policy in policies:
+        if type(policy) is not FastDeterministicComparisonExecutionPolicy:
+            raise ValueError(
+                "BUY authority writer execution economics policies must contain "
+                "exact FastDeterministicComparisonExecutionPolicy values"
+            )
+        if policy.horizon_ms in by_horizon:
+            raise ValueError(
+                "BUY authority writer execution economics contains duplicate horizon"
+            )
+        by_horizon[policy.horizon_ms] = policy
+
+    expected = set(manifest.action_policy.horizons_ms)
+    actual = set(by_horizon)
+    if actual != expected:
+        missing = sorted(expected.difference(actual))
+        extra = sorted(actual.difference(expected))
+        raise ValueError(
+            "BUY authority writer execution economics horizon coverage mismatch; "
+            f"missing={missing}, extra={extra}"
+        )
+    return by_horizon
 
 def _require_directory(
     value: str | Path,
