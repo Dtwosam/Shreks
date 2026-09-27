@@ -419,6 +419,10 @@ def retry_fast_paper_shadow_pending_buy(
                 current_exposure_fraction=(
                     pending.target_exposure_fraction
                 ),
+                current_base_quantity_raw=_raw_output_amount(
+                    retry.quote,
+                    context="filled pending BUY retry",
+                ),
             )
         )
 
@@ -566,6 +570,10 @@ def _execute_fresh_buy(
                 current_exposure_fraction=(
                     source.decision_evidence.decision.target_exposure_fraction
                 ),
+                current_base_quantity_raw=_raw_output_amount(
+                    source.decision_evidence.entry_quote,
+                    context="filled learned BUY",
+                ),
             )
         )
 
@@ -618,13 +626,21 @@ def _execute_position_action(
         base_state,
         mapping.position_id,
     )
-    quote = _position_execution_quote_evidence(
+    quote, raw_quote = _position_execution_quote_evidence(
         source,
         point.quote,
         action_state,
         position,
         mapping.current_exposure_fraction,
     )
+    if (
+        _effective_position_action_is_sell(action_state, source)
+        and raw_quote.input_amount_raw
+        != mapping.current_base_quantity_raw
+    ):
+        raise ValueError(
+            "SELL raw quote input must equal exact durable raw inventory"
+        )
     target_quantity = _position_exit_quantity(
         source,
         position,
@@ -665,7 +681,26 @@ def _execute_position_action(
         states[position.position_id] = result.next_state
         if result.outcome is FastPaperPositionOutcome.REDUCED:
             after = _open_position(ledger, position.position_id)
+            raw_exit = raw_quote.input_amount_raw
+            if (
+                raw_exit <= 0
+                or raw_exit >= mapping.current_base_quantity_raw
+            ):
+                raise ValueError(
+                    "REDUCE raw quote input must be positive and below durable raw inventory"
+                )
+            next_raw = mapping.current_base_quantity_raw - raw_exit
             ratio = after.quantity / position.quantity
+            raw_ratio = next_raw / mapping.current_base_quantity_raw
+            if not math.isclose(
+                raw_ratio,
+                ratio,
+                rel_tol=_REL_TOL,
+                abs_tol=_ABS_TOL,
+            ):
+                raise ValueError(
+                    "REDUCE raw remaining inventory conflicts with authoritative ledger quantity ratio"
+                )
             exposure = mapping.current_exposure_fraction * ratio
             if (
                 not math.isfinite(exposure)
@@ -680,6 +715,7 @@ def _execute_position_action(
                 position_id=mapping.position_id,
                 mint=mapping.mint,
                 current_exposure_fraction=exposure,
+                current_base_quantity_raw=next_raw,
             )
 
     next_state = _paper_state(
@@ -1009,18 +1045,24 @@ def _position_execution_quote_evidence(
     action_state,
     position: PaperPosition,
     current_exposure: float,
-) -> FastCampaignPaperQuoteEvidence:
+) -> tuple[FastCampaignPaperQuoteEvidence, FastPaperShadowQuoteEvidence]:
     pending = action_state.pending_exit
     fresh_action = source.decision_evidence.decision.action
     if pending is None:
-        return selected_quote
+        raw_quote = _fresh_position_shadow_quote(source)
+        return selected_quote, raw_quote
     if pending.assessment.action is FastPaperAction.SELL:
-        return _campaign_quote_from_shadow(
-            source.decision_evidence.exit_quote,
-            source.quote_usd_evidence,
+        raw_quote = source.decision_evidence.exit_quote
+        return (
+            _campaign_quote_from_shadow(
+                raw_quote,
+                source.quote_usd_evidence,
+            ),
+            raw_quote,
         )
     if fresh_action == "SELL":
-        return selected_quote
+        raw_quote = source.decision_evidence.exit_quote
+        return selected_quote, raw_quote
     if pending.assessment.action is not FastPaperAction.REDUCE:
         raise ValueError(
             "shadow executor pending exit action is unsupported"
@@ -1055,9 +1097,51 @@ def _position_execution_quote_evidence(
         raise ValueError(
             "pending REDUCE requires exactly one fresh target-sized reduction quote"
         )
-    return _campaign_quote_from_shadow(
-        matches[0],
-        source.quote_usd_evidence,
+    raw_quote = matches[0]
+    return (
+        _campaign_quote_from_shadow(
+            raw_quote,
+            source.quote_usd_evidence,
+        ),
+        raw_quote,
+    )
+
+
+def _fresh_position_shadow_quote(
+    source: FastPaperShadowExecutionInput,
+) -> FastPaperShadowQuoteEvidence:
+    evidence = source.decision_evidence
+    action = evidence.decision.action
+    if action in {"HOLD", "SELL"}:
+        return evidence.exit_quote
+    if action != "REDUCE":
+        raise ValueError(
+            "fresh OPEN action has no shadow execution quote"
+        )
+    target = evidence.decision.target_exposure_fraction
+    matches = tuple(
+        item.quote
+        for item in evidence.reduction_quotes
+        if item.target_exposure_fraction == target
+    )
+    if len(matches) != 1:
+        raise ValueError(
+            "fresh REDUCE requires exactly one target-matched raw quote"
+        )
+    return matches[0]
+
+
+def _effective_position_action_is_sell(
+    action_state,
+    source: FastPaperShadowExecutionInput,
+) -> bool:
+    pending = action_state.pending_exit
+    return (
+        (
+            pending is not None
+            and pending.assessment.action is FastPaperAction.SELL
+        )
+        or source.decision_evidence.decision.action == "SELL"
     )
 
 
@@ -1124,6 +1208,19 @@ def _position_exit_quantity(
             "derived learned REDUCE base quantity is invalid"
         )
     return quantity
+
+
+def _raw_output_amount(
+    quote: FastPaperShadowQuoteEvidence,
+    *,
+    context: str,
+) -> int:
+    value = quote.output_amount_raw
+    if value is None or value <= 0:
+        raise ValueError(
+            f"{context} requires positive sealed raw base output authority"
+        )
+    return value
 
 
 def _filled_position_id(
