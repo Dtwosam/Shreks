@@ -590,6 +590,48 @@ sample does not mean the champion is profitable or superior; it only unlocks a
 meaningful FL11.2 economic review. The command cannot promote a champion, change
 PAPER authority, sign/submit transactions, or enable LIVE.
 
+### Prove FL11.2a closed-trade economics
+
+After FL11.1 returns `SUFFICIENT_SAMPLE` for an exact evidence window, a
+trusted operator can replay the persisted learned-shadow history and produce
+the first FL11.2 economics report.
+
+Persist the canonical FL11.1 JSON for the same release, run id, binding, and
+window, then run:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-trade-economics" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --execution-policy-path /var/lib/shreks/fast-paper-shadow/execution-policy.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
+  --execution-source-directory /var/lib/shreks/fast-paper-shadow/execution-sources \
+  --pending-buy-retry-source-directory /var/lib/shreks/fast-paper-shadow/pending-buy-retry-sources \
+  --sample-proof-path <canonical-fl11.1-sample-proof.json> \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <same-inclusive-epoch-ms-as-fl11.1> \
+  --until-unix-ms <same-exclusive-epoch-ms-as-fl11.1> \
+  --evaluation-policy-version <reviewed-e5-policy-version> \
+  --calibration-bucket-count <2-to-100>
+```
+
+The command requires the FL11.1 proof to be `SUFFICIENT_SAMPLE` and to match
+the exact release/runtime identity, ledger binding, and window. It reconstructs
+the durable shadow transitions read-only, including pending-BUY retries, then
+reuses the sealed E11/E5 accounting path for closed-trade PnL, costs, turnover,
+profit factor, drawdown, winner/loser averages, regime performance, and related
+descriptive execution metrics.
+
+FL11.2a does not include counterfactual missed-opportunity evidence or
+fee/slippage sensitivity evidence; those remain explicit later FL11.2 work.
+A successful FL11.2a report does not grant champion promotion, production PAPER
+cutover, signing/submission authority, or LIVE.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
