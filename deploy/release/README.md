@@ -171,6 +171,120 @@ physical-host acceptance are separate later commissioning steps.
 The command grants no production PAPER cutover, provider-network expansion,
 wallet/signing authority, transaction submission, or LIVE enablement.
 
+### Prepare protected Fast PAPER shadow host state
+
+After the dormant shadow unit is installed from the exact immutable release,
+prepare the protected authority/config/state in four separate bounded steps.
+This is still a **dormant** commissioning ceremony: it does not reload systemd
+or activate the shadow service.
+
+First, create one private candidate authority directory containing exactly:
+
+```text
+fast-paper-runtime-manifest.json
+fast-paper-shadow-service-policy.json
+fast-paper-shadow-execution-policy.json
+fast-paper-shadow-buy-writer-policy.json
+```
+
+Those files must already represent the intended learned champion/runtime
+authority. The host-preparation CLI authenticates their canonical encodings and
+cross-bindings; it does not generate or tune them.
+
+Resolve the active release exactly once:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+if [[ ! "$CURRENT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "current release identity is invalid" >&2
+  exit 2
+fi
+```
+
+Authenticate and install the authority files:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  authority-preflight "$CURRENT_SHA" /root/shreks-shadow-authority
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  install-authority "$CURRENT_SHA" /root/shreks-shadow-authority
+```
+
+The four installed files are fixed under `/etc/shreks` as
+`root:shreks 0640`. Existing exact files are idempotent; any different bytes,
+invalid bindings, symlinks, unsafe metadata, or release drift fail closed.
+
+Next, create a private candidate environment file from the packaged
+`shreks-fast-paper-shadow.env.example`, replace the explicit run id, and keep
+the production paths unchanged. The environment parser is deliberately not a
+shell parser: do not add `export`, quoting, substitutions, continuations, or
+extra keys.
+
+Authenticate and install it:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  config-preflight "$CURRENT_SHA" /root/fast-paper-shadow.env
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  install-config "$CURRENT_SHA" /root/fast-paper-shadow.env
+```
+
+The installed `/etc/shreks/fast-paper-shadow.env` is `root:shreks 0640`.
+
+Create only the dedicated empty shadow root with the service identity:
+
+```sh
+sudo install -d -o shreks -g shreks -m 0700 \
+  /var/lib/shreks/fast-paper-shadow
+```
+
+Then run the existing isolated state provisioner through the new wrapper as the
+actual service identity, not as root:
+
+```sh
+sudo -u shreks -g shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  provision-state "$CURRENT_SHA"
+```
+
+That step reuses the sealed `provision_fast_paper_shadow(...)` implementation.
+It may create only the dedicated isolated shadow source/evidence directories,
+ledger/checkpoint/runtime state, and validates exact `shreks:shreks`
+ownership/modes afterward. Existing complete state is verify-only; partial or
+incompatible state fails closed.
+
+Finally, run the root read-only host readiness proof:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-host-prepare" \
+  host-preflight "$CURRENT_SHA"
+```
+
+A successful result is:
+
+```text
+state=READY_FOR_DORMANT_SYSTEMD_LOAD_REVIEW
+daemon_reload_authority=NOT_GRANTED
+service_start_authority=NOT_GRANTED
+paper_cutover_authority=NOT_GRANTED
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+The preflight re-authenticates the exact release/unit, all four protected
+authority files, the protected env, isolated state ownership/modes, supervisor
+bootstrap, and continued absence of the shadow unit from `shreks.target`.
+
+Do **not** run a daemon reload or activate the unit from this ceremony. Systemd
+load/start plus bounded physical shadow observation is the next separately
+authorized commissioning slice.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
