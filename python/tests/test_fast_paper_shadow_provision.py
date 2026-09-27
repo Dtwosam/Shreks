@@ -72,6 +72,9 @@ def _configs(tmp_path: Path):
         pending_buy_retry_source_directory=(
             root / "pending-buy-retry-sources"
         ).resolve(),
+        buy_writer_policy_path=(
+            authority / "buy-writer-policy.json"
+        ).resolve(),
     )
     config = provision.FastPaperShadowProvisionConfig(
         supervisor_config=supervisor_config,
@@ -81,6 +84,17 @@ def _configs(tmp_path: Path):
 
 
 def _patch_authority(monkeypatch, manifest):
+    buy_writer_policy = object()
+    monkeypatch.setattr(
+        provision,
+        "read_fast_paper_shadow_buy_writer_policy",
+        lambda _path: buy_writer_policy,
+    )
+    monkeypatch.setattr(
+        provision,
+        "verify_fast_paper_shadow_buy_writer_policy_bindings",
+        lambda *_args, **_kwargs: None,
+    )
     monkeypatch.setattr(
         provision,
         "read_fast_paper_runtime_manifest",
@@ -291,6 +305,9 @@ def test_provision_requires_host_owned_parent_before_creating_leaf(
             ),
             pending_buy_retry_source_directory=(
                 config.supervisor_config.pending_buy_retry_source_directory
+            ),
+            buy_writer_policy_path=(
+                config.supervisor_config.buy_writer_policy_path
             ),
         ),
         starting_cash_usd=20_000.0,

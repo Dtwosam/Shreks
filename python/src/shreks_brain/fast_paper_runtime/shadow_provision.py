@@ -16,6 +16,10 @@ from .codec import (
 from .shadow_execution_input import (
     read_fast_paper_shadow_execution_policy,
 )
+from .shadow_buy_writer_policy import (
+    read_fast_paper_shadow_buy_writer_policy,
+    verify_fast_paper_shadow_buy_writer_policy_bindings,
+)
 from .shadow_ledger import (
     build_fast_paper_shadow_ledger_binding,
     build_initial_fast_paper_shadow_ledger_state,
@@ -136,6 +140,14 @@ def provision_fast_paper_shadow(
             raise ValueError(
                 "shadow provision service policy route evidence version does not match manifest"
             )
+        buy_writer_policy = read_fast_paper_shadow_buy_writer_policy(
+            supervisor_config.buy_writer_policy_path
+        )
+        verify_fast_paper_shadow_buy_writer_policy_bindings(
+            manifest,
+            service_policy,
+            buy_writer_policy,
+        )
         execution_policy = read_fast_paper_shadow_execution_policy(
             manifest,
             execution_config.execution_policy_path,
@@ -240,6 +252,7 @@ def provision_fast_paper_shadow(
         supervisor_bootstrap=FastPaperShadowSupervisorBootstrap(
             decision_bootstrap=decision_bootstrap,
             execution_bootstrap=execution_bootstrap,
+            buy_writer_policy=buy_writer_policy,
         ),
     )
 

@@ -28,12 +28,48 @@ _ENV_EXAMPLE = (
 )
 
 
+def _buy_writer_policy(tmp_path: Path | None = None):
+    root = Path("/tmp") if tmp_path is None else tmp_path
+    return SimpleNamespace(
+        market_read_policy=object(),
+        regime_read_policy=object(),
+        regime_policy=object(),
+        safety_policy=object(),
+        safety_probe_identity=object(),
+        execution_economics_policies=(object(),),
+        operator_risk_control_path=(root / "operator-control.json").resolve(),
+        entry_authority_binary_path=(root / "shreks-fast-entry-authority").resolve(),
+        day_started_at_unix_ms=0,
+        data_healthy=True,
+        execution_healthy=True,
+        global_risk_halt=False,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _default_source_publishers(monkeypatch):
     monkeypatch.setattr(
         supervisor,
         "run_fast_paper_shadow_skip_source_publisher_cycle",
         lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_buy_authority_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "read_fast_paper_shadow_buy_writer_policy",
+        lambda _path: _buy_writer_policy(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "verify_fast_paper_shadow_buy_writer_policy_bindings",
+        lambda *_args, **_kwargs: None,
         raising=False,
     )
     monkeypatch.setattr(
@@ -79,11 +115,13 @@ def _config(tmp_path: Path):
         pending_buy_retry_source_directory=(
             tmp_path / "retry-sources"
         ).resolve(),
+        buy_writer_policy_path=(tmp_path / "buy-writer-policy.json").resolve(),
     )
 
 
 def _decision_bootstrap():
     return SimpleNamespace(
+        policy=SimpleNamespace(),
         manifest=SimpleNamespace(
             manifest_fingerprint_sha256="a" * 64,
             champion_version="champion-v1",
@@ -117,11 +155,13 @@ def test_supervisor_loads_existing_configs_and_source_directories(
     quote_usd = (tmp_path / "quote-usd-sources").resolve()
     reduction = (tmp_path / "reduction-sources").resolve()
     retry = (tmp_path / "retry-sources").resolve()
+    buy_writer_policy = (tmp_path / "buy-writer-policy.json").resolve()
     env = {
         "SHREKS_FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_DIRECTORY": str(buy_authority),
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY": str(quote_usd),
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY": str(reduction),
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY": str(retry),
+        "SHREKS_FAST_PAPER_SHADOW_BUY_WRITER_POLICY_PATH": str(buy_writer_policy),
     }
     captured: dict[str, object] = {}
 
@@ -152,6 +192,7 @@ def test_supervisor_loads_existing_configs_and_source_directories(
     assert config.quote_usd_source_directory == quote_usd
     assert config.reduction_source_directory == reduction
     assert config.pending_buy_retry_source_directory == retry
+    assert config.buy_writer_policy_path == buy_writer_policy
     assert captured["decision_env"] == env
     assert captured["execution_env"] == env
 
@@ -211,6 +252,7 @@ def test_supervisor_cycle_calls_coordinator_once_with_durable_sources(
     before = supervisor.FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=_decision_bootstrap(),
         execution_bootstrap=_execution_bootstrap(),
+        buy_writer_policy=_buy_writer_policy(tmp_path),
     )
     after_decision = _decision_bootstrap()
     after_execution = _execution_bootstrap()
@@ -283,6 +325,7 @@ def test_supervisor_status_reports_decision_and_execution_progress(
     bootstrap = supervisor.FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=_decision_bootstrap(),
         execution_bootstrap=_execution_bootstrap(),
+        buy_writer_policy=_buy_writer_policy(tmp_path),
     )
     monkeypatch.setattr(
         supervisor,
@@ -383,6 +426,7 @@ def test_systemd_runs_coordinated_supervisor_and_packages_complete_env_example()
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY",
+        "SHREKS_FAST_PAPER_SHADOW_BUY_WRITER_POLICY_PATH",
     ):
         assert f"{name}=" in payload
 
@@ -405,6 +449,7 @@ def test_supervisor_publishes_skip_source_before_coordinator(
     before = supervisor.FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=_decision_bootstrap(),
         execution_bootstrap=_execution_bootstrap(),
+        buy_writer_policy=_buy_writer_policy(tmp_path),
     )
     order: list[str] = []
 

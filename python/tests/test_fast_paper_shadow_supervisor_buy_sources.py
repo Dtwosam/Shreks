@@ -17,6 +17,8 @@ from shreks_brain.fast_paper_runtime.shadow_service_execution_bootstrap import (
     FastPaperShadowServiceExecutionConfig,
 )
 
+from test_fast_paper_shadow_supervisor import _buy_writer_policy
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ENV_EXAMPLE = (
@@ -60,6 +62,7 @@ def _config(tmp_path: Path):
         pending_buy_retry_source_directory=(
             tmp_path / "retry-sources"
         ).resolve(),
+        buy_writer_policy_path=(tmp_path / "buy-writer-policy.json").resolve(),
     )
 
 
@@ -96,6 +99,7 @@ def test_supervisor_config_loader_requires_buy_authority_source_root(
     quote_usd = (tmp_path / "quote-usd-sources").resolve()
     reduction = (tmp_path / "reduction-sources").resolve()
     retry = (tmp_path / "retry-sources").resolve()
+    buy_writer_policy_path = (tmp_path / "buy-writer-policy.json").resolve()
 
     config = _config(tmp_path)
     assert config.buy_authority_source_directory == buy_authority
@@ -108,6 +112,9 @@ def test_supervisor_config_loader_requires_buy_authority_source_root(
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY": str(reduction),
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY": str(
             retry
+        ),
+        "SHREKS_FAST_PAPER_SHADOW_BUY_WRITER_POLICY_PATH": str(
+            buy_writer_policy_path
         ),
     }
     monkeypatch.setattr(
@@ -142,9 +149,16 @@ def test_supervisor_orders_skip_buy_open_then_coordinator(
     before = supervisor.FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=_decision_bootstrap(),
         execution_bootstrap=_execution_bootstrap(),
+        buy_writer_policy=_buy_writer_policy(tmp_path),
     )
     events: list[object] = []
 
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_buy_authority_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
     monkeypatch.setattr(
         supervisor,
         "run_fast_paper_shadow_skip_source_publisher_cycle",
