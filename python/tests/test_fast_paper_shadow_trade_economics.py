@@ -498,7 +498,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         posture2,
         source2,
         source_observed_at_unix_ms=sell.evaluated_at_unix_ms,
-        risk_day_started_at_unix_ms=0,
+        risk_day_started_at_unix_ms=None,
     )
     write_fast_paper_shadow_execution_input_source_record(
         fresh2,
