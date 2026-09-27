@@ -97,6 +97,31 @@ SHREKS_DASHBOARD_TELEMETRY_PATH=/var/lib/shreks/telemetry/current.json
 SHREKS_DASHBOARD_MAX_TRADES=<explicit-integer-1-through-500>
 ```
 
+FL10.5 can optionally add the Fast Lane PAPER-shadow panel to the same
+authenticated dashboard. Existing hosts should leave **all** of these keys
+absent until the detached shadow runtime is intentionally configured. When the
+panel is enabled, provide the complete set:
+
+```text
+SHREKS_DASHBOARD_FAST_LANE_MANIFEST_PATH=<exact-fast-paper-runtime-manifest>
+SHREKS_DASHBOARD_FAST_LANE_EXECUTION_POLICY_PATH=<exact-shadow-execution-policy>
+SHREKS_DASHBOARD_FAST_LANE_LEDGER_DATABASE_PATH=<exact-isolated-shadow-ledger>
+SHREKS_DASHBOARD_FAST_LANE_RUN_ID=<exact-shadow-run-id>
+SHREKS_DASHBOARD_FAST_LANE_DECISION_EVIDENCE_DIRECTORY=<exact-decision-evidence-directory>
+SHREKS_DASHBOARD_FAST_LANE_EXECUTION_SOURCE_DIRECTORY=<exact-execution-source-directory>
+SHREKS_DASHBOARD_FAST_LANE_PENDING_BUY_RETRY_SOURCE_DIRECTORY=<exact-pending-buy-retry-source-directory>
+SHREKS_DASHBOARD_FAST_LANE_EXPECTED_RELEASE_SHA=<exact-40-character-release-sha>
+SHREKS_DASHBOARD_FAST_LANE_WINDOW_SECONDS=<explicit-integer-1-through-86400>
+```
+
+The panel composes the sealed decision, execution/retry, and outcome telemetry
+collectors over that bounded window. It does not calculate trading economics in
+the browser, does not call the shadow service transaction path, and does not
+write shadow state. Partial Fast Lane dashboard configuration fails closed. No
+systemd permission widening is required: the dashboard keeps its existing
+read-only access to `/var/lib/shreks` and `/etc/shreks`, with the existing
+G7 risk-control directory as its only Shreks write exception.
+
 Create the password outside GitHub and outside the release tree, then install it separately as a protected host secret. Ownership/mode should be `root:shreks 0640`:
 
 ```sh

@@ -53,6 +53,7 @@ def test_dashboard_config_is_exact_and_reuses_paper_runtime_paths(tmp_path: Path
         "telemetry_path",
         "max_trades",
         "paper_runtime_config",
+        "fast_lane",
     }
     assert config.bind_host == "127.0.0.1"
     assert config.port == 8787
@@ -60,6 +61,7 @@ def test_dashboard_config_is_exact_and_reuses_paper_runtime_paths(tmp_path: Path
     assert config.password_file == password_file.resolve()
     assert config.telemetry_path == (tmp_path / "telemetry" / "current.json").resolve()
     assert config.max_trades == 100
+    assert config.fast_lane is None
     assert config.paper_runtime_config.observer_database_path == Path(
         env["SHREKS_PAPER_CAMPAIGN_OBSERVER_DB_PATH"]
     ).resolve()

@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import stat
 
 from shreks_brain.observer_campaign.runtime_config import (
@@ -19,6 +20,27 @@ _USERNAME_KEY = "SHREKS_DASHBOARD_USERNAME"
 _PASSWORD_FILE_KEY = "SHREKS_DASHBOARD_PASSWORD_FILE"
 _TELEMETRY_PATH_KEY = "SHREKS_DASHBOARD_TELEMETRY_PATH"
 _MAX_TRADES_KEY = "SHREKS_DASHBOARD_MAX_TRADES"
+_FAST_LANE_MANIFEST_PATH_KEY = "SHREKS_DASHBOARD_FAST_LANE_MANIFEST_PATH"
+_FAST_LANE_EXECUTION_POLICY_PATH_KEY = "SHREKS_DASHBOARD_FAST_LANE_EXECUTION_POLICY_PATH"
+_FAST_LANE_LEDGER_DATABASE_PATH_KEY = "SHREKS_DASHBOARD_FAST_LANE_LEDGER_DATABASE_PATH"
+_FAST_LANE_RUN_ID_KEY = "SHREKS_DASHBOARD_FAST_LANE_RUN_ID"
+_FAST_LANE_DECISION_EVIDENCE_DIRECTORY_KEY = "SHREKS_DASHBOARD_FAST_LANE_DECISION_EVIDENCE_DIRECTORY"
+_FAST_LANE_EXECUTION_SOURCE_DIRECTORY_KEY = "SHREKS_DASHBOARD_FAST_LANE_EXECUTION_SOURCE_DIRECTORY"
+_FAST_LANE_PENDING_BUY_RETRY_SOURCE_DIRECTORY_KEY = "SHREKS_DASHBOARD_FAST_LANE_PENDING_BUY_RETRY_SOURCE_DIRECTORY"
+_FAST_LANE_EXPECTED_RELEASE_SHA_KEY = "SHREKS_DASHBOARD_FAST_LANE_EXPECTED_RELEASE_SHA"
+_FAST_LANE_WINDOW_SECONDS_KEY = "SHREKS_DASHBOARD_FAST_LANE_WINDOW_SECONDS"
+_FAST_LANE_KEYS = frozenset({
+    _FAST_LANE_MANIFEST_PATH_KEY,
+    _FAST_LANE_EXECUTION_POLICY_PATH_KEY,
+    _FAST_LANE_LEDGER_DATABASE_PATH_KEY,
+    _FAST_LANE_RUN_ID_KEY,
+    _FAST_LANE_DECISION_EVIDENCE_DIRECTORY_KEY,
+    _FAST_LANE_EXECUTION_SOURCE_DIRECTORY_KEY,
+    _FAST_LANE_PENDING_BUY_RETRY_SOURCE_DIRECTORY_KEY,
+    _FAST_LANE_EXPECTED_RELEASE_SHA_KEY,
+    _FAST_LANE_WINDOW_SECONDS_KEY,
+})
+_SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_DASHBOARD_KEYS = frozenset({
     _BIND_HOST_KEY,
     _PORT_KEY,
@@ -26,6 +48,7 @@ _ALLOWED_DASHBOARD_KEYS = frozenset({
     _PASSWORD_FILE_KEY,
     _TELEMETRY_PATH_KEY,
     _MAX_TRADES_KEY,
+    *_FAST_LANE_KEYS,
 })
 _MAX_PASSWORD_FILE_BYTES = 4096
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
@@ -33,6 +56,53 @@ _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1"})
 
 class DashboardRuntimeConfigError(ValueError):
     """Raised when the G5 dashboard runtime configuration is unsafe."""
+
+
+@dataclass(frozen=True, slots=True)
+class DashboardFastLaneConfig:
+    manifest_path: Path
+    execution_policy_path: Path
+    ledger_database_path: Path
+    run_id: str
+    decision_evidence_directory: Path
+    execution_source_directory: Path
+    pending_buy_retry_source_directory: Path
+    expected_release_sha: str
+    window_seconds: int
+
+    def __post_init__(self) -> None:
+        for name in (
+            "manifest_path",
+            "execution_policy_path",
+            "ledger_database_path",
+            "decision_evidence_directory",
+            "execution_source_directory",
+            "pending_buy_retry_source_directory",
+        ):
+            value = getattr(self, name)
+            if not isinstance(value, Path) or not value.is_absolute():
+                raise DashboardRuntimeConfigError(
+                    f"Fast Lane {name} must be an absolute Path"
+                )
+        if not isinstance(self.run_id, str) or not self.run_id.strip():
+            raise DashboardRuntimeConfigError(
+                "Fast Lane run id must be non-empty"
+            )
+        if (
+            not isinstance(self.expected_release_sha, str)
+            or _SOURCE_SHA_RE.fullmatch(self.expected_release_sha) is None
+        ):
+            raise DashboardRuntimeConfigError(
+                "Fast Lane expected release SHA must be 40 lowercase hex characters"
+            )
+        if (
+            isinstance(self.window_seconds, bool)
+            or not isinstance(self.window_seconds, int)
+            or not 1 <= self.window_seconds <= 86_400
+        ):
+            raise DashboardRuntimeConfigError(
+                "Fast Lane window seconds must be an integer in 1..86400"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +114,7 @@ class DashboardRuntimeConfig:
     telemetry_path: Path
     max_trades: int
     paper_runtime_config: ObserverPaperCampaignRuntimeConfig
+    fast_lane: DashboardFastLaneConfig | None = None
 
     def __post_init__(self) -> None:
         if self.bind_host not in _LOOPBACK_HOSTS:
@@ -59,6 +130,10 @@ class DashboardRuntimeConfig:
             raise DashboardRuntimeConfigError("dashboard max trades must be an integer in 1..500")
         if type(self.paper_runtime_config) is not ObserverPaperCampaignRuntimeConfig:
             raise DashboardRuntimeConfigError("paper_runtime_config must be exact")
+        if self.fast_lane is not None and type(self.fast_lane) is not DashboardFastLaneConfig:
+            raise DashboardRuntimeConfigError(
+                "fast_lane must be exact DashboardFastLaneConfig or None"
+            )
 
 
 def load_dashboard_runtime_config(
@@ -89,6 +164,7 @@ def load_dashboard_runtime_config(
     password_file = _password_path(source, base)
     telemetry_path = _required_path(source, _TELEMETRY_PATH_KEY, base)
     max_trades = _bounded_integer(source, _MAX_TRADES_KEY, 1, 500, "dashboard max trades")
+    fast_lane = _fast_lane_config(source, base)
     try:
         paper_runtime_config = load_observer_paper_campaign_runtime_config(source, base_directory=base)
     except ObserverPaperCampaignRuntimeConfigError as error:
@@ -101,6 +177,81 @@ def load_dashboard_runtime_config(
         telemetry_path=telemetry_path,
         max_trades=max_trades,
         paper_runtime_config=paper_runtime_config,
+        fast_lane=fast_lane,
+    )
+
+
+
+def _fast_lane_config(
+    env: Mapping[str, str],
+    base: Path,
+) -> DashboardFastLaneConfig | None:
+    present = {
+        key
+        for key in _FAST_LANE_KEYS
+        if key in env
+    }
+    if not present:
+        return None
+    if present != _FAST_LANE_KEYS:
+        missing = sorted(_FAST_LANE_KEYS - present)
+        raise DashboardRuntimeConfigError(
+            "Fast Lane dashboard configuration is incomplete; missing: "
+            + ", ".join(missing)
+        )
+    expected_release_sha = _required_text(
+        env,
+        _FAST_LANE_EXPECTED_RELEASE_SHA_KEY,
+    )
+    if _SOURCE_SHA_RE.fullmatch(expected_release_sha) is None:
+        raise DashboardRuntimeConfigError(
+            "Fast Lane expected release SHA must be 40 lowercase hex characters"
+        )
+    run_id = _required_text(env, _FAST_LANE_RUN_ID_KEY)
+    if not run_id.strip():
+        raise DashboardRuntimeConfigError(
+            "Fast Lane run id must be non-empty"
+        )
+    return DashboardFastLaneConfig(
+        manifest_path=_required_path(
+            env,
+            _FAST_LANE_MANIFEST_PATH_KEY,
+            base,
+        ),
+        execution_policy_path=_required_path(
+            env,
+            _FAST_LANE_EXECUTION_POLICY_PATH_KEY,
+            base,
+        ),
+        ledger_database_path=_required_path(
+            env,
+            _FAST_LANE_LEDGER_DATABASE_PATH_KEY,
+            base,
+        ),
+        run_id=run_id,
+        decision_evidence_directory=_required_path(
+            env,
+            _FAST_LANE_DECISION_EVIDENCE_DIRECTORY_KEY,
+            base,
+        ),
+        execution_source_directory=_required_path(
+            env,
+            _FAST_LANE_EXECUTION_SOURCE_DIRECTORY_KEY,
+            base,
+        ),
+        pending_buy_retry_source_directory=_required_path(
+            env,
+            _FAST_LANE_PENDING_BUY_RETRY_SOURCE_DIRECTORY_KEY,
+            base,
+        ),
+        expected_release_sha=expected_release_sha,
+        window_seconds=_bounded_integer(
+            env,
+            _FAST_LANE_WINDOW_SECONDS_KEY,
+            1,
+            86_400,
+            "Fast Lane window seconds",
+        ),
     )
 
 

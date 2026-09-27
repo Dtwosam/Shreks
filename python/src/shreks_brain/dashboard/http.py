@@ -27,7 +27,11 @@ from shreks_brain.risk_control import (
 from .config import DashboardRuntimeConfig, load_dashboard_password
 from .models import DashboardSourceConfig
 from .page import render_dashboard_page
-from .source import load_dashboard_snapshot, load_dashboard_trade
+from .source import (
+    load_dashboard_fast_lane_snapshot,
+    load_dashboard_snapshot,
+    load_dashboard_trade,
+)
 
 _SECURITY_HEADERS = (
     ("Cache-Control", "no-store"),
@@ -154,6 +158,8 @@ class DashboardApplication:
             return self._snapshot_response(include_trades=False)
         if path == "/api/v1/trades":
             return self._snapshot_response(include_trades=True)
+        if path == "/api/v1/fast-lane":
+            return self._fast_lane_response()
         if path == _CONTROL_STATE_PATH:
             return self._control_state_response()
         prefix = "/api/v1/trades/"
@@ -186,6 +192,34 @@ class DashboardApplication:
                 "telemetry_file_mtime_ns": source.telemetry_file_mtime_ns,
             }
         return _json_response(200, _jsonable(payload))
+
+    def _fast_lane_response(self) -> DashboardHTTPResponse:
+        fast_lane = self._config.fast_lane
+        if fast_lane is None:
+            return _json_response(
+                503,
+                {"error": "FAST_LANE_UNAVAILABLE"},
+            )
+        try:
+            until_unix_ms = self._clock_unix_ms()
+            if (
+                isinstance(until_unix_ms, bool)
+                or type(until_unix_ms) is not int
+                or until_unix_ms <= 0
+            ):
+                raise ValueError(
+                    "dashboard Fast Lane clock is invalid"
+                )
+            payload = load_dashboard_fast_lane_snapshot(
+                fast_lane,
+                until_unix_ms=until_unix_ms,
+            )
+        except Exception:
+            return _json_response(
+                503,
+                {"error": "SOURCE_UNAVAILABLE"},
+            )
+        return _json_response(200, payload)
 
     def _control_state_response(self) -> DashboardHTTPResponse:
         path = self._config.paper_runtime_config.risk_control_path
