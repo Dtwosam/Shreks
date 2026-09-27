@@ -22,9 +22,10 @@ from .shadow_ledger import (
 FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME = (
     "shreks.fast_paper_shadow_runtime_state"
 )
-FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION = 2
+FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION = 3
 
 _TABLE_NAME = "fast_paper_shadow_runtime_states"
+_MAX_U64 = (1 << 64) - 1
 _STATE_KEYS = frozenset(
     {
         "schema_name",
@@ -55,6 +56,7 @@ _POSITION_KEYS = frozenset(
         "position_id",
         "mint",
         "current_exposure_fraction_hex",
+        "current_base_quantity_raw",
     }
 )
 
@@ -86,6 +88,7 @@ class FastPaperShadowMarketPosition:
     position_id: str
     mint: str
     current_exposure_fraction: float
+    current_base_quantity_raw: int
 
     def __post_init__(self) -> None:
         for name in ("market_key", "position_id", "mint"):
@@ -98,6 +101,11 @@ class FastPaperShadowMarketPosition:
             self,
             "current_exposure_fraction",
             float(self.current_exposure_fraction),
+        )
+        _require_u64(
+            "current_base_quantity_raw",
+            self.current_base_quantity_raw,
+            positive=True,
         )
 
 
@@ -868,6 +876,9 @@ def _fingerprint_material(
                 "current_exposure_fraction_hex": (
                     value.current_exposure_fraction.hex()
                 ),
+                "current_base_quantity_raw": str(
+                    value.current_base_quantity_raw
+                ),
             }
             for value in positions
         ],
@@ -1016,6 +1027,11 @@ def _decode_state(payload: str) -> FastPaperShadowRuntimeState:
                 position_id=raw["position_id"],
                 mint=raw["mint"],
                 current_exposure_fraction=exposure,
+                current_base_quantity_raw=_decode_u64_text(
+                    "current_base_quantity_raw",
+                    raw["current_base_quantity_raw"],
+                    positive=True,
+                ),
             )
         )
 
@@ -1185,6 +1201,43 @@ def _require_sha256(name: str, value: object) -> None:
         raise ValueError(
             f"{name} must be lowercase SHA-256 hex"
         )
+
+
+def _require_u64(
+    name: str,
+    value: object,
+    *,
+    positive: bool = False,
+) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < (1 if positive else 0)
+        or value > _MAX_U64
+    ):
+        qualifier = "positive " if positive else ""
+        raise ValueError(f"{name} must be a {qualifier}u64 integer")
+
+
+def _decode_u64_text(
+    name: str,
+    value: object,
+    *,
+    positive: bool = False,
+) -> int:
+    if (
+        not isinstance(value, str)
+        or not value
+        or not value.isascii()
+        or not value.isdigit()
+        or (value != "0" and value.startswith("0"))
+    ):
+        raise ValueError(f"{name} must be canonical u64 text")
+    result = int(value)
+    _require_u64(name, result, positive=positive)
+    if str(result) != value:
+        raise ValueError(f"{name} must be canonical u64 text")
+    return result
 
 
 def _require_exposure(name: str, value: object) -> None:
