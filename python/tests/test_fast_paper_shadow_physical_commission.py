@@ -452,26 +452,37 @@ def _headroom_telemetry(count: int = 25) -> dict[str, object]:
     }
 
 
-def _advance_proc_resources(paths, pid: int) -> None:
+def _advance_proc_resources(
+    paths,
+    pid: int,
+    *,
+    cpu_ticks: int = 600,
+    rss_kib: int = 8192,
+    rx_bytes: int = 1100,
+    tx_bytes: int = 2200,
+    storage_bytes: int = 500,
+) -> None:
     pid_root = paths.proc_root / str(pid)
     fields = ["0"] * 50
-    fields[10] = "250"
-    fields[11] = "350"
+    fields[10] = str(cpu_ticks // 2)
+    fields[11] = str(cpu_ticks - cpu_ticks // 2)
     (pid_root / "stat").write_text(
         f"{pid} (python) S " + " ".join(fields) + "\n",
         encoding="utf-8",
     )
     (pid_root / "status").write_text(
-        "Name:\tpython\nVmRSS:\t8192 kB\n",
+        f"Name:\tpython\nVmRSS:\t{rss_kib} kB\n",
         encoding="utf-8",
     )
     (pid_root / "net" / "dev").write_text(
         "Inter-|   Receive                                                |  Transmit\n"
         " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
-        "    lo: 1100 1 0 0 0 0 0 0 2200 1 0 0 0 0 0 0\n",
+        f"    lo: {rx_bytes} 1 0 0 0 0 0 0 {tx_bytes} 1 0 0 0 0 0 0\n",
         encoding="utf-8",
     )
-    (paths.shadow_root / "burst-evidence.bin").write_bytes(b"x" * 500)
+    (paths.shadow_root / "burst-evidence.bin").write_bytes(
+        b"x" * storage_bytes
+    )
 
 
 def test_host_capacity_reads_cpu_memory_and_filesystem(
@@ -629,6 +640,23 @@ def test_resource_headroom_requires_activity_and_records_capacity(
 
     starts_before = runner.commands.count(("systemctl", "start", _UNIT))
     restarts_before = runner.commands.count(("systemctl", "restart", _UNIT))
+    sample_calls = 0
+
+    def burst_sleeper(_seconds):
+        nonlocal sample_calls
+        sample_calls += 1
+        if sample_calls == 1:
+            _advance_proc_resources(
+                paths,
+                runner.pid,
+                cpu_ticks=300,
+                rss_kib=12288,
+                rx_bytes=300,
+                tx_bytes=500,
+                storage_bytes=200,
+            )
+        else:
+            _advance_proc_resources(paths, runner.pid)
 
     receipt = physical.measure_fast_paper_shadow_resource_headroom(
         expected_release_source_sha=_SHA,
@@ -638,7 +666,7 @@ def test_resource_headroom_requires_activity_and_records_capacity(
         runtime_executable=paths.current_link / ".venv" / "bin" / "python",
         command_runner=runner,
         clock_unix_ms=lambda: 2_000_000,
-        sleeper=lambda _seconds: _advance_proc_resources(paths, runner.pid),
+        sleeper=burst_sleeper,
     )
 
     assert receipt["state"] == "RESOURCE_HEADROOM_MEASURED"
@@ -649,7 +677,9 @@ def test_resource_headroom_requires_activity_and_records_capacity(
     assert receipt["cpu_host_utilization_pct"] == pytest.approx(25.0)
     assert receipt["cpu_host_headroom_pct"] == pytest.approx(75.0)
     assert receipt["logical_cpu_count"] == 4
-    assert receipt["rss_bytes_peak"] == 8192 * 1024
+    assert receipt["rss_bytes_end"] == 8192 * 1024
+    assert receipt["rss_bytes_peak"] == 12288 * 1024
+    assert sample_calls == 5
     assert receipt["shadow_storage_growth_bytes_per_second"] == pytest.approx(
         100.0
     )
