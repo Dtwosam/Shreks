@@ -423,6 +423,49 @@ def test_authority_preflight_and_install_are_fixed_no_replace_and_idempotent(
         )
 
 
+def test_authority_divergence_fails_before_any_missing_member_is_published(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    candidate, payloads = _authority_candidate(tmp_path)
+    bundle = SimpleNamespace(
+        payloads=payloads,
+        manifest_fingerprint_sha256="d" * 64,
+        bundle_fingerprint_sha256="e" * 64,
+    )
+    monkeypatch.setattr(
+        host_prepare,
+        "_authenticate_authority_bundle",
+        lambda *_args, **_kwargs: bundle,
+    )
+
+    divergent_name = "fast-paper-shadow-execution-policy.json"
+    divergent = setup["config"].parent / divergent_name
+    divergent.write_bytes(b"drift")
+    divergent.chmod(0o640)
+
+    with pytest.raises(
+        host_prepare.FastPaperShadowHostPrepareError,
+        match="different bytes",
+    ):
+        host_prepare.install_fast_paper_shadow_host_authority(
+            expected_release_source_sha=_SHA,
+            candidate_authority_directory=candidate,
+            paths=setup["paths"],
+            runtime_executable=setup["runtime"],
+            service_uid=_UID,
+            service_gid=_GID,
+        )
+
+    assert divergent.read_bytes() == b"drift"
+    for name in (
+        "fast-paper-runtime-manifest.json",
+        "fast-paper-shadow-service-policy.json",
+    ):
+        assert not (setup["config"].parent / name).exists()
+
+
 def test_config_preflight_and_install_are_exact_no_replace_and_idempotent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
