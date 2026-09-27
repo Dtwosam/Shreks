@@ -503,6 +503,9 @@ def _resolve_quote(
             execution_price_quote=None,
             quoted_base_quantity=None,
             available_base_quantity=None,
+            input_amount_raw=stored_input,
+            output_amount_raw=None,
+            minimum_output_amount_raw=None,
         )
 
     if output == 0 or minimum_output == 0:
@@ -564,6 +567,9 @@ def _resolve_quote(
         execution_price_quote=execution_price,
         quoted_base_quantity=quoted_base,
         available_base_quantity=available_base,
+        input_amount_raw=stored_input,
+        output_amount_raw=output,
+        minimum_output_amount_raw=minimum_output,
     )
 
 
