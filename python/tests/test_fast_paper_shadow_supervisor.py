@@ -80,6 +80,12 @@ def _default_source_publishers(monkeypatch):
     )
     monkeypatch.setattr(
         supervisor,
+        "run_fast_paper_shadow_open_quote_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
         "run_fast_paper_shadow_open_source_publisher_cycle",
         lambda *_args, **_kwargs: 0,
         raising=False,
