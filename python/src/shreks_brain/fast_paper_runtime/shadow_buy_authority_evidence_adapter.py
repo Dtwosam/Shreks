@@ -108,6 +108,7 @@ def produce_fast_paper_shadow_buy_authority_from_persisted_evidence(
         safety_probe_identity,
         execution_economics_policy,
         decision_evidence,
+        feature_record,
     )
 
     cycle = resolve_fast_paper_shadow_cycle_input(
@@ -298,6 +299,7 @@ def produce_fast_paper_shadow_buy_authority_from_persisted_evidence(
         raw_entry_quote=raw_entry_quote,
         quote_usd_record_fingerprint=quote_usd.record_fingerprint_sha256,
         regime_market=regime_market,
+        regime_policy_version=regime_policy.version,
         regime_value=regime_assessment.regime.value,
         execution_evidence=execution_evidence,
         controls=controls,
@@ -394,7 +396,26 @@ def _require_policy_bindings(
     safety_probe_identity: ObserverSafetyProbeIdentity,
     execution_economics_policy: FastDeterministicComparisonExecutionPolicy,
     decision_evidence: FastPaperShadowDecisionEvidence,
+    feature_record: FastTrainingFeatureRecord,
 ) -> None:
+    if decision_evidence.decision.action != "BUY":
+        raise ValueError("BUY authority adapter requires learned BUY decision")
+    if decision_evidence.position.kind != "FLAT":
+        raise ValueError("BUY authority adapter requires FLAT learned posture")
+    if (
+        decision_evidence.feature_record_fingerprint_sha256
+        != feature_logical_fingerprint_sha256((feature_record,))
+    ):
+        raise ValueError(
+            "BUY authority adapter feature fingerprint does not match sealed decision"
+        )
+    expected_event_id = (
+        f"{feature_record.decision_signature}:{feature_record.decision_ordinal}"
+    )
+    if decision_evidence.source_event_id != expected_event_id:
+        raise ValueError(
+            "BUY authority adapter feature source identity does not match sealed decision"
+        )
     if manifest.quote_provider != "jupiter":
         raise ValueError(
             "BUY authority aggregate regime reader requires jupiter quote provider"
@@ -494,6 +515,7 @@ def _source_fingerprint(
     raw_entry_quote,
     quote_usd_record_fingerprint,
     regime_market,
+    regime_policy_version,
     regime_value,
     execution_evidence,
     controls,
@@ -515,6 +537,7 @@ def _source_fingerprint(
         ),
         "candidate_id": quote_read_policy.candidate_id,
         "entry_quote_observed_at_unix_ms": raw_entry_quote.quoted_at_unix_ms,
+        "entry_price_impact_pct": raw_entry_quote.price_impact_pct,
         "exit_quote_observed_at_unix_ms": (
             decision_evidence.exit_quote.observed_at_unix_ms
         ),
@@ -528,9 +551,8 @@ def _source_fingerprint(
         "quote_usd_record_fingerprint_sha256": (
             quote_usd_record_fingerprint
         ),
-        "regime_policy_version": regime_market.__class__.__name__
-        + ":"
-        + str(regime_value),
+        "regime_policy_version": regime_policy_version,
+        "regime_value": regime_value,
         "regime_source_observed_at_unix_ms": (
             regime_market.source_observed_at_unix_ms
         ),
