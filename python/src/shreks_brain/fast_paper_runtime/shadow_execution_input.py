@@ -671,6 +671,16 @@ def _validate_entry_authority(
         raise ValueError(
             "BUY entry authority decision price provenance mismatch"
         )
+    quoted_quantity = quote.quoted_base_quantity
+    if quoted_quantity is None or not math.isclose(
+        authority.intended_base_quantity,
+        quoted_quantity,
+        rel_tol=_REL_TOL,
+        abs_tol=_ABS_TOL,
+    ):
+        raise ValueError(
+            "BUY entry authority intended quantity must match sealed ENTRY quote size"
+        )
 
 
 def _reduction_quote_for_selected_target(

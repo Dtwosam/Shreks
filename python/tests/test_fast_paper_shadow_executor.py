@@ -128,6 +128,8 @@ def _evidence_for(
     entry_observed_at: int,
     exit_observed_at: int,
     reduction_observed_at: int | None = None,
+    reduction_base_quantity: float = 2.0,
+    reduction_input_amount_raw: int = 2_000_000,
 ):
     monkeypatch.setattr(
         shadow,
@@ -146,14 +148,21 @@ def _evidence_for(
 
     reductions = ()
     if reduction_observed_at is not None:
+        reduction_quote = _quote(
+            record,
+            observed_at=reduction_observed_at,
+            execution_price=0.985,
+        )
+        reduction_quote = replace(
+            reduction_quote,
+            quoted_base_quantity=reduction_base_quantity,
+            available_base_quantity=reduction_base_quantity,
+            input_amount_raw=reduction_input_amount_raw,
+        )
         reductions = (
             FastPaperShadowReductionQuote(
                 target_exposure_fraction=0.25,
-                quote=_quote(
-                    record,
-                    observed_at=reduction_observed_at,
-                    execution_price=0.985,
-                ),
+                quote=reduction_quote,
             ),
         )
 
@@ -235,7 +244,7 @@ def test_shadow_runtime_v2_binds_pending_buy_target_to_checkpoint(
     tmp_path: Path,
 ) -> None:
     manifest, binding, policy, checkpoint, _ = _runtime_fixture(tmp_path)
-    assert FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION == 2
+    assert FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION == 3
 
     # A companion pending target cannot exist without canonical pending BUY.
     pending = FastPaperShadowPendingBuy(
@@ -580,6 +589,8 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         entry_observed_at=20_310,
         exit_observed_at=20_315,
         reduction_observed_at=20_312,
+        reduction_base_quantity=1.0,
+        reduction_input_amount_raw=1_000_000,
     )
 
     reduced_pending = execute_fast_paper_shadow_decision(
@@ -647,6 +658,8 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         entry_observed_at=20_510,
         exit_observed_at=20_520,
         reduction_observed_at=20_521,
+        reduction_base_quantity=1.0,
+        reduction_input_amount_raw=1_000_000,
     )
     resolved = execute_fast_paper_shadow_decision(
         manifest,
@@ -666,6 +679,10 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     assert (
         resolved.next_market_positions[0].current_exposure_fraction
         == pytest.approx(0.25)
+    )
+    assert (
+        resolved.next_market_positions[0].current_base_quantity_raw
+        == 1_000_000
     )
 
 

@@ -123,7 +123,7 @@ def _entry(record) -> FastCampaignPaperEntryAuthority:
     return FastCampaignPaperEntryAuthority(
         mint=record.mint,
         quote_mint=record.quote_mint,
-        intended_base_quantity=1.5,
+        intended_base_quantity=2.0,
         decision_executable_entry_price_quote=(
             record.decision_executable_entry_price_quote
         ),

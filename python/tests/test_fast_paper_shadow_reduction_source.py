@@ -45,6 +45,7 @@ def _fixture(tmp_path: Path):
         position_id=position.position_id,
         mint=position.mint,
         current_exposure_fraction=0.5,
+        current_base_quantity_raw=10_000_000,
     )
     runtime_state = build_fast_paper_shadow_runtime_state(
         manifest,
