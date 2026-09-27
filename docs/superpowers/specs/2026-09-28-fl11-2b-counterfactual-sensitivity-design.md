@@ -47,7 +47,7 @@ The CLI requires:
 - exact training-economics overlay directory;
 - one or more explicit counterfactual horizons;
 - one baseline execution-cost policy;
-- zero or more sensitivity execution-cost policies;
+- one or more sensitivity execution-cost policies;
 - exact release SHA and FL11.1 window.
 
 No default horizon or cost policy is embedded in the repository.
