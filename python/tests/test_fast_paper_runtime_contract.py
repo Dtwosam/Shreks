@@ -347,6 +347,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "FastPaperShadowReductionQuote",
         "build_fast_paper_runtime_manifest",
         "build_fast_paper_shadow_buy_authority_source_record",
+        "produce_fast_paper_shadow_buy_authority_source_record",
         "bootstrap_fast_paper_shadow_service_execution",
         "commit_fast_paper_shadow_transition_atomically",
         "build_fast_paper_shadow_execution_input_source_record",
