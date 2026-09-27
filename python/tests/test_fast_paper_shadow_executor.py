@@ -235,7 +235,7 @@ def test_shadow_runtime_v2_binds_pending_buy_target_to_checkpoint(
     tmp_path: Path,
 ) -> None:
     manifest, binding, policy, checkpoint, _ = _runtime_fixture(tmp_path)
-    assert FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION == 2
+    assert FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION == 3
 
     # A companion pending target cannot exist without canonical pending BUY.
     pending = FastPaperShadowPendingBuy(
