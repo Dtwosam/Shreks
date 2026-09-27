@@ -56,17 +56,15 @@ def collect_fast_paper_shadow_decision_telemetry(
             continue
         if member.is_symlink():
             raise FastPaperShadowDecisionTelemetryError(
-                "shadow decision telemetry visible member must not be a symlink"
+                "shadow decision telemetry member must not be a symlink"
             )
         if not member.is_file():
             raise FastPaperShadowDecisionTelemetryError(
-                "shadow decision telemetry visible member must be a regular evidence file"
+                "shadow decision telemetry member must be a regular file"
             )
         match = _EVIDENCE_NAME_RE.fullmatch(member.name)
         if match is None:
-            raise FastPaperShadowDecisionTelemetryError(
-                "shadow decision telemetry visible member name is unsupported"
-            )
+            continue
         try:
             evidence = read_fast_paper_shadow_decision_evidence(member)
         except Exception as exc:
