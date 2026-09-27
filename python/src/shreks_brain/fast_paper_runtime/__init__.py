@@ -82,6 +82,7 @@ from .shadow_executor import (
     build_fast_paper_shadow_runtime_state_from_transition,
     execute_fast_paper_shadow_decision,
     reconstruct_fast_paper_shadow_decision,
+    reconstruct_fast_paper_shadow_pending_buy_retry,
     retry_fast_paper_shadow_pending_buy,
 )
 from .shadow_ledger import (
@@ -126,6 +127,7 @@ from .shadow_pending_buy_retry_source import (
     FastPaperShadowPendingBuyRetrySourceRecord,
     build_fast_paper_shadow_pending_buy_retry_source_record,
     read_fast_paper_shadow_pending_buy_retry_source_record,
+    read_fast_paper_shadow_pending_buy_retry_source_record_for_checkpoint,
     write_fast_paper_shadow_pending_buy_retry_source_record,
 )
 from .shadow_quote_usd_source import (
@@ -265,6 +267,7 @@ __all__ = (
     "read_fast_paper_shadow_execution_input_source_record",
     "read_fast_paper_shadow_execution_policy",
     "read_fast_paper_shadow_pending_buy_retry_source_record",
+    "read_fast_paper_shadow_pending_buy_retry_source_record_for_checkpoint",
     "read_fast_paper_shadow_quote_usd_source_record",
     "read_fast_paper_shadow_reduction_source_record",
     "read_fast_paper_runtime_state",
@@ -285,6 +288,7 @@ __all__ = (
     "evaluate_fast_paper_shadow_decision",
     "execute_fast_paper_shadow_decision",
     "reconstruct_fast_paper_shadow_decision",
+    "reconstruct_fast_paper_shadow_pending_buy_retry",
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
     "run_fast_paper_shadow_batch",
