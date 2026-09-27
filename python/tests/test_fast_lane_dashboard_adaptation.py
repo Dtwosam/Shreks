@@ -167,10 +167,10 @@ def _outcome(since: int, until: int) -> dict[str, object]:
 def test_fast_lane_dashboard_config_is_optional_all_or_nothing(
     tmp_path: Path,
 ) -> None:
-    base, _password = _env(tmp_path)
+    base, _password = _env(tmp_path / "base")
     assert load_dashboard_runtime_config(base).fast_lane is None
 
-    complete, _password = _fast_lane_env(tmp_path)
+    complete, _password = _fast_lane_env(tmp_path / "complete")
     config = load_dashboard_runtime_config(complete)
     assert type(config.fast_lane) is DashboardFastLaneConfig
     assert config.fast_lane.run_id == "shadow-run-1"
@@ -179,7 +179,7 @@ def test_fast_lane_dashboard_config_is_optional_all_or_nothing(
     assert config.fast_lane.manifest_path.is_absolute()
     assert config.fast_lane.pending_buy_retry_source_directory.is_absolute()
 
-    partial, _password = _env(tmp_path)
+    partial, _password = _env(tmp_path / "partial")
     partial[
         "SHREKS_DASHBOARD_FAST_LANE_MANIFEST_PATH"
     ] = "/tmp/manifest.json"
