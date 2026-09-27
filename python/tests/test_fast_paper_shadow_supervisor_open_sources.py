@@ -17,6 +17,8 @@ from shreks_brain.fast_paper_runtime.shadow_service_execution_bootstrap import (
     FastPaperShadowServiceExecutionConfig,
 )
 
+from test_fast_paper_shadow_supervisor import _buy_writer_policy
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _ENV_EXAMPLE = (
@@ -60,6 +62,7 @@ def _config(tmp_path: Path):
         pending_buy_retry_source_directory=(
             tmp_path / "retry-sources"
         ).resolve(),
+        buy_writer_policy_path=(tmp_path / "buy-writer-policy.json").resolve(),
     )
 
 
@@ -96,6 +99,7 @@ def test_supervisor_config_and_loader_require_quote_usd_source_root(
     quote_usd = (tmp_path / "quote-usd-sources").resolve()
     reduction = (tmp_path / "reduction-sources").resolve()
     retry = (tmp_path / "retry-sources").resolve()
+    buy_writer_policy_path = (tmp_path / "buy-writer-policy.json").resolve()
     config = _config(tmp_path)
     assert config.quote_usd_source_directory == quote_usd
 
@@ -106,6 +110,9 @@ def test_supervisor_config_and_loader_require_quote_usd_source_root(
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY": str(quote_usd),
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY": str(reduction),
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY": str(retry),
+        "SHREKS_FAST_PAPER_SHADOW_BUY_WRITER_POLICY_PATH": str(
+            buy_writer_policy_path
+        ),
     }
     monkeypatch.setattr(
         supervisor,
@@ -138,9 +145,16 @@ def test_supervisor_orders_skip_then_open_publisher_before_coordinator(
     before = supervisor.FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=_decision_bootstrap(),
         execution_bootstrap=_execution_bootstrap(),
+        buy_writer_policy=_buy_writer_policy(tmp_path),
     )
     events: list[object] = []
 
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_buy_authority_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
     monkeypatch.setattr(
         supervisor,
         "run_fast_paper_shadow_buy_source_publisher_cycle",
