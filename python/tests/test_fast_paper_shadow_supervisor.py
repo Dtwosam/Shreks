@@ -121,6 +121,7 @@ def _config(tmp_path: Path):
 
 def _decision_bootstrap():
     return SimpleNamespace(
+        policy=SimpleNamespace(),
         manifest=SimpleNamespace(
             manifest_fingerprint_sha256="a" * 64,
             champion_version="champion-v1",
