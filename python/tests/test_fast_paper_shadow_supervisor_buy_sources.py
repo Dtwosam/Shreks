@@ -204,6 +204,12 @@ def test_supervisor_orders_skip_buy_open_then_coordinator(
 
     monkeypatch.setattr(
         supervisor,
+        "run_fast_paper_shadow_open_quote_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
         "run_fast_paper_shadow_open_source_publisher_cycle",
         lambda manifest, execution_bootstrap, *,
         decision_evidence_directory, quote_usd_source_directory: (
