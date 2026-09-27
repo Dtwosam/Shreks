@@ -468,6 +468,7 @@ sudo -u shreks \
   --run-id <exact-shadow-run-id> \
   --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
   --execution-source-directory /var/lib/shreks/fast-paper-shadow/execution-sources \
+  --pending-buy-retry-source-directory /var/lib/shreks/fast-paper-shadow/pending-buy-retry-sources \
   --expected-release-sha "$CURRENT_SHA" \
   --since-unix-ms <inclusive-epoch-ms> \
   --until-unix-ms <exclusive-epoch-ms>
@@ -478,15 +479,19 @@ execution-source record against its exact historical checkpoint/runtime pair,
 reconstructs the existing sealed PAPER transition without writing state, and
 requires the next durable checkpoint/runtime pair to match that reconstruction.
 
-The report exposes decision-to-commit and decision-to-booked-entry latency,
-BUY/SKIP/HOLD/REDUCE/SELL outcome counts, exact maximum-entry-price aborts, and
-like-for-like selected price-cost versus realized fill slippage. Explicit
-swap/network cost is reported separately so it is not confused with price
-slippage.
+It also authenticates pending-BUY retry source records against their exact
+historical pending checkpoint/runtime pair, reconstructs the sealed retry
+transition read-only, and requires the durable successor pair to match. Retry
+transactions do not advance the learned decision cursor.
+
+The report exposes decision-to-commit/booked-entry latency and retry-to-commit/
+booked-entry latency; BUY/SKIP/HOLD/REDUCE/SELL outcomes; fresh and retry
+maximum-entry-price aborts; selected decision price-cost versus realized fill
+slippage; and retry-quote price-cost versus realized fill slippage. Explicit
+swap/network cost remains separate from price slippage.
 
 Missing execution-source or successor evidence is reported as incomplete rather
-than filled in by inference. Pending-BUY retry joins remain separate and are not
-claimed by this command.
+than filled in by inference.
 
 This command is read-only. It does not execute PAPER actions, write checkpoints,
 activate services, change production PAPER cutover, sign or submit

@@ -26,6 +26,10 @@ from .fast_paper_runtime.shadow_execution_source import (
 )
 from .fast_paper_runtime.shadow_executor import (
     reconstruct_fast_paper_shadow_decision,
+    reconstruct_fast_paper_shadow_pending_buy_retry,
+)
+from .fast_paper_runtime.shadow_pending_buy_retry_source import (
+    read_fast_paper_shadow_pending_buy_retry_source_record_for_checkpoint,
 )
 from .fast_paper_runtime.shadow_ledger import (
     FastPaperShadowLedgerBinding,
@@ -38,7 +42,7 @@ from .fast_paper_runtime.shadow_runtime_state import (
 
 
 _SCHEMA_NAME = "shreks.fast_paper_shadow_execution_telemetry"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _MAX_WINDOW_MS = 86_400_000
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -57,6 +61,7 @@ def collect_fast_paper_shadow_execution_telemetry(
     run_id: str,
     decision_evidence_directory: str | Path,
     execution_source_directory: str | Path,
+    pending_buy_retry_source_directory: str | Path | None = None,
     expected_release_sha: str,
     since_unix_ms: int,
     until_unix_ms: int,
@@ -93,6 +98,7 @@ def collect_fast_paper_shadow_execution_telemetry(
         binding=binding,
         decision_evidence_directory=decision_evidence_directory,
         execution_source_directory=execution_source_directory,
+        pending_buy_retry_source_directory=pending_buy_retry_source_directory,
         expected_release_sha=expected_sha,
         since_unix_ms=since_unix_ms,
         until_unix_ms=until_unix_ms,
@@ -106,6 +112,7 @@ def summarize_fast_paper_shadow_execution_telemetry(
     binding: object,
     decision_evidence_directory: str | Path,
     execution_source_directory: str | Path,
+    pending_buy_retry_source_directory: str | Path | None = None,
     expected_release_sha: str,
     since_unix_ms: int,
     until_unix_ms: int,
@@ -349,6 +356,17 @@ def summarize_fast_paper_shadow_execution_telemetry(
         explicit_cost_bps_values.append(explicit)
         total_burden_bps_values.append(realized + explicit)
 
+    retry_metrics = _pending_buy_retry_metrics(
+        manifest=manifest,
+        execution_policy=execution_policy,
+        binding=binding,
+        pending_buy_retry_source_directory=(
+            pending_buy_retry_source_directory
+        ),
+        since_unix_ms=since,
+        until_unix_ms=until,
+    )
+
     material = {
         "schema_name": _SCHEMA_NAME,
         "schema_version": _SCHEMA_VERSION,
@@ -382,9 +400,426 @@ def summarize_fast_paper_shadow_execution_telemetry(
         "realized_total_execution_burden_bps": _summary(
             total_burden_bps_values
         ),
-        "pending_buy_retry_joined": False,
+        **retry_metrics,
     }
     return _finalize(material)
+
+
+def _pending_buy_retry_metrics(
+    *,
+    manifest: object,
+    execution_policy: object,
+    binding: object,
+    pending_buy_retry_source_directory: str | Path | None,
+    since_unix_ms: int,
+    until_unix_ms: int,
+) -> dict[str, object]:
+    empty = {
+        "pending_buy_retry_joined": (
+            pending_buy_retry_source_directory is not None
+        ),
+        "pending_buy_retry_count": 0,
+        "joined_pending_buy_retry_count": 0,
+        "missing_retry_successor_commit_count": 0,
+        "pending_buy_retry_outcome_counts": {},
+        "pending_buy_retry_terminal_count": 0,
+        "pending_buy_retry_deferred_count": 0,
+        "pending_buy_retry_max_entry_price_abort_count": 0,
+        "retry_to_commit_latency_ms": _summary([]),
+        "retry_to_booked_entry_latency_ms": _summary([]),
+        "retry_quote_price_cost_bps": _summary([]),
+        "retry_realized_price_cost_bps": _summary([]),
+        "retry_realized_minus_quote_price_cost_bps": _summary([]),
+        "retry_realized_explicit_cost_bps": _summary([]),
+        "retry_realized_total_execution_burden_bps": _summary([]),
+    }
+    if pending_buy_retry_source_directory is None:
+        return empty
+
+    root = _directory(
+        pending_buy_retry_source_directory,
+        "pending BUY retry source",
+    )
+    records: list[tuple[object, object, object]] = []
+    seen_fingerprints: set[str] = set()
+
+    for path in sorted(root.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source path is not a regular file"
+            )
+        bindings = _probe_retry_source_bindings(path)
+        pre_sequence = bindings["paper_checkpoint_sequence"]
+        pre_checkpoint = load_fast_paper_shadow_ledger_checkpoint_by_sequence(
+            manifest,
+            binding,
+            sequence=pre_sequence,
+        )
+        pre_runtime = (
+            load_fast_paper_shadow_runtime_state_by_checkpoint_sequence(
+                manifest,
+                binding,
+                sequence=pre_sequence,
+            )
+        )
+        if pre_checkpoint is None or pre_runtime is None:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source references missing historical pre-state"
+            )
+        if (
+            pre_checkpoint.payload_sha256
+            != bindings["paper_checkpoint_payload_sha256"]
+            or pre_runtime.state_fingerprint_sha256
+            != bindings["shadow_runtime_state_fingerprint_sha256"]
+        ):
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry historical binding mismatch"
+            )
+        expected_name = _retry_source_filename(
+            pre_runtime.state_fingerprint_sha256,
+            bindings["pending_source_event_id"],
+        )
+        if path.name != expected_name:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source filename mismatch"
+            )
+        try:
+            record = (
+                read_fast_paper_shadow_pending_buy_retry_source_record_for_checkpoint(
+                    manifest,
+                    binding,
+                    execution_policy,
+                    pre_checkpoint,
+                    pre_runtime,
+                    root,
+                )
+            )
+        except Exception as exc:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source authentication failed"
+            ) from exc
+        if (
+            record.record_fingerprint_sha256
+            != bindings["record_fingerprint_sha256"]
+        ):
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source fingerprint mismatch"
+            )
+        if record.record_fingerprint_sha256 in seen_fingerprints:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry source fingerprint is duplicated"
+            )
+        seen_fingerprints.add(record.record_fingerprint_sha256)
+        if (
+            since_unix_ms
+            <= record.retry_input.evaluated_at_unix_ms
+            < until_unix_ms
+        ):
+            records.append((record, pre_checkpoint, pre_runtime))
+
+    outcome_counts: dict[str, int] = {}
+    commit_latencies: list[float] = []
+    booked_latencies: list[float] = []
+    quote_price_costs: list[float] = []
+    realized_price_costs: list[float] = []
+    price_cost_deltas: list[float] = []
+    explicit_costs: list[float] = []
+    total_burdens: list[float] = []
+    joined = 0
+    missing_successor = 0
+    deferred = 0
+    terminal = 0
+    max_entry_price_aborts = 0
+
+    for record, pre_checkpoint, pre_runtime in records:
+        try:
+            transition = reconstruct_fast_paper_shadow_pending_buy_retry(
+                manifest,
+                execution_policy,
+                binding,
+                pre_checkpoint,
+                pre_runtime,
+                record.retry_input,
+            )
+        except Exception as exc:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry pending BUY retry reconstruction failed"
+            ) from exc
+
+        successor_sequence = pre_checkpoint.sequence + 1
+        successor = load_fast_paper_shadow_ledger_checkpoint_by_sequence(
+            manifest,
+            binding,
+            sequence=successor_sequence,
+        )
+        successor_runtime = (
+            load_fast_paper_shadow_runtime_state_by_checkpoint_sequence(
+                manifest,
+                binding,
+                sequence=successor_sequence,
+            )
+        )
+        if successor is None or successor_runtime is None:
+            missing_successor += 1
+            continue
+
+        _require_retry_successor(
+            transition,
+            pre_runtime,
+            successor,
+            successor_runtime,
+            execution_policy,
+        )
+        joined += 1
+
+        commit_latency = (
+            successor.created_at_unix_ms
+            - record.retry_input.evaluated_at_unix_ms
+        )
+        if commit_latency < 0:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry retry commit precedes retry evaluation"
+            )
+        commit_latencies.append(float(commit_latency))
+
+        result = transition.buy_result
+        if result is None or transition.position_result is not None:
+            raise FastPaperShadowExecutionTelemetryError(
+                "shadow execution telemetry retry transition result shape is invalid"
+            )
+        outcome = result.outcome.value
+        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+        if outcome == "DEFERRED":
+            deferred += 1
+        else:
+            terminal += 1
+        if outcome == "ABORTED_PRICE_ABOVE_MAXIMUM":
+            max_entry_price_aborts += 1
+
+        new_entry = _single_new_ledger_entry(
+            pre_checkpoint.state.ledger.entries,
+            successor.state.ledger.entries,
+            context="pending BUY retry",
+        )
+        if new_entry is not None:
+            booked_latency = (
+                new_entry.booked_at_unix_ms
+                - record.retry_input.evaluated_at_unix_ms
+            )
+            if booked_latency < 0:
+                raise FastPaperShadowExecutionTelemetryError(
+                    "shadow execution telemetry retry ledger entry precedes retry evaluation"
+                )
+            booked_latencies.append(float(booked_latency))
+
+        quote_cost = _retry_quote_price_cost_bps(record.retry_input.quote)
+        if quote_cost is not None:
+            quote_price_costs.append(quote_cost)
+
+        execution = result.execution
+        fill = None if execution is None else execution.fill
+        if fill is not None:
+            realized = _finite(
+                "retry realized price cost",
+                fill.signed_slippage_bps,
+            )
+            if quote_cost is None:
+                raise FastPaperShadowExecutionTelemetryError(
+                    "shadow execution telemetry filled retry lacks executable quote cost"
+                )
+            realized_price_costs.append(realized)
+            price_cost_deltas.append(realized - quote_cost)
+            filled_notional = _finite(
+                "retry filled notional",
+                fill.filled_notional_usd,
+                non_negative=True,
+            )
+            if filled_notional <= 0.0:
+                raise FastPaperShadowExecutionTelemetryError(
+                    "shadow execution telemetry retry fill notional is not positive"
+                )
+            explicit = (
+                _finite(
+                    "retry explicit cost",
+                    fill.explicit_cost_usd,
+                    non_negative=True,
+                )
+                / filled_notional
+                * 10_000.0
+            )
+            explicit_costs.append(explicit)
+            total_burdens.append(realized + explicit)
+
+    return {
+        "pending_buy_retry_joined": True,
+        "pending_buy_retry_count": len(records),
+        "joined_pending_buy_retry_count": joined,
+        "missing_retry_successor_commit_count": missing_successor,
+        "pending_buy_retry_outcome_counts": {
+            key: outcome_counts[key] for key in sorted(outcome_counts)
+        },
+        "pending_buy_retry_terminal_count": terminal,
+        "pending_buy_retry_deferred_count": deferred,
+        "pending_buy_retry_max_entry_price_abort_count": (
+            max_entry_price_aborts
+        ),
+        "retry_to_commit_latency_ms": _summary(commit_latencies),
+        "retry_to_booked_entry_latency_ms": _summary(booked_latencies),
+        "retry_quote_price_cost_bps": _summary(quote_price_costs),
+        "retry_realized_price_cost_bps": _summary(realized_price_costs),
+        "retry_realized_minus_quote_price_cost_bps": _summary(
+            price_cost_deltas
+        ),
+        "retry_realized_explicit_cost_bps": _summary(explicit_costs),
+        "retry_realized_total_execution_burden_bps": _summary(
+            total_burdens
+        ),
+    }
+
+
+def _probe_retry_source_bindings(path: Path) -> dict[str, object]:
+    payload = path.read_bytes()
+    if not payload.endswith(b"\n") or payload.endswith(b"\n\n"):
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry pending BUY retry source must have one trailing newline"
+        )
+    try:
+        document = json.loads(
+            payload[:-1].decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry pending BUY retry source JSON is malformed"
+        ) from exc
+    if not isinstance(document, dict):
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry pending BUY retry source must be an object"
+        )
+    return {
+        "paper_checkpoint_sequence": _non_negative_int(
+            "retry source checkpoint sequence",
+            document.get("paper_checkpoint_sequence"),
+        ),
+        "paper_checkpoint_payload_sha256": _sha256(
+            "retry source checkpoint fingerprint",
+            document.get("paper_checkpoint_payload_sha256"),
+        ),
+        "shadow_runtime_state_fingerprint_sha256": _sha256(
+            "retry source runtime-state fingerprint",
+            document.get("shadow_runtime_state_fingerprint_sha256"),
+        ),
+        "pending_source_event_id": _text(
+            "retry pending source event id",
+            document.get("pending_source_event_id"),
+        ),
+        "record_fingerprint_sha256": _sha256(
+            "retry source record fingerprint",
+            document.get("record_fingerprint_sha256"),
+        ),
+    }
+
+
+def _retry_source_filename(
+    runtime_state_fingerprint_sha256: str,
+    pending_source_event_id: str,
+) -> str:
+    payload = json.dumps(
+        {
+            "pending_source_event_id": pending_source_event_id,
+            "runtime_state_fingerprint_sha256": (
+                runtime_state_fingerprint_sha256
+            ),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return f"{hashlib.sha256(payload).hexdigest()}.json"
+
+
+def _require_retry_successor(
+    transition: object,
+    pre_runtime: object,
+    successor: object,
+    successor_runtime: object,
+    execution_policy: object,
+) -> None:
+    if successor.state != transition.next_paper_state:
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry retry successor PAPER state differs from reconstructed transition"
+        )
+    if (
+        successor_runtime.paper_checkpoint_sequence
+        != successor.sequence
+        or successor_runtime.paper_checkpoint_payload_sha256
+        != successor.payload_sha256
+    ):
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry retry successor checkpoint/runtime pair is torn"
+        )
+    if (
+        successor_runtime.market_positions
+        != transition.next_market_positions
+        or successor_runtime.pending_buy
+        != transition.next_pending_buy
+        or successor_runtime.execution_policy_fingerprint_sha256
+        != execution_policy.policy_fingerprint_sha256
+    ):
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry retry successor runtime differs from reconstruction"
+        )
+    actual_cursor = (
+        successor_runtime.last_processed_source_sequence,
+        successor_runtime.last_processed_source_event_id,
+        successor_runtime.last_processed_decision_evidence_fingerprint_sha256,
+    )
+    expected_cursor = (
+        pre_runtime.last_processed_source_sequence,
+        pre_runtime.last_processed_source_event_id,
+        pre_runtime.last_processed_decision_evidence_fingerprint_sha256,
+    )
+    if actual_cursor != expected_cursor:
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry pending BUY retry changed learned decision cursor"
+        )
+
+
+def _single_new_ledger_entry(
+    before: tuple[object, ...],
+    after: tuple[object, ...],
+    *,
+    context: str,
+) -> object | None:
+    if after == before:
+        return None
+    if len(after) != len(before) + 1 or after[:-1] != before:
+        raise FastPaperShadowExecutionTelemetryError(
+            f"shadow execution telemetry {context} ledger delta is not exactly zero or one appended entry"
+        )
+    return after[-1]
+
+
+def _retry_quote_price_cost_bps(quote: object) -> float | None:
+    if getattr(quote, "state", None) != "EXECUTABLE":
+        return None
+    reference = _finite(
+        "retry quote reference price",
+        getattr(quote, "reference_price_quote", None),
+        non_negative=True,
+    )
+    execution = _finite(
+        "retry quote execution price",
+        getattr(quote, "execution_price_quote", None),
+        non_negative=True,
+    )
+    if reference <= 0.0 or execution <= 0.0:
+        raise FastPaperShadowExecutionTelemetryError(
+            "shadow execution telemetry retry quote prices must be positive"
+        )
+    return max(0.0, execution / reference - 1.0) * 10_000.0
 
 
 def canonical_fast_paper_shadow_execution_telemetry(
@@ -783,6 +1218,7 @@ def _parser() -> argparse.ArgumentParser:
     summarize.add_argument("--run-id", required=True)
     summarize.add_argument("--decision-evidence-directory", required=True)
     summarize.add_argument("--execution-source-directory", required=True)
+    summarize.add_argument("--pending-buy-retry-source-directory")
     summarize.add_argument("--expected-release-sha", required=True)
     summarize.add_argument("--since-unix-ms", type=int, required=True)
     summarize.add_argument("--until-unix-ms", type=int, required=True)
@@ -801,6 +1237,9 @@ def main(argv: list[str] | None = None) -> int:
                 args.decision_evidence_directory
             ),
             execution_source_directory=args.execution_source_directory,
+            pending_buy_retry_source_directory=(
+                args.pending_buy_retry_source_directory
+            ),
             expected_release_sha=args.expected_release_sha,
             since_unix_ms=args.since_unix_ms,
             until_unix_ms=args.until_unix_ms,
