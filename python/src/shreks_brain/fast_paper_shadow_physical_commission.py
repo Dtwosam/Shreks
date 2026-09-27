@@ -100,9 +100,11 @@ class FastPaperShadowPhysicalCommissionPaths:
             value = getattr(self, name)
             if not isinstance(value, Path) or not value.is_absolute():
                 raise ValueError(f"{name} must be an absolute Path")
-        if self.commissioning_root.parent != self.shadow_root:
+        shadow = self.shadow_root.resolve(strict=False)
+        commissioning = self.commissioning_root.resolve(strict=False)
+        if commissioning == shadow or shadow in commissioning.parents:
             raise ValueError(
-                "commissioning_root must be a direct child of shadow_root"
+                "commissioning_root must stay outside the service-writable shadow tree"
             )
 
     @property
@@ -191,7 +193,7 @@ def preflight_fast_paper_shadow_physical(
             "unit_file_state": state.unit_file_state,
             "active_state": state.active_state,
             "sub_state": state.sub_state,
-            **_authority_fields(),
+            **_authority_fields("DORMANT_DETACHED"),
         }
     )
 
@@ -1333,9 +1335,11 @@ def _finalize_receipt(
     }
 
 
-def _authority_fields() -> dict[str, str]:
+def _authority_fields(
+    shadow_runtime: str = "ACTIVE_DETACHED",
+) -> dict[str, str]:
     return {
-        "shadow_runtime": "ACTIVE_DETACHED",
+        "shadow_runtime": shadow_runtime,
         "shadow_enable_authority": "NOT_GRANTED",
         "production_paper_cutover": "NOT_GRANTED",
         "authoritative_paper_runtime": "LEGACY_UNCHANGED",
@@ -1432,7 +1436,9 @@ def _production_paths() -> FastPaperShadowPhysicalCommissionPaths:
         config_destination=Path("/etc/shreks/fast-paper-shadow.env"),
         target_path=Path("/etc/systemd/system/shreks.target"),
         shadow_root=root,
-        commissioning_root=root / "commissioning",
+        commissioning_root=Path(
+            "/root/shreks-fast-paper-shadow-commissioning"
+        ),
     )
 
 
