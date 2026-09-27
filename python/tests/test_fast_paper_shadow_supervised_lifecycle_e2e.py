@@ -137,7 +137,10 @@ def _install_feature_feed(
     }
 
     def feed(_manifest, state, *, maximum_decisions):
-        assert _manifest is manifest
+        assert (
+            _manifest.manifest_fingerprint_sha256
+            == manifest.manifest_fingerprint_sha256
+        )
         assert maximum_decisions == 1
         current_sequence = (
             0
@@ -153,7 +156,7 @@ def _install_feature_feed(
         return SimpleNamespace(
             records=(next_record,),
             next_state=build_fast_paper_runtime_state(
-                manifest,
+                _manifest,
                 cursor=_cursor_for(next_record),
             ),
         )
