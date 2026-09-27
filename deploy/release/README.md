@@ -670,6 +670,50 @@ change production PAPER authority, sign/submit transactions, or enable LIVE.
 Together, FL11.2a and FL11.2b cover the economics categories required by FL11.2.
 They do not themselves grant promotion or production cutover authority.
 
+### Prove FL11.3 learned entry latency
+
+After FL11.1 is `SUFFICIENT_SAMPLE` for the exact evidence window, measure the
+learned BUY path from the original event through the durable PAPER entry booking.
+
+Create an explicit reviewed latency policy JSON with the FL11.3 thresholds, then
+run:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-latency-proof" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --execution-policy-path /var/lib/shreks/fast-paper-shadow/execution-policy.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
+  --execution-source-directory /var/lib/shreks/fast-paper-shadow/execution-sources \
+  --pending-buy-retry-source-directory /var/lib/shreks/fast-paper-shadow/pending-buy-retry-sources \
+  --sample-proof-path <canonical-fl11.1-sample-proof.json> \
+  --latency-policy-path <reviewed-fl11.3-latency-policy.json> \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <same-inclusive-epoch-ms-as-fl11.1> \
+  --until-unix-ms <same-exclusive-epoch-ms-as-fl11.1>
+```
+
+The latency policy is explicit; the repository does not hide a default pass
+threshold. For each authenticated BUY, the proof joins the original event,
+decision evaluation, durable fresh transition, and—when needed—the exact
+pending-BUY retry that eventually books the isolated PAPER position.
+
+The report measures event-to-evaluation, decision compute time,
+decision-to-booked entry, full event-to-booked entry, and the booked latency as
+a fraction of the learned selected horizon. End-to-end percentiles are computed
+from joined per-BUY observations rather than by adding unrelated aggregate
+percentiles.
+
+The result is only `LATENCY_PROVEN` or `LATENCY_NOT_PROVEN`. FL11.2a remains
+the source for closed-position exit timing. FL11.3 cannot change PAPER state,
+promote a champion, grant production cutover, sign/submit transactions, or
+enable LIVE.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
