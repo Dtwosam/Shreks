@@ -444,6 +444,22 @@ def test_journal_parser_requires_canonical_advancing_supervisor_status() -> None
     assert len(physical.parse_supervisor_status_journal(bad)) == 2
 
 
+def test_journal_advancement_uses_latest_cycle_segment_after_restart() -> None:
+    statuses = physical.parse_supervisor_status_journal(
+        _status(12)
+        + "\n"
+        + _status(13)
+        + "\n"
+        + _status(1)
+        + "\n"
+        + _status(3)
+        + "\n"
+    )
+    first, last = physical._require_status_advancement(statuses)
+    assert first["completed_cycles"] == 1
+    assert last["completed_cycles"] == 3
+
+
 def test_restart_proof_requires_activation_receipt_and_monotonic_state(
     tmp_path: Path,
     monkeypatch,
