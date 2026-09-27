@@ -141,6 +141,9 @@ def _quote(
         execution_price_quote=execution_price if executable else None,
         quoted_base_quantity=2.0 if executable else None,
         available_base_quantity=2.0 if executable else None,
+        input_amount_raw=2_000_000,
+        output_amount_raw=2_000_000 if executable else None,
+        minimum_output_amount_raw=2_000_000 if executable else None,
     )
 
 
@@ -292,7 +295,7 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
     assert constraints.reduce_execution_costs[0].execution_cost_bps == pytest.approx(150.0)
 
     assert evidence.schema_name == FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME
-    assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 3
+    assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 4
     assert evidence.schema_version == FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION
     assert evidence.feature_record == record
     assert evidence.source_event_id == "shadow-event:0"

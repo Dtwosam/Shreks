@@ -88,6 +88,9 @@ _QUOTE_KEYS = frozenset(
         "execution_price_quote",
         "quoted_base_quantity",
         "available_base_quantity",
+        "input_amount_raw",
+        "output_amount_raw",
+        "minimum_output_amount_raw",
     }
 )
 
@@ -842,6 +845,9 @@ def _encode_quote(
         "available_base_quantity": _optional_float_tag(
             value.available_base_quantity
         ),
+        "input_amount_raw": value.input_amount_raw,
+        "output_amount_raw": value.output_amount_raw,
+        "minimum_output_amount_raw": value.minimum_output_amount_raw,
     }
 
 
@@ -877,6 +883,26 @@ def _decode_quote(value: object) -> FastPaperShadowQuoteEvidence:
         available_base_quantity=_decode_optional_float_tag(
             "available_base_quantity",
             value["available_base_quantity"],
+        ),
+        input_amount_raw=_require_exact_int(
+            "input_amount_raw",
+            value["input_amount_raw"],
+        ),
+        output_amount_raw=(
+            None
+            if value["output_amount_raw"] is None
+            else _require_exact_int(
+                "output_amount_raw",
+                value["output_amount_raw"],
+            )
+        ),
+        minimum_output_amount_raw=(
+            None
+            if value["minimum_output_amount_raw"] is None
+            else _require_exact_int(
+                "minimum_output_amount_raw",
+                value["minimum_output_amount_raw"],
+            )
         ),
     )
 

@@ -133,6 +133,9 @@ def _quote(record, *, observed_at: int, execution_price: float):
         execution_price_quote=execution_price,
         quoted_base_quantity=2.0,
         available_base_quantity=2.0,
+        input_amount_raw=2_000_000,
+        output_amount_raw=2_000_000,
+        minimum_output_amount_raw=2_000_000,
     )
 
 
@@ -289,7 +292,7 @@ def test_shadow_batch_writes_evidence_before_cursor_and_binds_feature_record(
     )
     assert "shadow-cycle" not in files[0].name
     evidence = read_fast_paper_shadow_decision_evidence(files[0])
-    assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 3
+    assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 4
     assert evidence.feature_record == record
     assert evidence.feature_record_fingerprint_sha256 == (
         feature_logical_fingerprint_sha256((record,))

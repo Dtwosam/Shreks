@@ -37,7 +37,7 @@ from .models import FastPaperRuntimeManifest
 
 
 FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME = "shreks.fast_paper_shadow_decision"
-FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 3
+FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 4
 
 _EXECUTABLE = "EXECUTABLE"
 _UNAVAILABLE = "UNAVAILABLE"
@@ -89,6 +89,9 @@ _QUOTE_KEYS = frozenset(
         "execution_price_quote",
         "quoted_base_quantity",
         "available_base_quantity",
+        "input_amount_raw",
+        "output_amount_raw",
+        "minimum_output_amount_raw",
     }
 )
 _REDUCTION_KEYS = frozenset({"target_exposure_fraction", "quote"})
@@ -121,6 +124,9 @@ class FastPaperShadowQuoteEvidence:
     execution_price_quote: float | None
     quoted_base_quantity: float | None
     available_base_quantity: float | None
+    input_amount_raw: int
+    output_amount_raw: int | None
+    minimum_output_amount_raw: int | None
 
     def __post_init__(self) -> None:
         for name in ("provider", "mint", "quote_mint"):
@@ -132,16 +138,29 @@ class FastPaperShadowQuoteEvidence:
             raise ValueError(
                 "shadow quote state must be EXECUTABLE or UNAVAILABLE"
             )
+        _require_u64(
+            "input_amount_raw",
+            self.input_amount_raw,
+            positive=True,
+        )
         values = (
             self.reference_price_quote,
             self.execution_price_quote,
             self.quoted_base_quantity,
             self.available_base_quantity,
         )
+        raw_outputs = (
+            self.output_amount_raw,
+            self.minimum_output_amount_raw,
+        )
         if self.state == _EXECUTABLE:
             if any(value is None for value in values):
                 raise ValueError(
                     "executable shadow quote requires complete price/capacity evidence"
+                )
+            if any(value is None for value in raw_outputs):
+                raise ValueError(
+                    "executable shadow quote requires complete raw output evidence"
                 )
             for name in (
                 "reference_price_quote",
@@ -150,10 +169,31 @@ class FastPaperShadowQuoteEvidence:
                 "available_base_quantity",
             ):
                 _require_positive_finite(name, getattr(self, name))
-        elif any(value is not None for value in values):
-            raise ValueError(
-                "unavailable shadow quote cannot carry price/capacity evidence"
+            assert self.output_amount_raw is not None
+            assert self.minimum_output_amount_raw is not None
+            _require_u64(
+                "output_amount_raw",
+                self.output_amount_raw,
+                positive=True,
             )
+            _require_u64(
+                "minimum_output_amount_raw",
+                self.minimum_output_amount_raw,
+                positive=True,
+            )
+            if self.minimum_output_amount_raw > self.output_amount_raw:
+                raise ValueError(
+                    "shadow quote raw minimum output exceeds raw output"
+                )
+        else:
+            if any(value is not None for value in values):
+                raise ValueError(
+                    "unavailable shadow quote cannot carry price/capacity evidence"
+                )
+            if any(value is not None for value in raw_outputs):
+                raise ValueError(
+                    "unavailable shadow quote cannot carry raw output evidence"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1543,6 +1583,20 @@ def _sha256_canonical(value: object) -> str:
 def _require_non_empty(name: str, value: object) -> None:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{name} must be a non-empty string")
+
+
+def _require_u64(
+    name: str,
+    value: object,
+    *,
+    positive: bool = False,
+) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be a u64 integer")
+    minimum = 1 if positive else 0
+    if not minimum <= value <= 2**64 - 1:
+        qualifier = "positive " if positive else ""
+        raise ValueError(f"{name} must be a {qualifier}u64 integer")
 
 
 def _require_positive_int(name: str, value: object) -> None:
