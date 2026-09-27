@@ -648,6 +648,20 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
         exit_observed_at=20_520,
         reduction_observed_at=20_521,
     )
+    hold_evidence = replace(
+        hold_evidence,
+        reduction_quotes=(
+            replace(
+                hold_evidence.reduction_quotes[0],
+                quote=replace(
+                    hold_evidence.reduction_quotes[0].quote,
+                    quoted_base_quantity=1.0,
+                    available_base_quantity=1.0,
+                    input_amount_raw=1_000_000,
+                ),
+            ),
+        ),
+    )
     resolved = execute_fast_paper_shadow_decision(
         manifest,
         policy,
@@ -666,6 +680,10 @@ def test_pending_reduce_survives_restart_and_updates_exposure_from_actual_quanti
     assert (
         resolved.next_market_positions[0].current_exposure_fraction
         == pytest.approx(0.25)
+    )
+    assert (
+        resolved.next_market_positions[0].current_base_quantity_raw
+        == 1_000_000
     )
 
 
