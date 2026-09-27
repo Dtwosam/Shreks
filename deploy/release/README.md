@@ -380,6 +380,38 @@ Do not use `systemctl enable`, do not add the shadow unit to
 ceremony. Production PAPER cutover remains a later explicit gate after real
 shadow evidence is accumulated and reviewed.
 
+### Summarize Fast PAPER shadow decision telemetry
+
+After the detached shadow service is running, a trusted operator can summarize
+a bounded interval of immutable decision evidence without changing runtime
+state.
+
+Use explicit UTC epoch-millisecond boundaries no wider than 24 hours:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-decision-telemetry" \
+  summarize \
+  --evidence-directory /var/lib/shreks/fast-paper-shadow/decision \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <inclusive-epoch-ms> \
+  --until-unix-ms <exclusive-epoch-ms>
+```
+
+The command is read-only and reuses the canonical shadow-decision evidence
+decoder. It reports decision-evidence rate, event-to-evaluation lag, measured
+Rust decision latency, BUY/SKIP/HOLD/REDUCE/SELL counts, selected
+reward/risk/execution-cost/value, executability constraints, source-sequence
+gaps, and exact champion/runtime identity.
+
+`decision_evidence_rate_per_second` is deliberately **not** raw observer
+events/sec. Likewise, this first telemetry rollup does not claim realized
+fill/slippage metrics. Those require the separate isolated execution/outcome
+telemetry slice.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
