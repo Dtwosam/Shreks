@@ -543,9 +543,14 @@ def _reconstruct_evaluation_capture(
                     raise FastPaperShadowTradeEconomicsError(
                         "shadow economics terminal position execution lacks ledger update"
                     )
+                active_assessment = (
+                    position.active_exit.assessment
+                    if position.active_exit is not None
+                    else position.applied_assessment
+                )
                 execution_inputs.append(
                     FastPaperExecutionEvidenceInput(
-                        assessment=position.applied_assessment,
+                        assessment=active_assessment,
                         execution=position.execution,
                         ledger_update=position.execution_ledger_update,
                     )
