@@ -9,6 +9,14 @@ import shreks_brain.fast_paper_runtime.shadow_buy_authority_evidence_adapter as 
 from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicComparisonExecutionPolicy,
 )
+from shreks_brain.fast_deterministic_offline import (
+    FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION,
+    FastChampionEntryExecutionEvidence,
+)
+from shreks_brain.fast_learning import (
+    FastForecastPrediction,
+    FastForecastTarget,
+)
 from shreks_brain.fast_paper_runtime import (
     FastPaperShadowCycleInput,
     FastPaperShadowQuoteReadPolicy,
@@ -175,10 +183,27 @@ def _wire_reads(monkeypatch, fixture, *, halt=False, kill=False, control_at=20_0
 
     def build_execution(**kwargs):
         build_calls.update(kwargs)
-        return SimpleNamespace(
+        return FastChampionEntryExecutionEvidence(
+            version=FAST_CHAMPION_ENTRY_EXECUTION_EVIDENCE_VERSION,
+            champion_version=manifest.champion_version,
+            champion_fingerprint_sha256=(
+                manifest.champion_fingerprint_sha256
+            ),
+            member_key="endpoint_return_bps@250ms",
+            validation_run_fingerprint_sha256="1" * 64,
+            test_evaluation_report_fingerprint_sha256="2" * 64,
+            prediction=FastForecastPrediction(
+                model_version="endpoint-model-v1",
+                target=FastForecastTarget.ENDPOINT_RETURN_BPS,
+                horizon_ms=250,
+                decision_identity=feature.decision_identity,
+                predicted_value=2_000.0,
+            ),
             execution=_execution(feature),
             forecast_source_version="forecast-source-v1",
-            execution_policy_source_version="shadow-buy-execution-economics-v1",
+            execution_policy_source_version=(
+                "shadow-buy-execution-economics-v1"
+            ),
             exit_capacity_source_version="persisted-exit-quote-v1",
         )
 
