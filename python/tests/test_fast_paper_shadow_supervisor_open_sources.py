@@ -50,6 +50,9 @@ def _config(tmp_path: Path):
     return supervisor.FastPaperShadowSupervisorConfig(
         decision_config=_decision_config(tmp_path),
         execution_config=_execution_config(tmp_path),
+        buy_authority_source_directory=(
+            tmp_path / "buy-authority-sources"
+        ).resolve(),
         quote_usd_source_directory=(
             tmp_path / "quote-usd-sources"
         ).resolve(),
@@ -89,6 +92,7 @@ def test_supervisor_config_and_loader_require_quote_usd_source_root(
 ) -> None:
     decision = _decision_config(tmp_path)
     execution = _execution_config(tmp_path)
+    buy_authority = (tmp_path / "buy-authority-sources").resolve()
     quote_usd = (tmp_path / "quote-usd-sources").resolve()
     reduction = (tmp_path / "reduction-sources").resolve()
     retry = (tmp_path / "retry-sources").resolve()
@@ -96,6 +100,9 @@ def test_supervisor_config_and_loader_require_quote_usd_source_root(
     assert config.quote_usd_source_directory == quote_usd
 
     env = {
+        "SHREKS_FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_DIRECTORY": str(
+            buy_authority
+        ),
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY": str(quote_usd),
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY": str(reduction),
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY": str(retry),
@@ -121,6 +128,7 @@ def test_supervisor_orders_skip_then_open_publisher_before_coordinator(
     for name in (
         "decision",
         "execution-sources",
+        "buy-authority-sources",
         "quote-usd-sources",
         "reduction-sources",
         "retry-sources",
@@ -133,6 +141,12 @@ def test_supervisor_orders_skip_then_open_publisher_before_coordinator(
     )
     events: list[object] = []
 
+    monkeypatch.setattr(
+        supervisor,
+        "run_fast_paper_shadow_buy_source_publisher_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
     monkeypatch.setattr(
         supervisor,
         "run_fast_paper_shadow_skip_source_publisher_cycle",
