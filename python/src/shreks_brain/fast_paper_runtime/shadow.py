@@ -28,6 +28,7 @@ from shreks_brain.fast_champion import read_fast_forecast_champion
 from shreks_brain.fast_learning import FastForecastTarget
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureRecord,
+    fast_training_feature_record_from_mapping,
     feature_logical_fingerprint_sha256,
 )
 
@@ -36,7 +37,7 @@ from .models import FastPaperRuntimeManifest
 
 
 FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME = "shreks.fast_paper_shadow_decision"
-FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 2
+FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION = 3
 
 _EXECUTABLE = "EXECUTABLE"
 _UNAVAILABLE = "UNAVAILABLE"
@@ -57,6 +58,7 @@ _TOP_KEYS = frozenset(
         "champion_version",
         "champion_fingerprint_sha256",
         "action_policy_version",
+        "feature_record",
         "feature_record_fingerprint_sha256",
         "source_event_id",
         "market_key",
@@ -183,6 +185,7 @@ class FastPaperShadowDecisionEvidence:
     champion_version: str
     champion_fingerprint_sha256: str
     action_policy_version: int
+    feature_record: FastTrainingFeatureRecord
     feature_record_fingerprint_sha256: str
     source_event_id: str
     market_key: str
@@ -219,6 +222,10 @@ class FastPaperShadowDecisionEvidence:
         _require_positive_int(
             "action_policy_version", self.action_policy_version
         )
+        if type(self.feature_record) is not FastTrainingFeatureRecord:
+            raise ValueError(
+                "feature_record must be exact FastTrainingFeatureRecord"
+            )
         _require_sha256(
             "feature_record_fingerprint_sha256",
             self.feature_record_fingerprint_sha256,
@@ -425,6 +432,7 @@ def evaluate_fast_paper_shadow_decision(
             manifest.champion_fingerprint_sha256
         ),
         "action_policy_version": manifest.action_policy.version,
+        "feature_record": record,
         "feature_record_fingerprint_sha256": (
             feature_logical_fingerprint_sha256((record,))
         ),
@@ -546,6 +554,9 @@ def read_fast_paper_shadow_decision_evidence(
             "shadow decision evidence must use canonical JSON"
         )
 
+    feature_record = fast_training_feature_record_from_mapping(
+        document["feature_record"]
+    )
     position = _decode_position(document["position"])
     constraints = _decode_constraints(document["constraints"])
     entry_quote = _decode_quote(document["entry_quote"])
@@ -579,6 +590,7 @@ def read_fast_paper_shadow_decision_evidence(
             "champion_fingerprint_sha256"
         ],
         action_policy_version=document["action_policy_version"],
+        feature_record=feature_record,
         feature_record_fingerprint_sha256=document[
             "feature_record_fingerprint_sha256"
         ],
@@ -853,6 +865,62 @@ def _validate_results_fingerprint(
 def _validate_evidence_internal(
     evidence: FastPaperShadowDecisionEvidence,
 ) -> None:
+    record = evidence.feature_record
+    if type(record) is not FastTrainingFeatureRecord:
+        raise ValueError(
+            "shadow evidence feature_record must be exact FastTrainingFeatureRecord"
+        )
+    if (
+        feature_logical_fingerprint_sha256((record,))
+        != evidence.feature_record_fingerprint_sha256
+    ):
+        raise ValueError(
+            "shadow evidence feature fingerprint does not match embedded feature_record"
+        )
+    expected_source_event_id = (
+        f"{record.decision_signature}:{record.decision_ordinal}"
+    )
+    expected_market_key = (
+        f"{record.venue}:{record.mint}:{record.quote_mint}"
+    )
+    if (
+        evidence.source_event_id != expected_source_event_id
+        or evidence.market_key != expected_market_key
+        or evidence.source_sequence != record.decision_sequence
+        or evidence.as_of_unix_ms
+        != record.decision_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "shadow evidence embedded feature source identity mismatch"
+        )
+    if evidence.evaluated_at_unix_ms < record.decision_observed_at_unix_ms:
+        raise ValueError(
+            "shadow evidence evaluation precedes embedded feature decision"
+        )
+    for name, quote in (
+        ("ENTRY", evidence.entry_quote),
+        ("EXIT", evidence.exit_quote),
+    ):
+        if (
+            quote.mint != record.mint
+            or quote.quote_mint != record.quote_mint
+        ):
+            raise ValueError(
+                f"shadow evidence {name} quote identity does not match embedded feature"
+            )
+        if quote.state == _EXECUTABLE:
+            reference = quote.reference_price_quote
+            assert reference is not None
+            if not math.isclose(
+                reference,
+                record.decision_executable_entry_price_quote,
+                rel_tol=1e-12,
+                abs_tol=1e-15,
+            ):
+                raise ValueError(
+                    f"shadow evidence {name} quote reference price does not match embedded feature"
+                )
+
     decision = evidence.decision
     if (
         decision.source_event_id != evidence.source_event_id
@@ -1074,6 +1142,7 @@ def _validate_evidence_fingerprint(
             "champion_version",
             "champion_fingerprint_sha256",
             "action_policy_version",
+            "feature_record",
             "feature_record_fingerprint_sha256",
             "source_event_id",
             "market_key",
@@ -1112,6 +1181,7 @@ def _document(
             "champion_version",
             "champion_fingerprint_sha256",
             "action_policy_version",
+            "feature_record",
             "feature_record_fingerprint_sha256",
             "source_event_id",
             "market_key",
@@ -1153,6 +1223,9 @@ def _evidence_material(
             "champion_fingerprint_sha256"
         ],
         "action_policy_version": values["action_policy_version"],
+        "feature_record": _feature_record_document(
+            values["feature_record"]
+        ),
         "feature_record_fingerprint_sha256": values[
             "feature_record_fingerprint_sha256"
         ],
@@ -1181,6 +1254,49 @@ def _evidence_material(
             "result_batch_fingerprint_sha256"
         ],
     }
+
+
+def _feature_record_document(
+    value: object,
+) -> dict[str, object]:
+    if type(value) is not FastTrainingFeatureRecord:
+        raise ValueError(
+            "shadow feature_record must be exact FastTrainingFeatureRecord"
+        )
+    document = asdict(value)
+    reserve = document["last_reserve_context"]
+    if reserve is not None:
+        if reserve["kind"] == "pump_curve":
+            document["last_reserve_context"] = {
+                name: reserve[name]
+                for name in (
+                    "kind",
+                    "virtual_base_reserve_raw",
+                    "virtual_quote_reserve_raw",
+                    "real_base_reserve_raw",
+                    "real_quote_reserve_raw",
+                    "base_decimals",
+                    "quote_decimals",
+                )
+            }
+        elif reserve["kind"] == "pump_swap_pool":
+            document["last_reserve_context"] = {
+                name: reserve[name]
+                for name in (
+                    "kind",
+                    "pool_base_reserve_raw",
+                    "pool_quote_reserve_raw",
+                    "virtual_quote_reserve_raw",
+                    "base_decimals",
+                    "quote_decimals",
+                )
+            }
+        else:
+            raise ValueError(
+                "shadow feature_record reserve context kind is unsupported"
+            )
+    document["windows"] = [dict(item) for item in document["windows"]]
+    return document
 
 
 def _position_document(
