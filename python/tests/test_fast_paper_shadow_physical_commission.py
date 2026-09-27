@@ -192,6 +192,30 @@ def _patch_preflight(monkeypatch, paths):
     )
 
 
+def test_commissioning_receipts_must_stay_outside_service_write_tree(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    current = tmp_path / "current"
+    current.symlink_to(release)
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    with pytest.raises(
+        ValueError,
+        match="outside the service-writable shadow tree",
+    ):
+        physical.FastPaperShadowPhysicalCommissionPaths(
+            current_link=current,
+            unit_destination=tmp_path / "unit",
+            config_destination=tmp_path / "env",
+            target_path=tmp_path / "target",
+            shadow_root=shadow,
+            commissioning_root=shadow / "commissioning",
+            proc_root=tmp_path / "proc",
+        )
+
+
 def test_default_command_runner_rejects_enable_stop_and_foreign_units(
     monkeypatch,
 ) -> None:
