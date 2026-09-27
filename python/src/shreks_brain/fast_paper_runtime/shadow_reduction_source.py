@@ -26,7 +26,7 @@ from .shadow_runtime_state import (
 FAST_PAPER_SHADOW_REDUCTION_SOURCE_SCHEMA_NAME = (
     "shreks.fast_paper_shadow_reduction_source"
 )
-FAST_PAPER_SHADOW_REDUCTION_SOURCE_SCHEMA_VERSION = 1
+FAST_PAPER_SHADOW_REDUCTION_SOURCE_SCHEMA_VERSION = 2
 
 _TOP_KEYS = frozenset(
     {
@@ -41,6 +41,8 @@ _TOP_KEYS = frozenset(
         "position_id",
         "mint",
         "current_exposure_fraction_hex",
+        "current_base_quantity_raw",
+        "exit_input_amount_raw",
         "reduction_reads",
         "record_fingerprint_sha256",
     }
@@ -67,6 +69,8 @@ class FastPaperShadowReductionSourceRecord:
     position_id: str
     mint: str
     current_exposure_fraction: float
+    current_base_quantity_raw: int
+    exit_input_amount_raw: int
     reduction_reads: tuple[FastPaperShadowReductionRead, ...]
     record_fingerprint_sha256: str
 
@@ -101,6 +105,20 @@ class FastPaperShadowReductionSourceRecord:
             "current_exposure_fraction",
             self.current_exposure_fraction,
         )
+        _require_u64(
+            "current_base_quantity_raw",
+            self.current_base_quantity_raw,
+            positive=True,
+        )
+        _require_u64(
+            "exit_input_amount_raw",
+            self.exit_input_amount_raw,
+            positive=True,
+        )
+        if self.exit_input_amount_raw != self.current_base_quantity_raw:
+            raise ValueError(
+                "shadow reduction source full-exit raw input must equal current raw inventory"
+            )
         if (
             not isinstance(self.reduction_reads, tuple)
             or not all(
@@ -192,6 +210,8 @@ def build_fast_paper_shadow_reduction_source_record(
         "position_id": mapping.position_id,
         "mint": mapping.mint,
         "current_exposure_fraction": mapping.current_exposure_fraction,
+        "current_base_quantity_raw": mapping.current_base_quantity_raw,
+        "exit_input_amount_raw": mapping.current_base_quantity_raw,
         "reduction_reads": reduction_reads,
     }
     fingerprint = hashlib.sha256(
@@ -338,6 +358,14 @@ def read_fast_paper_shadow_reduction_source_record(
             current_exposure_fraction=_decode_float_hex(
                 "current_exposure_fraction_hex",
                 document["current_exposure_fraction_hex"],
+            ),
+            current_base_quantity_raw=_decode_u64_text(
+                "current_base_quantity_raw",
+                document["current_base_quantity_raw"],
+            ),
+            exit_input_amount_raw=_decode_u64_text(
+                "exit_input_amount_raw",
+                document["exit_input_amount_raw"],
             ),
             reduction_reads=reduction_reads,
             record_fingerprint_sha256=document[
@@ -510,6 +538,12 @@ def _record_fingerprint(
                     "current_exposure_fraction": (
                         record.current_exposure_fraction
                     ),
+                    "current_base_quantity_raw": (
+                        record.current_base_quantity_raw
+                    ),
+                    "exit_input_amount_raw": (
+                        record.exit_input_amount_raw
+                    ),
                     "reduction_reads": record.reduction_reads,
                 }
             )
@@ -543,6 +577,10 @@ def _document(
             "current_exposure_fraction": (
                 record.current_exposure_fraction
             ),
+            "current_base_quantity_raw": (
+                record.current_base_quantity_raw
+            ),
+            "exit_input_amount_raw": record.exit_input_amount_raw,
             "reduction_reads": record.reduction_reads,
         }
     )
@@ -589,6 +627,20 @@ def _document_values(
         "mint": values["mint"],
         "current_exposure_fraction_hex": _float_hex(
             values["current_exposure_fraction"]
+        ),
+        "current_base_quantity_raw": str(
+            _validated_u64_value(
+                "current_base_quantity_raw",
+                values["current_base_quantity_raw"],
+                positive=True,
+            )
+        ),
+        "exit_input_amount_raw": str(
+            _validated_u64_value(
+                "exit_input_amount_raw",
+                values["exit_input_amount_raw"],
+                positive=True,
+            )
         ),
         "reduction_reads": [
             {
@@ -669,6 +721,32 @@ def _decode_u64_text(name: str, value: object) -> int:
     if not 0 <= result <= _MAX_U64 or str(result) != value:
         raise ValueError(f"{name} must be canonical u64 text")
     return result
+
+
+def _validated_u64_value(
+    name: str,
+    value: object,
+    *,
+    positive: bool,
+) -> int:
+    _require_u64(name, value, positive=positive)
+    return value
+
+
+def _require_u64(
+    name: str,
+    value: object,
+    *,
+    positive: bool,
+) -> None:
+    lower = 1 if positive else 0
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not lower <= value <= _MAX_U64
+    ):
+        qualifier = "positive " if positive else ""
+        raise ValueError(f"{name} must be a {qualifier}u64 integer")
 
 
 def _require_exposure(name: str, value: object) -> None:
