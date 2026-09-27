@@ -38,6 +38,12 @@ def _default_source_publishers(monkeypatch):
     )
     monkeypatch.setattr(
         supervisor,
+        "run_fast_paper_shadow_buy_source_publisher_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
         "run_fast_paper_shadow_open_source_publisher_cycle",
         lambda *_args, **_kwargs: 0,
         raising=False,
@@ -67,6 +73,7 @@ def _config(tmp_path: Path):
     return supervisor.FastPaperShadowSupervisorConfig(
         decision_config=_decision_config(tmp_path),
         execution_config=_execution_config(tmp_path),
+        buy_authority_source_directory=(tmp_path / "buy-authority-sources").resolve(),
         quote_usd_source_directory=(tmp_path / "quote-usd-sources").resolve(),
         reduction_source_directory=(tmp_path / "reduction-sources").resolve(),
         pending_buy_retry_source_directory=(
@@ -106,10 +113,12 @@ def test_supervisor_loads_existing_configs_and_source_directories(
 ) -> None:
     decision = _decision_config(tmp_path)
     execution = _execution_config(tmp_path)
+    buy_authority = (tmp_path / "buy-authority-sources").resolve()
     quote_usd = (tmp_path / "quote-usd-sources").resolve()
     reduction = (tmp_path / "reduction-sources").resolve()
     retry = (tmp_path / "retry-sources").resolve()
     env = {
+        "SHREKS_FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_DIRECTORY": str(buy_authority),
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY": str(quote_usd),
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY": str(reduction),
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY": str(retry),
@@ -139,6 +148,7 @@ def test_supervisor_loads_existing_configs_and_source_directories(
 
     assert config.decision_config is decision
     assert config.execution_config is execution
+    assert config.buy_authority_source_directory == buy_authority
     assert config.quote_usd_source_directory == quote_usd
     assert config.reduction_source_directory == reduction
     assert config.pending_buy_retry_source_directory == retry
@@ -150,7 +160,7 @@ def test_supervisor_preflight_authenticates_both_bootstraps_without_cycle(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    for name in ("decision", "execution-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
+    for name in ("decision", "execution-sources", "buy-authority-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
         (tmp_path / name).mkdir()
     config = _config(tmp_path)
     decision = _decision_bootstrap()
@@ -195,7 +205,7 @@ def test_supervisor_cycle_calls_coordinator_once_with_durable_sources(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    for name in ("decision", "execution-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
+    for name in ("decision", "execution-sources", "buy-authority-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
         (tmp_path / name).mkdir()
     config = _config(tmp_path)
     before = supervisor.FastPaperShadowSupervisorBootstrap(
@@ -267,7 +277,7 @@ def test_supervisor_status_reports_decision_and_execution_progress(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    for name in ("decision", "execution-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
+    for name in ("decision", "execution-sources", "buy-authority-sources", "quote-usd-sources", "reduction-sources", "retry-sources"):
         (tmp_path / name).mkdir()
     config = _config(tmp_path)
     bootstrap = supervisor.FastPaperShadowSupervisorBootstrap(
@@ -369,6 +379,7 @@ def test_systemd_runs_coordinated_supervisor_and_packages_complete_env_example()
         "SHREKS_FAST_PAPER_SHADOW_EXECUTION_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_LEDGER_DATABASE_PATH",
         "SHREKS_FAST_PAPER_SHADOW_LEDGER_RUN_ID",
+        "SHREKS_FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_REDUCTION_SOURCE_DIRECTORY",
         "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY",
@@ -384,6 +395,7 @@ def test_supervisor_publishes_skip_source_before_coordinator(
     for name in (
         "decision",
         "execution-sources",
+        "buy-authority-sources",
         "quote-usd-sources",
         "reduction-sources",
         "retry-sources",
