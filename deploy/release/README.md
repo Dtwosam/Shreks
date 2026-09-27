@@ -380,6 +380,54 @@ Do not use `systemctl enable`, do not add the shadow unit to
 ceremony. Production PAPER cutover remains a later explicit gate after real
 shadow evidence is accumulated and reviewed.
 
+### Measure Fast PAPER shadow resource headroom
+
+After the detached shadow service has a successful physical activation receipt,
+a trusted administrator can capture one bounded FL10.4 host-headroom receipt
+during a real decision-activity window.
+
+Choose an observation interval from 5 through 900 seconds and an explicit
+minimum number of authenticated Fast Lane decisions that makes the selected
+window meaningful for the burst being measured:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-physical-commission" \
+  headroom "$CURRENT_SHA" \
+  --observe-seconds <5..900> \
+  --minimum-decisions <positive-integer>
+```
+
+The command does not generate load. Run it while the real detached shadow
+service is naturally receiving the event-derived decision activity you want to
+measure. It reuses the exact physical observation window, authenticates decision
+evidence from that same interval, and requires the observed decision count to
+meet the explicit operator-supplied minimum.
+
+The receipt reports decision-evidence rate plus event/evaluation and decision
+latency, process CPU, normalized host CPU utilization/headroom, peak RSS versus
+host memory, filesystem capacity/available space, shadow-state growth rate,
+private-network byte rates, and supervisor cycle rate. The headroom path samples
+process resources once per second within the bounded window so the RSS peak is
+not limited to the two endpoint readings.
+
+No resource-utilization threshold is hard-coded. High utilization remains
+measured evidence to investigate rather than an automatic pass/fail tuning rule.
+
+A successful run writes:
+
+```text
+/root/shreks-fast-paper-shadow-commissioning/headroom-<release-sha>.json
+```
+
+The headroom command is read-only with respect to systemd and PAPER state. It
+does not start, restart, enable, disable, or stop any service, does not alter the
+legacy PAPER authority, and does not grant signing/submission or LIVE authority.
+
 ### Summarize Fast PAPER shadow decision telemetry
 
 After the detached shadow service is running, a trusted operator can summarize

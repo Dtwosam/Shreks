@@ -74,8 +74,8 @@ def _make_proc(paths, pid: int, *, cpu_ticks: int = 100, rss_kib: int = 4096):
         ).encode("utf-8")
     )
     fields = ["0"] * 50
-    fields[11] = str(cpu_ticks // 2)
-    fields[12] = str(cpu_ticks - cpu_ticks // 2)
+    fields[10] = str(cpu_ticks // 2)
+    fields[11] = str(cpu_ticks - cpu_ticks // 2)
     (pid_root / "stat").write_text(
         f"{pid} (python) S " + " ".join(fields) + "\n",
         encoding="utf-8",
@@ -426,6 +426,324 @@ def test_observation_rejects_process_restart_churn_and_bad_network(
             command_runner=runner,
             sleeper=lambda _seconds: None,
         )
+
+
+def _headroom_telemetry(count: int = 25) -> dict[str, object]:
+    return {
+        "manifest_fingerprint_sha256": "b" * 64,
+        "champion_version": "champion-v1",
+        "champion_fingerprint_sha256": "c" * 64,
+        "action_policy_version": 1,
+        "decision_evidence_count": count,
+        "decision_evidence_rate_per_second": float(count) / 5.0,
+        "event_to_evaluation_lag_ms": {
+            "p50": 4.0,
+            "p95": 12.0,
+            "p99": 15.0,
+            "max": 18.0,
+        },
+        "decision_latency_ms": {
+            "p50": 0.1,
+            "p95": 0.3,
+            "p99": 0.4,
+            "max": 0.5,
+        },
+        "telemetry_fingerprint_sha256": "d" * 64,
+    }
+
+
+def _advance_proc_resources(
+    paths,
+    pid: int,
+    *,
+    cpu_ticks: int = 600,
+    rss_kib: int = 8192,
+    rx_bytes: int = 1100,
+    tx_bytes: int = 2200,
+    storage_bytes: int = 500,
+) -> None:
+    pid_root = paths.proc_root / str(pid)
+    fields = ["0"] * 50
+    fields[10] = str(cpu_ticks // 2)
+    fields[11] = str(cpu_ticks - cpu_ticks // 2)
+    (pid_root / "stat").write_text(
+        f"{pid} (python) S " + " ".join(fields) + "\n",
+        encoding="utf-8",
+    )
+    (pid_root / "status").write_text(
+        f"Name:\tpython\nVmRSS:\t{rss_kib} kB\n",
+        encoding="utf-8",
+    )
+    (pid_root / "net" / "dev").write_text(
+        "Inter-|   Receive                                                |  Transmit\n"
+        " face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n"
+        f"    lo: {rx_bytes} 1 0 0 0 0 0 0 {tx_bytes} 1 0 0 0 0 0 0\n",
+        encoding="utf-8",
+    )
+    (paths.shadow_root / "burst-evidence.bin").write_bytes(
+        b"x" * storage_bytes
+    )
+
+
+def test_host_capacity_reads_cpu_memory_and_filesystem(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _layout(tmp_path)
+    (paths.proc_root / "meminfo").write_text(
+        "MemTotal:       16384 kB\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(physical.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(
+        physical.os,
+        "statvfs",
+        lambda _path: SimpleNamespace(
+            f_frsize=4096,
+            f_bsize=4096,
+            f_blocks=1000,
+            f_bavail=250,
+        ),
+    )
+
+    capacity = physical._read_host_capacity(paths)
+
+    assert capacity == physical.HostCapacitySnapshot(
+        logical_cpu_count=4,
+        memory_total_bytes=16384 * 1024,
+        storage_capacity_bytes=4096 * 1000,
+        storage_available_bytes=4096 * 250,
+    )
+
+
+def test_headroom_telemetry_uses_exact_runtime_evidence_directory(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _layout(tmp_path)
+    evidence_directory = tmp_path / "decisions"
+    evidence_directory.mkdir()
+    monkeypatch.setattr(
+        physical,
+        "read_fast_paper_shadow_host_environment",
+        lambda _path: {"loaded": "yes"},
+    )
+    monkeypatch.setattr(
+        physical,
+        "validate_fast_paper_shadow_production_environment",
+        lambda _env: SimpleNamespace(
+            supervisor_config=SimpleNamespace(
+                decision_config=SimpleNamespace(
+                    evidence_directory=evidence_directory
+                )
+            )
+        ),
+    )
+    captured = {}
+
+    def collect(**kwargs):
+        captured.update(kwargs)
+        return _headroom_telemetry()
+
+    monkeypatch.setattr(
+        physical,
+        "collect_fast_paper_shadow_decision_telemetry",
+        collect,
+    )
+
+    result = physical._collect_headroom_decision_telemetry(
+        paths,
+        expected_sha=_SHA,
+        since_unix_ms=1_000,
+        until_unix_ms=6_000,
+    )
+
+    assert result["decision_evidence_count"] == 25
+    assert captured == {
+        "evidence_directory": evidence_directory,
+        "expected_release_sha": _SHA,
+        "since_unix_ms": 1_000,
+        "until_unix_ms": 6_000,
+    }
+
+
+def test_resource_headroom_rejects_identity_drift_and_invalid_minimum() -> None:
+    observation = {
+        "manifest_fingerprint_sha256": "b" * 64,
+        "champion_version": "champion-v1",
+        "champion_fingerprint_sha256": "c" * 64,
+        "action_policy_version": 1,
+    }
+    telemetry = {
+        **_headroom_telemetry(),
+        "champion_version": "other-champion",
+    }
+
+    with pytest.raises(
+        physical.FastPaperShadowPhysicalCommissionError,
+        match="identity",
+    ):
+        physical._require_headroom_identity(observation, telemetry)
+
+    for value in (0, -1, True):
+        with pytest.raises(
+            physical.FastPaperShadowPhysicalCommissionError,
+            match="positive integer",
+        ):
+            physical._validate_minimum_decisions(value)
+
+
+def test_resource_headroom_requires_activity_and_records_capacity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _layout(tmp_path)
+    _patch_preflight(monkeypatch, paths)
+    runner = FakeRunner(paths)
+
+    physical.activate_fast_paper_shadow(
+        expected_release_source_sha=_SHA,
+        observation_seconds=5,
+        paths=paths,
+        runtime_executable=paths.current_link / ".venv" / "bin" / "python",
+        command_runner=runner,
+        clock_unix_ms=lambda: 1_000_000,
+        sleeper=lambda _seconds: None,
+    )
+
+    captured = {}
+
+    def telemetry(_paths, *, expected_sha, since_unix_ms, until_unix_ms):
+        captured.update(
+            expected_sha=expected_sha,
+            since_unix_ms=since_unix_ms,
+            until_unix_ms=until_unix_ms,
+        )
+        return _headroom_telemetry()
+
+    monkeypatch.setattr(
+        physical,
+        "_collect_headroom_decision_telemetry",
+        telemetry,
+    )
+    monkeypatch.setattr(
+        physical,
+        "_read_host_capacity",
+        lambda _paths: physical.HostCapacitySnapshot(
+            logical_cpu_count=4,
+            memory_total_bytes=16 * 1024**3,
+            storage_capacity_bytes=100 * 1024**3,
+            storage_available_bytes=80 * 1024**3,
+        ),
+    )
+    monkeypatch.setattr(physical.os, "sysconf", lambda _name: 100)
+
+    starts_before = runner.commands.count(("systemctl", "start", _UNIT))
+    restarts_before = runner.commands.count(("systemctl", "restart", _UNIT))
+    sample_calls = 0
+
+    def burst_sleeper(_seconds):
+        nonlocal sample_calls
+        sample_calls += 1
+        if sample_calls == 1:
+            _advance_proc_resources(
+                paths,
+                runner.pid,
+                cpu_ticks=300,
+                rss_kib=12288,
+                rx_bytes=300,
+                tx_bytes=500,
+                storage_bytes=200,
+            )
+        else:
+            _advance_proc_resources(paths, runner.pid)
+
+    receipt = physical.measure_fast_paper_shadow_resource_headroom(
+        expected_release_source_sha=_SHA,
+        observation_seconds=5,
+        minimum_decisions=10,
+        paths=paths,
+        runtime_executable=paths.current_link / ".venv" / "bin" / "python",
+        command_runner=runner,
+        clock_unix_ms=lambda: 2_000_000,
+        sleeper=burst_sleeper,
+    )
+
+    assert receipt["state"] == "RESOURCE_HEADROOM_MEASURED"
+    assert receipt["minimum_decision_evidence_count"] == 10
+    assert receipt["decision_evidence_count"] == 25
+    assert receipt["decision_evidence_rate_per_second"] == pytest.approx(5.0)
+    assert receipt["cpu_percent"] == pytest.approx(100.0)
+    assert receipt["cpu_host_utilization_pct"] == pytest.approx(25.0)
+    assert receipt["cpu_host_headroom_pct"] == pytest.approx(75.0)
+    assert receipt["logical_cpu_count"] == 4
+    assert receipt["rss_bytes_end"] == 8192 * 1024
+    assert receipt["rss_bytes_peak"] == 12288 * 1024
+    assert sample_calls == 5
+    assert receipt["shadow_storage_growth_bytes_per_second"] == pytest.approx(
+        100.0
+    )
+    assert receipt["private_network_rx_bytes_per_second"] == pytest.approx(
+        200.0
+    )
+    assert receipt["private_network_tx_bytes_per_second"] == pytest.approx(
+        400.0
+    )
+    assert receipt["completed_cycles_per_second"] == pytest.approx(0.6)
+    assert receipt["production_paper_cutover"] == "NOT_GRANTED"
+    assert receipt["live_authority"] == "DISABLED"
+    assert captured == {
+        "expected_sha": _SHA,
+        "since_unix_ms": 2_000_000,
+        "until_unix_ms": 2_005_000,
+    }
+    assert runner.commands.count(("systemctl", "start", _UNIT)) == starts_before
+    assert runner.commands.count(("systemctl", "restart", _UNIT)) == restarts_before
+    assert paths.headroom_receipt.is_file()
+    assert stat.S_IMODE(paths.headroom_receipt.stat().st_mode) == 0o600
+
+
+def test_resource_headroom_refuses_window_without_required_activity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    paths = _layout(tmp_path)
+    _patch_preflight(monkeypatch, paths)
+    runner = FakeRunner(paths)
+
+    physical.activate_fast_paper_shadow(
+        expected_release_source_sha=_SHA,
+        observation_seconds=5,
+        paths=paths,
+        runtime_executable=paths.current_link / ".venv" / "bin" / "python",
+        command_runner=runner,
+        sleeper=lambda _seconds: None,
+    )
+    monkeypatch.setattr(
+        physical,
+        "_collect_headroom_decision_telemetry",
+        lambda *_args, **_kwargs: _headroom_telemetry(count=2),
+    )
+
+    with pytest.raises(
+        physical.FastPaperShadowPhysicalCommissionError,
+        match="required decision evidence",
+    ):
+        physical.measure_fast_paper_shadow_resource_headroom(
+            expected_release_source_sha=_SHA,
+            observation_seconds=5,
+            minimum_decisions=10,
+            paths=paths,
+            runtime_executable=paths.current_link
+            / ".venv"
+            / "bin"
+            / "python",
+            command_runner=runner,
+            clock_unix_ms=lambda: 2_000_000,
+            sleeper=lambda _seconds: None,
+        )
+
+    assert not paths.headroom_receipt.exists()
 
 
 def test_journal_parser_requires_canonical_advancing_supervisor_status() -> None:
