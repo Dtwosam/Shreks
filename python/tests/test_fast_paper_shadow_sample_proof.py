@@ -337,8 +337,10 @@ def test_collector_authenticates_real_shadow_buy_regime(
 
     from shreks_brain.fast_paper_runtime import (
         produce_fast_paper_shadow_execution_input_source_record,
+        write_fast_paper_runtime_manifest,
         write_fast_paper_shadow_decision_evidence,
         write_fast_paper_shadow_execution_input_source_record,
+        write_fast_paper_shadow_execution_policy,
         execute_fast_paper_shadow_decision,
     )
 
@@ -362,6 +364,14 @@ def test_collector_authenticates_real_shadow_buy_regime(
         source_record,
         sources,
     )
+    manifest_path = tmp_path / "manifest.json"
+    execution_policy_path = tmp_path / "execution-policy.json"
+    write_fast_paper_runtime_manifest(manifest, manifest_path)
+    write_fast_paper_shadow_execution_policy(
+        execution_policy,
+        execution_policy_path,
+    )
+
     transition = execute_fast_paper_shadow_decision(
         manifest,
         execution_policy,
@@ -379,8 +389,8 @@ def test_collector_authenticates_real_shadow_buy_regime(
     )
 
     result = proof.collect_fast_paper_shadow_independent_sample(
-        manifest_path=tmp_path / "authority" / "manifest.json",
-        execution_policy_path=tmp_path / "authority" / "execution-policy.json",
+        manifest_path=manifest_path,
+        execution_policy_path=execution_policy_path,
         ledger_database_path=Path(binding.database_path),
         run_id=binding.run_id,
         decision_evidence_directory=decisions,
