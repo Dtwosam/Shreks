@@ -16,6 +16,9 @@ import sys
 import time
 from typing import Callable, Mapping
 
+from .fast_paper_shadow_decision_telemetry import (
+    collect_fast_paper_shadow_decision_telemetry,
+)
 from .fast_paper_shadow_host_prepare import (
     FastPaperShadowHostPreparePaths,
     preflight_fast_paper_shadow_host,
@@ -117,6 +120,11 @@ class FastPaperShadowPhysicalCommissionPaths:
         release = self.current_link.resolve(strict=False).name
         return self.commissioning_root / f"restart-{release}.json"
 
+    @property
+    def headroom_receipt(self) -> Path:
+        release = self.current_link.resolve(strict=False).name
+        return self.commissioning_root / f"headroom-{release}.json"
+
 
 @dataclass(frozen=True, slots=True)
 class SystemdShadowState:
@@ -140,6 +148,14 @@ class ProcessResourceSnapshot:
     rss_bytes: int
     storage_bytes: int
     network_bytes: tuple[tuple[str, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class HostCapacitySnapshot:
+    logical_cpu_count: int
+    memory_total_bytes: int
+    storage_capacity_bytes: int
+    storage_available_bytes: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,6 +358,99 @@ def observe_fast_paper_shadow(
             **_authority_fields(),
         }
     )
+
+
+def measure_fast_paper_shadow_resource_headroom(
+    *,
+    expected_release_source_sha: str,
+    observation_seconds: int,
+    minimum_decisions: int,
+    paths: FastPaperShadowPhysicalCommissionPaths,
+    runtime_executable: str | os.PathLike[str] | None = None,
+    command_runner: CommandRunner | None = None,
+    clock_unix_ms: Clock | None = None,
+    sleeper: Sleeper | None = None,
+) -> dict[str, object]:
+    _require_root()
+    duration = _validate_observation_seconds(observation_seconds)
+    minimum = _validate_minimum_decisions(minimum_decisions)
+    expected_sha = _validate_source_sha(expected_release_source_sha)
+    release = _require_release_runtime(
+        paths,
+        expected_sha,
+        runtime_executable,
+    )
+    activation = _read_receipt(paths.activation_receipt)
+    if (
+        activation.get("schema_name")
+        != "shreks.fast_paper_shadow_physical_activation"
+        or activation.get("state") != "ACTIVE_DETACHED_OBSERVED"
+        or activation.get("release_source_sha") != expected_sha
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "activation receipt is missing or incompatible"
+        )
+    if paths.headroom_receipt.exists() or paths.headroom_receipt.is_symlink():
+        raise FastPaperShadowPhysicalCommissionError(
+            "successful resource-headroom receipt already exists for this release"
+        )
+
+    _run_protected_host_preflight(
+        expected_sha=expected_sha,
+        paths=paths,
+        runtime_executable=runtime_executable,
+    )
+    runner = _default_command_runner if command_runner is None else command_runner
+    clock = _wall_clock_unix_ms if clock_unix_ms is None else clock_unix_ms
+    sleep = time.sleep if sleeper is None else sleeper
+    observation = _observe_running(
+        expected_sha=expected_sha,
+        release=release,
+        duration=duration,
+        paths=paths,
+        runner=runner,
+        clock=clock,
+        sleeper=sleep,
+    )
+    since_unix_ms = int(observation["observed_at_unix_ms"])
+    until_unix_ms = since_unix_ms + duration * 1000
+    telemetry = _collect_headroom_decision_telemetry(
+        paths,
+        expected_sha=expected_sha,
+        since_unix_ms=since_unix_ms,
+        until_unix_ms=until_unix_ms,
+    )
+    count = telemetry.get("decision_evidence_count")
+    if (
+        isinstance(count, bool)
+        or not isinstance(count, int)
+        or count < minimum
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "resource-headroom window did not contain the required decision evidence"
+        )
+    _require_headroom_identity(observation, telemetry)
+    capacity = _read_host_capacity(paths)
+    headroom = _resource_headroom_metrics(
+        observation,
+        telemetry,
+        capacity,
+    )
+
+    material = {
+        "schema_name": "shreks.fast_paper_shadow_resource_headroom",
+        "schema_version": _SCHEMA_VERSION,
+        "state": "RESOURCE_HEADROOM_MEASURED",
+        "release_source_sha": expected_sha,
+        "release_directory": str(release),
+        "minimum_decision_evidence_count": minimum,
+        **observation,
+        **headroom,
+        **_authority_fields(),
+    }
+    receipt = _finalize_receipt(material)
+    _write_receipt_no_replace(paths.headroom_receipt, receipt)
+    return receipt
 
 
 def prove_fast_paper_shadow_restart(
@@ -728,6 +837,214 @@ def _observe_running(
     }
 
 
+def _collect_headroom_decision_telemetry(
+    paths: FastPaperShadowPhysicalCommissionPaths,
+    *,
+    expected_sha: str,
+    since_unix_ms: int,
+    until_unix_ms: int,
+) -> dict[str, object]:
+    try:
+        environment = read_fast_paper_shadow_host_environment(
+            paths.config_destination
+        )
+        provision_config = (
+            validate_fast_paper_shadow_production_environment(environment)
+        )
+        evidence_directory = (
+            provision_config.supervisor_config.decision_config.evidence_directory
+        )
+        return collect_fast_paper_shadow_decision_telemetry(
+            evidence_directory=evidence_directory,
+            expected_release_sha=expected_sha,
+            since_unix_ms=since_unix_ms,
+            until_unix_ms=until_unix_ms,
+        )
+    except Exception as exc:
+        raise FastPaperShadowPhysicalCommissionError(
+            "resource-headroom decision telemetry failed closed"
+        ) from exc
+
+
+def _require_headroom_identity(
+    observation: Mapping[str, object],
+    telemetry: Mapping[str, object],
+) -> None:
+    for name in (
+        "manifest_fingerprint_sha256",
+        "champion_version",
+        "champion_fingerprint_sha256",
+        "action_policy_version",
+    ):
+        if observation.get(name) != telemetry.get(name):
+            raise FastPaperShadowPhysicalCommissionError(
+                "resource-headroom telemetry runtime identity changed"
+            )
+
+
+def _read_host_capacity(
+    paths: FastPaperShadowPhysicalCommissionPaths,
+) -> HostCapacitySnapshot:
+    logical_cpu_count = os.cpu_count()
+    if (
+        isinstance(logical_cpu_count, bool)
+        or not isinstance(logical_cpu_count, int)
+        or logical_cpu_count <= 0
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "host logical CPU capacity is unavailable"
+        )
+
+    try:
+        meminfo = (paths.proc_root / "meminfo").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise FastPaperShadowPhysicalCommissionError(
+            "host memory capacity evidence is unavailable"
+        ) from exc
+    memory_total_kib: int | None = None
+    for line in meminfo.splitlines():
+        if line.startswith("MemTotal:"):
+            pieces = line.split()
+            if len(pieces) >= 2:
+                try:
+                    memory_total_kib = int(pieces[1], 10)
+                except ValueError:
+                    memory_total_kib = None
+            break
+    if memory_total_kib is None or memory_total_kib <= 0:
+        raise FastPaperShadowPhysicalCommissionError(
+            "host memory capacity evidence is invalid"
+        )
+
+    try:
+        filesystem = os.statvfs(paths.shadow_root)
+    except OSError as exc:
+        raise FastPaperShadowPhysicalCommissionError(
+            "shadow filesystem capacity evidence is unavailable"
+        ) from exc
+    block_size = filesystem.f_frsize or filesystem.f_bsize
+    storage_capacity_bytes = int(block_size) * int(filesystem.f_blocks)
+    storage_available_bytes = int(block_size) * int(filesystem.f_bavail)
+    if (
+        block_size <= 0
+        or storage_capacity_bytes <= 0
+        or storage_available_bytes < 0
+        or storage_available_bytes > storage_capacity_bytes
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "shadow filesystem capacity evidence is invalid"
+        )
+
+    return HostCapacitySnapshot(
+        logical_cpu_count=logical_cpu_count,
+        memory_total_bytes=memory_total_kib * 1024,
+        storage_capacity_bytes=storage_capacity_bytes,
+        storage_available_bytes=storage_available_bytes,
+    )
+
+
+def _resource_headroom_metrics(
+    observation: Mapping[str, object],
+    telemetry: Mapping[str, object],
+    capacity: HostCapacitySnapshot,
+) -> dict[str, object]:
+    if type(capacity) is not HostCapacitySnapshot:
+        raise FastPaperShadowPhysicalCommissionError(
+            "resource-headroom capacity snapshot is invalid"
+        )
+    try:
+        duration = int(observation["observation_seconds"])
+        cpu_percent = float(observation["cpu_percent"])
+        rss_peak = int(observation["rss_bytes_peak"])
+        storage_delta = int(observation["shadow_storage_bytes_delta"])
+        network_rx_delta = int(observation["private_network_rx_bytes_delta"])
+        network_tx_delta = int(observation["private_network_tx_bytes_delta"])
+        cycles_delta = int(observation["completed_cycles_delta"])
+        decision_count = int(telemetry["decision_evidence_count"])
+        decision_rate = float(telemetry["decision_evidence_rate_per_second"])
+        lag_p95 = telemetry["event_to_evaluation_lag_ms"]["p95"]
+        decision_p95 = telemetry["decision_latency_ms"]["p95"]
+        telemetry_fingerprint = telemetry[
+            "telemetry_fingerprint_sha256"
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FastPaperShadowPhysicalCommissionError(
+            "resource-headroom evidence is incomplete"
+        ) from exc
+
+    cpu_capacity_percent = float(capacity.logical_cpu_count) * 100.0
+    if (
+        duration <= 0
+        or not math.isfinite(cpu_percent)
+        or cpu_percent < 0.0
+        or cpu_percent > cpu_capacity_percent + 1e-9
+        or rss_peak < 0
+        or rss_peak > capacity.memory_total_bytes
+        or network_rx_delta < 0
+        or network_tx_delta < 0
+        or cycles_delta < 0
+        or decision_count < 0
+        or not math.isfinite(decision_rate)
+        or decision_rate < 0.0
+        or not isinstance(telemetry_fingerprint, str)
+        or re.fullmatch(r"[0-9a-f]{64}", telemetry_fingerprint) is None
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "resource-headroom evidence is invalid"
+        )
+
+    cpu_host_utilization_pct = cpu_percent / float(
+        capacity.logical_cpu_count
+    )
+    memory_utilization_pct = (
+        float(rss_peak) / float(capacity.memory_total_bytes) * 100.0
+    )
+    filesystem_available_pct = (
+        float(capacity.storage_available_bytes)
+        / float(capacity.storage_capacity_bytes)
+        * 100.0
+    )
+
+    return {
+        "decision_telemetry_fingerprint_sha256": telemetry_fingerprint,
+        "decision_evidence_count": decision_count,
+        "decision_evidence_rate_per_second": decision_rate,
+        "event_to_evaluation_lag_p95_ms": lag_p95,
+        "decision_latency_p95_ms": decision_p95,
+        "logical_cpu_count": capacity.logical_cpu_count,
+        "cpu_capacity_percent": cpu_capacity_percent,
+        "cpu_host_utilization_pct": cpu_host_utilization_pct,
+        "cpu_host_headroom_pct": max(
+            0.0,
+            100.0 - cpu_host_utilization_pct,
+        ),
+        "memory_total_bytes": capacity.memory_total_bytes,
+        "rss_host_utilization_pct": memory_utilization_pct,
+        "rss_host_headroom_bytes": (
+            capacity.memory_total_bytes - rss_peak
+        ),
+        "shadow_filesystem_capacity_bytes": (
+            capacity.storage_capacity_bytes
+        ),
+        "shadow_filesystem_available_bytes": (
+            capacity.storage_available_bytes
+        ),
+        "shadow_filesystem_available_pct": filesystem_available_pct,
+        "shadow_storage_growth_bytes_per_second": (
+            float(storage_delta) / float(duration)
+        ),
+        "private_network_rx_bytes_per_second": (
+            float(network_rx_delta) / float(duration)
+        ),
+        "private_network_tx_bytes_per_second": (
+            float(network_tx_delta) / float(duration)
+        ),
+        "completed_cycles_per_second": (
+            float(cycles_delta) / float(duration)
+        ),
+    }
+
+
 def _capture_durable_shadow_snapshot(
     paths: FastPaperShadowPhysicalCommissionPaths,
 ) -> DurableShadowSnapshot:
@@ -919,6 +1236,18 @@ def _validate_observation_seconds(value: object) -> int:
     ):
         raise FastPaperShadowPhysicalCommissionError(
             "observation seconds must be an integer from 5 through 900"
+        )
+    return value
+
+
+def _validate_minimum_decisions(value: object) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value <= 0
+    ):
+        raise FastPaperShadowPhysicalCommissionError(
+            "minimum decisions must be a positive integer"
         )
     return value
 
@@ -1473,7 +1802,7 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight")
     preflight.add_argument("expected_release_source_sha")
-    for name in ("activate", "observe", "restart-proof"):
+    for name in ("activate", "observe", "restart-proof", "headroom"):
         command = commands.add_parser(name)
         command.add_argument("expected_release_source_sha")
         command.add_argument(
@@ -1481,6 +1810,12 @@ def _parser() -> argparse.ArgumentParser:
             type=int,
             required=True,
         )
+        if name == "headroom":
+            command.add_argument(
+                "--minimum-decisions",
+                type=int,
+                required=True,
+            )
     return parser
 
 
@@ -1503,6 +1838,13 @@ def main(argv: list[str] | None = None) -> int:
             result = observe_fast_paper_shadow(
                 expected_release_source_sha=args.expected_release_source_sha,
                 observation_seconds=args.observe_seconds,
+                paths=paths,
+            )
+        elif args.command == "headroom":
+            result = measure_fast_paper_shadow_resource_headroom(
+                expected_release_source_sha=args.expected_release_source_sha,
+                observation_seconds=args.observe_seconds,
+                minimum_decisions=args.minimum_decisions,
                 paths=paths,
             )
         else:
