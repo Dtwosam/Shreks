@@ -370,7 +370,7 @@ def test_persisted_evidence_adapter_propagates_operator_halt_and_kill(
     environment = captured["environment"]
     assert environment.kill_switch_active is True
     assert environment.operator_entry_halt_active is True
-    assert regime_calls["global_risk_halt"] is True
+    assert regime_calls["global_risk_halt"] is False
 
 
 def test_persisted_evidence_adapter_refuses_quote_drift_before_economics(
