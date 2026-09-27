@@ -74,8 +74,8 @@ def _make_proc(paths, pid: int, *, cpu_ticks: int = 100, rss_kib: int = 4096):
         ).encode("utf-8")
     )
     fields = ["0"] * 50
-    fields[11] = str(cpu_ticks // 2)
-    fields[12] = str(cpu_ticks - cpu_ticks // 2)
+    fields[10] = str(cpu_ticks // 2)
+    fields[11] = str(cpu_ticks - cpu_ticks // 2)
     (pid_root / "stat").write_text(
         f"{pid} (python) S " + " ".join(fields) + "\n",
         encoding="utf-8",
@@ -456,7 +456,7 @@ def _advance_proc_resources(paths, pid: int) -> None:
     pid_root = paths.proc_root / str(pid)
     fields = ["0"] * 50
     fields[10] = "250"
-    fields[11] = "300"
+    fields[11] = "350"
     (pid_root / "stat").write_text(
         f"{pid} (python) S " + " ".join(fields) + "\n",
         encoding="utf-8",
