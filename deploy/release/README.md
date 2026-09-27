@@ -105,6 +105,24 @@ These payloads are **offline proof tools, not runtime services**. Deployment doe
 
 This transport adds no provider credential, wallet/signing authority, promotion authority, transaction submission, or LIVE enablement.
 
+### Sealed Fast PAPER shadow commissioning assets
+
+Verified releases also carry the dormant learned-shadow commissioning assets inside the same manifest-hashed Shreks wheel:
+
+```text
+shreks_brain/_sealed_fast_paper_shadow_commissioning/manifest.json
+shreks_brain/_sealed_fast_paper_shadow_commissioning/shreks-fast-paper-shadow.service
+shreks_brain/_sealed_fast_paper_shadow_commissioning/shreks-fast-paper-shadow.env.example
+```
+
+The nested manifest binds the exact release source SHA, native platform, asset names, byte sizes, and SHA-256 fingerprints. Release construction verifies the completed wheel against the exact systemd unit and environment example from the sealed checkout. The historical G2 top-level release payload allowlist remains unchanged.
+
+These are **commissioning assets, not active deployment units**. Normal release installation does not install this shadow unit into `/etc/systemd/system`, does not create `/etc/shreks/fast-paper-shadow.env`, does not provision the isolated shadow ledger, and does not start or enable the shadow service. The unit remains outside `shreks.target`.
+
+A later trusted-administrator commissioning step must authenticate the exact active immutable release before installing any dormant shadow unit or protected configuration. That later step remains PAPER/shadow only and must separately collect physical-host acceptance evidence before learned PAPER authority can be considered for cutover.
+
+This transport grants no legacy PAPER replacement, provider-network expansion, wallet/signing authority, transaction submission, promotion authority, or LIVE enablement.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:

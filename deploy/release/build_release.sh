@@ -10,6 +10,7 @@ STAGING="$RELEASE_OUT/staging"
 CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"
 FAST_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_tools"
 FAST_RUNTIME_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_runtime_tools"
+SHADOW_COMMISSIONING_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_paper_shadow_commissioning"
 
 if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_SHA must be exactly 40 lowercase hex characters" >&2
@@ -57,8 +58,8 @@ cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
   --bin shreks-fast-campaign-decision
 
 # Keep the top-level release bundle compatible with the already-installed G2
-# verifier. Sealed deployment-control scripts and the offline FL9 proof tools
-# ride inside the already-allowlisted, manifest-hashed Shreks wheel.
+# verifier. Sealed deployment-control scripts, Fast Lane tools, and dormant
+# shadow commissioning assets ride inside the already-allowlisted, manifest-hashed wheel.
 cp -a python "$PYTHON_BUILD_ROOT"
 mkdir -p "$CONTROL_PACKAGE"
 printf '%s\n' '"""Sealed deployment-control payload; not a runtime API."""' \
@@ -103,6 +104,30 @@ stage_fast_runtime_tools_package(
     source_sha=source_sha,
     platform=platform,
     tool=Path("target/release/export_fast_runtime_features"),
+    destination=Path(destination),
+)
+PY
+
+PYTHONPATH=python/src python - "$SOURCE_SHA" "$PLATFORM" "$SHADOW_COMMISSIONING_PACKAGE" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_paper_shadow_commissioning_assets import (
+    stage_fast_paper_shadow_commissioning_package,
+)
+
+source_sha, platform, destination = sys.argv[1:]
+stage_fast_paper_shadow_commissioning_package(
+    source_sha=source_sha,
+    platform=platform,
+    assets={
+        "shreks-fast-paper-shadow.service": Path(
+            "deploy/systemd/shreks-fast-paper-shadow.service"
+        ),
+        "shreks-fast-paper-shadow.env.example": Path(
+            "deploy/systemd/shreks-fast-paper-shadow.env.example"
+        ),
+    },
     destination=Path(destination),
 )
 PY
@@ -183,6 +208,30 @@ verify_fast_runtime_tools_wheel(
     expected_source_sha=source_sha,
     expected_platform=platform,
     expected_tool=Path("target/release/export_fast_runtime_features"),
+)
+PY
+
+PYTHONPATH=python/src python - "${WHEELS[0]}" "$SOURCE_SHA" "$PLATFORM" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_paper_shadow_commissioning_assets import (
+    verify_fast_paper_shadow_commissioning_wheel,
+)
+
+wheel, source_sha, platform = sys.argv[1:]
+verify_fast_paper_shadow_commissioning_wheel(
+    Path(wheel),
+    expected_source_sha=source_sha,
+    expected_platform=platform,
+    expected_assets={
+        "shreks-fast-paper-shadow.service": Path(
+            "deploy/systemd/shreks-fast-paper-shadow.service"
+        ),
+        "shreks-fast-paper-shadow.env.example": Path(
+            "deploy/systemd/shreks-fast-paper-shadow.env.example"
+        ),
+    },
 )
 PY
 
