@@ -76,6 +76,10 @@ a claim about raw observer events/sec.
 
 Read only:
 
+The headroom path samples process resource evidence once per second within the
+same bounded observation window so RSS headroom uses an observed burst peak
+rather than only the start/end values.
+
 - logical CPU count from the host runtime;
 - `MemTotal` from `/proc/meminfo`;
 - filesystem capacity/available blocks for the isolated shadow root;
