@@ -81,6 +81,7 @@ from .shadow_executor import (
     FastPaperShadowPendingBuyRetryInput,
     build_fast_paper_shadow_runtime_state_from_transition,
     execute_fast_paper_shadow_decision,
+    reconstruct_fast_paper_shadow_decision,
     retry_fast_paper_shadow_pending_buy,
 )
 from .shadow_ledger import (
@@ -91,6 +92,7 @@ from .shadow_ledger import (
     build_initial_fast_paper_shadow_ledger_state,
     initialize_fast_paper_shadow_ledger_database,
     load_fast_paper_shadow_ledger_checkpoint_at_or_before,
+    load_fast_paper_shadow_ledger_checkpoint_by_sequence,
     load_latest_fast_paper_shadow_ledger_checkpoint,
     save_fast_paper_shadow_ledger_checkpoint,
 )
@@ -153,6 +155,7 @@ from .shadow_runtime_state import (
     FastPaperShadowRuntimeState,
     build_fast_paper_shadow_runtime_state,
     fast_paper_shadow_decision_position,
+    load_fast_paper_shadow_runtime_state_by_checkpoint_sequence,
     load_latest_fast_paper_shadow_runtime_state,
     save_fast_paper_shadow_runtime_state,
 )
@@ -281,6 +284,7 @@ __all__ = (
     "retry_fast_paper_shadow_pending_buy",
     "evaluate_fast_paper_shadow_decision",
     "execute_fast_paper_shadow_decision",
+    "reconstruct_fast_paper_shadow_decision",
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
     "run_fast_paper_shadow_batch",
@@ -298,7 +302,9 @@ __all__ = (
     "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
     "load_fast_paper_shadow_ledger_checkpoint_at_or_before",
+    "load_fast_paper_shadow_ledger_checkpoint_by_sequence",
     "load_latest_fast_paper_shadow_ledger_checkpoint",
+    "load_fast_paper_shadow_runtime_state_by_checkpoint_sequence",
     "load_latest_fast_paper_shadow_runtime_state",
     "load_fast_paper_shadow_service_execution_config",
     "save_fast_paper_shadow_ledger_checkpoint",
