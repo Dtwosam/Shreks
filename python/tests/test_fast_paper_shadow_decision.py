@@ -292,7 +292,9 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
     assert constraints.reduce_execution_costs[0].execution_cost_bps == pytest.approx(150.0)
 
     assert evidence.schema_name == FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME
+    assert FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION == 3
     assert evidence.schema_version == FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION
+    assert evidence.feature_record == record
     assert evidence.source_event_id == "shadow-event:0"
     assert evidence.entry_execution_cost_bps == pytest.approx(100.0)
     assert evidence.decision_latency_ns == 250
@@ -303,7 +305,49 @@ def test_shadow_decision_derives_constraints_invokes_bound_binary_and_seals_evid
     write_fast_paper_shadow_decision_evidence(evidence, destination)
     assert stat.S_IMODE(destination.stat().st_mode) == 0o600
     assert destination.read_bytes().endswith(b"\n")
-    assert read_fast_paper_shadow_decision_evidence(destination) == evidence
+    restored = read_fast_paper_shadow_decision_evidence(destination)
+    assert restored == evidence
+    assert restored.feature_record == record
+    stored_document = json.loads(destination.read_text(encoding="utf-8"))
+    assert stored_document["feature_record"]["decision_signature"] == (
+        record.decision_signature
+    )
+    assert stored_document["feature_record"]["decision_sequence"] == (
+        record.decision_sequence
+    )
+
+    tampered_feature_document = json.loads(
+        destination.read_text(encoding="utf-8")
+    )
+    tampered_feature_document["feature_record"]["decision_signature"] = (
+        "different-signature"
+    )
+    feature_material = dict(tampered_feature_document)
+    feature_material.pop("evidence_fingerprint_sha256")
+    tampered_feature_document["evidence_fingerprint_sha256"] = hashlib.sha256(
+        json.dumps(
+            feature_material,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    feature_tampered = tmp_path / "shadow-decision-feature-tampered.json"
+    feature_tampered.write_text(
+        json.dumps(
+            tampered_feature_document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="feature|fingerprint|source identity"):
+        read_fast_paper_shadow_decision_evidence(feature_tampered)
+
     with pytest.raises(FileExistsError):
         write_fast_paper_shadow_decision_evidence(evidence, destination)
 
