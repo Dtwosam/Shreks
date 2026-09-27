@@ -346,7 +346,10 @@ def summarize_fast_paper_shadow_independent_sample(
     gates = sorted(gates, key=lambda value: value["code"])
     decision = (
         FastPaperShadowSampleDecision.SUFFICIENT_SAMPLE
-        if all(\n            value["status"] == FastPaperShadowSampleGateStatus.PASS.value\n            for value in gates\n        )
+        if all(
+            value["status"] == FastPaperShadowSampleGateStatus.PASS.value
+            for value in gates
+        )
         else FastPaperShadowSampleDecision.INSUFFICIENT_SAMPLE
     )
 
