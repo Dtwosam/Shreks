@@ -18,10 +18,24 @@ from .fast_paper_shadow_commissioning_install import (
     FastPaperShadowCommissioningInstallPaths,
     preflight_release_bound_fast_paper_shadow_unit,
 )
+from .fast_paper_runtime.codec import (
+    read_fast_paper_runtime_manifest,
+    verify_fast_paper_runtime_bindings,
+)
+from .fast_paper_runtime.shadow_buy_writer_policy import (
+    read_fast_paper_shadow_buy_writer_policy,
+    verify_fast_paper_shadow_buy_writer_policy_bindings,
+)
+from .fast_paper_runtime.shadow_execution_input import (
+    read_fast_paper_shadow_execution_policy,
+)
 from .fast_paper_runtime.shadow_provision import (
     FastPaperShadowProvisionConfig,
     load_fast_paper_shadow_provision_config,
     provision_fast_paper_shadow,
+)
+from .fast_paper_runtime.shadow_service import (
+    read_fast_paper_shadow_service_policy,
 )
 from .fast_paper_runtime.shadow_supervisor import (
     bootstrap_fast_paper_shadow_supervisor,
@@ -38,6 +52,13 @@ _SERVICE_NAME = "shreks"
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _KEY_RE = re.compile(r"^[A-Z0-9_]+$")
+
+_AUTHORITY_NAMES = (
+    "fast-paper-runtime-manifest.json",
+    "fast-paper-shadow-service-policy.json",
+    "fast-paper-shadow-execution-policy.json",
+    "fast-paper-shadow-buy-writer-policy.json",
+)
 
 _ENV_KEYS = (
     "SHREKS_FAST_PAPER_RUNTIME_MANIFEST_PATH",
@@ -101,6 +122,13 @@ class FastPaperShadowHostPrepareError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
+class _AuthenticatedAuthorityBundle:
+    payloads: dict[str, bytes]
+    manifest_fingerprint_sha256: str
+    bundle_fingerprint_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class FastPaperShadowHostPreparePaths:
     current_link: Path
     unit_destination: Path
@@ -121,6 +149,227 @@ class FastPaperShadowHostPreparePaths:
                 raise FastPaperShadowHostPrepareError(
                     f"{name} must be an absolute Path"
                 )
+
+
+def preflight_fast_paper_shadow_host_authority(
+    *,
+    expected_release_source_sha: str,
+    candidate_authority_directory: str | Path,
+    paths: FastPaperShadowHostPreparePaths,
+    runtime_executable: str | os.PathLike[str] | None = None,
+    service_uid: int,
+    service_gid: int,
+) -> dict[str, object]:
+    _require_root()
+    _require_paths(paths)
+    expected_sha = _validate_source_sha(expected_release_source_sha)
+    release_dir = _require_release_runtime(
+        paths.current_link,
+        expected_sha,
+        runtime_executable,
+    )
+    _require_commissioned_unit(
+        expected_sha,
+        paths,
+        runtime_executable,
+    )
+    bundle = _authenticate_authority_bundle(
+        Path(candidate_authority_directory),
+        expected_release_source_sha=expected_sha,
+    )
+    _require_safe_config_parent(
+        paths.config_destination,
+        service_gid=service_gid,
+    )
+    exact = 0
+    for name in _AUTHORITY_NAMES:
+        destination = paths.config_destination.parent / name
+        if _inspect_config_destination(
+            destination,
+            expected_payload=bundle.payloads[name],
+            service_gid=service_gid,
+        ):
+            exact += 1
+    return _receipt(
+        schema_name="shreks.fast_paper_shadow_host_authority_preflight",
+        state=(
+            "READY_AUTHORITY_ALREADY_INSTALLED"
+            if exact == len(_AUTHORITY_NAMES)
+            else "READY_TO_INSTALL_AUTHORITY"
+        ),
+        expected_sha=expected_sha,
+        release_dir=release_dir,
+        config_sha256=None,
+        service_uid=service_uid,
+        service_gid=service_gid,
+        extra={
+            "authority_manifest_fingerprint_sha256": (
+                bundle.manifest_fingerprint_sha256
+            ),
+            "authority_bundle_fingerprint_sha256": (
+                bundle.bundle_fingerprint_sha256
+            ),
+            "authority_files_exact": exact,
+        },
+    )
+
+
+def install_fast_paper_shadow_host_authority(
+    *,
+    expected_release_source_sha: str,
+    candidate_authority_directory: str | Path,
+    paths: FastPaperShadowHostPreparePaths,
+    runtime_executable: str | os.PathLike[str] | None = None,
+    service_uid: int,
+    service_gid: int,
+) -> dict[str, object]:
+    _require_root()
+    _require_paths(paths)
+    expected_sha = _validate_source_sha(expected_release_source_sha)
+    release_dir = _require_release_runtime(
+        paths.current_link,
+        expected_sha,
+        runtime_executable,
+    )
+    _require_commissioned_unit(
+        expected_sha,
+        paths,
+        runtime_executable,
+    )
+    bundle = _authenticate_authority_bundle(
+        Path(candidate_authority_directory),
+        expected_release_source_sha=expected_sha,
+    )
+    _require_safe_config_parent(
+        paths.config_destination,
+        service_gid=service_gid,
+    )
+
+    created = 0
+    for name in _AUTHORITY_NAMES:
+        destination = paths.config_destination.parent / name
+        payload = bundle.payloads[name]
+        if _inspect_config_destination(
+            destination,
+            expected_payload=payload,
+            service_gid=service_gid,
+        ):
+            continue
+        if _require_current_release(paths.current_link, expected_sha) != release_dir:
+            raise FastPaperShadowHostPrepareError(
+                "current release changed before authority publication"
+            )
+        _publish_config_no_replace(
+            destination,
+            payload,
+            service_gid=service_gid,
+        )
+        _require_config_destination(
+            destination,
+            expected_payload=payload,
+            service_gid=service_gid,
+        )
+        created += 1
+
+    return _receipt(
+        schema_name="shreks.fast_paper_shadow_host_authority_installation",
+        state=(
+            "AUTHORITY_INSTALLED"
+            if created
+            else "AUTHORITY_ALREADY_INSTALLED"
+        ),
+        expected_sha=expected_sha,
+        release_dir=release_dir,
+        config_sha256=None,
+        service_uid=service_uid,
+        service_gid=service_gid,
+        extra={
+            "authority_manifest_fingerprint_sha256": (
+                bundle.manifest_fingerprint_sha256
+            ),
+            "authority_bundle_fingerprint_sha256": (
+                bundle.bundle_fingerprint_sha256
+            ),
+            "authority_files_published": created,
+        },
+    )
+
+
+def _authenticate_authority_bundle(
+    candidate_directory: Path,
+    *,
+    expected_release_source_sha: str,
+) -> _AuthenticatedAuthorityBundle:
+    if candidate_directory.is_symlink() or not candidate_directory.is_dir():
+        raise FastPaperShadowHostPrepareError(
+            "shadow authority candidate must be a regular non-symlink directory"
+        )
+    children = tuple(candidate_directory.iterdir())
+    if {child.name for child in children} != set(_AUTHORITY_NAMES):
+        raise FastPaperShadowHostPrepareError(
+            "shadow authority candidate member set must be exact"
+        )
+
+    payloads: dict[str, bytes] = {}
+    for name in _AUTHORITY_NAMES:
+        payload, _ = _read_regular_no_follow(
+            candidate_directory / name,
+            label=f"shadow authority candidate {name}",
+        )
+        payloads[name] = payload
+
+    manifest_path = candidate_directory / _AUTHORITY_NAMES[0]
+    service_path = candidate_directory / _AUTHORITY_NAMES[1]
+    execution_path = candidate_directory / _AUTHORITY_NAMES[2]
+    buy_writer_path = candidate_directory / _AUTHORITY_NAMES[3]
+    try:
+        manifest = read_fast_paper_runtime_manifest(manifest_path)
+        if manifest.release_source_sha != expected_release_source_sha:
+            raise ValueError(
+                "runtime manifest release source SHA does not match active release"
+            )
+        verify_fast_paper_runtime_bindings(manifest)
+        service_policy = read_fast_paper_shadow_service_policy(service_path)
+        if (
+            service_policy.route_evidence_version
+            != manifest.route_evidence_version
+        ):
+            raise ValueError(
+                "service policy route evidence version does not match runtime manifest"
+            )
+        read_fast_paper_shadow_execution_policy(
+            manifest,
+            execution_path,
+        )
+        buy_writer_policy = read_fast_paper_shadow_buy_writer_policy(
+            buy_writer_path
+        )
+        verify_fast_paper_shadow_buy_writer_policy_bindings(
+            manifest,
+            service_policy,
+            buy_writer_policy,
+        )
+    except Exception as exc:
+        raise FastPaperShadowHostPrepareError(
+            "shadow authority candidate authentication failed closed"
+        ) from exc
+
+    digest_document = {
+        name: hashlib.sha256(payloads[name]).hexdigest()
+        for name in _AUTHORITY_NAMES
+    }
+    digest_document["manifest_fingerprint_sha256"] = (
+        manifest.manifest_fingerprint_sha256
+    )
+    return _AuthenticatedAuthorityBundle(
+        payloads=payloads,
+        manifest_fingerprint_sha256=(
+            manifest.manifest_fingerprint_sha256
+        ),
+        bundle_fingerprint_sha256=hashlib.sha256(
+            _canonical(digest_document).encode("utf-8")
+        ).hexdigest(),
+    )
 
 
 def read_fast_paper_shadow_host_environment(path: str | Path) -> dict[str, str]:
@@ -990,7 +1239,7 @@ def _receipt(
     state: str,
     expected_sha: str,
     release_dir: Path,
-    config_sha256: str,
+    config_sha256: str | None,
     service_uid: int,
     service_gid: int,
     extra: Mapping[str, object] | None = None,
@@ -1001,7 +1250,6 @@ def _receipt(
         "state": state,
         "release_source_sha": expected_sha,
         "release_dir": str(release_dir),
-        "config_sha256": config_sha256,
         "service_uid": service_uid,
         "service_gid": service_gid,
         "daemon_reload_authority": "NOT_GRANTED",
@@ -1010,6 +1258,8 @@ def _receipt(
         "signing_submission_authority": "NOT_GRANTED",
         "live_authority": "DISABLED",
     }
+    if config_sha256 is not None:
+        material["config_sha256"] = config_sha256
     if extra is not None:
         material.update(dict(extra))
     return {
@@ -1050,6 +1300,10 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="shreks-fast-paper-shadow-host-prepare"
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    for command in ("authority-preflight", "install-authority"):
+        sub = commands.add_parser(command)
+        sub.add_argument("expected_release_source_sha")
+        sub.add_argument("candidate_authority_directory")
     for command in ("config-preflight", "install-config"):
         sub = commands.add_parser(command)
         sub.add_argument("expected_release_source_sha")
@@ -1071,7 +1325,21 @@ def main(argv: list[str] | None = None) -> int:
             "service_uid": service_uid,
             "service_gid": service_gid,
         }
-        if args.command == "config-preflight":
+        if args.command == "authority-preflight":
+            result = preflight_fast_paper_shadow_host_authority(
+                candidate_authority_directory=Path(
+                    args.candidate_authority_directory
+                ),
+                **common,
+            )
+        elif args.command == "install-authority":
+            result = install_fast_paper_shadow_host_authority(
+                candidate_authority_directory=Path(
+                    args.candidate_authority_directory
+                ),
+                **common,
+            )
+        elif args.command == "config-preflight":
             result = preflight_fast_paper_shadow_host_config(
                 candidate_env_path=Path(args.candidate_env),
                 **common,
