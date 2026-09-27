@@ -127,7 +127,18 @@ def test_collect_reuses_canonical_reader_and_enforces_visible_members(
     assert result["decision_evidence_count"] == 2
     assert seen == [first.name, second.name]
 
-    (root / "unexpected.txt").write_text("x", encoding="utf-8")
+    checkpoint = root / "runtime-state.json"
+    checkpoint.write_text("{}\n", encoding="utf-8")
+    again = telemetry.collect_fast_paper_shadow_decision_telemetry(
+        evidence_directory=root,
+        expected_release_sha=_SHA,
+        since_unix_ms=1_000,
+        until_unix_ms=2_000,
+    )
+    assert again["decision_evidence_count"] == 2
+
+    unexpected_dir = root / "unexpected-dir"
+    unexpected_dir.mkdir()
     with pytest.raises(
         telemetry.FastPaperShadowDecisionTelemetryError,
         match="member",
@@ -138,8 +149,8 @@ def test_collect_reuses_canonical_reader_and_enforces_visible_members(
             since_unix_ms=1_000,
             until_unix_ms=2_000,
         )
+    unexpected_dir.rmdir()
 
-    (root / "unexpected.txt").unlink()
     first.unlink()
     first.symlink_to(second)
     with pytest.raises(
