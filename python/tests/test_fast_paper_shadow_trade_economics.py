@@ -122,10 +122,14 @@ def _lifecycle_fixture(monkeypatch, tmp_path: Path):
     return manifest, supervisor_config, bootstrap
 
 
-def _sample_policy(*, min_closed_positions: int = 1):
+def _sample_policy(
+    *,
+    min_closed_positions: int = 1,
+    min_decisions: int = 4,
+):
     return FastPaperShadowSamplePolicy(
         version="fl11.2a-test-sample-v1",
-        min_decision_count=4,
+        min_decision_count=min_decisions,
         min_distinct_market_count=1,
         min_distinct_mint_count=1,
         min_observation_span_ms=1,
@@ -144,6 +148,7 @@ def _write_sample(
     since: int,
     until: int,
     min_closed_positions: int = 1,
+    min_decisions: int = 4,
 ):
     sample = collect_fast_paper_shadow_independent_sample(
         manifest_path=config.decision_config.manifest_path,
@@ -157,6 +162,7 @@ def _write_sample(
         until_unix_ms=until,
         policy=_sample_policy(
             min_closed_positions=min_closed_positions,
+            min_decisions=min_decisions,
         ),
     )
     path = tmp_path / "fl11.1-sample.json"
@@ -544,6 +550,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         config=config,
         since=since,
         until=until,
+        min_decisions=2,
     )
     assert sample["decision"] == "SUFFICIENT_SAMPLE"
 
