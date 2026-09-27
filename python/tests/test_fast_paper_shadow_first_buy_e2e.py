@@ -9,7 +9,13 @@ import sqlite3
 import pytest
 
 import shreks_brain.fast_paper_runtime.shadow as shadow
-from shreks_brain.fast_campaign import FastCampaignDecisionPosition
+from shreks_brain.fast_campaign import (
+    FastCampaignDecisionPosition,
+    FastCampaignDecisionResult,
+    FastCampaignDecisionResults,
+)
+from shreks_brain.fast_campaign.models import FastCampaignActionCandidate
+from shreks_brain.fast_champion import write_fast_forecast_champion
 from shreks_brain.fast_paper_runtime import (
     FastPaperRuntimeCursor,
     FastPaperShadowQuoteReadPolicy,
@@ -59,14 +65,14 @@ from test_fast_paper_shadow_buy_authority_evidence_adapter import (
     _market_policy,
     _safety_policy,
 )
+from fast_first_champion_v2_fixtures import synthetic_v2_build_result
 from test_fast_paper_shadow_decision import (
-    _champion,
     _policy as _action_policy,
     _record,
+    _result_fingerprint,
 )
 from test_fast_paper_shadow_execution_input import (
     _execution_policy as _shadow_execution_policy,
-    _decision,
 )
 from test_fast_paper_shadow_executor import _record_at
 from test_regime_engine import policy as _regime_policy
@@ -76,14 +82,16 @@ _RELEASE_SHA = "a" * 40
 _QUOTE_RATE_USD = 100.0
 _ENTRY_QUOTE_RAW = 5_000_000_000
 _BASE_RAW = 5_000_000
-_DECISION_AT = 20_000
-_ENTRY_AT = 20_010
-_MARKET_AT = 20_012
-_SAFETY_EXIT_AT = 20_014
-_EXIT_AT = 20_015
-_USD_AT = 20_017
-_EVALUATED_AT = 20_020
-_COMMITTED_AT = 20_030
+_HORIZON_MS = 30_000
+_DECISION_AT = 1_788_902_400_000
+_ENTRY_AT = _DECISION_AT + 10
+_MARKET_AT = _DECISION_AT + 12
+_SAFETY_EXIT_AT = _DECISION_AT + 14
+_EXIT_AT = _DECISION_AT + 15
+_USD_AT = _DECISION_AT + 17
+_EVALUATED_AT = _DECISION_AT + 20
+_COMMITTED_AT = _DECISION_AT + 30
+_PROVISIONED_AT = _DECISION_AT - 1_000
 
 
 def _executable(path: Path, payload: str = "#!/bin/sh\nexit 0\n") -> Path:
@@ -91,6 +99,49 @@ def _executable(path: Path, payload: str = "#!/bin/sh\nexit 0\n") -> Path:
     path.write_text(payload, encoding="utf-8")
     path.chmod(0o700)
     return path
+
+
+def _buy_results(manifest, request) -> FastCampaignDecisionResults:
+    decision = FastCampaignDecisionResult(
+        source_event_id=request.source_event_id,
+        market_key=request.market_key,
+        source_sequence=request.source_sequence,
+        as_of_unix_ms=request.as_of_unix_ms,
+        policy_version=manifest.action_policy.version,
+        action="BUY",
+        reason="BUY_SELECTED",
+        selected_horizon_ms=_HORIZON_MS,
+        current_exposure_fraction=0.0,
+        target_exposure_fraction=0.5,
+        selected_reward_bps=100.0,
+        selected_risk_bps=25.0,
+        selected_execution_cost_bps=0.0,
+        selected_value_bps=20.0,
+        horizon_evidence=(),
+        candidates=(
+            FastCampaignActionCandidate(
+                action="BUY",
+                horizon_ms=_HORIZON_MS,
+                target_exposure_fraction=0.5,
+                reward_bps=100.0,
+                risk_bps=25.0,
+                execution_cost_penalty_bps=0.0,
+                comparison_value_bps=20.0,
+                eligible=True,
+            ),
+        ),
+    )
+    return FastCampaignDecisionResults(
+        schema_name="shreks.fast_campaign_decision_results",
+        schema_version=1,
+        champion_version=manifest.champion_version,
+        champion_fingerprint_sha256=manifest.champion_fingerprint_sha256,
+        decisions=(decision,),
+        batch_fingerprint_sha256=_result_fingerprint(
+            manifest,
+            decision,
+        ),
+    )
 
 
 def _entry_authority_binary(path: Path) -> Path:
@@ -271,26 +322,27 @@ def _observer_database(
             INSERT INTO token_candidates
                 (id, mint, pair_address, discovery_source,
                  discovered_at_unix_ms, venue)
-            VALUES (7, ?, 'pair-first-buy', 'pump', 19000, ?)
+            VALUES (7, ?, 'pair-first-buy', 'pump', ?, ?)
             """,
-            (feature.mint, feature.venue),
+            (feature.mint, _PROVISIONED_AT, feature.venue),
         )
         connection.execute(
             """
             INSERT INTO token_mint_states
                 (id, candidate_id, provider, decimals, mint_authority,
                  freeze_authority, slot, observed_at_unix_ms)
-            VALUES (1, 7, 'helius', 6, NULL, NULL, '1', 20008)
-            """
+            VALUES (1, 7, 'helius', 6, NULL, NULL, '1', ?)
+            """,
+            (_DECISION_AT + 8,),
         )
         connection.execute(
             """
             INSERT INTO token_holder_distributions
                 (id, candidate_id, provider, mint, last_indexed_slot,
                  observed_at_unix_ms, complete, top_holder_concentration_pct)
-            VALUES (1, 7, 'helius', ?, '1', 20009, 1, 10.0)
+            VALUES (1, 7, 'helius', ?, '1', ?, 1, 10.0)
             """,
-            (feature.mint,),
+            (feature.mint, _DECISION_AT + 9),
         )
         connection.execute(
             """
@@ -304,7 +356,7 @@ def _observer_database(
             VALUES
                 (1, 7, ?, 'dexscreener', ?, ?, 'pair-first-buy',
                  ?, ?, '1.0', 100.0, 100000.0, 25000.0, 50000.0,
-                 100000.0, 20, 5, 100, 30, 19000)
+                 100000.0, 20, 5, 100, 30, ?)
             """,
             (
                 _MARKET_AT,
@@ -312,6 +364,7 @@ def _observer_database(
                 feature.venue,
                 feature.mint,
                 feature.quote_mint,
+                _PROVISIONED_AT,
             ),
         )
         connection.execute(
@@ -404,7 +457,11 @@ def _runtime_fixture(tmp_path: Path):
         sequence=1,
         at=_DECISION_AT,
     )
-    champion_path = _champion(authority)
+    champion_path = authority / "champion.json"
+    write_fast_forecast_champion(
+        synthetic_v2_build_result().champion,
+        champion_path,
+    )
     decision_binary = _executable(
         binaries / "shreks-fast-campaign-decision"
     )
@@ -426,7 +483,10 @@ def _runtime_fixture(tmp_path: Path):
         champion_path=champion_path,
         decision_binary_path=decision_binary,
         feature_feed_binary_path=feature_binary,
-        action_policy=_action_policy(),
+        action_policy=replace(
+            _action_policy(),
+            horizons_ms=(_HORIZON_MS,),
+        ),
         state_version="fast-state-v1",
         risk_policy_version="fast-risk-v1",
         fill_policy_version="paper-fill-v1",
@@ -486,7 +546,7 @@ def _runtime_fixture(tmp_path: Path):
     operator.parent.mkdir()
     initialize_operator_risk_control_state(
         operator,
-        observed_at_unix_ms=19_000,
+        observed_at_unix_ms=_PROVISIONED_AT,
     )
 
     quote_policy = FastPaperShadowQuoteReadPolicy(
@@ -524,14 +584,17 @@ def _runtime_fixture(tmp_path: Path):
         safety_policy=_safety_policy(),
         safety_probe_identity=safety_probe,
         execution_economics_policies=(
-            _economics_policy(feature),
+            replace(
+                _economics_policy(feature),
+                horizon_ms=_HORIZON_MS,
+            ),
         ),
         operator_risk_control_path=operator,
         entry_authority_binary_path=entry_authority_binary,
         entry_authority_binary_sha256=hashlib.sha256(
             entry_authority_binary.read_bytes()
         ).hexdigest(),
-        day_started_at_unix_ms=19_000,
+        day_started_at_unix_ms=_PROVISIONED_AT,
         data_healthy=True,
         execution_healthy=True,
         global_risk_halt=False,
@@ -607,7 +670,7 @@ def test_first_learned_buy_reaches_isolated_ledger_end_to_end(
 
     provisioned = provision_fast_paper_shadow(
         provision_config,
-        clock_unix_ms=lambda: 19_000,
+        clock_unix_ms=lambda: _PROVISIONED_AT,
     )
     assert provisioned.created is True
     assert provisioned.supervisor_bootstrap.execution_bootstrap.checkpoint.sequence == 0
@@ -629,7 +692,7 @@ def test_first_learned_buy_reaches_isolated_ledger_end_to_end(
         shadow,
         "evaluate_fast_campaign_decision_batch_offline",
         lambda *, binary_path, champion_path, batch, timeout_seconds=None: (
-            _decision(manifest, batch.decisions[0], action="BUY")
+            _buy_results(manifest, batch.decisions[0])
         ),
     )
     ticks = iter((1_000, 1_250))
