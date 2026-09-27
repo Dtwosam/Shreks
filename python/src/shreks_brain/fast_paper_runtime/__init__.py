@@ -111,6 +111,9 @@ from .shadow_service_coordinator import (
     FastPaperShadowServiceCoordinatorResult,
     run_fast_paper_shadow_service_coordinated_cycle,
 )
+from .shadow_open_quote_writer import (
+    run_fast_paper_shadow_open_quote_writer_cycle,
+)
 from .shadow_open_source_publisher import (
     run_fast_paper_shadow_open_source_publisher_cycle,
 )
@@ -287,6 +290,7 @@ __all__ = (
     "run_fast_paper_shadow_service_coordinated_cycle",
     "run_fast_paper_shadow_buy_authority_writer_cycle",
     "run_fast_paper_shadow_buy_source_publisher_cycle",
+    "run_fast_paper_shadow_open_quote_writer_cycle",
     "run_fast_paper_shadow_open_source_publisher_cycle",
     "run_fast_paper_shadow_skip_source_publisher_cycle",
     "materialize_fast_paper_shadow_execution_evidence",
