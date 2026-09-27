@@ -411,6 +411,7 @@ def measure_fast_paper_shadow_resource_headroom(
         runner=runner,
         clock=clock,
         sleeper=sleep,
+        resource_sample_interval_seconds=1,
     )
     since_unix_ms = int(observation["observed_at_unix_ms"])
     until_unix_ms = since_unix_ms + duration * 1000
@@ -674,6 +675,7 @@ def _observe_running(
     runner: CommandRunner,
     clock: Clock,
     sleeper: Sleeper,
+    resource_sample_interval_seconds: int | None = None,
 ) -> dict[str, object]:
     start_ms = _clock_value(clock)
     first_unit = _read_systemd_state(runner)
@@ -685,8 +687,31 @@ def _observe_running(
         first_unit.main_pid,
     )
     _require_private_network(first_resource)
+    resource_samples = [first_resource]
 
-    sleeper(float(duration))
+    if resource_sample_interval_seconds is None:
+        sleeper(float(duration))
+    else:
+        interval = resource_sample_interval_seconds
+        if (
+            isinstance(interval, bool)
+            or not isinstance(interval, int)
+            or interval <= 0
+        ):
+            raise FastPaperShadowPhysicalCommissionError(
+                "resource sample interval must be a positive integer"
+            )
+        remaining = duration
+        while remaining > 0:
+            step = min(interval, remaining)
+            sleeper(float(step))
+            remaining -= step
+            sample = _read_process_resources(
+                paths,
+                first_unit.main_pid,
+            )
+            _require_private_network(sample)
+            resource_samples.append(sample)
 
     last_unit = _read_systemd_state(runner)
     _require_not_enabled(last_unit)
@@ -705,6 +730,7 @@ def _observe_running(
         last_unit.main_pid,
     )
     _require_private_network(last_resource)
+    resource_samples.append(last_resource)
 
     journal = runner(
         (
@@ -820,8 +846,7 @@ def _observe_running(
         "rss_bytes_start": first_resource.rss_bytes,
         "rss_bytes_end": last_resource.rss_bytes,
         "rss_bytes_peak": max(
-            first_resource.rss_bytes,
-            last_resource.rss_bytes,
+            sample.rss_bytes for sample in resource_samples
         ),
         "shadow_storage_bytes_start": first_resource.storage_bytes,
         "shadow_storage_bytes_end": last_resource.storage_bytes,
