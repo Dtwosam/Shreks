@@ -25,6 +25,7 @@ from shreks_brain.paper_validation import (
     FastPaperRuntimeState,
     decode_fast_paper_checkpoint,
     encode_fast_paper_checkpoint,
+    load_fast_paper_checkpoint_at_or_before,
     load_latest_fast_paper_checkpoint,
     save_fast_paper_checkpoint,
     validate_fast_paper_restart_equivalence,
@@ -247,6 +248,107 @@ def test_fast_checkpoint_save_load_is_append_only_and_idempotent(tmp_path) -> No
             ("fast-run",),
         ).fetchone()[0]
     assert rows == 1
+
+
+def test_fast_checkpoint_load_at_or_before_selects_exact_historical_state(
+    tmp_path,
+) -> None:
+    database = tmp_path / "fast-historical.sqlite3"
+    _migrate(database)
+    base = _runtime_state()
+    first_state = replace(base, as_of_unix_ms=T0 + 100)
+    second_state = replace(base, as_of_unix_ms=T0 + 300)
+    third_state = replace(base, as_of_unix_ms=T0 + 300)
+
+    first = save_fast_paper_checkpoint(
+        database,
+        "fast-run",
+        1,
+        first_state,
+        T0 + 200,
+    )
+    second = save_fast_paper_checkpoint(
+        database,
+        "fast-run",
+        2,
+        second_state,
+        T0 + 400,
+    )
+    third = save_fast_paper_checkpoint(
+        database,
+        "fast-run",
+        3,
+        third_state,
+        T0 + 500,
+    )
+
+    assert (
+        load_fast_paper_checkpoint_at_or_before(
+            database,
+            "fast-run",
+            T0 + 99,
+        )
+        is None
+    )
+    assert load_fast_paper_checkpoint_at_or_before(
+        database,
+        "fast-run",
+        T0 + 100,
+    ) == first
+    assert load_fast_paper_checkpoint_at_or_before(
+        database,
+        "fast-run",
+        T0 + 299,
+    ) == first
+    assert load_fast_paper_checkpoint_at_or_before(
+        database,
+        "fast-run",
+        T0 + 300,
+    ) == third
+    assert third.sequence > second.sequence
+
+
+def test_fast_checkpoint_load_at_or_before_authenticates_selected_row(
+    tmp_path,
+) -> None:
+    database = tmp_path / "fast-historical-corrupt.sqlite3"
+    _migrate(database)
+    base = _runtime_state()
+    save_fast_paper_checkpoint(
+        database,
+        "fast-run",
+        1,
+        replace(base, as_of_unix_ms=T0 + 100),
+        T0 + 200,
+    )
+    save_fast_paper_checkpoint(
+        database,
+        "fast-run",
+        2,
+        replace(base, as_of_unix_ms=T0 + 300),
+        T0 + 400,
+    )
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            UPDATE paper_loop_checkpoints
+            SET payload_json = ?
+            WHERE run_id = ? AND sequence = ?
+            """,
+            ("{}", "fast-run", 1),
+        )
+        connection.commit()
+
+    with pytest.raises(
+        FastPaperCheckpointError,
+        match="checksum|payload|canonical|malformed",
+    ):
+        load_fast_paper_checkpoint_at_or_before(
+            database,
+            "fast-run",
+            T0 + 200,
+        )
 
 
 def test_fast_checkpoint_rejects_sequence_collision_and_regression(tmp_path) -> None:

@@ -277,6 +277,55 @@ def save_fast_paper_checkpoint(
         connection.close()
 
 
+def load_fast_paper_checkpoint_at_or_before(
+    database_path: str | os.PathLike[str],
+    run_id: str,
+    as_of_unix_ms: int,
+) -> FastPaperCheckpointRecord | None:
+    _require_non_empty_string("run_id", run_id)
+    _require_non_negative_int("as_of_unix_ms", as_of_unix_ms)
+    connection = _connect(database_path)
+    try:
+        _require_checkpoint_table(connection)
+        _require_fast_schema_namespace(connection, run_id)
+        row = connection.execute(
+            f"""SELECT run_id, sequence, checkpoint_schema_version,
+                       state_as_of_unix_ms, created_at_unix_ms,
+                       payload_sha256, payload_json
+                FROM {_TABLE_NAME}
+                WHERE run_id = ?
+                  AND state_as_of_unix_ms <= ?
+                ORDER BY state_as_of_unix_ms DESC, sequence DESC
+                LIMIT 1""",
+            (run_id, as_of_unix_ms),
+        ).fetchone()
+    except FastPaperCheckpointError:
+        raise
+    except sqlite3.Error as error:
+        raise FastPaperCheckpointError(
+            f"Fast PAPER checkpoint storage error: {error}"
+        ) from error
+    finally:
+        connection.close()
+
+    if row is None:
+        return None
+    payload_json = row[6]
+    if not isinstance(payload_json, str):
+        raise FastPaperCheckpointError(
+            "Fast PAPER checkpoint payload_json is not text"
+        )
+    record = decode_fast_paper_checkpoint(
+        payload_json.encode("utf-8"),
+        expected_sha256=row[5],
+    )
+    if not _stored_row_matches_record(row, record, payload_json):
+        raise FastPaperCheckpointError(
+            "Fast PAPER checkpoint row/envelope metadata mismatch"
+        )
+    return record
+
+
 def load_latest_fast_paper_checkpoint(
     database_path: str | os.PathLike[str],
     run_id: str,

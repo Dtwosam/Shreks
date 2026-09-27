@@ -90,6 +90,7 @@ from .shadow_ledger import (
     build_fast_paper_shadow_ledger_binding,
     build_initial_fast_paper_shadow_ledger_state,
     initialize_fast_paper_shadow_ledger_database,
+    load_fast_paper_shadow_ledger_checkpoint_at_or_before,
     load_latest_fast_paper_shadow_ledger_checkpoint,
     save_fast_paper_shadow_ledger_checkpoint,
 )
@@ -296,6 +297,7 @@ __all__ = (
     "materialize_fast_paper_shadow_execution_evidence",
     "fast_paper_shadow_decision_position",
     "initialize_fast_paper_shadow_ledger_database",
+    "load_fast_paper_shadow_ledger_checkpoint_at_or_before",
     "load_latest_fast_paper_shadow_ledger_checkpoint",
     "load_latest_fast_paper_shadow_runtime_state",
     "load_fast_paper_shadow_service_execution_config",

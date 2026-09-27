@@ -408,6 +408,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "materialize_fast_paper_shadow_execution_evidence",
         "fast_paper_shadow_decision_position",
         "initialize_fast_paper_shadow_ledger_database",
+        "load_fast_paper_shadow_ledger_checkpoint_at_or_before",
         "load_latest_fast_paper_shadow_ledger_checkpoint",
         "load_latest_fast_paper_shadow_runtime_state",
         "load_fast_paper_shadow_service_execution_config",

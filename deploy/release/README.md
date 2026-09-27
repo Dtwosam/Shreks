@@ -412,6 +412,43 @@ events/sec. Likewise, this first telemetry rollup does not claim realized
 fill/slippage metrics. Those require the separate isolated execution/outcome
 telemetry slice.
 
+### Summarize Fast PAPER shadow outcome telemetry
+
+After the isolated shadow ledger has accumulated checkpoints, a trusted
+operator can read a bounded accounting/outcome window without changing runtime
+state.
+
+Use the exact active release, explicit shadow run id, and a window no wider
+than 24 hours:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-outcome-telemetry" \
+  summarize \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <inclusive-epoch-ms> \
+  --until-unix-ms <exclusive-epoch-ms>
+```
+
+The command authenticates the manifest, persisted shadow-ledger binding, and
+the latest canonical checkpoint at or before the requested window end. It
+reports terminal PAPER fills/failures, BUY/SELL counts and reason codes,
+filled notional, explicit fee/network cost burden, realized PnL/cash-flow
+deltas, and the cumulative isolated ledger cash/PnL/cost/position snapshot.
+
+Rolling drawdown, loss streak, and aggregate open risk reuse the existing PAPER
+risk-accounting derivation rather than introducing a second formula.
+
+This rollup does **not** yet claim expected-vs-realized slippage,
+decision/action-to-fill latency, or pre-ledger abort attribution. Those require
+the separately authenticated execution-source join.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
