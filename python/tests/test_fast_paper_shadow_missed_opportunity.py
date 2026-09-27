@@ -254,6 +254,7 @@ def _fixture(
     *,
     sample_min_decisions: int = 2,
 ):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     manifest = _manifest(tmp_path)
     manifest_path = tmp_path / "manifest.json"
     write_fast_paper_runtime_manifest(manifest, manifest_path)
