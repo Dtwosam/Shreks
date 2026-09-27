@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
 
 from shreks_brain.fast_paper_runtime import (
     FastPaperShadowPendingBuyRetryInput,
@@ -62,6 +61,7 @@ def test_fl10_3_restart_reconstructs_pending_buy_open_position_and_idempotency(
         ),
         position_action_policy=execution_policy.position_action_policy,
     )
+    supervisor_config.execution_config.execution_policy_path.unlink()
     write_fast_paper_shadow_execution_policy(
         deferred_policy,
         supervisor_config.execution_config.execution_policy_path,
