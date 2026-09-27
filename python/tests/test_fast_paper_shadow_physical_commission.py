@@ -447,13 +447,14 @@ def test_restart_proof_requires_activation_receipt_and_monotonic_state(
 
     physical._write_receipt_no_replace(
         paths.activation_receipt,
-        {
-            "schema_name": "shreks.fast_paper_shadow_physical_activation",
-            "schema_version": 1,
-            "state": "ACTIVE_DETACHED_OBSERVED",
-            "release_source_sha": _SHA,
-            "receipt_fingerprint_sha256": "f" * 64,
-        },
+        physical._finalize_receipt(
+            {
+                "schema_name": "shreks.fast_paper_shadow_physical_activation",
+                "schema_version": 1,
+                "state": "ACTIVE_DETACHED_OBSERVED",
+                "release_source_sha": _SHA,
+            }
+        ),
     )
 
     snapshots = iter(
