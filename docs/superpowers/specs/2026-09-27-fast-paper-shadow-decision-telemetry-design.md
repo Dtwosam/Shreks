@@ -52,16 +52,21 @@ The command is read-only.
 
 The evidence directory must be a regular non-symlink directory.
 
-Visible members must be only regular non-symlink decision files named:
+Decision evidence is selected only from regular non-symlink files named:
 
 ```text
 shadow-<20 digit source sequence>-<16 lowercase hex>.json
 ```
 
-Hidden members are ignored because the existing writer may temporarily create
-same-directory dot-prefixed staging files before atomic publication.
+The dedicated decision directory also contains the runtime checkpoint by
+design, so other regular non-symlink files are ignored rather than mistaken for
+decision evidence. Hidden members are likewise ignored because the existing
+writer may temporarily create same-directory dot-prefixed staging files before
+atomic publication.
 
-Directories, symlinks, or unexpected visible filenames fail closed.
+Any directory member or symlink fails closed. A matching decision filename is
+never ignored: it must decode successfully and its embedded source sequence
+must match the filename.
 
 Each selected file is decoded with the existing
 `read_fast_paper_shadow_decision_evidence(...)` reader so canonical JSON,
@@ -207,7 +212,7 @@ The source must not:
 
 Tests prove:
 
-1. exact visible evidence member contract and symlink rejection;
+1. canonical decision filename selection plus directory/symlink rejection;
 2. canonical reader is reused;
 3. explicit release identity is required;
 4. mixed manifest/champion/action-policy identity fails closed;
