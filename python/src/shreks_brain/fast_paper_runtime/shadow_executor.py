@@ -404,6 +404,47 @@ def retry_fast_paper_shadow_pending_buy(
         paper_checkpoint,
         shadow_state,
     )
+    return _retry_fast_paper_shadow_pending_buy_from_authenticated_pair(
+        manifest,
+        execution_policy,
+        paper_checkpoint,
+        shadow_state,
+        retry,
+    )
+
+
+def reconstruct_fast_paper_shadow_pending_buy_retry(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperShadowLedgerBinding,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+    retry: FastPaperShadowPendingBuyRetryInput,
+) -> FastPaperShadowExecutionTransition:
+    """Reconstruct one authenticated historical pending-BUY retry without storage mutation."""
+    _require_static_authority_bindings(
+        manifest,
+        execution_policy,
+        binding,
+        paper_checkpoint,
+        shadow_state,
+    )
+    return _retry_fast_paper_shadow_pending_buy_from_authenticated_pair(
+        manifest,
+        execution_policy,
+        paper_checkpoint,
+        shadow_state,
+        retry,
+    )
+
+
+def _retry_fast_paper_shadow_pending_buy_from_authenticated_pair(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    paper_checkpoint: FastPaperCheckpointRecord,
+    shadow_state: FastPaperShadowRuntimeState,
+    retry: FastPaperShadowPendingBuyRetryInput,
+) -> FastPaperShadowExecutionTransition:
     if type(retry) is not FastPaperShadowPendingBuyRetryInput:
         raise ValueError(
             "retry must be exact FastPaperShadowPendingBuyRetryInput"
@@ -497,6 +538,7 @@ def retry_fast_paper_shadow_pending_buy(
             shadow_state.last_processed_decision_evidence_fingerprint_sha256
         ),
     )
+
 
 
 def build_fast_paper_shadow_runtime_state_from_transition(
