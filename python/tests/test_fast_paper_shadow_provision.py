@@ -66,6 +66,7 @@ def _configs(tmp_path: Path):
             ledger_database_path=(root / "ledger.sqlite3").resolve(),
             run_id="shadow-provision-run-1",
         ),
+        buy_authority_source_directory=(root / "buy-authority-sources").resolve(),
         quote_usd_source_directory=(root / "quote-usd-sources").resolve(),
         reduction_source_directory=(root / "reduction-sources").resolve(),
         pending_buy_retry_source_directory=(
@@ -166,6 +167,7 @@ def test_provision_creates_initial_isolated_pair_and_private_directories(
     for directory in (
         config.supervisor_config.decision_config.evidence_directory,
         config.supervisor_config.execution_config.source_directory,
+        config.supervisor_config.buy_authority_source_directory,
         config.supervisor_config.quote_usd_source_directory,
         config.supervisor_config.reduction_source_directory,
         config.supervisor_config.pending_buy_retry_source_directory,
@@ -278,6 +280,9 @@ def test_provision_requires_host_owned_parent_before_creating_leaf(
                 maximum_decisions=1,
             ),
             execution_config=config.supervisor_config.execution_config,
+            buy_authority_source_directory=(
+                config.supervisor_config.buy_authority_source_directory
+            ),
             quote_usd_source_directory=(
                 config.supervisor_config.quote_usd_source_directory
             ),

@@ -11,6 +11,9 @@ import time
 from types import FrameType
 from typing import Callable
 
+from .shadow_buy_source_publisher import (
+    run_fast_paper_shadow_buy_source_publisher_cycle,
+)
 from .shadow_open_source_publisher import (
     run_fast_paper_shadow_open_source_publisher_cycle,
 )
@@ -48,6 +51,7 @@ class FastPaperShadowSupervisorError(RuntimeError):
 class FastPaperShadowSupervisorConfig:
     decision_config: FastPaperShadowServiceConfig
     execution_config: FastPaperShadowServiceExecutionConfig
+    buy_authority_source_directory: Path
     quote_usd_source_directory: Path
     reduction_source_directory: Path
     pending_buy_retry_source_directory: Path
@@ -65,6 +69,7 @@ class FastPaperShadowSupervisorConfig:
                 "execution_config must be exact FastPaperShadowServiceExecutionConfig"
             )
         for name in (
+            "buy_authority_source_directory",
             "quote_usd_source_directory",
             "reduction_source_directory",
             "pending_buy_retry_source_directory",
@@ -101,6 +106,9 @@ def load_fast_paper_shadow_supervisor_config(
         return FastPaperShadowSupervisorConfig(
             decision_config=decision_config,
             execution_config=execution_config,
+            buy_authority_source_directory=required_path(
+                "SHREKS_FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_DIRECTORY"
+            ),
             quote_usd_source_directory=required_path(
                 "SHREKS_FAST_PAPER_SHADOW_QUOTE_USD_SOURCE_DIRECTORY"
             ),
@@ -174,6 +182,19 @@ def run_fast_paper_shadow_supervisor_cycle(
             bootstrap.execution_bootstrap,
             decision_evidence_directory=(
                 config.decision_config.evidence_directory
+            ),
+        )
+        run_fast_paper_shadow_buy_source_publisher_cycle(
+            bootstrap.decision_bootstrap.manifest,
+            bootstrap.execution_bootstrap,
+            decision_evidence_directory=(
+                config.decision_config.evidence_directory
+            ),
+            buy_authority_source_directory=(
+                config.buy_authority_source_directory
+            ),
+            quote_usd_source_directory=(
+                config.quote_usd_source_directory
             ),
         )
         run_fast_paper_shadow_open_source_publisher_cycle(
@@ -306,6 +327,7 @@ def _validate_source_directories(
     roots = (
         config.decision_config.evidence_directory,
         config.execution_config.source_directory,
+        config.buy_authority_source_directory,
         config.quote_usd_source_directory,
         config.reduction_source_directory,
         config.pending_buy_retry_source_directory,
