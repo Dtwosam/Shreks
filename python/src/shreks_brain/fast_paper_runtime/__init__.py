@@ -23,6 +23,10 @@ from .shadow_commit import (
     FastPaperShadowCommitResult,
     commit_fast_paper_shadow_transition_atomically,
 )
+from .shadow_buy_authority_evidence_adapter import (
+    FAST_PAPER_SHADOW_BUY_AUTHORITY_EVIDENCE_ADAPTER_VERSION,
+    produce_fast_paper_shadow_buy_authority_from_persisted_evidence,
+)
 from .shadow_buy_authority_producer import (
     produce_fast_paper_shadow_buy_authority_source_record,
 )
@@ -167,6 +171,7 @@ __all__ = (
     "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_NAME",
     "FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION",
     "FAST_PAPER_SHADOW_COMMIT_VERSION",
+    "FAST_PAPER_SHADOW_BUY_AUTHORITY_EVIDENCE_ADAPTER_VERSION",
     "FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_SCHEMA_VERSION",
     "FAST_PAPER_SHADOW_DECISION_SCHEMA_NAME",
@@ -216,6 +221,7 @@ __all__ = (
     "FastPaperShadowReductionQuote",
     "build_fast_paper_runtime_manifest",
     "build_fast_paper_shadow_buy_authority_source_record",
+    "produce_fast_paper_shadow_buy_authority_from_persisted_evidence",
     "produce_fast_paper_shadow_buy_authority_source_record",
     "bootstrap_fast_paper_shadow_service_execution",
     "commit_fast_paper_shadow_transition_atomically",
