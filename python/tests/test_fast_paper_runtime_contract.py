@@ -393,6 +393,7 @@ def test_fast_paper_runtime_public_api_and_source_are_score_free() -> None:
         "run_fast_paper_shadow_service_pending_buy_retry",
         "run_fast_paper_shadow_service_execution_cycle",
         "run_fast_paper_shadow_service_coordinated_cycle",
+        "run_fast_paper_shadow_buy_authority_writer_cycle",
         "run_fast_paper_shadow_buy_source_publisher_cycle",
         "run_fast_paper_shadow_open_source_publisher_cycle",
         "run_fast_paper_shadow_skip_source_publisher_cycle",

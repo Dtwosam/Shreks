@@ -288,7 +288,8 @@ def test_writer_uses_oldest_buy_embedded_feature_and_active_quote_policy(
     assert args[3] == execution_bootstrap.checkpoint
     assert args[4] == execution_bootstrap.runtime_state
     assert args[5] == evidence
-    assert args[6] is evidence.feature_record
+    assert args[6] is args[5].feature_record
+    assert args[6] == evidence.feature_record
     quote_policy = args[7]
     assert type(quote_policy) is FastPaperShadowQuoteReadPolicy
     assert quote_policy == _quote_policy(
