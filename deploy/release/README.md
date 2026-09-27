@@ -411,7 +411,9 @@ meet the explicit operator-supplied minimum.
 The receipt reports decision-evidence rate plus event/evaluation and decision
 latency, process CPU, normalized host CPU utilization/headroom, peak RSS versus
 host memory, filesystem capacity/available space, shadow-state growth rate,
-private-network byte rates, and supervisor cycle rate.
+private-network byte rates, and supervisor cycle rate. The headroom path samples
+process resources once per second within the bounded window so the RSS peak is
+not limited to the two endpoint readings.
 
 No resource-utilization threshold is hard-coded. High utilization remains
 measured evidence to investigate rather than an automatic pass/fail tuning rule.
