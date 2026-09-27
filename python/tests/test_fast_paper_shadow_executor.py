@@ -113,6 +113,7 @@ def _record_at(base, *, signature: str, sequence: int, at: int):
         decision_occurred_at_unix_ms=at,
         decision_slot=base.decision_slot + sequence,
         snapshot_as_of_unix_ms=at,
+        snapshot_last_sequence=sequence,
     )
 
 
