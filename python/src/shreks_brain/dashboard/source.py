@@ -4,6 +4,15 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shreks_brain.evaluation import EvaluatedTrade
+from shreks_brain.fast_paper_shadow_decision_telemetry import (
+    collect_fast_paper_shadow_decision_telemetry,
+)
+from shreks_brain.fast_paper_shadow_execution_telemetry import (
+    collect_fast_paper_shadow_execution_telemetry,
+)
+from shreks_brain.fast_paper_shadow_outcome_telemetry import (
+    collect_fast_paper_shadow_outcome_telemetry,
+)
 from shreks_brain.observer_campaign.runtime import (
     ObserverPaperCampaignRuntimeError,
     bootstrap_observer_paper_campaign_runtime,
@@ -11,6 +20,7 @@ from shreks_brain.observer_campaign.runtime import (
 from shreks_brain.paper import PaperLedgerEntry
 from shreks_brain.telemetry import TelemetrySnapshot, decode_telemetry_snapshot
 
+from .config import DashboardFastLaneConfig
 from .models import (
     DashboardEvidenceAvailability,
     DashboardLedgerEvent,
@@ -50,6 +60,102 @@ def load_dashboard_snapshot(
     )
 
 
+def load_dashboard_fast_lane_snapshot(
+    config: DashboardFastLaneConfig,
+    *,
+    until_unix_ms: int,
+) -> dict[str, object]:
+    if type(config) is not DashboardFastLaneConfig:
+        raise DashboardSourceError(
+            "Fast Lane dashboard config must be exact"
+        )
+    if (
+        isinstance(until_unix_ms, bool)
+        or not isinstance(until_unix_ms, int)
+        or until_unix_ms < 0
+    ):
+        raise DashboardSourceError(
+            "Fast Lane dashboard window end must be a non-negative integer"
+        )
+    since_unix_ms = max(
+        0,
+        until_unix_ms - config.window_seconds * 1000,
+    )
+    if since_unix_ms >= until_unix_ms:
+        raise DashboardSourceError(
+            "Fast Lane dashboard window is empty"
+        )
+
+    try:
+        decision = collect_fast_paper_shadow_decision_telemetry(
+            evidence_directory=config.decision_evidence_directory,
+            expected_release_sha=config.expected_release_sha,
+            since_unix_ms=since_unix_ms,
+            until_unix_ms=until_unix_ms,
+        )
+        execution = collect_fast_paper_shadow_execution_telemetry(
+            manifest_path=config.manifest_path,
+            execution_policy_path=config.execution_policy_path,
+            ledger_database_path=config.ledger_database_path,
+            run_id=config.run_id,
+            decision_evidence_directory=(
+                config.decision_evidence_directory
+            ),
+            execution_source_directory=(
+                config.execution_source_directory
+            ),
+            pending_buy_retry_source_directory=(
+                config.pending_buy_retry_source_directory
+            ),
+            expected_release_sha=config.expected_release_sha,
+            since_unix_ms=since_unix_ms,
+            until_unix_ms=until_unix_ms,
+        )
+        outcome = collect_fast_paper_shadow_outcome_telemetry(
+            manifest_path=config.manifest_path,
+            ledger_database_path=config.ledger_database_path,
+            run_id=config.run_id,
+            expected_release_sha=config.expected_release_sha,
+            since_unix_ms=since_unix_ms,
+            until_unix_ms=until_unix_ms,
+        )
+    except Exception as error:
+        raise DashboardSourceError(
+            "Fast Lane telemetry source is unavailable"
+        ) from error
+
+    _require_fast_lane_document(
+        "decision",
+        decision,
+        expected_release_sha=config.expected_release_sha,
+        since_unix_ms=since_unix_ms,
+        until_unix_ms=until_unix_ms,
+    )
+    _require_fast_lane_document(
+        "execution",
+        execution,
+        expected_release_sha=config.expected_release_sha,
+        since_unix_ms=since_unix_ms,
+        until_unix_ms=until_unix_ms,
+    )
+    _require_fast_lane_document(
+        "outcome",
+        outcome,
+        expected_release_sha=config.expected_release_sha,
+        since_unix_ms=since_unix_ms,
+        until_unix_ms=until_unix_ms,
+    )
+    _require_fast_lane_identity(decision, execution, outcome)
+    return {
+        "window_since_unix_ms": since_unix_ms,
+        "window_until_unix_ms": until_unix_ms,
+        "expected_release_sha": config.expected_release_sha,
+        "decision": decision,
+        "execution": execution,
+        "outcome": outcome,
+    }
+
+
 def load_dashboard_trade(
     config: DashboardSourceConfig,
     position_id: str,
@@ -83,6 +189,59 @@ def load_dashboard_trade(
         entry_quote=unavailable,
         strategic_exit_reason=unavailable,
     )
+
+
+
+def _require_fast_lane_document(
+    label: str,
+    document: object,
+    *,
+    expected_release_sha: str,
+    since_unix_ms: int,
+    until_unix_ms: int,
+) -> None:
+    if not isinstance(document, dict):
+        raise DashboardSourceError(
+            f"Fast Lane {label} telemetry must be a document"
+        )
+    if (
+        document.get("release_source_sha") != expected_release_sha
+        or document.get("window_since_unix_ms") != since_unix_ms
+        or document.get("window_until_unix_ms") != until_unix_ms
+    ):
+        raise DashboardSourceError(
+            f"Fast Lane {label} telemetry release/window identity mismatch"
+        )
+
+
+def _require_fast_lane_identity(
+    decision: dict[str, object],
+    execution: dict[str, object],
+    outcome: dict[str, object],
+) -> None:
+    identity_keys = (
+        "manifest_fingerprint_sha256",
+        "champion_version",
+        "champion_fingerprint_sha256",
+        "action_policy_version",
+    )
+    execution_identity = tuple(execution.get(key) for key in identity_keys)
+    outcome_identity = tuple(outcome.get(key) for key in identity_keys)
+    if execution_identity != outcome_identity:
+        raise DashboardSourceError(
+            "Fast Lane execution/outcome identity mismatch"
+        )
+    decision_identity = tuple(decision.get(key) for key in identity_keys)
+    if any(value is not None for value in decision_identity):
+        if decision_identity != execution_identity:
+            raise DashboardSourceError(
+                "Fast Lane decision identity mismatch"
+            )
+    for key in ("run_id", "binding_fingerprint_sha256"):
+        if execution.get(key) != outcome.get(key):
+            raise DashboardSourceError(
+                "Fast Lane ledger identity mismatch"
+            )
 
 
 def _load_context(config: DashboardSourceConfig) -> _DashboardContext:
