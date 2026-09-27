@@ -11,8 +11,16 @@ import time
 from types import FrameType
 from typing import Callable
 
+from .shadow_buy_authority_writer import (
+    run_fast_paper_shadow_buy_authority_writer_cycle,
+)
 from .shadow_buy_source_publisher import (
     run_fast_paper_shadow_buy_source_publisher_cycle,
+)
+from .shadow_buy_writer_policy import (
+    FastPaperShadowBuyWriterPolicy,
+    read_fast_paper_shadow_buy_writer_policy,
+    verify_fast_paper_shadow_buy_writer_policy_bindings,
 )
 from .shadow_open_source_publisher import (
     run_fast_paper_shadow_open_source_publisher_cycle,
@@ -55,6 +63,7 @@ class FastPaperShadowSupervisorConfig:
     quote_usd_source_directory: Path
     reduction_source_directory: Path
     pending_buy_retry_source_directory: Path
+    buy_writer_policy_path: Path
 
     def __post_init__(self) -> None:
         if type(self.decision_config) is not FastPaperShadowServiceConfig:
@@ -73,6 +82,7 @@ class FastPaperShadowSupervisorConfig:
             "quote_usd_source_directory",
             "reduction_source_directory",
             "pending_buy_retry_source_directory",
+            "buy_writer_policy_path",
         ):
             value = getattr(self, name)
             if not isinstance(value, Path):
@@ -85,6 +95,7 @@ class FastPaperShadowSupervisorConfig:
 class FastPaperShadowSupervisorBootstrap:
     decision_bootstrap: FastPaperShadowServiceBootstrap
     execution_bootstrap: FastPaperShadowServiceExecutionBootstrap
+    buy_writer_policy: FastPaperShadowBuyWriterPolicy
 
 
 def load_fast_paper_shadow_supervisor_config(
@@ -118,6 +129,9 @@ def load_fast_paper_shadow_supervisor_config(
             pending_buy_retry_source_directory=required_path(
                 "SHREKS_FAST_PAPER_SHADOW_PENDING_BUY_RETRY_SOURCE_DIRECTORY"
             ),
+            buy_writer_policy_path=required_path(
+                "SHREKS_FAST_PAPER_SHADOW_BUY_WRITER_POLICY_PATH"
+            ),
         )
     except FastPaperShadowSupervisorError:
         raise
@@ -144,6 +158,14 @@ def bootstrap_fast_paper_shadow_supervisor(
                 config.execution_config,
             )
         )
+        buy_writer_policy = read_fast_paper_shadow_buy_writer_policy(
+            config.buy_writer_policy_path
+        )
+        verify_fast_paper_shadow_buy_writer_policy_bindings(
+            decision_bootstrap.manifest,
+            decision_bootstrap.policy,
+            buy_writer_policy,
+        )
         _validate_source_directories(config)
     except (
         FastPaperShadowServiceError,
@@ -157,6 +179,7 @@ def bootstrap_fast_paper_shadow_supervisor(
     return FastPaperShadowSupervisorBootstrap(
         decision_bootstrap=decision_bootstrap,
         execution_bootstrap=execution_bootstrap,
+        buy_writer_policy=buy_writer_policy,
     )
 
 
@@ -183,6 +206,38 @@ def run_fast_paper_shadow_supervisor_cycle(
             decision_evidence_directory=(
                 config.decision_config.evidence_directory
             ),
+        )
+        writer_policy = bootstrap.buy_writer_policy
+        run_fast_paper_shadow_buy_authority_writer_cycle(
+            bootstrap.decision_bootstrap,
+            bootstrap.execution_bootstrap,
+            decision_evidence_directory=(
+                config.decision_config.evidence_directory
+            ),
+            buy_authority_source_directory=(
+                config.buy_authority_source_directory
+            ),
+            quote_usd_source_directory=(
+                config.quote_usd_source_directory
+            ),
+            market_read_policy=writer_policy.market_read_policy,
+            regime_read_policy=writer_policy.regime_read_policy,
+            regime_policy=writer_policy.regime_policy,
+            safety_policy=writer_policy.safety_policy,
+            safety_probe_identity=writer_policy.safety_probe_identity,
+            execution_economics_policies=(
+                writer_policy.execution_economics_policies
+            ),
+            operator_risk_control_path=(
+                writer_policy.operator_risk_control_path
+            ),
+            entry_authority_binary_path=(
+                writer_policy.entry_authority_binary_path
+            ),
+            day_started_at_unix_ms=writer_policy.day_started_at_unix_ms,
+            data_healthy=writer_policy.data_healthy,
+            execution_healthy=writer_policy.execution_healthy,
+            global_risk_halt=writer_policy.global_risk_halt,
         )
         run_fast_paper_shadow_buy_source_publisher_cycle(
             bootstrap.decision_bootstrap.manifest,
@@ -237,6 +292,7 @@ def run_fast_paper_shadow_supervisor_cycle(
         FastPaperShadowSupervisorBootstrap(
             decision_bootstrap=result.decision_bootstrap,
             execution_bootstrap=result.execution_bootstrap,
+            buy_writer_policy=bootstrap.buy_writer_policy,
         ),
         result.decisions_produced,
         result.executions_committed,
