@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -410,16 +411,9 @@ def test_persisted_evidence_adapter_refuses_quote_drift_before_economics(
         evaluated_at_unix_ms=decision.evaluated_at_unix_ms,
         max_exposure_fraction=decision.decision.target_exposure_fraction,
         entry_quote=decision.entry_quote,
-        exit_quote=decision.exit_quote.__class__(
-            provider=decision.exit_quote.provider,
-            mint=decision.exit_quote.mint,
-            quote_mint=decision.exit_quote.quote_mint,
+        exit_quote=replace(
+            decision.exit_quote,
             observed_at_unix_ms=decision.exit_quote.observed_at_unix_ms - 1,
-            state=decision.exit_quote.state,
-            reference_price_quote=decision.exit_quote.reference_price_quote,
-            execution_price_quote=decision.exit_quote.execution_price_quote,
-            quoted_base_quantity=decision.exit_quote.quoted_base_quantity,
-            available_base_quantity=decision.exit_quote.available_base_quantity,
         ),
     )
     monkeypatch.setattr(
