@@ -190,8 +190,8 @@ def _call(
             manifest,
             expected_quote,
         ),
-        execution_economics_policy=_economics_policy(
-            _record()
+        execution_economics_policies=(
+            _economics_policy(_record()),
         ),
         operator_risk_control_path=operator_path,
         entry_authority_binary_path=(
