@@ -632,6 +632,49 @@ fee/slippage sensitivity evidence; those remain explicit later FL11.2 work.
 A successful FL11.2a report does not grant champion promotion, production PAPER
 cutover, signing/submission authority, or LIVE.
 
+### Prove FL11.2b missed-opportunity and fee/slippage sensitivity
+
+After FL11.1 is `SUFFICIENT_SAMPLE`, FL11.2b evaluates learned SKIP decisions
+against the authenticated training-economics overlay.
+
+Prepare one baseline `FastTrainingExecutionCostPolicy` JSON and at least one
+sensitivity policy. Sensitivity policies may change fee/slippage assumptions,
+but their entry/exit latency bps must remain identical to baseline so FL11.3
+latency proof stays separate.
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-counterfactual-economics" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
+  --sample-proof-path <canonical-fl11.1-sample-proof.json> \
+  --training-economics-overlay-path <authenticated-training-economics-overlay-dir> \
+  --baseline-cost-policy-path <baseline-cost-policy.json> \
+  --sensitivity-cost-policy-path <sensitivity-cost-policy-1.json> \
+  --horizon-ms <explicit-counterfactual-horizon-ms> \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <same-inclusive-epoch-ms-as-fl11.1> \
+  --until-unix-ms <same-exclusive-epoch-ms-as-fl11.1>
+```
+
+Repeat `--sensitivity-cost-policy-path` and `--horizon-ms` for additional
+reviewed scenarios/horizons.
+
+The report keeps missed profitable opportunities, avoided losses, missing
+coverage, and unavailable counterfactuals separate. It uses the existing sealed
+training-economics builder and counterfactual labeler; missing rows are never
+filled by inference.
+
+FL11.2a remains authoritative for actual executed-trade PnL and observed
+fee/slippage burden. FL11.2b adds counterfactual missed-opportunity behavior and
+explicit fee/slippage sensitivity only. Neither command promotes a champion,
+changes production PAPER authority, signs/submits transactions, or enables LIVE.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
