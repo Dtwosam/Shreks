@@ -23,6 +23,9 @@ from .shadow_commit import (
     FastPaperShadowCommitResult,
     commit_fast_paper_shadow_transition_atomically,
 )
+from .shadow_buy_authority_producer import (
+    produce_fast_paper_shadow_buy_authority_source_record,
+)
 from .shadow_buy_authority_source import (
     FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_SCHEMA_NAME,
     FAST_PAPER_SHADOW_BUY_AUTHORITY_SOURCE_SCHEMA_VERSION,
@@ -213,6 +216,7 @@ __all__ = (
     "FastPaperShadowReductionQuote",
     "build_fast_paper_runtime_manifest",
     "build_fast_paper_shadow_buy_authority_source_record",
+    "produce_fast_paper_shadow_buy_authority_source_record",
     "bootstrap_fast_paper_shadow_service_execution",
     "commit_fast_paper_shadow_transition_atomically",
     "build_fast_paper_shadow_execution_input_source_record",
