@@ -137,6 +137,7 @@ def _write_sample(
         ),
     )
     path = tmp_path / "fl11.1-sample.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         canonical_fast_paper_shadow_sample_proof(sample),
         encoding="utf-8",
