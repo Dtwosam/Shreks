@@ -335,6 +335,10 @@ def _require_replay_compatible(
         raise ValueError(
             "shadow replay feature fingerprint mismatch"
         )
+    if evidence.feature_record != record:
+        raise ValueError(
+            "shadow replay embedded feature record mismatch"
+        )
     if (
         evidence.source_event_id != expected_source_event_id
         or evidence.market_key != expected_market_key
