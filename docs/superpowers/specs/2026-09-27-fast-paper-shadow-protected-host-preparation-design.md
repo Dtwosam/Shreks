@@ -34,6 +34,8 @@ It does not reload systemd, start/enable/restart/stop the shadow service, join
 Add one release-local CLI:
 
 ```text
+shreks-fast-paper-shadow-host-prepare authority-preflight <expected-release-sha> <candidate-authority-dir>
+shreks-fast-paper-shadow-host-prepare install-authority <expected-release-sha> <candidate-authority-dir>
 shreks-fast-paper-shadow-host-prepare config-preflight <expected-release-sha> <candidate-env>
 shreks-fast-paper-shadow-host-prepare install-config <expected-release-sha> <candidate-env>
 shreks-fast-paper-shadow-host-prepare provision-state <expected-release-sha>
@@ -44,6 +46,39 @@ The first, second, and fourth commands require root.
 
 `provision-state` must reject root and require the exact `shreks` service
 uid/gid.
+
+## Protected authority bundle
+
+Before the env/state steps, the trusted administrator supplies one private
+candidate directory containing exactly:
+
+```text
+fast-paper-runtime-manifest.json
+fast-paper-shadow-service-policy.json
+fast-paper-shadow-execution-policy.json
+fast-paper-shadow-buy-writer-policy.json
+```
+
+The host-preparation CLI must authenticate these with the existing canonical
+runtime readers and binding verifiers before any publication:
+
+- runtime manifest canonical decode and fingerprint;
+- runtime manifest `release_source_sha` equals the explicit active release;
+- champion artifact plus decision/feature binary hashes and identities verify;
+- service policy canonical decode and route-evidence version matches manifest;
+- execution policy canonical decode/bindings against the manifest;
+- buy-writer policy canonical decode and exact manifest/service-policy binding.
+
+`authority-preflight` is read-only. `install-authority` may publish only the
+four fixed destinations under `/etc/shreks`, each as `root:shreks 0640`.
+
+Publication is no-replace and idempotent. A mixed exact/absent state may be
+completed; any divergent bytes, symlink, wrong metadata, unsafe parent, invalid
+candidate member set, failed binding, or release swap fails closed.
+
+The authority installer does not generate, tune, or modify policy content. It
+only authenticates and publishes operator-supplied canonical artifacts whose
+existing bindings already prove their champion/release identity.
 
 ## Protected env contract
 
@@ -212,20 +247,22 @@ shadow provisioner, and only from the `shreks` service identity.
 
 Tests must prove:
 
-1. strict env parsing rejects shell syntax, duplicates, unknown/missing keys,
+1. exact authority-bundle membership and canonical cross-binding are required;
+2. authority publication is fixed-destination, no-replace, metadata-exact, and idempotent;
+3. strict env parsing rejects shell syntax, duplicates, unknown/missing keys,
    and placeholders;
-2. production path shape is exact;
-3. config preflight/install authenticate the exact release and unit;
-4. config publication is no-replace, metadata-exact, and idempotent;
-5. root cannot run state provisioning;
-6. wrong service uid/gid cannot run state provisioning;
-7. service-identity provisioning reuses the existing provisioner and verifies
+4. production path shape is exact;
+5. config preflight/install authenticate the exact release and unit;
+6. config publication is no-replace, metadata-exact, and idempotent;
+7. root cannot run state provisioning;
+8. wrong service uid/gid cannot run state provisioning;
+9. service-identity provisioning reuses the existing provisioner and verifies
    owner/mode of created state;
-8. host preflight is read-only and fails on authority/config/state ownership
+10. host preflight is read-only and fails on authority/config/state ownership
    drift;
-9. CLI is packaged in the release;
-10. source contains no service activation/capital authority;
-11. `shreks.target` and release-manager activation logic remain unchanged.
+11. CLI is packaged in the release;
+12. source contains no service activation/capital authority;
+13. `shreks.target` and release-manager activation logic remain unchanged.
 
 ## Following slice
 
