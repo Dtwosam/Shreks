@@ -545,6 +545,51 @@ This command is read-only. It does not execute PAPER actions, write checkpoints,
 activate services, change production PAPER cutover, sign or submit
 transactions, or enable LIVE.
 
+### Prove FL11.1 independent shadow sample breadth
+
+After the learned shadow has accumulated real chronological evidence, a trusted
+operator can evaluate whether the requested window is broad enough to proceed to
+FL11.2 economics.
+
+The policy thresholds are explicit command inputs. The repository does not ship
+a hidden default for how many decisions, markets, mints, regimes, horizons, or
+closed positions count as "enough".
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-sample-proof" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --execution-policy-path /var/lib/shreks/fast-paper-shadow/execution-policy.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
+  --execution-source-directory /var/lib/shreks/fast-paper-shadow/execution-sources \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <inclusive-epoch-ms> \
+  --until-unix-ms <exclusive-epoch-ms> \
+  --policy-version <reviewed-sample-policy-version> \
+  --min-decisions <positive-integer> \
+  --min-distinct-markets <positive-integer> \
+  --min-distinct-mints <positive-integer> \
+  --min-observation-span-ms <positive-integer> \
+  --min-closed-positions <positive-integer> \
+  --min-distinct-traded-mints <positive-integer> \
+  --min-distinct-buy-regimes <positive-integer> \
+  --min-distinct-horizons <positive-integer>
+```
+
+The command authenticates learned decision evidence, validates every available
+BUY regime through its exact historical execution-input source/checkpoint pair,
+and counts closed positions only from the isolated shadow PAPER ledger.
+
+The result is only `SUFFICIENT_SAMPLE` or `INSUFFICIENT_SAMPLE`. A sufficient
+sample does not mean the champion is profitable or superior; it only unlocks a
+meaningful FL11.2 economic review. The command cannot promote a champion, change
+PAPER authority, sign/submit transactions, or enable LIVE.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
