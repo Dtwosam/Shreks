@@ -27,6 +27,7 @@ EXPECTED_PUBLIC_API = (
     "encode_fast_paper_checkpoint",
     "encode_fast_paper_protected_checkpoint",
     "encode_paper_checkpoint",
+    "load_fast_paper_checkpoint_at_or_before",
     "load_latest_fast_paper_checkpoint",
     "load_latest_fast_paper_protected_checkpoint",
     "load_latest_paper_checkpoint",
