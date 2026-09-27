@@ -15,6 +15,7 @@ from shreks_brain.fast_paper_runtime.shadow_ledger import (
     build_fast_paper_shadow_ledger_binding,
     build_initial_fast_paper_shadow_ledger_state,
     initialize_fast_paper_shadow_ledger_database,
+    load_fast_paper_shadow_ledger_checkpoint_at_or_before,
     load_latest_fast_paper_shadow_ledger_checkpoint,
     save_fast_paper_shadow_ledger_checkpoint,
 )
@@ -168,6 +169,88 @@ def test_shadow_ledger_checkpoint_round_trip_is_private_and_restart_equivalent(
     assert report.equivalent
     assert stat.S_IMODE(database.stat().st_mode) == 0o600
     assert stat.S_IMODE(database.parent.stat().st_mode) == 0o700
+
+
+def test_shadow_ledger_historical_loader_preserves_manifest_binding(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path)
+    database = tmp_path / "shadow-ledger" / "runtime.sqlite3"
+    binding = build_fast_paper_shadow_ledger_binding(
+        manifest,
+        run_id="shadow-run-1",
+        database_path=database,
+    )
+    initialize_fast_paper_shadow_ledger_database(manifest, binding)
+
+    first_state = build_initial_fast_paper_shadow_ledger_state(
+        manifest,
+        binding,
+        starting_cash_usd=20_000.0,
+        as_of_unix_ms=50_000,
+        fill_policy=_fill_policy(manifest.fill_policy_version),
+        position_action_policy=_position_policy(
+            manifest.position_action_policy_version
+        ),
+    )
+    first = save_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+        first_state,
+        sequence=0,
+        created_at_unix_ms=50_000,
+    )
+    second_state = first_state.__class__(
+        version=first_state.version,
+        as_of_unix_ms=50_100,
+        event_loop_state=first_state.event_loop_state,
+        ledger=first_state.ledger,
+        fill_policy=first_state.fill_policy,
+        position_action_policy=first_state.position_action_policy,
+        pending_buy=first_state.pending_buy,
+        position_action_states=first_state.position_action_states,
+    )
+    second = save_fast_paper_shadow_ledger_checkpoint(
+        manifest,
+        binding,
+        second_state,
+        sequence=1,
+        created_at_unix_ms=50_100,
+    )
+
+    assert load_fast_paper_shadow_ledger_checkpoint_at_or_before(
+        manifest,
+        binding,
+        as_of_unix_ms=49_999,
+    ) is None
+    assert load_fast_paper_shadow_ledger_checkpoint_at_or_before(
+        manifest,
+        binding,
+        as_of_unix_ms=50_000,
+    ) == first
+    assert load_fast_paper_shadow_ledger_checkpoint_at_or_before(
+        manifest,
+        binding,
+        as_of_unix_ms=50_100,
+    ) == second
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            UPDATE fast_paper_shadow_ledger_bindings
+            SET binding_fingerprint_sha256 = ?
+            WHERE run_id = ?
+            """,
+            ("0" * 64, binding.run_id),
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match="binding|fingerprint"):
+        load_fast_paper_shadow_ledger_checkpoint_at_or_before(
+            manifest,
+            binding,
+            as_of_unix_ms=50_100,
+        )
 
 
 def test_shadow_ledger_binding_tamper_fails_closed_before_checkpoint_load(
