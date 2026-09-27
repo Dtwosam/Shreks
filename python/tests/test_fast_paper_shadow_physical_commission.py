@@ -542,6 +542,52 @@ def test_restart_snapshot_regression_fails_closed() -> None:
         physical._verify_restart_monotonicity(before, after)
 
 
+def test_restart_pending_buy_change_requires_durable_advancement() -> None:
+    before = physical.DurableShadowSnapshot(
+        manifest_fingerprint_sha256="a" * 64,
+        run_id="run",
+        binding_fingerprint_sha256="b" * 64,
+        checkpoint_sequence=5,
+        checkpoint_payload_sha256="c" * 64,
+        runtime_state_fingerprint_sha256="d" * 64,
+        last_processed_source_sequence=10,
+        last_processed_source_event_id="event-10",
+        pending_buy_fingerprint_sha256="e" * 64,
+        market_position_ids=(),
+    )
+    invalid = physical.DurableShadowSnapshot(
+        manifest_fingerprint_sha256="a" * 64,
+        run_id="run",
+        binding_fingerprint_sha256="b" * 64,
+        checkpoint_sequence=5,
+        checkpoint_payload_sha256="c" * 64,
+        runtime_state_fingerprint_sha256="f" * 64,
+        last_processed_source_sequence=10,
+        last_processed_source_event_id="event-10",
+        pending_buy_fingerprint_sha256=None,
+        market_position_ids=(),
+    )
+    with pytest.raises(
+        physical.FastPaperShadowPhysicalCommissionError,
+        match="pending BUY identity changed without durable advancement",
+    ):
+        physical._verify_restart_monotonicity(before, invalid)
+
+    advanced = physical.DurableShadowSnapshot(
+        manifest_fingerprint_sha256="a" * 64,
+        run_id="run",
+        binding_fingerprint_sha256="b" * 64,
+        checkpoint_sequence=6,
+        checkpoint_payload_sha256="1" * 64,
+        runtime_state_fingerprint_sha256="2" * 64,
+        last_processed_source_sequence=10,
+        last_processed_source_event_id="event-10",
+        pending_buy_fingerprint_sha256=None,
+        market_position_ids=("position-1",),
+    )
+    physical._verify_restart_monotonicity(before, advanced)
+
+
 def test_cli_packaging_and_authority_boundary() -> None:
     repo = Path(__file__).resolve().parents[2]
     pyproject = (repo / "python" / "pyproject.toml").read_text(encoding="utf-8")
