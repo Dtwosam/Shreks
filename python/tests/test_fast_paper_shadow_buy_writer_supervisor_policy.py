@@ -361,6 +361,12 @@ def test_supervisor_orders_buy_writer_before_buy_source_and_forwards_policy(
     )
     monkeypatch.setattr(
         supervisor,
+        "run_fast_paper_shadow_open_quote_writer_cycle",
+        lambda *_args, **_kwargs: 0,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        supervisor,
         "run_fast_paper_shadow_open_source_publisher_cycle",
         lambda *_args, **_kwargs: events.append(("open", None)) or 0,
     )

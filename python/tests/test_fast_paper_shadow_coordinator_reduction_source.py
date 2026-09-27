@@ -103,6 +103,7 @@ def test_coordinator_reads_exact_open_reduction_source(
         clock_unix_ms,
         position_resolver,
         reduction_read_resolver,
+        exit_input_amount_resolver,
     ):
         resolved_position = position_resolver(record)
         assert resolved_position == position
@@ -175,6 +176,7 @@ def test_coordinator_flat_posture_does_not_read_reduction_source(
         clock_unix_ms,
         position_resolver,
         reduction_read_resolver,
+        exit_input_amount_resolver,
     ):
         record = SimpleNamespace(
             venue="pump_fun_bonding_curve",

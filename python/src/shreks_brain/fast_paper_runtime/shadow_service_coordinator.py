@@ -292,10 +292,12 @@ def run_fast_paper_shadow_service_coordinated_cycle(
             market_key,
         )
 
-    def source_reduction_read_resolver(
+    source_record_cache: dict[str, object] = {}
+
+    def source_record_for(
         record: FastTrainingFeatureRecord,
         position: FastCampaignDecisionPosition,
-    ) -> tuple[FastPaperShadowReductionRead, ...]:
+    ):
         market_key = f"{record.venue}:{record.mint}:{record.quote_mint}"
         expected_position = fast_paper_shadow_decision_position(
             state,
@@ -306,11 +308,14 @@ def run_fast_paper_shadow_service_coordinated_cycle(
                 "coordinator reduction source posture does not match durable execution state"
             )
         if position.kind == "FLAT":
-            return ()
+            return None
         if resolved_reduction_source_directory is None:
             raise ValueError(
                 "coordinator OPEN posture is missing reduction source authority"
             )
+        cached = source_record_cache.get(market_key)
+        if cached is not None:
+            return cached
         source_record = read_fast_paper_shadow_reduction_source_record(
             manifest,
             execution_bootstrap.binding,
@@ -319,7 +324,28 @@ def run_fast_paper_shadow_service_coordinated_cycle(
             market_key,
             resolved_reduction_source_directory,
         )
+        source_record_cache[market_key] = source_record
+        return source_record
+
+    def source_reduction_read_resolver(
+        record: FastTrainingFeatureRecord,
+        position: FastCampaignDecisionPosition,
+    ) -> tuple[FastPaperShadowReductionRead, ...]:
+        source_record = source_record_for(record, position)
+        if source_record is None:
+            return ()
         return source_record.reduction_reads
+
+    def source_exit_input_amount_resolver(
+        record: FastTrainingFeatureRecord,
+        position: FastCampaignDecisionPosition,
+    ) -> int:
+        source_record = source_record_for(record, position)
+        if source_record is None:
+            raise ValueError(
+                "coordinator FLAT posture has no dynamic OPEN full-exit authority"
+            )
+        return source_record.exit_input_amount_raw
 
     cycle_kwargs = {
         "clock_unix_ms": clock_unix_ms,
@@ -329,6 +355,9 @@ def run_fast_paper_shadow_service_coordinated_cycle(
         cycle_kwargs["reduction_read_resolver"] = reduction_read_resolver
     elif resolved_reduction_source_directory is not None:
         cycle_kwargs["reduction_read_resolver"] = source_reduction_read_resolver
+        cycle_kwargs["exit_input_amount_resolver"] = (
+            source_exit_input_amount_resolver
+        )
     updated, produced = run_fast_paper_shadow_service_cycle(
         decision_bootstrap,
         bounded_config,

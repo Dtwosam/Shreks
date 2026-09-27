@@ -59,6 +59,8 @@ def run_fast_paper_shadow_open_quote_writer_cycle(
         reduction_source_directory,
         label="OPEN quote writer source",
     )
+    if not execution_bootstrap.runtime_state.market_positions:
+        return 0
 
     preview = fetch_fast_paper_runtime_feature_batch(
         manifest,

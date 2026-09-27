@@ -300,6 +300,9 @@ def run_fast_paper_shadow_service_cycle(
         ]
         | None
     ) = None,
+    exit_input_amount_resolver: (
+        Callable[[Any, FastCampaignDecisionPosition], int] | None
+    ) = None,
 ) -> tuple[FastPaperShadowServiceBootstrap, int]:
     if type(bootstrap) is not FastPaperShadowServiceBootstrap:
         raise FastPaperShadowServiceError(
@@ -335,6 +338,20 @@ def run_fast_paper_shadow_service_cycle(
                 position,
                 reduction_read_resolver,
             )
+            exit_input_amount_raw = bootstrap.policy.exit_input_amount_raw
+            if (
+                position.kind == "OPEN"
+                and exit_input_amount_resolver is not None
+            ):
+                exit_input_amount_raw = exit_input_amount_resolver(
+                    record,
+                    position,
+                )
+                _require_u64(
+                    "exit_input_amount_resolver result",
+                    exit_input_amount_raw,
+                    positive=True,
+                )
             candidate_id = _resolve_candidate_id(
                 bootstrap.manifest.observer_database_path,
                 mint=record.mint,
@@ -361,9 +378,7 @@ def run_fast_paper_shadow_service_cycle(
                 entry_input_amount_raw=(
                     bootstrap.policy.entry_input_amount_raw
                 ),
-                exit_input_amount_raw=(
-                    bootstrap.policy.exit_input_amount_raw
-                ),
+                exit_input_amount_raw=exit_input_amount_raw,
                 max_quote_age_ms=bootstrap.policy.max_quote_age_ms,
                 reduction_reads=reduction_reads,
             )
