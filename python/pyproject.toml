@@ -45,7 +45,8 @@ shreks-fl9-v2-discovery-backed-request-prepare = "shreks_brain.fl9_v2_discovery_
 # Legacy module remains sealed for helper/unit-test compatibility; production
 # execution is routed through the cohort-bounded runner below.
 # shreks-fl9-v2-first-champion = "shreks_brain.fast_first_champion_v2.host_run:main"
-shreks-fl9-v2-first-champion = "shreks_brain.fast_first_champion_v2.bounded_host_run:main"\nshreks-fast-paper-shadow-commissioning = "shreks_brain.fast_paper_shadow_commissioning_install:main"
+shreks-fl9-v2-first-champion = "shreks_brain.fast_first_champion_v2.bounded_host_run:main"
+shreks-fast-paper-shadow-commissioning = "shreks_brain.fast_paper_shadow_commissioning_install:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
