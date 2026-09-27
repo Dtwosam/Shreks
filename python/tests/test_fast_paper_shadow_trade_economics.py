@@ -481,7 +481,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         ),
         evaluated_at=20_320,
         entry_observed_at=20_310,
-        exit_observed_at=20_315,
+        exit_observed_at=20_270,
     )
     source2 = _source(feature2, sell)
     write_fast_paper_shadow_decision_evidence(
