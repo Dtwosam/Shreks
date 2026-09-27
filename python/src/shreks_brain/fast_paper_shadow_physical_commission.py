@@ -545,7 +545,7 @@ def _require_status_advancement(
     segment = statuses[segment_start:]
     if len(segment) < 2:
         raise FastPaperShadowPhysicalCommissionError(
-            "latest shadow supervisor invocation did not emit two advancing cycles"
+            "latest shadow supervisor invocation did not emit two cycles that advance"
         )
     first = segment[0]
     last = segment[-1]
