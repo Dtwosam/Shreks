@@ -22,6 +22,9 @@ from .shadow_buy_writer_policy import (
     read_fast_paper_shadow_buy_writer_policy,
     verify_fast_paper_shadow_buy_writer_policy_bindings,
 )
+from .shadow_open_quote_writer import (
+    run_fast_paper_shadow_open_quote_writer_cycle,
+)
 from .shadow_open_source_publisher import (
     run_fast_paper_shadow_open_source_publisher_cycle,
 )
@@ -251,6 +254,14 @@ def run_fast_paper_shadow_supervisor_cycle(
             quote_usd_source_directory=(
                 config.quote_usd_source_directory
             ),
+        )
+        run_fast_paper_shadow_open_quote_writer_cycle(
+            bootstrap.decision_bootstrap,
+            bootstrap.execution_bootstrap,
+            reduction_source_directory=(
+                config.reduction_source_directory
+            ),
+            clock_unix_ms=lambda: now,
         )
         run_fast_paper_shadow_open_source_publisher_cycle(
             bootstrap.decision_bootstrap.manifest,
