@@ -520,22 +520,38 @@ def _require_status_advancement(
         raise FastPaperShadowPhysicalCommissionError(
             "bounded observation requires at least two supervisor status records"
         )
-    first = statuses[0]
-    last = statuses[-1]
-    if int(last["completed_cycles"]) <= int(first["completed_cycles"]):
-        raise FastPaperShadowPhysicalCommissionError(
-            "shadow supervisor completed cycles did not advance"
-        )
     identity_names = (
         "manifest_fingerprint_sha256",
         "champion_version",
         "champion_fingerprint_sha256",
         "action_policy_version",
     )
-    identity = tuple(first.get(name) for name in identity_names)
-    if any(tuple(item.get(name) for name in identity_names) != identity for item in statuses):
+    identity = tuple(statuses[-1].get(name) for name in identity_names)
+    if any(
+        tuple(item.get(name) for name in identity_names) != identity
+        for item in statuses
+    ):
         raise FastPaperShadowPhysicalCommissionError(
             "shadow supervisor runtime identity changed during observation"
+        )
+
+    segment_start = 0
+    previous_cycle = int(statuses[0]["completed_cycles"])
+    for index, item in enumerate(statuses[1:], start=1):
+        cycle = int(item["completed_cycles"])
+        if cycle <= previous_cycle:
+            segment_start = index
+        previous_cycle = cycle
+    segment = statuses[segment_start:]
+    if len(segment) < 2:
+        raise FastPaperShadowPhysicalCommissionError(
+            "latest shadow supervisor invocation did not emit two advancing cycles"
+        )
+    first = segment[0]
+    last = segment[-1]
+    if int(last["completed_cycles"]) <= int(first["completed_cycles"]):
+        raise FastPaperShadowPhysicalCommissionError(
+            "shadow supervisor completed cycles did not advance"
         )
     return first, last
 
