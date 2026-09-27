@@ -175,7 +175,8 @@ The restored state must prove:
 - market position identities remain unique;
 - any exact pre-restart pending BUY is either still the same pending identity or
   has advanced through a valid later durable state;
-- the restart counter increases by exactly one;
+- the manual restart changes MainPID and systemd InvocationID;
+- the automatic-restart counter does not increase during the controlled restart proof;
 - the post-restart process passes the same provenance checks;
 - supervisor cycles resume and advance.
 
@@ -235,11 +236,12 @@ Tests must prove:
 10. activation receipt is write-once/root-private and prevents a second
     activation ceremony for that release;
 11. restart proof requires the activation receipt and one exact restart;
-12. restart proof accepts monotonic durable advancement and rejects regression;
-13. no legacy PAPER service mutation, no enable, no target membership, no
+12. restart proof requires new MainPID/InvocationID while rejecting automatic-restart-counter churn;
+13. restart proof accepts monotonic durable advancement and rejects regression;
+14. no legacy PAPER service mutation, no enable, no target membership, no
     signing/submission, and no LIVE authority;
-14. the CLI is packaged in the release;
-15. full Python/Rust/repository-safety/ARM64 release CI stays green.
+15. the CLI is packaged in the release;
+16. full Python/Rust/repository-safety/ARM64 release CI stays green.
 
 ## Physical acceptance boundary
 
