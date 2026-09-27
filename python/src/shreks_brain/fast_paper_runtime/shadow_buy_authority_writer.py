@@ -281,11 +281,11 @@ def _require_bootstrap_manifest_binding(
             "BUY authority writer execution policy does not match runtime manifest"
         )
     if (
-        bootstrap.runtime_state.manifest_fingerprint_sha256
-        != manifest.manifest_fingerprint_sha256
+        bootstrap.runtime_state.binding_fingerprint_sha256
+        != bootstrap.binding.binding_fingerprint_sha256
     ):
         raise ValueError(
-            "BUY authority writer runtime state does not match runtime manifest"
+            "BUY authority writer runtime state does not match ledger binding"
         )
 
 
