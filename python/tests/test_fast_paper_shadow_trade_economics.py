@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from shreks_brain.fast_campaign import FastCampaignDecisionPosition
+from shreks_brain.fast_paper import FastPaperPositionOutcome
 from shreks_brain.fast_paper_runtime import (
     FastPaperShadowPendingBuyRetryInput,
     build_fast_paper_shadow_pending_buy_retry_source_record,
@@ -481,7 +482,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         ),
         evaluated_at=20_320,
         entry_observed_at=20_310,
-        exit_observed_at=20_270,
+        exit_observed_at=20_315,
     )
     source2 = _source(feature2, sell)
     write_fast_paper_shadow_decision_evidence(
@@ -504,7 +505,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         fresh2,
         source_root,
     )
-    sold = execute_fast_paper_shadow_decision(
+    deferred_sell = execute_fast_paper_shadow_decision(
         manifest,
         policy,
         binding,
@@ -512,15 +513,78 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         posture2,
         source2,
     )
+    assert deferred_sell.position_result is not None
+    assert (
+        deferred_sell.position_result.outcome
+        is FastPaperPositionOutcome.DEFERRED
+    )
     checkpoint3, posture3 = _persist(
         manifest,
         binding,
-        sold,
+        deferred_sell,
         sequence=3,
         created_at=20_320,
     )
-    assert posture3.market_positions == ()
-    assert checkpoint3.state.ledger.positions[0].state.value == "CLOSED"
+    assert len(posture3.market_positions) == 1
+    assert checkpoint3.state.position_action_states[0].pending_exit is not None
+
+    feature3 = _record_at(
+        feature1,
+        signature="economics-retry-sell-resolution",
+        sequence=3,
+        at=20_500,
+    )
+    hold = _evidence_for(
+        monkeypatch,
+        manifest,
+        feature3,
+        action="HOLD",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=20_530,
+        entry_observed_at=20_510,
+        exit_observed_at=20_520,
+    )
+    source3 = _source(feature3, hold)
+    write_fast_paper_shadow_decision_evidence(
+        hold,
+        decision_root
+        / f"shadow-{hold.source_sequence:020d}-"
+        f"{hold.evidence_fingerprint_sha256[:16]}.json",
+    )
+    fresh3 = produce_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        binding,
+        policy,
+        checkpoint3,
+        posture3,
+        source3,
+        source_observed_at_unix_ms=hold.evaluated_at_unix_ms,
+        risk_day_started_at_unix_ms=None,
+    )
+    write_fast_paper_shadow_execution_input_source_record(
+        fresh3,
+        source_root,
+    )
+    sold = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint3,
+        posture3,
+        source3,
+    )
+    checkpoint4, posture4 = _persist(
+        manifest,
+        binding,
+        sold,
+        sequence=4,
+        created_at=20_530,
+    )
+    assert posture4.market_positions == ()
+    assert checkpoint4.state.ledger.positions[0].state.value == "CLOSED"
 
     manifest_path = tmp_path / "manifest.json"
     execution_policy_path = tmp_path / "execution-policy.json"
@@ -550,7 +614,7 @@ def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
         config=config,
         since=since,
         until=until,
-        min_decisions=2,
+        min_decisions=3,
     )
     assert sample["decision"] == "SUFFICIENT_SAMPLE"
 
