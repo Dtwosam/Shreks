@@ -58,8 +58,8 @@ cargo build --release --bin shreks-observe --bin shreks-paper-evidence \
   --bin shreks-fast-campaign-decision
 
 # Keep the top-level release bundle compatible with the already-installed G2
-# verifier. Sealed deployment-control scripts and the offline FL9 proof tools
-# ride inside the already-allowlisted, manifest-hashed Shreks wheel.
+# verifier. Sealed deployment-control scripts, Fast Lane tools, and dormant
+# shadow commissioning assets ride inside the already-allowlisted, manifest-hashed wheel.
 cp -a python "$PYTHON_BUILD_ROOT"
 mkdir -p "$CONTROL_PACKAGE"
 printf '%s\n' '"""Sealed deployment-control payload; not a runtime API."""' \
