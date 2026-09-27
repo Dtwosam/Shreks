@@ -245,16 +245,19 @@ def install_fast_paper_shadow_host_authority(
         service_gid=service_gid,
     )
 
-    created = 0
+    missing: list[tuple[Path, bytes]] = []
     for name in _AUTHORITY_NAMES:
         destination = paths.config_destination.parent / name
         payload = bundle.payloads[name]
-        if _inspect_config_destination(
+        if not _inspect_config_destination(
             destination,
             expected_payload=payload,
             service_gid=service_gid,
         ):
-            continue
+            missing.append((destination, payload))
+
+    created = 0
+    for destination, payload in missing:
         if _require_current_release(paths.current_link, expected_sha) != release_dir:
             raise FastPaperShadowHostPrepareError(
                 "current release changed before authority publication"
