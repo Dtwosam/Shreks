@@ -312,23 +312,27 @@ def test_current_release_change_before_publish_fails_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     setup = _layout(tmp_path, monkeypatch)
-    original = commissioning._publish_no_replace
+    original = commissioning._require_current_release
+    calls = 0
 
-    def switch_then_publish(destination: Path, payload: bytes) -> None:
-        setup["current"].unlink()
-        other = setup["release"].parent / ("b" * 40)
-        other.mkdir()
-        setup["current"].symlink_to(other)
-        original(destination, payload)
+    def switch_on_publish_check(current_link: Path, expected_sha: str) -> Path:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            setup["current"].unlink()
+            other = setup["release"].parent / ("b" * 40)
+            other.mkdir()
+            setup["current"].symlink_to(other)
+        return original(current_link, expected_sha)
 
     monkeypatch.setattr(
         commissioning,
-        "_publish_no_replace",
-        switch_then_publish,
+        "_require_current_release",
+        switch_on_publish_check,
     )
     with pytest.raises(
         commissioning.FastPaperShadowCommissioningInstallError,
-        match="current release changed|release",
+        match="release",
     ):
         _install(setup)
     assert not setup["destination"].exists()
