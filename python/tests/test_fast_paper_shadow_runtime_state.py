@@ -172,6 +172,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         position_id=position.position_id,
         mint=position.mint,
         current_exposure_fraction=0.5,
+        current_base_quantity_raw=10_000_000,
     )
 
     state = build_fast_paper_shadow_runtime_state(
@@ -190,6 +191,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         position_id=position.position_id,
         mint=position.mint,
         current_exposure_fraction=1,
+        current_base_quantity_raw=10_000_000,
     )
     assert type(full_mapping.current_exposure_fraction) is float
     assert full_mapping.current_exposure_fraction == 1.0
@@ -216,6 +218,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         position_id="missing-position",
         mint=position.mint,
         current_exposure_fraction=0.5,
+        current_base_quantity_raw=10_000_000,
     )
     with pytest.raises(ValueError, match="OPEN|mapping|position"):
         build_fast_paper_shadow_runtime_state(
@@ -231,6 +234,7 @@ def test_shadow_runtime_state_requires_exact_open_ledger_mapping(
         position_id=position.position_id,
         mint="wrong-mint",
         current_exposure_fraction=0.5,
+        current_base_quantity_raw=10_000_000,
     )
     with pytest.raises(ValueError, match="mint|mapping|position"):
         build_fast_paper_shadow_runtime_state(
