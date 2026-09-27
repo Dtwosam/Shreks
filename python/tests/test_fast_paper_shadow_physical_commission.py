@@ -556,6 +556,32 @@ def test_headroom_telemetry_uses_exact_runtime_evidence_directory(
     }
 
 
+def test_resource_headroom_rejects_identity_drift_and_invalid_minimum() -> None:
+    observation = {
+        "manifest_fingerprint_sha256": "b" * 64,
+        "champion_version": "champion-v1",
+        "champion_fingerprint_sha256": "c" * 64,
+        "action_policy_version": 1,
+    }
+    telemetry = {
+        **_headroom_telemetry(),
+        "champion_version": "other-champion",
+    }
+
+    with pytest.raises(
+        physical.FastPaperShadowPhysicalCommissionError,
+        match="identity",
+    ):
+        physical._require_headroom_identity(observation, telemetry)
+
+    for value in (0, -1, True):
+        with pytest.raises(
+            physical.FastPaperShadowPhysicalCommissionError,
+            match="positive integer",
+        ):
+            physical._validate_minimum_decisions(value)
+
+
 def test_resource_headroom_requires_activity_and_records_capacity(
     tmp_path: Path,
     monkeypatch,
