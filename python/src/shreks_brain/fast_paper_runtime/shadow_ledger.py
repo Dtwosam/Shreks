@@ -17,6 +17,7 @@ from shreks_brain.paper_validation import (
     FAST_PAPER_RUNTIME_STATE_VERSION,
     FastPaperCheckpointRecord,
     FastPaperRuntimeState,
+    load_fast_paper_checkpoint_at_or_before,
     load_latest_fast_paper_checkpoint,
     save_fast_paper_checkpoint,
 )
@@ -349,6 +350,32 @@ def save_fast_paper_shadow_ledger_checkpoint(
         state,
         created_at_unix_ms,
     )
+
+
+def load_fast_paper_shadow_ledger_checkpoint_at_or_before(
+    manifest: FastPaperRuntimeManifest,
+    binding: FastPaperShadowLedgerBinding,
+    *,
+    as_of_unix_ms: int,
+) -> FastPaperCheckpointRecord | None:
+    _require_manifest_binding(manifest, binding)
+    _require_persisted_binding(binding)
+    if (
+        isinstance(as_of_unix_ms, bool)
+        or not isinstance(as_of_unix_ms, int)
+        or as_of_unix_ms < 0
+    ):
+        raise ValueError(
+            "as_of_unix_ms must be a non-negative integer"
+        )
+    record = load_fast_paper_checkpoint_at_or_before(
+        binding.database_path,
+        binding.run_id,
+        as_of_unix_ms,
+    )
+    if record is not None:
+        _require_state_policy_binding(manifest, record.state)
+    return record
 
 
 def load_latest_fast_paper_shadow_ledger_checkpoint(
