@@ -1,9 +1,24 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from shreks_brain.fast_campaign import FastCampaignDecisionPosition
+from shreks_brain.fast_paper_runtime import (
+    FastPaperShadowPendingBuyRetryInput,
+    build_fast_paper_shadow_pending_buy_retry_source_record,
+    execute_fast_paper_shadow_decision,
+    produce_fast_paper_shadow_execution_input_source_record,
+    retry_fast_paper_shadow_pending_buy,
+    write_fast_paper_runtime_manifest,
+    write_fast_paper_shadow_decision_evidence,
+    write_fast_paper_shadow_execution_input_source_record,
+    write_fast_paper_shadow_execution_policy,
+    write_fast_paper_shadow_pending_buy_retry_source_record,
+)
 from shreks_brain.fast_paper_runtime.shadow_provision import (
     provision_fast_paper_shadow,
 )
@@ -18,7 +33,15 @@ from shreks_brain.fast_paper_shadow_sample_proof import (
 
 import shreks_brain.fast_paper_shadow_trade_economics as economics
 
-from test_fast_paper_shadow_executor import _record_at
+from test_fast_paper_shadow_decision import _record
+from test_fast_paper_shadow_execution_input import _risk, _usd
+from test_fast_paper_shadow_executor import (
+    _evidence_for,
+    _persist,
+    _record_at,
+    _runtime_fixture as _executor_runtime_fixture,
+    _source,
+)
 from test_fast_paper_shadow_first_buy_e2e import (
     _DECISION_AT,
     _HORIZON_MS,
@@ -328,6 +351,216 @@ def test_fl11_2a_fails_closed_when_durable_source_history_is_incomplete(
             since=since,
             until=until,
         )
+
+
+def test_fl11_2a_attributes_deferred_buy_retry_to_original_entry(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint0, posture0 = (
+        _executor_runtime_fixture(tmp_path)
+    )
+    decision_root = tmp_path / "decisions"
+    source_root = tmp_path / "execution-sources"
+    retry_root = tmp_path / "pending-buy-retry-sources"
+    for directory in (decision_root, source_root, retry_root):
+        directory.mkdir()
+
+    feature1 = _record()
+    buy = _evidence_for(
+        monkeypatch,
+        manifest,
+        feature1,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=20_020,
+        entry_observed_at=20_010,
+        exit_observed_at=20_015,
+    )
+    source1 = _source(feature1, buy)
+    write_fast_paper_shadow_decision_evidence(
+        buy,
+        decision_root
+        / f"shadow-{buy.source_sequence:020d}-"
+        f"{buy.evidence_fingerprint_sha256[:16]}.json",
+    )
+    fresh1 = produce_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        binding,
+        policy,
+        checkpoint0,
+        posture0,
+        source1,
+        source_observed_at_unix_ms=buy.evaluated_at_unix_ms,
+        risk_day_started_at_unix_ms=0,
+    )
+    write_fast_paper_shadow_execution_input_source_record(
+        fresh1,
+        source_root,
+    )
+    deferred = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint0,
+        posture0,
+        source1,
+    )
+    checkpoint1, posture1 = _persist(
+        manifest,
+        binding,
+        deferred,
+        sequence=1,
+        created_at=20_020,
+    )
+    assert checkpoint1.state.pending_buy is not None
+
+    retry = FastPaperShadowPendingBuyRetryInput(
+        evaluated_at_unix_ms=20_200,
+        quote=replace(
+            buy.entry_quote,
+            observed_at_unix_ms=20_150,
+            reference_price_quote=1.02,
+            execution_price_quote=1.03,
+        ),
+        risk_context=_risk(20_200),
+        quote_usd_evidence=_usd(feature1, observed_at=20_190),
+    )
+    retry_source = build_fast_paper_shadow_pending_buy_retry_source_record(
+        manifest,
+        binding,
+        policy,
+        checkpoint1,
+        posture1,
+        retry,
+        risk_day_started_at_unix_ms=0,
+        source_observed_at_unix_ms=20_195,
+    )
+    write_fast_paper_shadow_pending_buy_retry_source_record(
+        retry_source,
+        retry_root,
+    )
+    filled = retry_fast_paper_shadow_pending_buy(
+        manifest,
+        policy,
+        binding,
+        checkpoint1,
+        posture1,
+        retry,
+    )
+    checkpoint2, posture2 = _persist(
+        manifest,
+        binding,
+        filled,
+        sequence=2,
+        created_at=20_200,
+    )
+    assert len(posture2.market_positions) == 1
+    assert checkpoint2.state.pending_buy is None
+
+    feature2 = _record_at(
+        feature1,
+        signature="economics-retry-sell",
+        sequence=2,
+        at=20_300,
+    )
+    sell = _evidence_for(
+        monkeypatch,
+        manifest,
+        feature2,
+        action="SELL",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=20_320,
+        entry_observed_at=20_310,
+        exit_observed_at=20_315,
+    )
+    source2 = _source(feature2, sell)
+    write_fast_paper_shadow_decision_evidence(
+        sell,
+        decision_root
+        / f"shadow-{sell.source_sequence:020d}-"
+        f"{sell.evidence_fingerprint_sha256[:16]}.json",
+    )
+    fresh2 = produce_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        binding,
+        policy,
+        checkpoint2,
+        posture2,
+        source2,
+        source_observed_at_unix_ms=sell.evaluated_at_unix_ms,
+        risk_day_started_at_unix_ms=0,
+    )
+    write_fast_paper_shadow_execution_input_source_record(
+        fresh2,
+        source_root,
+    )
+    sold = execute_fast_paper_shadow_decision(
+        manifest,
+        policy,
+        binding,
+        checkpoint2,
+        posture2,
+        source2,
+    )
+    checkpoint3, posture3 = _persist(
+        manifest,
+        binding,
+        sold,
+        sequence=3,
+        created_at=20_320,
+    )
+    assert posture3.market_positions == ()
+    assert checkpoint3.state.ledger.positions[0].state.value == "CLOSED"
+
+    manifest_path = tmp_path / "manifest.json"
+    execution_policy_path = tmp_path / "execution-policy.json"
+    write_fast_paper_runtime_manifest(manifest, manifest_path)
+    write_fast_paper_shadow_execution_policy(
+        policy,
+        execution_policy_path,
+    )
+    config = SimpleNamespace(
+        decision_config=SimpleNamespace(
+            manifest_path=manifest_path,
+            evidence_directory=decision_root,
+        ),
+        execution_config=SimpleNamespace(
+            execution_policy_path=execution_policy_path,
+            ledger_database_path=Path(binding.database_path),
+            run_id=binding.run_id,
+            source_directory=source_root,
+        ),
+        pending_buy_retry_source_directory=retry_root,
+    )
+    since = 19_900
+    until = 21_000
+    sample_path, sample = _write_sample(
+        tmp_path / "sample",
+        manifest=manifest,
+        config=config,
+        since=since,
+        until=until,
+    )
+    assert sample["decision"] == "SUFFICIENT_SAMPLE"
+
+    report = _collect(
+        manifest=manifest,
+        config=config,
+        sample_path=sample_path,
+        since=since,
+        until=until,
+    )
+
+    assert report["closed_trade_count"] == 1
+    assert report["sealed_e5_report"]["metrics"]["trade_count"] == 1
+    assert report["expected_realized_value_bps"]["observation_count"] == 1
+    assert report["horizon_performance"][0]["selected_horizon_ms"] == (
+        buy.decision.selected_horizon_ms
+    )
 
 
 def test_fl11_2a_packaging_and_authority_firewall() -> None:
