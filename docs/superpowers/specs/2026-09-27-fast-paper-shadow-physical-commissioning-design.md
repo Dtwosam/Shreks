@@ -189,10 +189,10 @@ monotonic reconstruction without resetting or duplicating identities.
 Commissioning evidence lives under:
 
 ```text
-/var/lib/shreks/fast-paper-shadow/commissioning/
+/root/shreks-fast-paper-shadow-commissioning/
 ```
 
-The directory is root:root `0700`.
+The directory is root:root `0700` and must remain outside `/var/lib/shreks/fast-paper-shadow`, because that runtime tree is writable by the `shreks` service identity and therefore cannot protect administrator receipts from rename/removal.
 
 Successful receipts are root:root `0600`, canonical JSON, no-replace:
 
