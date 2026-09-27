@@ -632,6 +632,44 @@ fee/slippage sensitivity evidence; those remain explicit later FL11.2 work.
 A successful FL11.2a report does not grant champion promotion, production PAPER
 cutover, signing/submission authority, or LIVE.
 
+### Prove FL11.2b missed-opportunity cost
+
+After FL11.1 returns `SUFFICIENT_SAMPLE` for the evidence window, evaluate
+learned-shadow `SKIP` decisions against the independently produced canonical
+FL4 future-path labels:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-missed-opportunity" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --run-id <exact-shadow-run-id> \
+  --decision-evidence-directory /var/lib/shreks/fast-paper-shadow/decisions \
+  --sample-proof-path <canonical-fl11.1-sample-proof.json> \
+  --expected-release-sha "$CURRENT_SHA" \
+  --since-unix-ms <same-inclusive-epoch-ms-as-fl11.1> \
+  --until-unix-ms <same-exclusive-epoch-ms-as-fl11.1> \
+  --future-path-label-version <exact-fl4-label-version>
+```
+
+The command reads future paths only from the observer database pinned by the
+runtime manifest. It evaluates exactly the action-policy horizons, so an
+operator cannot choose a favorable hindsight subset. A SKIP/horizon is scored
+only when the FL4 path is complete and cost-adjusted economics are available;
+a complete path with no trade events is explicit zero, while incomplete or
+economics-missing paths remain unavailable.
+
+A cross-horizon missed-opportunity value is emitted only when every policy
+horizon is scorable. The report is hindsight evaluation evidence only: it
+cannot alter decisions, create/backfill future-path labels, promote a champion,
+change production PAPER authority, sign/submit transactions, or enable LIVE.
+
+Together, FL11.2a and FL11.2b cover the economics categories required by FL11.2.
+They do not themselves grant promotion or production cutover authority.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
