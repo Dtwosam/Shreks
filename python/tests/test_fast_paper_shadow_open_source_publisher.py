@@ -61,6 +61,7 @@ def _evidence(
         decision_occurred_at_unix_ms=20_000 + sequence,
         decision_slot=base.decision_slot + sequence,
         snapshot_as_of_unix_ms=20_000 + sequence,
+        snapshot_last_sequence=sequence,
     )
     position = (
         FastCampaignDecisionPosition(kind="FLAT")
