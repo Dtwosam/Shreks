@@ -25,6 +25,8 @@ _AUTHORITATIVE_CHECKPOINT = "4" * 64
 _AUTHORITATIVE_BINDING = "5" * 64
 _AUTHORITATIVE_RUNTIME_STATE = "6" * 64
 _AUTHORITATIVE_COMMISSIONING = "7" * 64
+_BASELINE_STATE = "8" * 64
+_BASELINE_RECEIPT = "9" * 64
 
 
 def _canonical(value: object) -> str:
@@ -188,7 +190,10 @@ def _patch_dependencies(
             decision_observed_at_unix_ms=1_900,
         )
     )
-    shadow_state = SimpleNamespace(cursor=shadow_cursor)
+    shadow_state = SimpleNamespace(
+        cursor=shadow_cursor,
+        state_fingerprint_sha256=_BASELINE_STATE,
+    )
     Path(manifest.checkpoint_path).write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         cutover,
@@ -208,7 +213,10 @@ def _patch_dependencies(
     monkeypatch.setattr(
         cutover,
         "build_fast_paper_runtime_state",
-        lambda _manifest, cursor: SimpleNamespace(cursor=cursor),
+        lambda _manifest, cursor: SimpleNamespace(
+            cursor=cursor,
+            state_fingerprint_sha256=_BASELINE_STATE,
+        ),
     )
     monkeypatch.setattr(
         cutover,
@@ -269,6 +277,13 @@ def _patch_dependencies(
     )
     authoritative_evidence = tmp_path / "authoritative-decision-evidence"
     authoritative_evidence.mkdir(exist_ok=True)
+    authoritative_decision_checkpoint = (
+        authoritative_evidence / "runtime-state.json"
+    )
+    authoritative_decision_checkpoint.write_text(
+        "{}\n",
+        encoding="utf-8",
+    )
     for index in range(authoritative_decision_evidence_count):
         (authoritative_evidence / f"shadow-{index + 1:020d}.json").write_text(
             "{}\n",
@@ -281,10 +296,35 @@ def _patch_dependencies(
             SimpleNamespace(
                 database_path=str(authoritative_database_path),
                 decision_config=SimpleNamespace(
-                    evidence_directory=authoritative_evidence
+                    evidence_directory=authoritative_evidence,
+                    checkpoint_path=authoritative_decision_checkpoint,
                 ),
             )
         ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_authoritative_cutover_baseline_receipt",
+        lambda _path: {
+            "release_source_sha": _RELEASE_SHA,
+            "manifest_fingerprint_sha256": _FAST_MANIFEST,
+            "shadow_checkpoint_path": str(
+                Path(manifest.checkpoint_path).resolve()
+            ),
+            "shadow_checkpoint_file_sha256": hashlib.sha256(
+                Path(manifest.checkpoint_path).read_bytes()
+            ).hexdigest(),
+            "decision_state_fingerprint_sha256": _BASELINE_STATE,
+            "decision_cursor_sequence": (
+                None
+                if authoritative_decision_cursor is None
+                else authoritative_decision_cursor.decision_sequence
+            ),
+            "authoritative_checkpoint_path": str(
+                authoritative_decision_checkpoint.resolve()
+            ),
+            "receipt_fingerprint_sha256": _BASELINE_RECEIPT,
+        },
     )
     monkeypatch.setattr(
         cutover,
@@ -339,7 +379,8 @@ def _patch_dependencies(
         lambda _config: SimpleNamespace(
             decision_bootstrap=SimpleNamespace(
                 state=SimpleNamespace(
-                    cursor=authoritative_decision_cursor
+                    cursor=authoritative_decision_cursor,
+                    state_fingerprint_sha256=_BASELINE_STATE,
                 )
             ),
             execution_bootstrap=authoritative_execution,
@@ -378,6 +419,9 @@ def _assess(tmp_path: Path):
         legacy_runtime_manifest_path=legacy_manifest,
         legacy_observer_database_path=tmp_path / "observer.sqlite3",
         authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+        authoritative_decision_baseline_receipt_path=(
+            tmp_path / "authoritative-baseline-receipt.json"
+        ),
         authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
         release_platform="x86_64-unknown-linux-gnu",
         expected_release_sha=_RELEASE_SHA,
@@ -568,6 +612,9 @@ def test_restart_receipt_fingerprint_drift_is_hard_error(
             legacy_runtime_manifest_path=legacy_manifest,
             legacy_observer_database_path=tmp_path / "observer.sqlite3",
             authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+            authoritative_decision_baseline_receipt_path=(
+                tmp_path / "authoritative-baseline-receipt.json"
+            ),
             authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
             release_platform="x86_64-unknown-linux-gnu",
             expected_release_sha=_RELEASE_SHA,
@@ -602,6 +649,9 @@ def test_restart_receipt_identity_drift_is_hard_error(
             legacy_runtime_manifest_path=legacy_manifest,
             legacy_observer_database_path=tmp_path / "observer.sqlite3",
             authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+            authoritative_decision_baseline_receipt_path=(
+                tmp_path / "authoritative-baseline-receipt.json"
+            ),
             authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
             release_platform="x86_64-unknown-linux-gnu",
             expected_release_sha=_RELEASE_SHA,
@@ -661,6 +711,27 @@ def test_report_fingerprint_is_deterministic(
     ).hexdigest()
 
 
+
+
+def test_authoritative_baseline_receipt_identity_drift_is_hard_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(monkeypatch, tmp_path)
+    original = cutover.read_fast_paper_authoritative_cutover_baseline_receipt
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_authoritative_cutover_baseline_receipt",
+        lambda path: {
+            **original(path),
+            "release_source_sha": "0" * 40,
+        },
+    )
+    with pytest.raises(
+        cutover.FastPaperCutoverPreflightError,
+        match="baseline receipt release_source_sha identity mismatch",
+    ):
+        _assess(tmp_path)
 
 
 def test_authoritative_handoff_must_bind_exact_final_legacy_checkpoint(

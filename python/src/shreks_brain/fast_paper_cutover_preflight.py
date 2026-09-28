@@ -19,6 +19,9 @@ from shreks_brain.fast_paper_authoritative_cutover_config import (
     read_fast_paper_authoritative_cutover_environment,
     validate_fast_paper_authoritative_cutover_environment,
 )
+from shreks_brain.fast_paper_authoritative_cutover_baseline import (
+    read_fast_paper_authoritative_cutover_baseline_receipt,
+)
 from shreks_brain.fast_paper_runtime.authoritative_runtime import (
     bootstrap_fast_paper_authoritative_runtime,
 )
@@ -47,7 +50,7 @@ from shreks_brain.paper_validation import (
 FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_NAME = (
     "shreks.fast_paper_cutover_preflight"
 )
-FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 2
+FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 3
 
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -130,6 +133,7 @@ def assess_fast_paper_cutover_preflight(
     legacy_runtime_manifest_path: str | Path,
     legacy_observer_database_path: str | Path,
     authoritative_runtime_env_path: str | Path,
+    authoritative_decision_baseline_receipt_path: str | Path,
     authoritative_release_wheel_path: str | Path,
     release_platform: str,
     expected_release_sha: str,
@@ -268,6 +272,16 @@ def assess_fast_paper_cutover_preflight(
             authoritative_environment
         ).encode("utf-8")
     ).hexdigest()
+    try:
+        baseline_receipt = (
+            read_fast_paper_authoritative_cutover_baseline_receipt(
+                authoritative_decision_baseline_receipt_path
+            )
+        )
+    except Exception as exc:
+        raise FastPaperCutoverPreflightError(
+            "authoritative decision baseline receipt authentication failed"
+        ) from exc
     authoritative_decision = authoritative_bootstrap.decision_bootstrap
     authoritative_execution = authoritative_bootstrap.execution_bootstrap
     authoritative_binding = authoritative_execution.binding
@@ -373,8 +387,26 @@ def assess_fast_paper_cutover_preflight(
     authoritative_decision_evidence_count = len(
         tuple(decision_evidence_root.glob("shadow-*.json"))
     )
+    baseline_receipt_matches_runtime = _require_authoritative_baseline_receipt_identity(
+        baseline_receipt,
+        manifest=manifest,
+        expected_sha=expected_sha,
+        shadow_decision_checkpoint=shadow_decision_checkpoint,
+        shadow_decision_state=shadow_decision_state,
+        authoritative_decision_state=authoritative_decision.state,
+        authoritative_checkpoint_path=(
+            authoritative_config.decision_config.checkpoint_path
+        ),
+    )
 
     gates = [
+        _gate(
+            "AUTHORITATIVE_DECISION_BASELINE_PROVISIONED_QUIESCENT",
+            baseline_receipt_matches_runtime,
+            baseline_receipt["decision_state_fingerprint_sha256"],
+            authoritative_decision.state.state_fingerprint_sha256,
+            "authoritative decision baseline must come from an authenticated quiescent-shadow provisioning receipt",
+        ),
         _gate(
             "AUTHORITATIVE_RUNTIME_ENTRYPOINT_SEALED",
             True,
@@ -605,6 +637,9 @@ def assess_fast_paper_cutover_preflight(
         "authoritative_runtime_environment_sha256": (
             authoritative_env_sha256
         ),
+        "authoritative_decision_baseline_receipt_fingerprint_sha256": (
+            baseline_receipt["receipt_fingerprint_sha256"]
+        ),
         "authoritative_fast_run_id": authoritative_binding.fast_run_id,
         "authoritative_binding_fingerprint_sha256": (
             authoritative_binding.binding_fingerprint_sha256
@@ -782,6 +817,56 @@ def _require_restart_identity(
             raise FastPaperCutoverPreflightError(
                 f"shadow restart receipt {name} identity mismatch"
             )
+
+
+
+def _require_authoritative_baseline_receipt_identity(
+    receipt: Mapping[str, object],
+    *,
+    manifest,
+    expected_sha: str,
+    shadow_decision_checkpoint: Path,
+    shadow_decision_state,
+    authoritative_decision_state,
+    authoritative_checkpoint_path: Path | None,
+) -> bool:
+    if authoritative_checkpoint_path is None:
+        raise FastPaperCutoverPreflightError(
+            "authoritative decision checkpoint path is missing"
+        )
+    try:
+        shadow_path = str(shadow_decision_checkpoint.resolve(strict=True))
+        authoritative_path = str(
+            authoritative_checkpoint_path.expanduser().resolve(strict=True)
+        )
+        shadow_file_sha256 = hashlib.sha256(
+            shadow_decision_checkpoint.read_bytes()
+        ).hexdigest()
+    except OSError as exc:
+        raise FastPaperCutoverPreflightError(
+            "cutover baseline checkpoint paths are unavailable"
+        ) from exc
+    cursor = authoritative_decision_state.cursor
+    cursor_sequence = None if cursor is None else cursor.decision_sequence
+    expected = {
+        "release_source_sha": expected_sha,
+        "manifest_fingerprint_sha256": manifest.manifest_fingerprint_sha256,
+        "shadow_checkpoint_path": shadow_path,
+        "shadow_checkpoint_file_sha256": shadow_file_sha256,
+        "decision_state_fingerprint_sha256": (
+            authoritative_decision_state.state_fingerprint_sha256
+        ),
+        "decision_cursor_sequence": cursor_sequence,
+        "authoritative_checkpoint_path": authoritative_path,
+    }
+    for name, value in expected.items():
+        if receipt.get(name) != value:
+            raise FastPaperCutoverPreflightError(
+                f"authoritative decision baseline receipt {name} identity mismatch"
+            )
+    if shadow_decision_state != authoritative_decision_state:
+        return False
+    return True
 
 
 def _read_legacy_manifest(path: str | Path):
@@ -969,6 +1054,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--legacy-runtime-manifest-path", required=True)
     parser.add_argument("--legacy-observer-database-path", required=True)
     parser.add_argument("--authoritative-runtime-env-path", required=True)
+    parser.add_argument(
+        "--authoritative-decision-baseline-receipt-path",
+        required=True,
+    )
     parser.add_argument("--authoritative-release-wheel-path", required=True)
     parser.add_argument("--release-platform", required=True)
     parser.add_argument("--expected-release-sha", required=True)
@@ -986,6 +1075,9 @@ def main(argv: list[str] | None = None) -> int:
             legacy_runtime_manifest_path=args.legacy_runtime_manifest_path,
             legacy_observer_database_path=args.legacy_observer_database_path,
             authoritative_runtime_env_path=args.authoritative_runtime_env_path,
+            authoritative_decision_baseline_receipt_path=(
+                args.authoritative_decision_baseline_receipt_path
+            ),
             authoritative_release_wheel_path=args.authoritative_release_wheel_path,
             release_platform=args.release_platform,
             expected_release_sha=args.expected_release_sha,

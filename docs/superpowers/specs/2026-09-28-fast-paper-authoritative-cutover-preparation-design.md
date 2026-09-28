@@ -194,6 +194,8 @@ Tests must prove:
 
 ## Following slice
 
+> The cutover-baseline provisioning portion of this following slice is specified by `2026-09-28-fast-paper-authoritative-cutover-baseline-design.md`. After that baseline layer, the remaining next slice is authoritative source-writer/publisher adaptation.
+
 The physical cutover is **not** next yet. Repository inspection shows the
 authoritative BUY/reduction/pending-retry formats currently have builders and
 readers, but no continuous production writer/publisher topology equivalent to
