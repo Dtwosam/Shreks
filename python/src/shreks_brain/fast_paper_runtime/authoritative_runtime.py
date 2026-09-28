@@ -467,7 +467,6 @@ def main(argv: list[str] | None = None) -> int:
                 "production PAPER cutover authorization failed closed"
             ) from exc
 
-        cutover_state = "GRANTED_AND_ACTIVE"
         event = Event()
         previous = _install_signal_handlers(event)
         try:
