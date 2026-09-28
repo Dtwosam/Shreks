@@ -283,6 +283,159 @@ def _patch_common(monkeypatch, paths, config):
     )
 
 
+def test_final_handoff_initializes_fresh_run_and_retargets_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "authoritative.env"
+    config_path.write_text("provisional\n", encoding="utf-8")
+    database = tmp_path / "observer.sqlite3"
+    database.write_bytes(b"db")
+    provisional_config = SimpleNamespace(
+        execution_config=SimpleNamespace(database_path=database),
+    )
+    manifest = SimpleNamespace()
+    execution_policy = SimpleNamespace()
+    provisional_bootstrap = SimpleNamespace(
+        decision_bootstrap=SimpleNamespace(manifest=manifest),
+        execution_bootstrap=SimpleNamespace(
+            binding=SimpleNamespace(fast_run_id="fast-provisional-run-1"),
+            execution_policy=execution_policy,
+        ),
+    )
+    final_binding = SimpleNamespace(fast_run_id=_FINAL_RUN_ID)
+    final_checkpoint = SimpleNamespace(sequence=0)
+    final_bootstrap = SimpleNamespace(
+        execution_bootstrap=SimpleNamespace(
+            binding=final_binding,
+            checkpoint=final_checkpoint,
+        )
+    )
+    final_config = SimpleNamespace(
+        execution_config=SimpleNamespace(
+            database_path=database,
+            run_id=_FINAL_RUN_ID,
+        )
+    )
+    legacy_manifest = SimpleNamespace(
+        paper_run_id="legacy-run-1",
+        manifest_fingerprint_sha256="8" * 64,
+    )
+    legacy_checkpoint = SimpleNamespace(sequence=99)
+    calls = {"bootstrap": 0}
+
+    def bootstrap(config):
+        calls["bootstrap"] += 1
+        return (
+            provisional_bootstrap
+            if config is provisional_config
+            else final_bootstrap
+        )
+
+    monkeypatch.setattr(
+        cutover,
+        "bootstrap_fast_paper_authoritative_runtime",
+        bootstrap,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "decode_observer_paper_campaign_runtime_manifest",
+        lambda _payload: legacy_manifest,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "load_latest_paper_checkpoint",
+        lambda database_path, run_id: (
+            legacy_checkpoint
+            if Path(database_path) == database
+            and run_id == "legacy-run-1"
+            else None
+        ),
+    )
+    observed = {}
+
+    def initialize(*args, **kwargs):
+        observed["initialize_args"] = args
+        observed["initialize_kwargs"] = kwargs
+        return SimpleNamespace(
+            binding=final_binding,
+            checkpoint=final_checkpoint,
+        )
+
+    monkeypatch.setattr(
+        cutover,
+        "initialize_fast_paper_authoritative_handoff",
+        initialize,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_authoritative_cutover_environment",
+        lambda _path: {
+            "SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID": (
+                "fast-provisional-run-1"
+            )
+        },
+    )
+    monkeypatch.setattr(
+        cutover,
+        "validate_fast_paper_authoritative_cutover_environment",
+        lambda environment, supplied_manifest, authoritative_database_path: (
+            final_config
+            if environment[
+                "SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID"
+            ]
+            == _FINAL_RUN_ID
+            and supplied_manifest is manifest
+            and Path(authoritative_database_path) == database
+            else pytest.fail("final environment binding drift")
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "encode_fast_paper_authoritative_cutover_environment",
+        lambda environment: (
+            f"run_id={environment['SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID']}\n"
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "_read_regular_no_follow",
+        lambda path, label: (
+            (b"legacy-manifest\n", os.stat(config_path))
+            if "legacy" in label
+            else (config_path.read_bytes(), os.stat(config_path))
+        ),
+    )
+
+    def replace_file(path, payload, **metadata):
+        observed["config_path"] = path
+        observed["config_payload"] = payload
+        observed["config_metadata"] = metadata
+
+    monkeypatch.setattr(cutover, "_replace_file_atomically", replace_file)
+
+    restored_config, restored_bootstrap = (
+        cutover._initialize_final_legacy_handoff(
+            provisional_config,
+            final_fast_run_id=_FINAL_RUN_ID,
+            authoritative_config_path=config_path,
+            legacy_runtime_manifest_path=tmp_path / "legacy.json",
+            legacy_observer_database_path=database,
+            created_at_unix_ms=123_456,
+        )
+    )
+
+    assert restored_config is final_config
+    assert restored_bootstrap is final_bootstrap
+    assert observed["initialize_args"][2] is legacy_checkpoint
+    assert observed["initialize_kwargs"]["fast_run_id"] == _FINAL_RUN_ID
+    assert observed["config_path"] == config_path
+    assert observed["config_payload"] == (
+        f"run_id={_FINAL_RUN_ID}\n".encode("utf-8")
+    )
+    assert calls["bootstrap"] == 2
+
+
 def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
