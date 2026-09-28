@@ -74,14 +74,9 @@ from .fast_paper_runtime.shadow_execution_input import (
 from .fast_paper_runtime.shadow_service import (
     read_fast_paper_shadow_service_policy,
 )
-from .fast_proof_tools import (
-    FAST_PROOF_TOOL_NAMES,
-    materialize_fast_proof_tools_from_directory,
-    verify_fast_proof_tools_wheel,
-)
+from .fast_proof_tools import verify_fast_proof_tools_wheel
 from .fast_runtime_tools import (
     FAST_RUNTIME_FEATURE_TOOL_NAME,
-    materialize_fast_runtime_feature_tool_from_directory,
     verify_fast_runtime_tools_wheel,
 )
 
@@ -113,11 +108,6 @@ _REQUIRED_RELEASE_PATHS = frozenset(
 )
 _PROOF_PREFIX = "shreks_brain/_sealed_fast_tools/"
 _RUNTIME_PREFIX = "shreks_brain/_sealed_fast_runtime_tools/"
-_CONTROL_FILES = (
-    "fast-paper-runtime-manifest.json",
-    "fast-paper-shadow-execution-policy.json",
-    "fast-paper-shadow-buy-writer-policy.json",
-)
 _SYSTEMD_SHOW_PROPERTIES = (
     "ActiveState",
     "SubState",
@@ -749,51 +739,34 @@ def _prepare_target_context(
             "target release sealed Fast assets failed authentication"
         ) from exc
 
-    decision_source = Path(source.manifest.decision_binary_path)
-    feature_source = Path(source.manifest.feature_feed_binary_path)
-    _require_materialized_source_path(
-        decision_source,
-        source.manifest.release_source_sha,
-        "shreks-fast-campaign-decision",
+    tool_root = release / ".venv" / "shreks-fast-tools"
+    _require_target_tool_root(tool_root)
+    proof_records = {
+        value.name: value for value in proof_manifest.tools
+    }
+    decision_record = proof_records["shreks-fast-campaign-decision"]
+    entry_record = proof_records["shreks-fast-entry-authority"]
+    decision_binary = _materialize_target_wheel_binary(
+        wheel,
+        f"{_PROOF_PREFIX}shreks-fast-campaign-decision.bin",
+        tool_root / "shreks-fast-campaign-decision",
+        expected_size=decision_record.size,
+        expected_sha256=decision_record.sha256,
     )
-    _require_materialized_source_path(
-        feature_source,
-        source.manifest.release_source_sha,
-        FAST_RUNTIME_FEATURE_TOOL_NAME,
+    entry_authority_binary = _materialize_target_wheel_binary(
+        wheel,
+        f"{_PROOF_PREFIX}shreks-fast-entry-authority.bin",
+        tool_root / "shreks-fast-entry-authority",
+        expected_size=entry_record.size,
+        expected_sha256=entry_record.sha256,
     )
-    proof_root = decision_source.parent.parent
-    runtime_root = feature_source.parent.parent
-
-    temporary = Path(tempfile.mkdtemp(prefix=".fast-release-target-"))
-    try:
-        proof_package = _extract_wheel_package(
-            wheel,
-            _PROOF_PREFIX,
-            temporary / "proof",
-        )
-        runtime_package = _extract_wheel_package(
-            wheel,
-            _RUNTIME_PREFIX,
-            temporary / "runtime",
-        )
-        proof_set = materialize_fast_proof_tools_from_directory(
-            proof_package,
-            proof_root,
-            expected_source_sha=identity.source_sha,
-            expected_platform=identity.platform,
-        )
-        feature_tool = materialize_fast_runtime_feature_tool_from_directory(
-            runtime_package,
-            runtime_root,
-            expected_source_sha=identity.source_sha,
-            expected_platform=identity.platform,
-        )
-    finally:
-        shutil.rmtree(temporary, ignore_errors=True)
-
-    proof_by_name = {path.name: path for path in proof_set.paths}
-    decision_binary = proof_by_name["shreks-fast-campaign-decision"]
-    entry_authority_binary = proof_by_name["shreks-fast-entry-authority"]
+    feature_tool = _materialize_target_wheel_binary(
+        wheel,
+        f"{_RUNTIME_PREFIX}{FAST_RUNTIME_FEATURE_TOOL_NAME}.bin",
+        tool_root / FAST_RUNTIME_FEATURE_TOOL_NAME,
+        expected_size=runtime_manifest.size,
+        expected_sha256=runtime_manifest.sha256,
+    )
     target_champion = _target_path_for_same_asset(
         Path(source.manifest.champion_path),
         source.release,
@@ -1298,43 +1271,73 @@ def _verify_staged_release(release: Path) -> _ReleaseIdentity:
     )
 
 
-def _extract_wheel_package(
+def _require_target_tool_root(root: Path) -> None:
+    if root.is_symlink():
+        raise FastPaperReleaseUpgradeError(
+            "target Fast tool root must not be a symlink"
+        )
+    root.mkdir(parents=True, mode=0o755, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise FastPaperReleaseUpgradeError(
+            "target Fast tool root must be a real directory"
+        )
+    os.chmod(root, 0o755)
+
+
+def _materialize_target_wheel_binary(
     wheel: Path,
-    prefix: str,
+    member: str,
     destination: Path,
+    *,
+    expected_size: int,
+    expected_sha256: str,
 ) -> Path:
-    destination.mkdir(parents=True)
     try:
         with zipfile.ZipFile(wheel) as archive:
-            members = [
-                value
-                for value in archive.infolist()
-                if value.filename.startswith(prefix)
-                and value.filename != prefix
-            ]
-            if not members:
-                raise ValueError("wheel package is missing")
-            names = []
-            for member in members:
-                relative = member.filename[len(prefix):]
-                if (
-                    not relative
-                    or "/" in relative
-                    or member.is_dir()
-                    or relative in names
-                ):
-                    raise ValueError(
-                        "wheel package contains unsafe member"
-                    )
-                names.append(relative)
-                (destination / relative).write_bytes(
-                    archive.read(member)
-                )
-    except (OSError, KeyError, zipfile.BadZipFile, ValueError) as exc:
+            payload = archive.read(member)
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
         raise FastPaperReleaseUpgradeError(
-            "sealed wheel package extraction failed"
+            "sealed target Fast binary cannot be read"
         ) from exc
-    return destination
+    if (
+        len(payload) != expected_size
+        or hashlib.sha256(payload).hexdigest() != expected_sha256
+    ):
+        raise FastPaperReleaseUpgradeError(
+            "sealed target Fast binary fingerprint mismatch"
+        )
+    if destination.is_symlink():
+        raise FastPaperReleaseUpgradeError(
+            "target Fast binary destination must not be a symlink"
+        )
+    if destination.exists():
+        if (
+            not destination.is_file()
+            or destination.read_bytes() != payload
+        ):
+            raise FastPaperReleaseUpgradeError(
+                "existing target Fast binary differs from sealed release"
+            )
+        os.chmod(destination, 0o755)
+        return destination.resolve(strict=True)
+
+    descriptor = os.open(
+        destination,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o755,
+    )
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(destination, 0o755)
+        _fsync_directory(destination.parent)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    return destination.resolve(strict=True)
 
 
 def _target_path_for_same_asset(
@@ -1371,28 +1374,6 @@ def _target_path_for_same_asset(
             "target release does not preserve release-local asset"
         )
     return target.resolve(strict=True)
-
-
-def _require_materialized_source_path(
-    path: Path,
-    source_sha: str,
-    expected_name: str,
-) -> None:
-    try:
-        resolved = path.resolve(strict=True)
-    except OSError as exc:
-        raise FastPaperReleaseUpgradeError(
-            "source Fast tool path cannot be resolved"
-        ) from exc
-    if (
-        resolved.name != expected_name
-        or resolved.parent.name != source_sha
-        or resolved.is_symlink()
-        or not resolved.is_file()
-    ):
-        raise FastPaperReleaseUpgradeError(
-            "source Fast tool path is not release-namespaced materialized authority"
-        )
 
 
 def _fresh_target_run_id(
