@@ -196,6 +196,8 @@ def provision_fast_paper_authoritative_host_roots(
     if not root.exists():
         os.mkdir(root, _STATE_DIR_MODE)
         os.chown(root, service_uid, service_gid)
+        os.chmod(root, _STATE_DIR_MODE)
+        _fsync_directory(root.parent)
         created += 1
     _require_path_metadata(
         root,
@@ -213,6 +215,7 @@ def provision_fast_paper_authoritative_host_roots(
         if not directory.exists():
             os.mkdir(directory, _STATE_DIR_MODE)
             os.chown(directory, service_uid, service_gid)
+            os.chmod(directory, _STATE_DIR_MODE)
             created += 1
         _require_path_metadata(
             directory,
