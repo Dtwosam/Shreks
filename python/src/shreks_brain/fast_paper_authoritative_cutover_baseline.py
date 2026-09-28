@@ -122,7 +122,7 @@ def provision_fast_paper_authoritative_cutover_baseline(
     receipt = Path(receipt_path).expanduser()
 
     _require_source_checkpoint(source)
-    _require_empty_authoritative_decision_root(
+    destination_preexisting = _require_authoritative_decision_root(
         decision_root,
         destination=destination,
     )
@@ -169,13 +169,23 @@ def provision_fast_paper_authoritative_cutover_baseline(
             "shadow decision checkpoint changed during cutover-baseline authentication"
         )
 
-    uid, gid = _service_identity()
-    _write_bytes_no_replace(
-        destination,
-        source_bytes_before,
-        uid=uid,
-        gid=gid,
+    _require_authoritative_decision_root(
+        decision_root,
+        destination=destination,
     )
+    if destination_preexisting:
+        if destination.read_bytes() != source_bytes_before:
+            raise FastPaperAuthoritativeCutoverBaselineError(
+                "preexisting authoritative decision baseline conflicts with shadow checkpoint"
+            )
+    else:
+        uid, gid = _service_identity()
+        _write_bytes_no_replace(
+            destination,
+            source_bytes_before,
+            uid=uid,
+            gid=gid,
+        )
     try:
         restored = read_fast_paper_runtime_state(destination)
     except Exception as exc:
@@ -185,6 +195,12 @@ def provision_fast_paper_authoritative_cutover_baseline(
     if restored != source_state or destination.read_bytes() != source_bytes_before:
         raise FastPaperAuthoritativeCutoverBaselineError(
             "authoritative decision baseline does not exactly match shadow checkpoint"
+        )
+    if {
+        child.name for child in decision_root.iterdir()
+    } != {destination.name}:
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "authoritative decision root changed during baseline provisioning"
         )
 
     final_systemd = _read_quiescence_state(runner)
@@ -222,6 +238,7 @@ def provision_fast_paper_authoritative_cutover_baseline(
             source_state.state_fingerprint_sha256
         ),
         "decision_cursor_sequence": cursor_sequence,
+        "baseline_replayed": destination_preexisting,
         "authoritative_checkpoint_path": str(
             destination.resolve(strict=True)
         ),
@@ -245,11 +262,11 @@ def _require_source_checkpoint(path: Path) -> None:
         )
 
 
-def _require_empty_authoritative_decision_root(
+def _require_authoritative_decision_root(
     root: Path,
     *,
     destination: Path,
-) -> None:
+) -> bool:
     if root.is_symlink() or not root.is_dir():
         raise FastPaperAuthoritativeCutoverBaselineError(
             "authoritative decision root must be an existing regular non-symlink directory"
@@ -259,14 +276,18 @@ def _require_empty_authoritative_decision_root(
         raise FastPaperAuthoritativeCutoverBaselineError(
             "authoritative decision checkpoint must stay directly inside authoritative decision root"
         )
-    if destination.exists() or destination.is_symlink():
+    if destination.is_symlink():
         raise FastPaperAuthoritativeCutoverBaselineError(
-            "authoritative decision checkpoint already exists"
+            "authoritative decision checkpoint must not be a symlink"
         )
-    if any(True for _ in resolved_root.iterdir()):
+    members = tuple(resolved_root.iterdir())
+    if not members:
+        return False
+    if len(members) != 1 or members[0] != destination or not destination.is_file():
         raise FastPaperAuthoritativeCutoverBaselineError(
-            "authoritative decision root must be empty before baseline provisioning"
+            "authoritative decision root must be empty or contain only the exact baseline checkpoint"
         )
+    return True
 
 
 def _require_receipt_path(path: Path, *, decision_root: Path) -> None:
