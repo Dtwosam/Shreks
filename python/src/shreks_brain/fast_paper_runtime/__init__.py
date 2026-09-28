@@ -7,12 +7,6 @@ from .codec import (
     write_fast_paper_runtime_manifest,
     write_fast_paper_runtime_state,
 )
-from .authoritative_runner import (
-    FAST_PAPER_AUTHORITATIVE_RUNNER_VERSION,
-    FastPaperAuthoritativeRunnerResult,
-    run_fast_paper_authoritative_execution,
-    run_fast_paper_authoritative_pending_buy_retry,
-)
 from .feed import (
     FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_NAME,
     FAST_PAPER_RUNTIME_FEATURE_BATCH_SCHEMA_VERSION,
@@ -192,7 +186,6 @@ from .models import (
 
 
 __all__ = (
-    "FAST_PAPER_AUTHORITATIVE_RUNNER_VERSION",
     "FAST_PAPER_RUNTIME_MANIFEST_SCHEMA_NAME",
     "FAST_PAPER_RUNTIME_STATE_SCHEMA_NAME",
     "FAST_PAPER_RUNTIME_SCHEMA_VERSION",
@@ -221,7 +214,6 @@ __all__ = (
     "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_NAME",
     "FAST_PAPER_SHADOW_RUNTIME_STATE_SCHEMA_VERSION",
     "FAST_PAPER_SHADOW_DECISION_SCHEMA_VERSION",
-    "FastPaperAuthoritativeRunnerResult",
     "FastPaperRuntimeCursor",
     "FastPaperRuntimeManifest",
     "FastPaperRuntimeState",
@@ -299,8 +291,6 @@ __all__ = (
     "reconstruct_fast_paper_shadow_pending_buy_retry",
     "read_fast_paper_shadow_decision_evidence",
     "write_fast_paper_shadow_decision_evidence",
-    "run_fast_paper_authoritative_execution",
-    "run_fast_paper_authoritative_pending_buy_retry",
     "run_fast_paper_shadow_batch",
     "consume_fast_paper_shadow_service_execution_source_record",
     "run_fast_paper_shadow_service_execution",
