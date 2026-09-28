@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import pwd
 import re
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -240,12 +241,14 @@ def preflight_fast_paper_physical_cutover(
     )
     _require_shadow_quiescent(runner)
     _require_authorization_absent(paths.cutover_authorization_path)
+    _require_no_prior_cutover_receipt(paths)
 
     config = _load_authoritative_config(paths.authoritative_config_path)
     if config.execution_config.run_id == final_run_id:
         raise FastPaperPhysicalCutoverError(
             "final Fast run id must differ from provisional host-preparation run id"
         )
+    _require_final_run_namespace_unused(config, final_run_id)
     snapshot = _capture_authoritative_snapshot(config)
     _require_pristine_authoritative_snapshot(snapshot, config)
 
@@ -303,10 +306,7 @@ def activate_fast_paper_physical_cutover(
         expected_sha,
         runtime_executable,
     )
-    if paths.success_receipt.exists() or paths.success_receipt.is_symlink():
-        raise FastPaperPhysicalCutoverError(
-            "successful physical cutover receipt already exists"
-        )
+    _require_no_prior_cutover_receipt(paths)
     runner = _default_command_runner if command_runner is None else command_runner
     sleep = time.sleep if sleeper is None else sleeper
     clock = _wall_clock_unix_ms if clock_unix_ms is None else clock_unix_ms
@@ -1236,6 +1236,60 @@ def _remove_authorization(path: Path) -> None:
         )
     path.unlink(missing_ok=True)
     _fsync_directory(path.parent)
+
+
+def _require_no_prior_cutover_receipt(
+    paths: FastPaperPhysicalCutoverPaths,
+) -> None:
+    for receipt in (paths.success_receipt, paths.failure_receipt):
+        if receipt.exists() or receipt.is_symlink():
+            raise FastPaperPhysicalCutoverError(
+                "physical cutover receipt already exists for this release"
+            )
+
+
+def _require_final_run_namespace_unused(config, final_run_id: str) -> None:
+    database = Path(config.execution_config.database_path)
+    try:
+        connection = sqlite3.connect(
+            f"file:{database}?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
+    except sqlite3.Error as exc:
+        raise FastPaperPhysicalCutoverError(
+            "authoritative database cannot be opened read-only"
+        ) from exc
+    try:
+        checks = (
+            (
+                "fast_paper_authoritative_bindings",
+                "fast_run_id",
+            ),
+            (
+                "paper_loop_checkpoints",
+                "run_id",
+            ),
+            (
+                "fast_paper_authoritative_runtime_states",
+                "fast_run_id",
+            ),
+        )
+        for table, column in checks:
+            row = connection.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE {column} = ?",
+                (final_run_id,),
+            ).fetchone()
+            if row is None or row[0] != 0:
+                raise FastPaperPhysicalCutoverError(
+                    "final Fast run namespace is already used"
+                )
+    except sqlite3.Error as exc:
+        raise FastPaperPhysicalCutoverError(
+            "final Fast run namespace preflight failed closed"
+        ) from exc
+    finally:
+        connection.close()
 
 
 def _require_authorization_absent(path: Path) -> None:
