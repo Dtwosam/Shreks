@@ -874,6 +874,7 @@ CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
 CHAMPION_REGISTRY="/var/lib/shreks/fast-paper-promotion/champion-registry.json"
 RESTART_RECEIPT="/root/shreks-fast-paper-shadow-commissioning/restart-$CURRENT_SHA.json"
 AUTHORITATIVE_ENV="/etc/shreks/fast-paper-authoritative.env"
+BASELINE_RECEIPT="/root/shreks-fast-paper-cutover/baseline-$CURRENT_SHA.json"
 
 mapfile -t WHEELS < <(
   find "$CURRENT_RELEASE/wheelhouse" -maxdepth 1 -type f \
@@ -891,6 +892,14 @@ with open(sys.argv[1], encoding="utf-8") as handle:
 PY
 )"
 
+# Run this only after the protected ceremony has already quiesced
+# shreks-fast-paper-shadow.service. This command does not stop/start services.
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-authoritative-cutover-baseline" \
+  --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --authoritative-runtime-env-path "$AUTHORITATIVE_ENV" \
+  --receipt-path "$BASELINE_RECEIPT" \
+  --expected-release-sha "$CURRENT_SHA"
+
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-cutover-preflight" \
   --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
   --champion-registry-path "$CHAMPION_REGISTRY" \
@@ -899,6 +908,7 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-cutover-preflight" \
   --legacy-runtime-manifest-path <active-legacy-paper-runtime-manifest> \
   --legacy-observer-database-path <active-legacy-observer-database> \
   --authoritative-runtime-env-path "$AUTHORITATIVE_ENV" \
+  --authoritative-decision-baseline-receipt-path "$BASELINE_RECEIPT" \
   --authoritative-release-wheel-path "${WHEELS[0]}" \
   --release-platform "$RELEASE_PLATFORM" \
   --expected-release-sha "$CURRENT_SHA"
@@ -929,6 +939,7 @@ authoritative_checkpoint_sequence=0
 authoritative_pending_buy=0
 authoritative_open_positions=0
 authoritative_learned_execution_cursor=EMPTY
+authoritative_decision_baseline=PROVISIONED_WHILE_SHADOW_QUIESCENT
 authoritative_decision_baseline=MATCHES_LATEST_SHADOW_CURSOR
 authoritative_decision_evidence=EMPTY
 authoritative_handoff=EXACT_FINAL_LEGACY_CHECKPOINT
@@ -953,12 +964,11 @@ signing_submission_authority=NOT_GRANTED
 live_authority=DISABLED
 ```
 
-Do not stop `shreks-paper-campaign.service`, stop the detached shadow,
-replace unit bytes, switch target membership, or treat this report as cutover
-authority. The protected cutover ceremony must quiesce the detached shadow,
-copy its exact authenticated learned-decision state to
-`/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json`, then
-re-run this preflight before the Fast runtime may become authoritative.
+Do not stop `shreks-paper-campaign.service`, replace unit bytes, switch
+target membership, or treat this report as cutover authority. The baseline
+provisioning command requires the detached shadow to have already been
+quiesced; it only authenticates `systemctl show` state and performs the
+write-once non-economic decision-state copy.
 
 Continuous authoritative BUY/OPEN/retry source production and the physical
 service switch remain separately reviewed steps.
