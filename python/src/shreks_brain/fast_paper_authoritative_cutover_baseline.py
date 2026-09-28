@@ -38,6 +38,36 @@ _SHOW_COMMAND = (
     "--no-pager",
 )
 
+_RECEIPT_FIELDS = frozenset(
+    {
+        "schema_name",
+        "schema_version",
+        "state",
+        "release_source_sha",
+        "manifest_fingerprint_sha256",
+        "shadow_unit",
+        "shadow_active_state",
+        "shadow_sub_state",
+        "shadow_main_pid",
+        "shadow_n_restarts",
+        "shadow_invocation_id",
+        "shadow_checkpoint_path",
+        "shadow_checkpoint_file_sha256",
+        "decision_state_fingerprint_sha256",
+        "decision_cursor_sequence",
+        "baseline_replayed",
+        "authoritative_checkpoint_path",
+        "observed_at_unix_ms",
+        "production_fast_paper_runner",
+        "production_paper_cutover",
+        "service_control_authority",
+        "authoritative_paper_mutation",
+        "signing_submission_authority",
+        "live_authority",
+        "receipt_fingerprint_sha256",
+    }
+)
+
 
 class FastPaperAuthoritativeCutoverBaselineError(RuntimeError):
     pass
@@ -252,6 +282,121 @@ def provision_fast_paper_authoritative_cutover_baseline(
     }
     document = _finalize_receipt(material)
     _write_receipt_no_replace(receipt, document)
+    return document
+
+
+
+def read_fast_paper_authoritative_cutover_baseline_receipt(
+    path: str | Path,
+) -> dict[str, object]:
+    source = Path(path).expanduser()
+    if source.is_symlink() or not source.is_file():
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt must be a regular non-symlink file"
+        )
+    try:
+        payload = source.read_text(encoding="utf-8")
+        document = json.loads(
+            payload,
+            object_pairs_hook=_reject_duplicate_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt is malformed JSON"
+        ) from exc
+    if type(document) is not dict or frozenset(document) != _RECEIPT_FIELDS:
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt has unknown or missing fields"
+        )
+    if payload != _canonical(document) + "\n":
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt must use canonical JSON"
+        )
+    claimed = document["receipt_fingerprint_sha256"]
+    if (
+        not isinstance(claimed, str)
+        or len(claimed) != 64
+        or any(character not in "0123456789abcdef" for character in claimed)
+    ):
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt fingerprint is invalid"
+        )
+    material = dict(document)
+    material.pop("receipt_fingerprint_sha256")
+    expected = hashlib.sha256(
+        _canonical(material).encode("utf-8")
+    ).hexdigest()
+    if claimed != expected:
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt fingerprint mismatch"
+        )
+    expected_static = {
+        "schema_name": _SCHEMA_NAME,
+        "schema_version": _SCHEMA_VERSION,
+        "state": "AUTHORITATIVE_DECISION_BASELINE_PROVISIONED",
+        "shadow_unit": _SHADOW_UNIT,
+        "shadow_active_state": "inactive",
+        "shadow_sub_state": "dead",
+        "shadow_main_pid": 0,
+        "production_fast_paper_runner": "SEALED_NOT_ACTIVE",
+        "production_paper_cutover": "NOT_GRANTED",
+        "service_control_authority": "NOT_GRANTED",
+        "authoritative_paper_mutation": "NOT_GRANTED",
+        "signing_submission_authority": "NOT_GRANTED",
+        "live_authority": "DISABLED",
+    }
+    for name, expected_value in expected_static.items():
+        if document[name] != expected_value:
+            raise FastPaperAuthoritativeCutoverBaselineError(
+                f"cutover baseline receipt {name} is incompatible"
+            )
+    _require_source_sha(document["release_source_sha"])
+    for name in (
+        "manifest_fingerprint_sha256",
+        "shadow_checkpoint_file_sha256",
+        "decision_state_fingerprint_sha256",
+    ):
+        value = document[name]
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise FastPaperAuthoritativeCutoverBaselineError(
+                f"cutover baseline receipt {name} is invalid"
+            )
+    for name in (
+        "shadow_n_restarts",
+        "observed_at_unix_ms",
+    ):
+        value = document[name]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise FastPaperAuthoritativeCutoverBaselineError(
+                f"cutover baseline receipt {name} must be non-negative"
+            )
+    cursor = document["decision_cursor_sequence"]
+    if cursor is not None and (
+        isinstance(cursor, bool)
+        or not isinstance(cursor, int)
+        or cursor <= 0
+    ):
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt decision cursor must be positive or null"
+        )
+    if type(document["baseline_replayed"]) is not bool:
+        raise FastPaperAuthoritativeCutoverBaselineError(
+            "cutover baseline receipt baseline_replayed must be bool"
+        )
+    for name in (
+        "shadow_checkpoint_path",
+        "authoritative_checkpoint_path",
+    ):
+        value = document[name]
+        if not isinstance(value, str) or not Path(value).is_absolute():
+            raise FastPaperAuthoritativeCutoverBaselineError(
+                f"cutover baseline receipt {name} must be an absolute path"
+            )
     return document
 
 
@@ -518,6 +663,22 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+
+def _reject_duplicate_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
 def _canonical(value: object) -> str:
