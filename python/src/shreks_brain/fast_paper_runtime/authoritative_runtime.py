@@ -467,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
                 "production PAPER cutover authorization failed closed"
             ) from exc
 
+        cutover_state = "GRANTED_AND_ACTIVE"
         event = Event()
         previous = _install_signal_handlers(event)
         try:
@@ -584,7 +585,7 @@ def _emit_failure(error: BaseException) -> None:
         "schema_version": _STATUS_SCHEMA_VERSION,
         "mode": "PAPER_AUTHORITATIVE_FAST",
         "state": "FAILED",
-        "production_paper_cutover": "NOT_GRANTED",
+        "production_paper_cutover": production_paper_cutover,
         "service_control_authority": "NOT_GRANTED",
         "signing_submission_authority": "NOT_GRANTED",
         "live": "DISABLED",
