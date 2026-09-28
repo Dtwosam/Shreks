@@ -18,6 +18,7 @@ _MANIFEST_FP = "e" * 64
 _CHAMPION_FP = "f" * 64
 _BINDING_FP = "1" * 64
 _POLICY_FP = "2" * 64
+_FINAL_RUN_ID = "fast-final-run-1"
 
 
 def _paths(tmp_path: Path) -> cutover.FastPaperPhysicalCutoverPaths:
@@ -78,6 +79,7 @@ def _config(tmp_path: Path):
         ),
         execution_config=SimpleNamespace(
             source_directory=roots["execution"],
+            run_id="fast-provisional-run-1",
         ),
         buy_authority_source_directory=roots["buy"],
         quote_usd_source_directory=roots["usd"],
@@ -230,7 +232,7 @@ class FakeRunner:
         raise AssertionError(f"unexpected command: {command}")
 
 
-def _bootstrap():
+def _bootstrap(run_id: str = _FINAL_RUN_ID):
     manifest = SimpleNamespace(
         release_source_sha=_SHA,
         manifest_fingerprint_sha256=_MANIFEST_FP,
@@ -242,7 +244,7 @@ def _bootstrap():
         decision_bootstrap=SimpleNamespace(manifest=manifest),
         execution_bootstrap=SimpleNamespace(
             binding=SimpleNamespace(
-                fast_run_id="fast-run-1",
+                fast_run_id=run_id,
                 binding_fingerprint_sha256=_BINDING_FP,
             ),
             execution_policy=SimpleNamespace(
@@ -273,8 +275,11 @@ def _patch_common(monkeypatch, paths, config):
     )
     monkeypatch.setattr(
         cutover,
-        "_refresh_final_legacy_handoff",
-        lambda *_args, **_kwargs: _bootstrap(),
+        "_initialize_final_legacy_handoff",
+        lambda supplied_config, **_kwargs: (
+            supplied_config,
+            _bootstrap(),
+        ),
     )
 
 
@@ -292,7 +297,7 @@ def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine
         lambda **_kwargs: {
             "state": "READY_FOR_PROTECTED_PAPER_CUTOVER_REVIEW",
             "release_source_sha": _SHA,
-            "fast_run_id": "fast-run-1",
+            "fast_run_id": "fast-provisional-run-1",
             "baseline_receipt_fingerprint_sha256": _BASELINE_FP,
         },
     )
@@ -312,6 +317,7 @@ def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine
         authoritative_release_wheel_path=tmp_path / "wheel.whl",
         release_platform="x86_64-unknown-linux-gnu",
         baseline_receipt_path=tmp_path / "baseline.json",
+        final_fast_run_id=_FINAL_RUN_ID,
         paths=paths,
         runtime_executable=paths.current_link / ".venv" / "bin" / "python",
         command_runner=runner,
@@ -443,6 +449,7 @@ def test_final_preflight_failure_restores_legacy_when_state_is_unchanged(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
             shadow_restart_receipt_path=tmp_path / "restart.json",
@@ -516,6 +523,7 @@ def test_post_start_failure_never_restores_legacy_authority(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
             shadow_restart_receipt_path=tmp_path / "restart.json",
@@ -531,12 +539,13 @@ def test_post_start_failure_never_restores_legacy_authority(
         )
 
     assert runner.mode == "stopped"
-    assert paths.active_unit_destination.read_bytes() == b"legacy-unit\n"
+    assert paths.active_unit_destination.read_bytes() == b"fast-unit\n"
     assert not paths.cutover_authorization_path.exists()
     assert paths.failure_receipt.is_file()
     failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
     assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
     assert failure["legacy_service_restarted"] is False
+    assert failure["fast_unit_retained"] is True
 
 
 def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
@@ -583,6 +592,7 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
             shadow_restart_receipt_path=tmp_path / "restart.json",
@@ -598,12 +608,13 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
         )
 
     assert runner.mode == "stopped"
-    assert paths.active_unit_destination.read_bytes() == b"legacy-unit\n"
+    assert paths.active_unit_destination.read_bytes() == b"fast-unit\n"
     assert not paths.cutover_authorization_path.exists()
     failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
     assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
     assert failure["authoritative_state_changed"] is False
     assert failure["legacy_service_restarted"] is False
+    assert failure["fast_unit_retained"] is True
 
 
 def test_default_command_runner_rejects_unreviewed_service_controls(
