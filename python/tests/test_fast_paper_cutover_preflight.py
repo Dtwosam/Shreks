@@ -288,7 +288,10 @@ def _patch_dependencies(
         cutover,
         "bootstrap_fast_paper_authoritative_runtime",
         lambda _config: SimpleNamespace(
-            execution_bootstrap=authoritative_execution
+            decision_bootstrap=SimpleNamespace(
+                state=SimpleNamespace(cursor=None)
+            ),
+            execution_bootstrap=authoritative_execution,
         ),
     )
     monkeypatch.setattr(
@@ -357,6 +360,8 @@ def test_cutover_preflight_ready_when_all_handoff_state_is_safe(
         "authoritative_pending_buy_count": 0,
         "authoritative_open_position_count": 0,
         "authoritative_learned_cursor_empty": True,
+        "learned_decision_cursor_sequence": None,
+        "authoritative_first_cycle_cursor_compatible": True,
         "authoritative_ledger_matches_legacy": True,
     }
     assert {gate["status"] for gate in report["gate_results"]} == {"PASS"}
@@ -595,6 +600,40 @@ def test_report_fingerprint_is_deterministic(
     ).hexdigest()
 
 
+
+
+def test_advanced_learned_cursor_requires_durable_cutover_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(monkeypatch)
+    original = cutover.bootstrap_fast_paper_authoritative_runtime
+
+    def with_advanced_cursor(config):
+        bootstrap = original(config)
+        return SimpleNamespace(
+            decision_bootstrap=SimpleNamespace(
+                state=SimpleNamespace(
+                    cursor=SimpleNamespace(decision_sequence=41)
+                )
+            ),
+            execution_bootstrap=bootstrap.execution_bootstrap,
+        )
+
+    monkeypatch.setattr(
+        cutover,
+        "bootstrap_fast_paper_authoritative_runtime",
+        with_advanced_cursor,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(
+            report,
+            "AUTHORITATIVE_FIRST_CYCLE_CURSOR_COMPATIBLE",
+        )["status"]
+        == "FAIL"
+    )
 
 def test_authoritative_handoff_must_bind_exact_final_legacy_checkpoint(
     tmp_path: Path,
