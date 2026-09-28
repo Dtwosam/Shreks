@@ -22,6 +22,16 @@ _POLICY_FP = "2" * 64
 _FINAL_RUN_ID = "fast-final-run-1"
 
 
+def failure_marker_is_fail_closed(document: dict[str, object]) -> bool:
+    return (
+        document.get("production_paper_cutover")
+        == "STOPPED_MANUAL_RECOVERY"
+        and document.get("signing_submission_authority")
+        == "NOT_GRANTED"
+        and document.get("live_authority") == "DISABLED"
+    )
+
+
 def _paths(tmp_path: Path) -> cutover.FastPaperPhysicalCutoverPaths:
     release = tmp_path / _SHA
     (release / ".venv" / "bin").mkdir(parents=True)
@@ -895,7 +905,12 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
 
     assert runner.mode == "stopped"
     assert paths.active_unit_destination.read_bytes() == b"fast-unit\n"
-    assert not paths.cutover_authorization_path.exists()
+    assert paths.cutover_authorization_path.is_file()
+    revocation = json.loads(
+        paths.cutover_authorization_path.read_text(encoding="utf-8")
+    )
+    assert revocation["state"] == "REVOKED_MANUAL_RECOVERY"
+    assert failure_marker_is_fail_closed(revocation)
     failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
     assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
     assert failure["authoritative_state_changed"] is False
