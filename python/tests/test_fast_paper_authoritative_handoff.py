@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import pytest
 
@@ -287,18 +288,11 @@ def test_non_reconciled_source_accounting_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manifest, database, source = _legacy_checkpoint(tmp_path)
-    real_validate = handoff.validate_paper_accounting
     monkeypatch.setattr(
         handoff,
         "validate_paper_accounting",
-        lambda state: replace(
-            real_validate(state),
-            status=AccountingValidationStatus.INVALID,
-            findings=real_validate(state).findings
-            or (
-                # The handoff checks status before consuming findings.
-                pytest.fail("fixture needs no synthetic accounting details"),
-            ),
+        lambda _state: SimpleNamespace(
+            status=AccountingValidationStatus.INVALID
         ),
     )
 
