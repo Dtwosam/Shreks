@@ -334,6 +334,19 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
         _evidence_path(decision_config.evidence_directory, 1),
     )
     source = _source(record, evidence)
+    source = replace(
+        source,
+        entry_authority=replace(
+            source.entry_authority,
+            intended_base_quantity=1.0,
+        ),
+        risk_context=replace(
+            source.risk_context,
+            trading_capital_usd=(
+                bootstrap.checkpoint.state.ledger.starting_cash_usd
+            ),
+        ),
+    )
     deferred = run_fast_paper_authoritative_service_execution(
         manifest,
         bootstrap,
@@ -355,7 +368,12 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
             reference_price_quote=1.02,
             execution_price_quote=1.03,
         ),
-        risk_context=_risk(retry_at),
+        risk_context=replace(
+            _risk(retry_at),
+            trading_capital_usd=(
+                deferred.checkpoint.state.ledger.starting_cash_usd
+            ),
+        ),
         quote_usd_evidence=_usd(
             record,
             observed_at=at + 190,
@@ -387,6 +405,11 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
     )
     assert calls == [evidence.evidence_fingerprint_sha256]
 
+    monkeypatch.setattr(
+        coordinator,
+        "run_fast_paper_shadow_service_cycle",
+        lambda supplied, *_args, **_kwargs: (supplied, 0),
+    )
     second = run_fast_paper_authoritative_coordinated_cycle(
         decision_bootstrap,
         decision_config,
