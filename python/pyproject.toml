@@ -72,6 +72,7 @@ where = ["src"]
 "shreks_brain._sealed_fast_tools" = ["*.bin", "manifest.json"]
 "shreks_brain._sealed_fast_runtime_tools" = ["*.bin", "manifest.json"]
 "shreks_brain._sealed_fast_paper_shadow_commissioning" = ["manifest.json", "*.service", "*.example"]
+"shreks_brain._sealed_fast_paper_authoritative_commissioning" = ["manifest.json", "*.service", "*.example"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
