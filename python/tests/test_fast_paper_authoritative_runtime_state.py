@@ -318,6 +318,9 @@ def test_atomic_commit_rejects_stale_checkpoint_or_runtime(
                 as_of_unix_ms=checkpoint.state.as_of_unix_ms + 1,
             ),
             policy,
+            sequence=None,
+            event_id=None,
+            evidence_fp=None,
         ),
         sequence=1,
         created_at_unix_ms=checkpoint.state.as_of_unix_ms + 1,
@@ -332,9 +335,9 @@ def test_atomic_commit_rejects_stale_checkpoint_or_runtime(
             _transition(
                 first.checkpoint.state,
                 policy,
-                sequence=2,
-                event_id="event-2",
-                evidence_fp="b" * 64,
+                sequence=None,
+                event_id=None,
+                evidence_fp=None,
             ),
             sequence=1,
             created_at_unix_ms=first.checkpoint.state.as_of_unix_ms,
@@ -364,16 +367,18 @@ def test_deferred_execution_commit_may_preserve_learned_identity(
     manifest, _database, policy, binding, checkpoint, state = _fixture(
         tmp_path
     )
-    first_state = replace(
-        checkpoint.state,
-        as_of_unix_ms=checkpoint.state.as_of_unix_ms + 1,
-    )
+    first_state = _open_next_state(manifest, policy)
+    mapping = _open_mapping(first_state)
     first = commit.commit_fast_paper_authoritative_transition_atomically(
         manifest,
         binding,
         checkpoint,
         state,
-        _transition(first_state, policy),
+        _transition(
+            first_state,
+            policy,
+            market_positions=(mapping,),
+        ),
         sequence=1,
         created_at_unix_ms=first_state.as_of_unix_ms,
     )
@@ -387,7 +392,11 @@ def test_deferred_execution_commit_may_preserve_learned_identity(
         binding,
         first.checkpoint,
         first.runtime_state,
-        _transition(retry_state, policy),
+        _transition(
+            retry_state,
+            policy,
+            market_positions=(mapping,),
+        ),
         sequence=2,
         created_at_unix_ms=retry_state.as_of_unix_ms,
     )
@@ -418,16 +427,18 @@ def test_learned_identity_cannot_regress_or_mutate_in_place(
     manifest, _database, policy, binding, checkpoint, state = _fixture(
         tmp_path
     )
-    first_state = replace(
-        checkpoint.state,
-        as_of_unix_ms=checkpoint.state.as_of_unix_ms + 1,
-    )
+    first_state = _open_next_state(manifest, policy)
+    mapping = _open_mapping(first_state)
     first = commit.commit_fast_paper_authoritative_transition_atomically(
         manifest,
         binding,
         checkpoint,
         state,
-        _transition(first_state, policy),
+        _transition(
+            first_state,
+            policy,
+            market_positions=(mapping,),
+        ),
         sequence=1,
         created_at_unix_ms=first_state.as_of_unix_ms,
     )
@@ -445,6 +456,7 @@ def test_learned_identity_cannot_regress_or_mutate_in_place(
             _transition(
                 next_state,
                 policy,
+                market_positions=(mapping,),
                 sequence=sequence,
                 event_id=event_id,
                 evidence_fp=evidence_fp,
@@ -508,7 +520,13 @@ def test_atomic_insert_failure_leaves_no_torn_target_rows(
             binding,
             checkpoint,
             state,
-            _transition(next_state, policy),
+            _transition(
+                next_state,
+                policy,
+                sequence=None,
+                event_id=None,
+                evidence_fp=None,
+            ),
             sequence=1,
             created_at_unix_ms=next_state.as_of_unix_ms,
         )
