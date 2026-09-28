@@ -30,6 +30,7 @@ from .authoritative_handoff import (
 )
 from .authoritative_runtime_state import (
     FastPaperAuthoritativeRuntimeState,
+    decode_fast_paper_authoritative_runtime_state,
     _ensure_authoritative_runtime_state_table,
     _insert_runtime_state_row,
     _runtime_state_row,
@@ -870,23 +871,28 @@ def _require_source_rows_unchanged(
         raise FastPaperAuthoritativeReleaseHandoffError(
             "source authoritative runtime state disappeared during release handoff"
         )
+    payload = stored_runtime[5]
+    if not isinstance(payload, str):
+        raise FastPaperAuthoritativeReleaseHandoffError(
+            "source authoritative runtime payload became malformed"
+        )
     if (
         stored_runtime[0] != runtime_state.paper_checkpoint_sequence
         or stored_runtime[1]
         != runtime_state.paper_checkpoint_payload_sha256
-        or stored_runtime[5] is None
+        or hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        != stored_runtime[4]
     ):
         raise FastPaperAuthoritativeReleaseHandoffError(
             "source authoritative runtime state changed during release handoff"
         )
-    if (
-        hashlib.sha256(str(stored_runtime[5]).encode("utf-8")).hexdigest()
-        != stored_runtime[4]
-    ):
+    try:
+        decoded = decode_fast_paper_authoritative_runtime_state(payload)
+    except ValueError as exc:
         raise FastPaperAuthoritativeReleaseHandoffError(
-            "source authoritative runtime row checksum changed during release handoff"
-        )
-    if runtime_state.state_fingerprint_sha256 not in str(stored_runtime[5]):
+            "source authoritative runtime payload became invalid"
+        ) from exc
+    if decoded != runtime_state:
         raise FastPaperAuthoritativeReleaseHandoffError(
             "source authoritative runtime payload changed during release handoff"
         )
