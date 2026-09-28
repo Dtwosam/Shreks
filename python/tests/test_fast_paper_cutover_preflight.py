@@ -21,6 +21,10 @@ _RESTART = "f" * 64
 _SHADOW_CHECKPOINT = "1" * 64
 _LEGACY_MANIFEST = "2" * 64
 _LEGACY_CHECKPOINT = "3" * 64
+_AUTHORITATIVE_CHECKPOINT = "4" * 64
+_AUTHORITATIVE_BINDING = "5" * 64
+_AUTHORITATIVE_RUNTIME_STATE = "6" * 64
+_AUTHORITATIVE_COMMISSIONING = "7" * 64
 
 
 def _canonical(value: object) -> str:
@@ -143,6 +147,12 @@ def _patch_dependencies(
     registry_champion: str = _CHAMPION,
     binding_fingerprint: str = _BINDING,
     shadow_checkpoint_sequence: int = 12,
+    authoritative_checkpoint_sequence: int = 0,
+    authoritative_legacy_checkpoint_sha: str = _LEGACY_CHECKPOINT,
+    authoritative_cursor_sequence: int | None = None,
+    authoritative_open_positions: int = 0,
+    authoritative_pending_buy: bool = False,
+    authoritative_status=AccountingValidationStatus.RECONCILED,
 ) -> None:
     if legacy_state is None:
         legacy_state = _legacy_state()
@@ -188,13 +198,19 @@ def _patch_dependencies(
         lambda _manifest, _binding: SimpleNamespace(
             sequence=shadow_checkpoint_sequence,
             payload_sha256=_SHADOW_CHECKPOINT,
-            state=SimpleNamespace(),
+            state=SimpleNamespace(kind="shadow"),
         ),
     )
     monkeypatch.setattr(
         cutover,
         "validate_fast_paper_accounting",
-        lambda _state: SimpleNamespace(status=shadow_status),
+        lambda state: SimpleNamespace(
+            status=(
+                authoritative_status
+                if getattr(state, "kind", None) == "authoritative"
+                else shadow_status
+            )
+        ),
     )
     monkeypatch.setattr(
         cutover,
@@ -202,6 +218,77 @@ def _patch_dependencies(
         lambda _payload: SimpleNamespace(
             paper_run_id="legacy-run-1",
             manifest_fingerprint_sha256=_LEGACY_MANIFEST,
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_authoritative_cutover_environment",
+        lambda _path: {"sealed": "environment"},
+    )
+    monkeypatch.setattr(
+        cutover,
+        "encode_fast_paper_authoritative_cutover_environment",
+        lambda _env: "sealed=environment\n",
+    )
+    monkeypatch.setattr(
+        cutover,
+        "validate_fast_paper_authoritative_cutover_environment",
+        lambda _env, _manifest, authoritative_database_path: (
+            SimpleNamespace(database_path=str(authoritative_database_path))
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "verify_fast_paper_authoritative_commissioning_wheel",
+        lambda _path, expected_source_sha, expected_platform: SimpleNamespace(
+            source_sha=expected_source_sha,
+            platform=expected_platform,
+            manifest_fingerprint_sha256=_AUTHORITATIVE_COMMISSIONING,
+        ),
+    )
+    authoritative_positions = tuple(
+        SimpleNamespace(market_key=f"market-{index}")
+        for index in range(authoritative_open_positions)
+    )
+    authoritative_state = SimpleNamespace(
+        kind="authoritative",
+        ledger=legacy_state.ledger,
+        pending_buy=(SimpleNamespace() if authoritative_pending_buy else None),
+    )
+    authoritative_runtime_state = SimpleNamespace(
+        market_positions=authoritative_positions,
+        last_processed_source_sequence=authoritative_cursor_sequence,
+        last_processed_source_event_id=(
+            None if authoritative_cursor_sequence is None else "event"
+        ),
+        last_processed_decision_evidence_fingerprint_sha256=(
+            None if authoritative_cursor_sequence is None else "a" * 64
+        ),
+        state_fingerprint_sha256=_AUTHORITATIVE_RUNTIME_STATE,
+    )
+    authoritative_execution = SimpleNamespace(
+        binding=SimpleNamespace(
+            fast_run_id="fast-authoritative-run-1",
+            binding_fingerprint_sha256=_AUTHORITATIVE_BINDING,
+            legacy_run_id="legacy-run-1",
+            legacy_checkpoint_sequence=9,
+            legacy_checkpoint_payload_sha256=(
+                authoritative_legacy_checkpoint_sha
+            ),
+            legacy_runtime_manifest_fingerprint_sha256=_LEGACY_MANIFEST,
+        ),
+        checkpoint=SimpleNamespace(
+            sequence=authoritative_checkpoint_sequence,
+            payload_sha256=_AUTHORITATIVE_CHECKPOINT,
+            state=authoritative_state,
+        ),
+        runtime_state=authoritative_runtime_state,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "bootstrap_fast_paper_authoritative_runtime",
+        lambda _config: SimpleNamespace(
+            execution_bootstrap=authoritative_execution
         ),
     )
     monkeypatch.setattr(
@@ -236,6 +323,9 @@ def _assess(tmp_path: Path):
         shadow_ledger_database_path=tmp_path / "shadow.sqlite3",
         legacy_runtime_manifest_path=legacy_manifest,
         legacy_observer_database_path=tmp_path / "observer.sqlite3",
+        authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+        authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
+        release_platform="x86_64-unknown-linux-gnu",
         expected_release_sha=_RELEASE_SHA,
     )
 
@@ -262,9 +352,15 @@ def test_cutover_preflight_ready_when_all_handoff_state_is_safe(
         "legacy_pending_entry_count": 0,
         "legacy_deferred_execution_count": 0,
         "legacy_active_intent_count": 0,
+        "authoritative_accounting_status": "RECONCILED",
+        "authoritative_checkpoint_sequence": 0,
+        "authoritative_pending_buy_count": 0,
+        "authoritative_open_position_count": 0,
+        "authoritative_learned_cursor_empty": True,
+        "authoritative_ledger_matches_legacy": True,
     }
     assert {gate["status"] for gate in report["gate_results"]} == {"PASS"}
-    assert report["production_fast_paper_runner"] == "NOT_PRESENT_IN_THIS_SLICE"
+    assert report["production_fast_paper_runner"] == "SEALED_NOT_ACTIVE"
     assert report["production_paper_cutover"] == "NOT_GRANTED"
     assert report["service_control_authority"] == "NOT_GRANTED"
     assert report["authoritative_paper_mutation"] == "NOT_GRANTED"
@@ -492,6 +588,60 @@ def test_report_fingerprint_is_deterministic(
         )
     ).hexdigest()
 
+
+
+def test_authoritative_handoff_must_bind_exact_final_legacy_checkpoint(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        authoritative_legacy_checkpoint_sha="9" * 64,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(report, "AUTHORITATIVE_HANDOFF_MATCHES_FINAL_LEGACY")["status"]
+        == "FAIL"
+    )
+
+
+def test_authoritative_runtime_must_remain_unexecuted_before_cutover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        authoritative_checkpoint_sequence=1,
+        authoritative_cursor_sequence=1,
+        authoritative_open_positions=1,
+        authoritative_pending_buy=True,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    for code in (
+        "AUTHORITATIVE_CHECKPOINT_INITIAL",
+        "AUTHORITATIVE_PENDING_BUY_ZERO",
+        "AUTHORITATIVE_OPEN_POSITIONS_ZERO",
+        "AUTHORITATIVE_LEARNED_CURSOR_EMPTY",
+    ):
+        assert _gate(report, code)["status"] == "FAIL"
+
+
+def test_authoritative_runtime_accounting_must_reconcile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        authoritative_status=AccountingValidationStatus.INVALID,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(report, "AUTHORITATIVE_PAPER_ACCOUNTING_RECONCILED")["status"]
+        == "FAIL"
+    )
 
 def test_packaging_and_authority_firewall() -> None:
     root = Path(__file__).resolve().parents[2]
