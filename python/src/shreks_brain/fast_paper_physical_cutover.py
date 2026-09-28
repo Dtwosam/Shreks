@@ -35,6 +35,14 @@ from .fast_paper_cutover_authorization import (
     encode_fast_paper_cutover_authorization,
 )
 from .fast_paper_cutover_preflight import assess_fast_paper_cutover_preflight
+from shreks_brain.observer_campaign.runtime_manifest import (
+    decode_observer_paper_campaign_runtime_manifest,
+)
+from shreks_brain.paper_validation import load_latest_paper_checkpoint
+
+from .fast_paper_runtime.authoritative_handoff import (
+    refresh_pristine_fast_paper_authoritative_handoff,
+)
 from .fast_paper_runtime.authoritative_runtime import (
     bootstrap_fast_paper_authoritative_runtime,
 )
@@ -311,10 +319,11 @@ def activate_fast_paper_physical_cutover(
         "active legacy PAPER unit",
     )
     config = _load_authoritative_config(paths.authoritative_config_path)
-    before_snapshot = _capture_authoritative_snapshot(config)
     stopped_legacy = False
     authorization_created = False
     candidate_installed = False
+    fast_start_attempted = False
+    pre_start_snapshot: DurableAuthoritativeSnapshot | None = None
 
     try:
         _require_success(
@@ -325,6 +334,18 @@ def activate_fast_paper_physical_cutover(
         stopped = _read_systemd_state(runner)
         _require_stopped(stopped, "legacy PAPER")
         _require_shadow_quiescent(runner)
+
+        bootstrap = _refresh_final_legacy_handoff(
+            config,
+            legacy_runtime_manifest_path=legacy_runtime_manifest_path,
+            legacy_observer_database_path=legacy_observer_database_path,
+            created_at_unix_ms=_clock_value(clock),
+        )
+        pre_start_snapshot = _capture_authoritative_snapshot(config)
+        _require_pristine_authoritative_snapshot(
+            pre_start_snapshot,
+            config,
+        )
 
         report = assess_fast_paper_cutover_preflight(
             fast_manifest_path=fast_manifest_path,
@@ -348,7 +369,6 @@ def activate_fast_paper_physical_cutover(
                 "final stopped-legacy cutover preflight is not READY"
             )
 
-        bootstrap = bootstrap_fast_paper_authoritative_runtime(config)
         baseline = read_fast_paper_authoritative_cutover_baseline_receipt(
             baseline_receipt_path
         )
@@ -395,6 +415,7 @@ def activate_fast_paper_physical_cutover(
             runner(("systemctl", "daemon-reload")),
             "PAPER cutover daemon reload",
         )
+        fast_start_attempted = True
         _require_success(
             runner(("systemctl", "start", _UNIT)),
             "authoritative Fast PAPER start",
@@ -442,8 +463,12 @@ def activate_fast_paper_physical_cutover(
             ),
         )
         after_snapshot = _capture_authoritative_snapshot(config)
+        if pre_start_snapshot is None:
+            raise FastPaperPhysicalCutoverError(
+                "authoritative pre-start snapshot is missing"
+            )
         _require_monotonic_authoritative_snapshot(
-            before_snapshot,
+            pre_start_snapshot,
             after_snapshot,
         )
 
@@ -473,7 +498,7 @@ def activate_fast_paper_physical_cutover(
             "decisions_produced_end": statuses[-1]["decisions_produced"],
             "executions_committed_end": statuses[-1]["executions_committed"],
             "paper_checkpoint_sequence_start": (
-                before_snapshot.paper_checkpoint_sequence
+                pre_start_snapshot.paper_checkpoint_sequence
             ),
             "paper_checkpoint_sequence_end": (
                 after_snapshot.paper_checkpoint_sequence
@@ -495,11 +520,12 @@ def activate_fast_paper_physical_cutover(
                 runner=runner,
                 release=release,
                 config=config,
-                before_snapshot=before_snapshot,
+                pre_start_snapshot=pre_start_snapshot,
                 legacy_payload=legacy_payload,
                 legacy_stat=legacy_stat,
                 authorization_created=authorization_created,
                 candidate_installed=candidate_installed,
+                fast_start_attempted=fast_start_attempted,
                 error=cutover_error,
             )
         if isinstance(cutover_error, FastPaperPhysicalCutoverError):
@@ -515,23 +541,25 @@ def _recover_failed_cutover(
     runner: CommandRunner,
     release: Path,
     config,
-    before_snapshot: DurableAuthoritativeSnapshot,
+    pre_start_snapshot: DurableAuthoritativeSnapshot | None,
     legacy_payload: bytes,
     legacy_stat: os.stat_result,
     authorization_created: bool,
     candidate_installed: bool,
+    fast_start_attempted: bool,
     error: BaseException,
 ) -> None:
     try:
         runner(("systemctl", "stop", _UNIT))
     except Exception:
         pass
-    try:
-        after_snapshot = _capture_authoritative_snapshot(config)
-    except Exception:
-        after_snapshot = None
+    after_snapshot = None
+    if fast_start_attempted:
+        try:
+            after_snapshot = _capture_authoritative_snapshot(config)
+        except Exception:
+            after_snapshot = None
 
-    safe_rollback = after_snapshot == before_snapshot
     if authorization_created:
         _remove_authorization(paths.cutover_authorization_path)
     if candidate_installed:
@@ -547,10 +575,10 @@ def _recover_failed_cutover(
             "legacy PAPER rollback daemon reload",
         )
 
-    if safe_rollback:
+    if not fast_start_attempted:
         _require_success(
             runner(("systemctl", "start", _UNIT)),
-            "legacy PAPER rollback start",
+            "legacy PAPER pre-activation rollback start",
         )
         restored = _wait_running(
             runner,
@@ -565,16 +593,22 @@ def _recover_failed_cutover(
             require_private_network=False,
         )
         raise FastPaperPhysicalCutoverError(
-            "physical PAPER cutover failed; legacy PAPER authority restored"
+            "physical PAPER cutover failed before Fast start; "
+            "legacy PAPER authority restored"
         ) from error
 
+    state_changed = (
+        pre_start_snapshot is None
+        or after_snapshot is None
+        or after_snapshot != pre_start_snapshot
+    )
     failure = _finalize_receipt(
         {
             "schema_name": "shreks.fast_paper_physical_cutover_failure",
             "schema_version": _SCHEMA_VERSION,
             "state": "MANUAL_RECOVERY_REQUIRED",
             "release_source_sha": release.name,
-            "authoritative_state_changed": after_snapshot is not None,
+            "authoritative_state_changed": state_changed,
             "legacy_unit_restored": candidate_installed,
             "legacy_service_restarted": False,
             "authorization_revoked": authorization_created,
@@ -587,9 +621,63 @@ def _recover_failed_cutover(
     )
     _write_receipt_no_replace(paths.failure_receipt, failure)
     raise FastPaperPhysicalCutoverError(
-        "physical PAPER cutover failed after authoritative state changed; "
-        "PAPER authority left stopped for manual recovery"
+        "physical PAPER cutover failed after Fast start; "
+        "legacy score authority is not restored and PAPER remains stopped "
+        "for manual recovery"
     ) from error
+
+
+def _refresh_final_legacy_handoff(
+    config,
+    *,
+    legacy_runtime_manifest_path: str | Path,
+    legacy_observer_database_path: str | Path,
+    created_at_unix_ms: int,
+):
+    try:
+        before = bootstrap_fast_paper_authoritative_runtime(config)
+        legacy_payload, _ = _read_regular_no_follow(
+            Path(legacy_runtime_manifest_path),
+            "final legacy PAPER runtime manifest",
+        )
+        legacy_manifest = (
+            decode_observer_paper_campaign_runtime_manifest(
+                legacy_payload
+            )
+        )
+        legacy_checkpoint = load_latest_paper_checkpoint(
+            legacy_observer_database_path,
+            legacy_manifest.paper_run_id,
+        )
+        if legacy_checkpoint is None:
+            raise ValueError(
+                "final legacy PAPER checkpoint is missing"
+            )
+        result = refresh_pristine_fast_paper_authoritative_handoff(
+            before.decision_bootstrap.manifest,
+            before.execution_bootstrap.execution_policy,
+            legacy_checkpoint,
+            legacy_runtime_manifest_fingerprint_sha256=(
+                legacy_manifest.manifest_fingerprint_sha256
+            ),
+            fast_run_id=before.execution_bootstrap.binding.fast_run_id,
+            database_path=config.execution_config.database_path,
+            created_at_unix_ms=created_at_unix_ms,
+        )
+        after = bootstrap_fast_paper_authoritative_runtime(config)
+    except Exception as exc:
+        raise FastPaperPhysicalCutoverError(
+            "final legacy-to-Fast handoff refresh failed closed"
+        ) from exc
+    if (
+        after.execution_bootstrap.binding != result.binding
+        or after.execution_bootstrap.checkpoint != result.checkpoint
+        or after.execution_bootstrap.checkpoint.sequence != 0
+    ):
+        raise FastPaperPhysicalCutoverError(
+            "refreshed authoritative handoff bootstrap mismatch"
+        )
+    return after
 
 
 def _candidate_unit_from_wheel(
