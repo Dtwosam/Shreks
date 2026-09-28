@@ -492,6 +492,73 @@ def test_final_handoff_initializes_fresh_run_and_retargets_environment(
     assert calls["bootstrap"] == 2
 
 
+def test_final_handoff_rejects_different_legacy_database_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "authoritative.env"
+    config_path.write_text("provisional\n", encoding="utf-8")
+    authoritative_database = tmp_path / "authoritative.sqlite3"
+    authoritative_database.write_bytes(b"authoritative")
+    other_database = tmp_path / "other.sqlite3"
+    other_database.write_bytes(b"other")
+    provisional_config = SimpleNamespace(
+        execution_config=SimpleNamespace(
+            database_path=authoritative_database,
+        ),
+    )
+    provisional_bootstrap = SimpleNamespace(
+        decision_bootstrap=SimpleNamespace(manifest=SimpleNamespace()),
+        execution_bootstrap=SimpleNamespace(
+            binding=SimpleNamespace(
+                fast_run_id="fast-provisional-run-1"
+            ),
+            execution_policy=SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "bootstrap_fast_paper_authoritative_runtime",
+        lambda _config: provisional_bootstrap,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "decode_observer_paper_campaign_runtime_manifest",
+        lambda _payload: SimpleNamespace(
+            paper_run_id="legacy-run-1",
+            manifest_fingerprint_sha256="8" * 64,
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "_read_regular_no_follow",
+        lambda _path, _label: (
+            b"legacy-manifest\n",
+            os.stat(config_path),
+        ),
+    )
+    monkeypatch.setattr(
+        cutover,
+        "initialize_fast_paper_authoritative_handoff",
+        lambda *_args, **_kwargs: pytest.fail(
+            "handoff must not initialize from a different database"
+        ),
+    )
+
+    with pytest.raises(
+        cutover.FastPaperPhysicalCutoverError,
+        match="handoff initialization",
+    ):
+        cutover._initialize_final_legacy_handoff(
+            provisional_config,
+            final_fast_run_id=_FINAL_RUN_ID,
+            authoritative_config_path=config_path,
+            legacy_runtime_manifest_path=tmp_path / "legacy.json",
+            legacy_observer_database_path=other_database,
+            created_at_unix_ms=123_456,
+        )
+
+
 def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -750,7 +817,16 @@ def test_post_start_failure_never_restores_legacy_authority(
 
     assert runner.mode == "stopped"
     assert paths.active_unit_destination.read_bytes() == b"fast-unit\n"
-    assert not paths.cutover_authorization_path.exists()
+    assert paths.cutover_authorization_path.is_file()
+    revocation = json.loads(
+        paths.cutover_authorization_path.read_text(encoding="utf-8")
+    )
+    assert revocation["state"] == "REVOKED_MANUAL_RECOVERY"
+    assert (
+        revocation["production_paper_cutover"]
+        == "STOPPED_MANUAL_RECOVERY"
+    )
+    assert revocation["live_authority"] == "DISABLED"
     assert paths.failure_receipt.is_file()
     failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
     assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
