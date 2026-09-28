@@ -598,7 +598,14 @@ def _recover_failed_cutover(
             after_snapshot = None
 
     if authorization_created:
-        _remove_authorization(paths.cutover_authorization_path)
+        if fast_start_attempted:
+            _revoke_authorization_for_manual_recovery(
+                paths.cutover_authorization_path,
+                release_source_sha=release.name,
+                error=error,
+            )
+        else:
+            _remove_authorization(paths.cutover_authorization_path)
     if not fast_start_attempted and candidate_installed:
         _replace_file_atomically(
             paths.active_unit_destination,
@@ -703,8 +710,24 @@ def _initialize_final_legacy_handoff(
                 legacy_payload
             )
         )
+        legacy_database = Path(
+            legacy_observer_database_path
+        ).expanduser()
+        authoritative_database = Path(
+            provisional_config.execution_config.database_path
+        ).expanduser()
+        if (
+            legacy_database.is_symlink()
+            or authoritative_database.is_symlink()
+            or not legacy_database.is_file()
+            or not authoritative_database.is_file()
+            or not legacy_database.samefile(authoritative_database)
+        ):
+            raise ValueError(
+                "final legacy checkpoint database is not the authoritative observer database"
+            )
         legacy_checkpoint = load_latest_paper_checkpoint(
-            legacy_observer_database_path,
+            legacy_database,
             legacy_manifest.paper_run_id,
         )
         if legacy_checkpoint is None:
@@ -1227,6 +1250,47 @@ def _write_authorization_no_replace(path: Path, payload: bytes) -> None:
         if linked:
             path.unlink(missing_ok=True)
         raise
+
+
+def _revoke_authorization_for_manual_recovery(
+    path: Path,
+    *,
+    release_source_sha: str,
+    error: BaseException,
+) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise FastPaperPhysicalCutoverError(
+            "cutover authorization cannot be revoked safely"
+        )
+    material = {
+        "schema_name": (
+            "shreks.fast_paper_cutover_authorization_revocation"
+        ),
+        "schema_version": 1,
+        "state": "REVOKED_MANUAL_RECOVERY",
+        "release_source_sha": _source_sha(release_source_sha),
+        "production_paper_cutover": "STOPPED_MANUAL_RECOVERY",
+        "service_control_authority": (
+            "EXERCISED_BY_PROTECTED_CEREMONY"
+        ),
+        "signing_submission_authority": "NOT_GRANTED",
+        "live_authority": "DISABLED",
+        "error_type": type(error).__name__,
+    }
+    document = {
+        **material,
+        "revocation_fingerprint_sha256": hashlib.sha256(
+            _canonical(material).encode("utf-8")
+        ).hexdigest(),
+    }
+    _uid, gid = _service_identity()
+    _replace_file_atomically(
+        path,
+        (_canonical(document) + "\n").encode("utf-8"),
+        uid=0,
+        gid=gid,
+        mode=0o640,
+    )
 
 
 def _remove_authorization(path: Path) -> None:
