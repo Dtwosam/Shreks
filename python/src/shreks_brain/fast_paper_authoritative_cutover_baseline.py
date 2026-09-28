@@ -527,8 +527,10 @@ def _write_bytes_no_replace(
         )
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     fd = -1
+    created = False
     try:
         fd = os.open(destination, flags, 0o600)
+        created = True
         os.fchown(fd, uid, gid)
         with os.fdopen(fd, "wb") as handle:
             fd = -1
@@ -540,7 +542,8 @@ def _write_bytes_no_replace(
     except Exception:
         if fd >= 0:
             os.close(fd)
-        destination.unlink(missing_ok=True)
+        if created:
+            destination.unlink(missing_ok=True)
         raise
 
 
@@ -555,12 +558,14 @@ def _write_receipt_no_replace(
         )
     payload = (_canonical(document) + "\n").encode("utf-8")
     fd = -1
+    created = False
     try:
         fd = os.open(
             destination,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o600,
         )
+        created = True
         with os.fdopen(fd, "wb") as handle:
             fd = -1
             handle.write(payload)
@@ -570,7 +575,8 @@ def _write_receipt_no_replace(
     except Exception:
         if fd >= 0:
             os.close(fd)
-        destination.unlink(missing_ok=True)
+        if created:
+            destination.unlink(missing_ok=True)
         raise
 
 
