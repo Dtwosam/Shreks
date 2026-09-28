@@ -45,7 +45,7 @@ from shreks_brain.paper_validation import (
 FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_NAME = (
     "shreks.fast_paper_cutover_preflight"
 )
-FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 1
+FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 2
 
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
