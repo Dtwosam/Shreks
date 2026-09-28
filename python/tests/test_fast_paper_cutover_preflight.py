@@ -213,7 +213,10 @@ def _patch_dependencies(
     monkeypatch.setattr(
         cutover,
         "build_fast_paper_runtime_state",
-        lambda _manifest, cursor: SimpleNamespace(cursor=cursor),
+        lambda _manifest, cursor: SimpleNamespace(
+            cursor=cursor,
+            state_fingerprint_sha256=_BASELINE_STATE,
+        ),
     )
     monkeypatch.setattr(
         cutover,
