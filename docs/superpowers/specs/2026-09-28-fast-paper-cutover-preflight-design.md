@@ -1,5 +1,7 @@
 # Fast Lane Production PAPER Cutover Preflight — Design
 
+> **Superseded on 2026-09-28:** the production runner now exists. The current v2 preflight contract is defined by `2026-09-28-fast-paper-authoritative-cutover-preparation-design.md`; this document is retained as the historical v1 gate.
+
 **Date:** 2026-09-28
 **Base main SHA:** `e5c117e04a138e4756ef263142387d308c985fb4`
 **Migration:** controlled Fast Lane learned PAPER runtime cutover

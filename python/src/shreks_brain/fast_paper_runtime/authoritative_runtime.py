@@ -143,6 +143,9 @@ def load_fast_paper_authoritative_runtime_config(
             ),
             cycle_interval_seconds=interval,
             maximum_decisions=1,
+            checkpoint_path=required_path(
+                "SHREKS_FAST_PAPER_AUTHORITATIVE_DECISION_CHECKPOINT_PATH"
+            ),
         )
         execution_config = (
             load_fast_paper_authoritative_service_execution_config(env)

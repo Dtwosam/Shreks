@@ -11,8 +11,21 @@ from typing import Mapping
 from shreks_brain.fast_paper_champion_promotion import (
     read_fast_paper_champion_registry,
 )
+from shreks_brain.fast_paper_authoritative_commissioning_assets import (
+    verify_fast_paper_authoritative_commissioning_wheel,
+)
+from shreks_brain.fast_paper_authoritative_cutover_config import (
+    encode_fast_paper_authoritative_cutover_environment,
+    read_fast_paper_authoritative_cutover_environment,
+    validate_fast_paper_authoritative_cutover_environment,
+)
+from shreks_brain.fast_paper_runtime.authoritative_runtime import (
+    bootstrap_fast_paper_authoritative_runtime,
+)
 from shreks_brain.fast_paper_runtime.codec import (
+    build_fast_paper_runtime_state,
     read_fast_paper_runtime_manifest,
+    read_fast_paper_runtime_state,
     verify_fast_paper_runtime_bindings,
 )
 from shreks_brain.fast_paper_runtime.shadow_ledger import (
@@ -34,7 +47,7 @@ from shreks_brain.paper_validation import (
 FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_NAME = (
     "shreks.fast_paper_cutover_preflight"
 )
-FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 1
+FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION = 2
 
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -116,6 +129,9 @@ def assess_fast_paper_cutover_preflight(
     shadow_ledger_database_path: str | Path,
     legacy_runtime_manifest_path: str | Path,
     legacy_observer_database_path: str | Path,
+    authoritative_runtime_env_path: str | Path,
+    authoritative_release_wheel_path: str | Path,
+    release_platform: str,
     expected_release_sha: str,
 ) -> dict[str, object]:
     expected_sha = _release_sha(expected_release_sha)
@@ -183,7 +199,92 @@ def assess_fast_paper_cutover_preflight(
             "shadow checkpoint payload fingerprint",
         )
 
+    try:
+        shadow_decision_checkpoint = Path(
+            manifest.checkpoint_path
+        ).expanduser()
+        if shadow_decision_checkpoint.is_symlink():
+            raise ValueError(
+                "shadow learned decision checkpoint must not be a symlink"
+            )
+        if shadow_decision_checkpoint.exists():
+            if not shadow_decision_checkpoint.is_file():
+                raise ValueError(
+                    "shadow learned decision checkpoint must be a regular file"
+                )
+            shadow_decision_state = read_fast_paper_runtime_state(
+                shadow_decision_checkpoint
+            )
+            expected_shadow_decision_state = build_fast_paper_runtime_state(
+                manifest,
+                cursor=shadow_decision_state.cursor,
+            )
+            if shadow_decision_state != expected_shadow_decision_state:
+                raise ValueError(
+                    "shadow learned decision checkpoint does not authenticate against manifest"
+                )
+        else:
+            shadow_decision_state = build_fast_paper_runtime_state(
+                manifest,
+                cursor=None,
+            )
+    except Exception as exc:
+        raise FastPaperCutoverPreflightError(
+            "shadow learned decision checkpoint authentication failed"
+        ) from exc
+
     legacy_manifest = _read_legacy_manifest(legacy_runtime_manifest_path)
+
+    try:
+        authoritative_environment = (
+            read_fast_paper_authoritative_cutover_environment(
+                authoritative_runtime_env_path
+            )
+        )
+        authoritative_config = (
+            validate_fast_paper_authoritative_cutover_environment(
+                authoritative_environment,
+                manifest,
+                authoritative_database_path=legacy_observer_database_path,
+            )
+        )
+        commissioning_manifest = (
+            verify_fast_paper_authoritative_commissioning_wheel(
+                authoritative_release_wheel_path,
+                expected_source_sha=expected_sha,
+                expected_platform=release_platform,
+            )
+        )
+        authoritative_bootstrap = bootstrap_fast_paper_authoritative_runtime(
+            authoritative_config
+        )
+    except Exception as exc:
+        raise FastPaperCutoverPreflightError(
+            "authoritative Fast PAPER runtime preparation authentication failed"
+        ) from exc
+
+    authoritative_env_sha256 = hashlib.sha256(
+        encode_fast_paper_authoritative_cutover_environment(
+            authoritative_environment
+        ).encode("utf-8")
+    ).hexdigest()
+    authoritative_decision = authoritative_bootstrap.decision_bootstrap
+    authoritative_execution = authoritative_bootstrap.execution_bootstrap
+    authoritative_binding = authoritative_execution.binding
+    authoritative_checkpoint = authoritative_execution.checkpoint
+    authoritative_runtime_state = authoritative_execution.runtime_state
+    try:
+        authoritative_accounting = validate_fast_paper_accounting(
+            authoritative_checkpoint.state
+        )
+    except Exception as exc:
+        raise FastPaperCutoverPreflightError(
+            "authoritative Fast PAPER accounting validation failed"
+        ) from exc
+    authoritative_status = _accounting_status(
+        authoritative_accounting.status
+    )
+
     try:
         legacy_checkpoint = load_latest_paper_checkpoint(
             legacy_observer_database_path,
@@ -224,7 +325,137 @@ def assess_fast_paper_cutover_preflight(
             active_intents,
         ) = _legacy_handoff_counts(legacy_checkpoint.state)
 
+    authoritative_handoff_matches_legacy = (
+        legacy_checkpoint is not None
+        and authoritative_binding.legacy_run_id
+        == legacy_manifest.paper_run_id
+        and authoritative_binding.legacy_checkpoint_sequence
+        == legacy_checkpoint.sequence
+        and authoritative_binding.legacy_checkpoint_payload_sha256
+        == legacy_checkpoint.payload_sha256
+        and authoritative_binding.legacy_runtime_manifest_fingerprint_sha256
+        == legacy_manifest.manifest_fingerprint_sha256
+    )
+    authoritative_ledger_matches_legacy = (
+        legacy_checkpoint is not None
+        and authoritative_checkpoint.state.ledger
+        == legacy_checkpoint.state.ledger
+    )
+    authoritative_pending_buy_count = (
+        0 if authoritative_checkpoint.state.pending_buy is None else 1
+    )
+    authoritative_open_positions = len(
+        authoritative_runtime_state.market_positions
+    )
+    authoritative_cursor_empty = (
+        authoritative_runtime_state.last_processed_source_sequence is None
+        and authoritative_runtime_state.last_processed_source_event_id is None
+        and authoritative_runtime_state.last_processed_decision_evidence_fingerprint_sha256
+        is None
+    )
+    learned_decision_cursor = authoritative_decision.state.cursor
+    learned_decision_cursor_sequence = (
+        None
+        if learned_decision_cursor is None
+        else learned_decision_cursor.decision_sequence
+    )
+    shadow_decision_cursor_sequence = (
+        None
+        if shadow_decision_state.cursor is None
+        else shadow_decision_state.cursor.decision_sequence
+    )
+    authoritative_decision_baseline_matches_shadow = (
+        authoritative_decision.state == shadow_decision_state
+    )
+    decision_evidence_root = (
+        authoritative_config.decision_config.evidence_directory
+    )
+    authoritative_decision_evidence_count = len(
+        tuple(decision_evidence_root.glob("shadow-*.json"))
+    )
+
     gates = [
+        _gate(
+            "AUTHORITATIVE_RUNTIME_ENTRYPOINT_SEALED",
+            True,
+            commissioning_manifest.manifest_fingerprint_sha256,
+            commissioning_manifest.manifest_fingerprint_sha256,
+            "active release contains the exact sealed authoritative Fast PAPER runtime candidate",
+        ),
+        _gate(
+            "AUTHORITATIVE_RUNTIME_CONFIG_BOUND",
+            True,
+            authoritative_env_sha256,
+            authoritative_env_sha256,
+            "authoritative runtime configuration and source roots are exact and authenticated",
+        ),
+        _gate(
+            "AUTHORITATIVE_PAPER_ACCOUNTING_RECONCILED",
+            authoritative_status == AccountingValidationStatus.RECONCILED.value,
+            authoritative_status,
+            AccountingValidationStatus.RECONCILED.value,
+            "authoritative Fast PAPER accounting must reconcile before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_CHECKPOINT_INITIAL",
+            authoritative_checkpoint.sequence == 0,
+            authoritative_checkpoint.sequence,
+            0,
+            "authoritative Fast PAPER runner must remain at the initial handoff checkpoint before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_PENDING_BUY_ZERO",
+            authoritative_pending_buy_count == 0,
+            authoritative_pending_buy_count,
+            0,
+            "authoritative Fast PAPER runner must have no pending BUY before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_OPEN_POSITIONS_ZERO",
+            authoritative_open_positions == 0,
+            authoritative_open_positions,
+            0,
+            "authoritative Fast PAPER runtime must have no open mapped position before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_LEARNED_CURSOR_EMPTY",
+            authoritative_cursor_empty,
+            (
+                authoritative_runtime_state.last_processed_source_sequence
+            ),
+            None,
+            "authoritative Fast PAPER runner must not have processed learned economic decisions before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_DECISION_BASELINE_MATCHES_SHADOW",
+            authoritative_decision_baseline_matches_shadow,
+            learned_decision_cursor_sequence,
+            shadow_decision_cursor_sequence,
+            "authoritative learned decision baseline must exactly equal the latest authenticated detached-shadow cursor",
+        ),
+        _gate(
+            "AUTHORITATIVE_DECISION_EVIDENCE_EMPTY",
+            authoritative_decision_evidence_count == 0,
+            authoritative_decision_evidence_count,
+            0,
+            "authoritative decision evidence must be empty before production cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_HANDOFF_MATCHES_FINAL_LEGACY",
+            authoritative_handoff_matches_legacy,
+            (
+                authoritative_binding.legacy_checkpoint_payload_sha256
+            ),
+            legacy_payload_sha256,
+            "authoritative Fast PAPER handoff must bind the exact final legacy checkpoint",
+        ),
+        _gate(
+            "AUTHORITATIVE_LEDGER_EQUALS_FINAL_LEGACY",
+            authoritative_ledger_matches_legacy,
+            authoritative_ledger_matches_legacy,
+            True,
+            "authoritative Fast PAPER handoff ledger must equal the unchanged final legacy ledger",
+        ),
         _gate(
             "APPROVED_FAST_CHAMPION_BOUND",
             True,
@@ -327,6 +558,30 @@ def assess_fast_paper_cutover_preflight(
         "legacy_pending_entry_count": pending_entries,
         "legacy_deferred_execution_count": deferred_executions,
         "legacy_active_intent_count": active_intents,
+        "authoritative_accounting_status": authoritative_status,
+        "authoritative_checkpoint_sequence": (
+            authoritative_checkpoint.sequence
+        ),
+        "authoritative_pending_buy_count": (
+            authoritative_pending_buy_count
+        ),
+        "authoritative_open_position_count": authoritative_open_positions,
+        "authoritative_learned_cursor_empty": authoritative_cursor_empty,
+        "learned_decision_cursor_sequence": (
+            learned_decision_cursor_sequence
+        ),
+        "shadow_decision_cursor_sequence": (
+            shadow_decision_cursor_sequence
+        ),
+        "authoritative_decision_baseline_matches_shadow": (
+            authoritative_decision_baseline_matches_shadow
+        ),
+        "authoritative_decision_evidence_count": (
+            authoritative_decision_evidence_count
+        ),
+        "authoritative_ledger_matches_legacy": (
+            authoritative_ledger_matches_legacy
+        ),
     }
     material: dict[str, object] = {
         "schema_name": FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_NAME,
@@ -344,6 +599,25 @@ def assess_fast_paper_cutover_preflight(
             manifest.champion_fingerprint_sha256
         ),
         "action_policy_version": manifest.action_policy.version,
+        "authoritative_commissioning_manifest_fingerprint_sha256": (
+            commissioning_manifest.manifest_fingerprint_sha256
+        ),
+        "authoritative_runtime_environment_sha256": (
+            authoritative_env_sha256
+        ),
+        "authoritative_fast_run_id": authoritative_binding.fast_run_id,
+        "authoritative_binding_fingerprint_sha256": (
+            authoritative_binding.binding_fingerprint_sha256
+        ),
+        "authoritative_checkpoint_sequence": (
+            authoritative_checkpoint.sequence
+        ),
+        "authoritative_checkpoint_payload_sha256": (
+            authoritative_checkpoint.payload_sha256
+        ),
+        "authoritative_runtime_state_fingerprint_sha256": (
+            authoritative_runtime_state.state_fingerprint_sha256
+        ),
         "shadow_restart_receipt_fingerprint_sha256": restart[
             "receipt_fingerprint_sha256"
         ],
@@ -362,7 +636,7 @@ def assess_fast_paper_cutover_preflight(
         "observed_state": observed_state,
         "gate_results": gates,
         "decision": decision,
-        "production_fast_paper_runner": "NOT_PRESENT_IN_THIS_SLICE",
+        "production_fast_paper_runner": "SEALED_NOT_ACTIVE",
         "production_paper_cutover": "NOT_GRANTED",
         "service_control_authority": "NOT_GRANTED",
         "authoritative_paper_mutation": "NOT_GRANTED",
@@ -694,6 +968,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--shadow-ledger-database-path", required=True)
     parser.add_argument("--legacy-runtime-manifest-path", required=True)
     parser.add_argument("--legacy-observer-database-path", required=True)
+    parser.add_argument("--authoritative-runtime-env-path", required=True)
+    parser.add_argument("--authoritative-release-wheel-path", required=True)
+    parser.add_argument("--release-platform", required=True)
     parser.add_argument("--expected-release-sha", required=True)
     return parser
 
@@ -708,6 +985,9 @@ def main(argv: list[str] | None = None) -> int:
             shadow_ledger_database_path=args.shadow_ledger_database_path,
             legacy_runtime_manifest_path=args.legacy_runtime_manifest_path,
             legacy_observer_database_path=args.legacy_observer_database_path,
+            authoritative_runtime_env_path=args.authoritative_runtime_env_path,
+            authoritative_release_wheel_path=args.authoritative_release_wheel_path,
+            release_platform=args.release_platform,
             expected_release_sha=args.expected_release_sha,
         )
     except (FastPaperCutoverPreflightError, OSError, ValueError) as exc:
@@ -717,7 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                     "schema_name": (
                         "shreks.fast_paper_cutover_preflight_failure"
                     ),
-                    "schema_version": 1,
+                    "schema_version": FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION,
                     "state": "FAILED",
                     "error_type": type(exc).__name__,
                     "production_paper_cutover": "NOT_GRANTED",

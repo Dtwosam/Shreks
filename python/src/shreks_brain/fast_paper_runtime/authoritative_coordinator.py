@@ -157,7 +157,12 @@ def run_fast_paper_authoritative_coordinated_cycle(
         )
     )
     decision_sequence = _decision_sequence(decision_bootstrap)
-    execution_sequence = _execution_sequence(execution_bootstrap)
+    execution_sequence = _execution_sequence_for_cycle(
+        manifest,
+        execution_bootstrap,
+        decision_sequence,
+        decision_config.evidence_directory,
+    )
     _require_cursor_relationship(
         decision_sequence,
         execution_sequence,
@@ -168,6 +173,7 @@ def run_fast_paper_authoritative_coordinated_cycle(
             manifest,
             execution_bootstrap,
             decision_config.evidence_directory,
+            last_processed_sequence=execution_sequence,
         )
         if evidence is None:
             return FastPaperAuthoritativeCoordinatorResult(
@@ -417,12 +423,14 @@ def _oldest_unexecuted_decision(
     manifest,
     bootstrap: FastPaperAuthoritativeServiceExecutionBootstrap,
     directory: Path,
+    *,
+    last_processed_sequence: int,
 ) -> FastPaperShadowDecisionEvidence | None:
     root = _require_directory(
         directory,
         "authoritative decision evidence",
     )
-    last_processed = _execution_sequence(bootstrap)
+    last_processed = last_processed_sequence
     pending: list[
         tuple[int, str, FastPaperShadowDecisionEvidence]
     ] = []
@@ -509,6 +517,48 @@ def _decision_sequence(
             "authoritative decision cursor sequence must be positive"
         )
     return value
+
+
+
+def _execution_sequence_for_cycle(
+    manifest,
+    bootstrap: FastPaperAuthoritativeServiceExecutionBootstrap,
+    decision_sequence: int,
+    directory: Path,
+) -> int:
+    value = bootstrap.runtime_state.last_processed_source_sequence
+    if value is not None:
+        return _execution_sequence(bootstrap)
+
+    if bootstrap.checkpoint.sequence != 0:
+        raise ValueError(
+            "authoritative non-initial checkpoint is missing learned execution identity"
+        )
+    root = _require_directory(
+        directory,
+        "authoritative decision evidence",
+    )
+    pending: list[FastPaperShadowDecisionEvidence] = []
+    for path in sorted(root.glob("shadow-*.json")):
+        evidence = read_fast_paper_shadow_decision_evidence(path)
+        _require_decision_manifest_binding(manifest, evidence)
+        pending.append(evidence)
+
+    if not pending:
+        return decision_sequence
+    if len(pending) != 1:
+        raise ValueError(
+            "pristine authoritative runtime may retain at most one unexecuted decision"
+        )
+    evidence = pending[0]
+    if (
+        decision_sequence <= 0
+        or evidence.source_sequence != decision_sequence
+    ):
+        raise ValueError(
+            "pristine authoritative pending decision does not match decision cursor"
+        )
+    return decision_sequence - 1
 
 
 def _execution_sequence(

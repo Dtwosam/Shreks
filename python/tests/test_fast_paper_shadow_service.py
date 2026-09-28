@@ -155,11 +155,13 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
         inputs,
         *,
         evidence_directory,
+        checkpoint_path,
     ):
         captured.update(
             commit_state=supplied_state,
             inputs=inputs,
             evidence_directory=evidence_directory,
+            checkpoint_path=checkpoint_path,
         )
         return next_state
 
@@ -197,6 +199,7 @@ def test_shadow_service_cycle_composes_feed_quotes_and_restart_safe_commit(
     assert captured["commit_state"] is state
     assert captured["inputs"] == (cycle_input,)
     assert captured["evidence_directory"] == config.evidence_directory
+    assert captured["checkpoint_path"] is None
 
 
 def test_shadow_service_failed_resolution_does_not_commit_row(

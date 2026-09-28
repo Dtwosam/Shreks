@@ -298,6 +298,90 @@ def test_equal_cursors_produce_only_one_decision_from_authoritative_posture(
     assert captured["position"].kind == "FLAT"
 
 
+def test_pristine_authoritative_runner_rebases_on_nonzero_cutover_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (
+        manifest,
+        _policy,
+        _handoff,
+        execution_config,
+        decision_config,
+    ) = _fixture(tmp_path)
+    decision_bootstrap = _decision_bootstrap(manifest, 42)
+    updated = _decision_bootstrap(manifest, 43)
+
+    monkeypatch.setattr(
+        coordinator,
+        "run_fast_paper_shadow_service_cycle",
+        lambda *_args, **_kwargs: (updated, 1),
+    )
+
+    result = run_fast_paper_authoritative_coordinated_cycle(
+        decision_bootstrap,
+        decision_config,
+        execution_config,
+        committed_at_unix_ms=50_000,
+    )
+
+    assert result.decisions_produced == 1
+    assert result.executions_committed == 0
+    assert result.decision_bootstrap is updated
+    assert (
+        result.execution_bootstrap.runtime_state.last_processed_source_sequence
+        is None
+    )
+
+
+def test_first_post_cutover_decision_executes_after_nonzero_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (
+        manifest,
+        _policy,
+        handoff,
+        execution_config,
+        decision_config,
+    ) = _fixture(tmp_path)
+    record = _decision_record(
+        handoff.checkpoint,
+        sequence=43,
+        signature="authoritative-cutover-baseline-skip",
+    )
+    at = record.decision_observed_at_unix_ms
+    evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        record,
+        action="SKIP",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=at + 20,
+        entry_observed_at=at + 10,
+        exit_observed_at=at + 15,
+    )
+    write_fast_paper_shadow_decision_evidence(
+        evidence,
+        _evidence_path(decision_config.evidence_directory, 43),
+    )
+
+    result = run_fast_paper_authoritative_coordinated_cycle(
+        _decision_bootstrap(manifest, 43),
+        decision_config,
+        execution_config,
+        committed_at_unix_ms=evidence.evaluated_at_unix_ms,
+    )
+
+    assert result.decisions_produced == 0
+    assert result.executions_committed == 1
+    assert result.execution_bootstrap.checkpoint.sequence == 1
+    assert (
+        result.execution_bootstrap.runtime_state.last_processed_source_sequence
+        == 43
+    )
+
+
 def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
