@@ -159,9 +159,12 @@ legacy unit. No Fast PAPER process has held authority yet; a non-economic
 provisional handoff refresh does not change that rule.
 
 **At or after the first Fast start attempt**, the legacy score-gated runtime is
-never restored as PAPER authority. The Fast service is stopped and
-authorization is revoked, but the Fast unit and final Fast environment remain
-installed. Without authorization an accidental service start fails closed.
+never restored as PAPER authority. The Fast service is stopped and the valid
+authorization is atomically replaced by a root-owned
+`REVOKED_MANUAL_RECOVERY` marker at the same path. The Fast unit and final
+Fast environment remain installed. The marker is deliberately not a valid
+runtime authorization, so an accidental service start fails closed; its
+continued presence also keeps the legacy-style release manager blocked.
 PAPER authority remains stopped for manual recovery (or a separately proven
 known-good Fast release).
 
@@ -187,8 +190,10 @@ Therefore legacy-style release activation now checks for:
 /etc/shreks/fast-paper-cutover-authorization.json
 ```
 
-before stopping any runtime service. If the authorization exists (or is a
-symlink), activation fails closed with no service-control command issued.
+before stopping any runtime service. This path remains present after successful
+cutover and also after post-start failure as the revoked manual-recovery marker.
+If the path exists (or is a symlink), activation fails closed with no
+service-control command issued.
 
 This intentionally blocks ordinary automatic deployments after cutover until a
 separately reviewed Fast-aware release path is implemented. Failing deployment
@@ -237,12 +242,13 @@ Tests must prove:
 6. sealed Fast unit replaces the active unit atomically;
 7. runtime starts with `GRANTED_AND_ACTIVE` status and LIVE disabled;
 8. stopped legacy creates a fresh final Fast sequence-0 run without mutating provisional/legacy history;
-9. authoritative env retargeting changes only the Fast run ID and is canonical;
-10. pre-Fast-start failure may restore the provisional env and legacy authority;
-11. any failure at/after Fast start never restores legacy score authority, even if durable Fast state is unchanged;
-12. unreviewed systemd operations are rejected by the command allowlist;
-13. ordinary legacy-style release activation is blocked after cutover before service stop;
-14. Python, Rust, ARM64, and repository-safety CI remain green.
+9. the final legacy checkpoint database is exactly the authoritative observer database before the final Fast namespace is written;
+10. authoritative env retargeting changes only the Fast run ID and is canonical;
+11. pre-Fast-start failure may restore the provisional env and legacy authority;
+12. any failure at/after Fast start never restores legacy score authority and leaves a revoked cutover marker;
+13. unreviewed systemd operations are rejected by the command allowlist;
+14. ordinary legacy-style release activation is blocked by a cutover/revocation path before service stop;
+15. Python, Rust, ARM64, and repository-safety CI remain green.
 
 ## After this slice
 
