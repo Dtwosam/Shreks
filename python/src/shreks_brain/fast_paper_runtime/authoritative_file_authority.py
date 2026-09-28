@@ -474,8 +474,13 @@ def build_fast_paper_authoritative_buy_authority_source_record(
         or entry_authority.quote_mint != quote.quote_mint
         or entry_authority.decision_executable_entry_price_quote
         != quote.reference_price_quote
-        or entry_authority.intended_base_quantity
-        != quote.quoted_base_quantity
+        or quote.quoted_base_quantity is None
+        or not math.isclose(
+            entry_authority.intended_base_quantity,
+            quote.quoted_base_quantity,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        )
     ):
         raise ValueError(
             "authoritative BUY entry authority conflicts with sealed entry quote"
