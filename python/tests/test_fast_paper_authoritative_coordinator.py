@@ -414,6 +414,7 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
         decision_bootstrap,
         decision_config,
         execution_config,
+        reduction_read_resolver=lambda *_args: (),
         pending_buy_retry_resolver=lambda *_args: pytest.fail(
             "resolved retry must not execute twice"
         ),
