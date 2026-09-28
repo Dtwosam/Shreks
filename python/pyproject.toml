@@ -55,7 +55,8 @@ shreks-fast-paper-shadow-execution-telemetry = "shreks_brain.fast_paper_shadow_e
 shreks-fast-paper-shadow-sample-proof = "shreks_brain.fast_paper_shadow_sample_proof:main"
 shreks-fast-paper-shadow-trade-economics = "shreks_brain.fast_paper_shadow_trade_economics:main"
 shreks-fast-paper-shadow-missed-opportunity = "shreks_brain.fast_paper_shadow_missed_opportunity:main"
-shreks-fast-paper-shadow-latency-proof = "shreks_brain.fast_paper_shadow_latency_proof:main"\nshreks-fast-paper-shadow-promotion-readiness = "shreks_brain.fast_paper_shadow_promotion_readiness:main"
+shreks-fast-paper-shadow-latency-proof = "shreks_brain.fast_paper_shadow_latency_proof:main"
+shreks-fast-paper-shadow-promotion-readiness = "shreks_brain.fast_paper_shadow_promotion_readiness:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]
