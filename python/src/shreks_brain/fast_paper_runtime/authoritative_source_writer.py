@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -9,6 +10,7 @@ from typing import Callable
 
 from shreks_brain.fast_deterministic_campaign import (
     FastDeterministicCampaignRiskEnvironment,
+    FastDeterministicComparisonExecutionPolicy,
 )
 from shreks_brain.fast_deterministic_campaign.risk_context import (
     build_fast_deterministic_campaign_risk_context,
@@ -28,6 +30,9 @@ from shreks_brain.observer_campaign import (
 from shreks_brain.observer_market import ObserverMarketStore
 from shreks_brain.regime import assess_regime
 from shreks_brain.risk_control import load_operator_risk_control_state
+from shreks_brain.research.fast_training_features import (
+    feature_logical_fingerprint_sha256,
+)
 
 from .authoritative_file_authority import (
     build_fast_paper_authoritative_buy_authority_source_record,
@@ -54,14 +59,6 @@ from .persisted_quotes import (
 from .shadow import (
     FastPaperShadowDecisionEvidence,
     read_fast_paper_shadow_decision_evidence,
-)
-from .shadow_buy_authority_evidence_adapter import (
-    _entry_notional_usd,
-    _price_impact,
-    _source_fingerprint,
-)
-from .shadow_buy_authority_writer import (
-    _execution_economics_by_horizon,
 )
 from .shadow_buy_writer_policy import FastPaperShadowBuyWriterPolicy
 from .shadow_execution_input import FastPaperShadowQuoteUsdEvidence
@@ -810,7 +807,7 @@ def _produce_authoritative_buy_authority(
         risk_environment,
         as_of_unix_ms=evidence.evaluated_at_unix_ms,
     )
-    persisted_facts_fingerprint = _source_fingerprint(
+    persisted_facts_fingerprint = _persisted_facts_fingerprint(
         manifest=manifest,
         decision_evidence=evidence,
         feature_record=feature,
@@ -1233,6 +1230,176 @@ def _require_bootstraps(
             "authoritative source writer bootstrap manifest binding mismatch"
         )
 
+
+
+def _execution_economics_by_horizon(
+    manifest,
+    policies: tuple[FastDeterministicComparisonExecutionPolicy, ...],
+) -> dict[int, FastDeterministicComparisonExecutionPolicy]:
+    if not isinstance(policies, tuple) or not policies:
+        raise ValueError(
+            "authoritative BUY execution economics must be a non-empty tuple"
+        )
+    by_horizon: dict[int, FastDeterministicComparisonExecutionPolicy] = {}
+    for policy in policies:
+        if type(policy) is not FastDeterministicComparisonExecutionPolicy:
+            raise ValueError(
+                "authoritative BUY execution economics must contain exact policies"
+            )
+        if policy.horizon_ms in by_horizon:
+            raise ValueError(
+                "authoritative BUY execution economics contains duplicate horizon"
+            )
+        by_horizon[policy.horizon_ms] = policy
+    expected = set(manifest.action_policy.horizons_ms)
+    actual = set(by_horizon)
+    if actual != expected:
+        raise ValueError(
+            "authoritative BUY execution economics horizon coverage mismatch; "
+            f"missing={sorted(expected - actual)}, extra={sorted(actual - expected)}"
+        )
+    return by_horizon
+
+
+def _price_impact(value: str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        parsed = Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(
+            "authoritative BUY persisted ENTRY price impact is malformed"
+        ) from exc
+    converted = float(parsed)
+    if (
+        not parsed.is_finite()
+        or not math.isfinite(converted)
+        or converted < 0.0
+    ):
+        raise ValueError(
+            "authoritative BUY persisted ENTRY price impact must be finite and non-negative"
+        )
+    return converted
+
+
+def _entry_notional_usd(
+    input_amount_raw: int,
+    *,
+    quote_decimals: int,
+    quote_to_usd_rate: float,
+) -> float:
+    try:
+        value = (
+            Decimal(input_amount_raw)
+            / (Decimal(10) ** quote_decimals)
+            * Decimal(str(quote_to_usd_rate))
+        )
+        converted = float(value)
+    except (InvalidOperation, OverflowError, ValueError) as exc:
+        raise ValueError(
+            "authoritative BUY price-impact notional could not be derived safely"
+        ) from exc
+    if (
+        not value.is_finite()
+        or not math.isfinite(converted)
+        or converted <= 0.0
+    ):
+        raise ValueError(
+            "authoritative BUY price-impact notional must be positive and finite"
+        )
+    return converted
+
+
+def _persisted_facts_fingerprint(
+    *,
+    manifest,
+    decision_evidence,
+    feature_record,
+    quote_read_policy,
+    market_window,
+    raw_entry_quote,
+    quote_usd_record_fingerprint,
+    regime_market,
+    regime_policy_version,
+    regime_value,
+    execution_evidence,
+    controls,
+    day_started_at_unix_ms,
+    data_healthy,
+    execution_healthy,
+    global_risk_halt,
+) -> str:
+    material = {
+        "derivation_version": (
+            "fast-paper-authoritative-buy-persisted-facts-v1"
+        ),
+        "manifest_fingerprint_sha256": manifest.manifest_fingerprint_sha256,
+        "decision_evidence_fingerprint_sha256": (
+            decision_evidence.evidence_fingerprint_sha256
+        ),
+        "feature_record_fingerprint_sha256": (
+            feature_logical_fingerprint_sha256((feature_record,))
+        ),
+        "candidate_id": quote_read_policy.candidate_id,
+        "entry_quote_observed_at_unix_ms": raw_entry_quote.quoted_at_unix_ms,
+        "entry_price_impact_pct": raw_entry_quote.price_impact_pct,
+        "exit_quote_observed_at_unix_ms": (
+            decision_evidence.exit_quote.observed_at_unix_ms
+        ),
+        "market_row_id": market_window.current.row_id,
+        "market_observed_at_unix_ms": (
+            market_window.current.observed_at_unix_ms
+        ),
+        "market_liquidity_usd_hex": _float_hex(
+            market_window.current.liquidity_usd
+        ),
+        "quote_usd_record_fingerprint_sha256": (
+            quote_usd_record_fingerprint
+        ),
+        "regime_policy_version": regime_policy_version,
+        "regime_value": regime_value,
+        "regime_source_observed_at_unix_ms": (
+            regime_market.source_observed_at_unix_ms
+        ),
+        "forecast_source_version": execution_evidence.forecast_source_version,
+        "execution_policy_source_version": (
+            execution_evidence.execution_policy_source_version
+        ),
+        "exit_capacity_source_version": (
+            execution_evidence.exit_capacity_source_version
+        ),
+        "operator_control_revision": controls.revision,
+        "operator_control_updated_at_unix_ms": controls.updated_at_unix_ms,
+        "operator_halt_new_entries": controls.halt_new_entries,
+        "operator_kill_switch_active": controls.kill_switch_active,
+        "day_started_at_unix_ms": day_started_at_unix_ms,
+        "data_healthy": data_healthy,
+        "execution_healthy": execution_healthy,
+        "global_risk_halt": global_risk_halt,
+    }
+    return hashlib.sha256(
+        json.dumps(
+            material,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def _float_hex(value: object) -> str | None:
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise ValueError(
+            "authoritative BUY persisted market liquidity must be finite or None"
+        )
+    return float(value).hex()
 
 def _require_directory(value: str | Path, label: str) -> Path:
     root = Path(value).expanduser()
