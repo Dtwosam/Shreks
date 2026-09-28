@@ -63,6 +63,9 @@ from test_fast_paper_shadow_executor import (
     _record_at,
     _source,
 )
+from test_fast_paper_shadow_buy_writer_supervisor_policy import (
+    _policy_fixture,
+)
 
 
 def _fixture(tmp_path: Path):
@@ -106,6 +109,11 @@ def _fixture(tmp_path: Path):
         cycle_interval_seconds=1.0,
         maximum_decisions=1,
     )
+    writer_root = tmp_path / "writer-policy-fixture"
+    writer_root.mkdir()
+    _writer_manifest, _writer_service, writer_policy, _operator, _binary = (
+        _policy_fixture(writer_root)
+    )
     config = FastPaperAuthoritativeRuntimeConfig(
         decision_config=decision_config,
         execution_config=execution_config,
@@ -113,8 +121,9 @@ def _fixture(tmp_path: Path):
         quote_usd_source_directory=roots["quote-usd"],
         reduction_source_directory=roots["reductions"],
         pending_buy_retry_source_directory=roots["retries"],
+        buy_writer_policy_path=(writer_root / "buy-writer-policy.json").resolve(),
     )
-    return manifest, handoff, execution_bootstrap, config
+    return manifest, handoff, execution_bootstrap, config, writer_policy
 
 
 def _decision_record(checkpoint, *, sequence: int, signature: str):
@@ -165,7 +174,7 @@ def test_authoritative_buy_authority_round_trip_and_resolver(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    manifest, _handoff, bootstrap, config = _fixture(tmp_path)
+    manifest, _handoff, bootstrap, config, _writer_policy = _fixture(tmp_path)
     _record_value, evidence, source = _buy_source(
         monkeypatch,
         manifest,
@@ -229,7 +238,7 @@ def test_authoritative_buy_authority_stale_after_checkpoint_advance(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    manifest, _handoff, bootstrap, config = _fixture(tmp_path)
+    manifest, _handoff, bootstrap, config, _writer_policy = _fixture(tmp_path)
     _record_value, evidence, source = _buy_source(
         monkeypatch,
         manifest,
@@ -295,7 +304,7 @@ def test_authoritative_pending_buy_retry_file_survives_restart(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    manifest, _handoff, bootstrap, config = _fixture(tmp_path)
+    manifest, _handoff, bootstrap, config, _writer_policy = _fixture(tmp_path)
     record, evidence, source = _buy_source(
         monkeypatch,
         manifest,
@@ -382,7 +391,7 @@ def test_runtime_missing_open_reduction_source_backpressures_without_decision(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    manifest, _handoff, execution_bootstrap, config = _fixture(tmp_path)
+    manifest, _handoff, execution_bootstrap, config, writer_policy = _fixture(tmp_path)
     decision_bootstrap = FastPaperShadowServiceBootstrap(
         manifest=manifest,
         policy=object(),
@@ -391,10 +400,17 @@ def test_runtime_missing_open_reduction_source_backpressures_without_decision(
     bootstrap = FastPaperAuthoritativeRuntimeBootstrap(
         decision_bootstrap=decision_bootstrap,
         execution_bootstrap=execution_bootstrap,
+        buy_writer_policy=writer_policy,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "run_fast_paper_authoritative_source_writer_cycle",
+        lambda *_args, **_kwargs: 0,
     )
     monkeypatch.setattr(
         runtime,
         "run_fast_paper_authoritative_coordinated_cycle",
+        "run_fast_paper_authoritative_source_writer_cycle",
         lambda *_args, **kwargs: (
             kwargs["reduction_read_resolver"](
                 SimpleNamespace(
@@ -440,6 +456,7 @@ def test_runtime_entrypoint_source_is_score_free_and_has_no_service_or_live_auth
         (package / name).read_text(encoding="utf-8")
         for name in (
             "authoritative_file_authority.py",
+            "authoritative_source_writer.py",
             "authoritative_runtime.py",
         )
     )
@@ -455,6 +472,8 @@ def test_runtime_entrypoint_source_is_score_free_and_has_no_service_or_live_auth
         "commit_fast_paper_shadow_transition_atomically",
         "initialize_fast_paper_shadow_ledger_database",
         "save_fast_paper_shadow_runtime_state",
+        "load_latest_fast_paper_shadow_ledger_checkpoint",
+        "load_latest_fast_paper_shadow_runtime_state",
         "requests.",
         "httpx",
         "aiohttp",
