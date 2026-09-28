@@ -774,6 +774,88 @@ authority, sign/submit transactions, or enable LIVE. A separate later FL11.4
 transition must provide a Fast Lane-native atomic and auditable champion
 activation contract before any replacement of the approved champion.
 
+### Record an explicit FL11.4 Fast Lane PAPER champion promotion
+
+Only a canonical FL11.4 readiness report with `decision=PROMOTION_READY` may
+enter the Fast Lane PAPER champion registry. Promotion is an explicit trusted
+operator action; it is separate from production PAPER cutover.
+
+Use a root-owned private registry directory:
+
+```sh
+sudo install -d -o root -g root -m 0700 /var/lib/shreks/fast-paper-promotion
+```
+
+For the first Fast Lane PAPER champion, preflight without an incumbent
+fingerprint:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+READINESS="<reviewed-canonical-fl11.4-promotion-readiness.json>"
+REGISTRY="/var/lib/shreks/fast-paper-promotion/champion-registry.json"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-champion-promotion" \
+  preflight \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --readiness-path "$READINESS" \
+  --registry-path "$REGISTRY" \
+  --expected-release-sha "$CURRENT_SHA"
+```
+
+A first promotion preflight must report `READY_TO_PROMOTE`. Then record the
+reviewed decision with an explicit decision time and reason:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-champion-promotion" \
+  promote \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --readiness-path "$READINESS" \
+  --registry-path "$REGISTRY" \
+  --expected-release-sha "$CURRENT_SHA" \
+  --decided-at-unix-ms <explicit-reviewed-epoch-ms> \
+  --reason '<explicit-reviewed-promotion-reason>'
+```
+
+The registry is canonical, self-fingerprinted, mode `0600`, and keeps the
+complete transition history. The command authenticates the exact runtime
+manifest and champion plus the readiness report's release, manifest, champion,
+action-policy, shadow-binding, evidence-window, policy, and report
+fingerprints.
+
+For a later champion replacement, first read and review the current registry.
+Both preflight and promote must include the exact currently approved champion
+fingerprint:
+
+```text
+--expected-current-champion-fingerprint <exact-reviewed-incumbent-64-hex>
+```
+
+That compare-and-swap requirement prevents a stale reviewed command from
+silently replacing a champion that changed after review. Repeating a promotion
+for the already-current candidate is idempotent and creates no duplicate
+transition.
+
+A successful promotion receipt may say:
+
+```text
+paper_champion_authority=RECORDED
+```
+
+but it always retains:
+
+```text
+production_paper_cutover=NOT_GRANTED
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+The registry records which Fast Lane champion is approved for PAPER. It does
+not alter the shadow runtime manifest/champion files, migrate the authoritative
+PAPER ledger, stop or start a service, replace the legacy production PAPER
+authority, sign/submit, or enable LIVE. Those remain separate protected
+transition gates.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
