@@ -384,6 +384,7 @@ def test_activation_stops_legacy_runs_final_preflight_then_starts_fast(
         authoritative_release_wheel_path=tmp_path / "wheel.whl",
         release_platform="x86_64-unknown-linux-gnu",
         baseline_receipt_path=tmp_path / "baseline.json",
+        final_fast_run_id=_FINAL_RUN_ID,
         fast_manifest_path=tmp_path / "manifest.json",
         champion_registry_path=tmp_path / "registry.json",
         shadow_restart_receipt_path=tmp_path / "restart.json",
