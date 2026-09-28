@@ -503,6 +503,9 @@ def test_restart_receipt_fingerprint_drift_is_hard_error(
             shadow_ledger_database_path=tmp_path / "shadow.sqlite3",
             legacy_runtime_manifest_path=legacy_manifest,
             legacy_observer_database_path=tmp_path / "observer.sqlite3",
+            authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+            authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
+            release_platform="x86_64-unknown-linux-gnu",
             expected_release_sha=_RELEASE_SHA,
         )
 
@@ -534,6 +537,9 @@ def test_restart_receipt_identity_drift_is_hard_error(
             shadow_ledger_database_path=tmp_path / "shadow.sqlite3",
             legacy_runtime_manifest_path=legacy_manifest,
             legacy_observer_database_path=tmp_path / "observer.sqlite3",
+            authoritative_runtime_env_path=tmp_path / "fast-paper-authoritative.env",
+            authoritative_release_wheel_path=tmp_path / "shreks-brain.whl",
+            release_platform="x86_64-unknown-linux-gnu",
             expected_release_sha=_RELEASE_SHA,
         )
 
