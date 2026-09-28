@@ -271,6 +271,11 @@ def _patch_common(monkeypatch, paths, config):
         "_load_authoritative_config",
         lambda _path: config,
     )
+    monkeypatch.setattr(
+        cutover,
+        "_refresh_final_legacy_handoff",
+        lambda *_args, **_kwargs: _bootstrap(),
+    )
 
 
 def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine(
@@ -456,7 +461,7 @@ def test_final_preflight_failure_restores_legacy_when_state_is_unchanged(
     assert not paths.cutover_authorization_path.exists()
 
 
-def test_post_start_failure_with_state_change_stops_for_manual_recovery(
+def test_post_start_failure_never_restores_legacy_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -504,7 +509,7 @@ def test_post_start_failure_with_state_change_stops_for_manual_recovery(
 
     with pytest.raises(
         cutover.FastPaperPhysicalCutoverError,
-        match="manual recovery",
+        match="legacy score authority is not restored",
     ):
         cutover.activate_fast_paper_physical_cutover(
             expected_release_source_sha=_SHA,
@@ -531,6 +536,73 @@ def test_post_start_failure_with_state_change_stops_for_manual_recovery(
     assert paths.failure_receipt.is_file()
     failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
     assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
+    assert failure["legacy_service_restarted"] is False
+
+
+def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    config = _config(tmp_path)
+    runner = FakeRunner(paths)
+    runner.journal_enabled = False
+    pristine = _snapshot(config)
+    snapshots = iter((pristine, pristine))
+    _patch_common(monkeypatch, paths, config)
+    monkeypatch.setattr(
+        cutover,
+        "preflight_fast_paper_physical_cutover",
+        lambda **_kwargs: {"state": "READY_FOR_PROTECTED_PAPER_CUTOVER"},
+    )
+    monkeypatch.setattr(
+        cutover,
+        "assess_fast_paper_cutover_preflight",
+        lambda **_kwargs: {
+            "decision": "CUTOVER_PREFLIGHT_READY",
+            "report_fingerprint_sha256": _REPORT_FP,
+        },
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_authoritative_cutover_baseline_receipt",
+        lambda _path: {"receipt_fingerprint_sha256": _BASELINE_FP},
+    )
+    monkeypatch.setattr(
+        cutover,
+        "_capture_authoritative_snapshot",
+        lambda _config: next(snapshots),
+    )
+
+    with pytest.raises(
+        cutover.FastPaperPhysicalCutoverError,
+        match="legacy score authority is not restored",
+    ):
+        cutover.activate_fast_paper_physical_cutover(
+            expected_release_source_sha=_SHA,
+            authoritative_release_wheel_path=tmp_path / "wheel.whl",
+            release_platform="x86_64-unknown-linux-gnu",
+            baseline_receipt_path=tmp_path / "baseline.json",
+            fast_manifest_path=tmp_path / "manifest.json",
+            champion_registry_path=tmp_path / "registry.json",
+            shadow_restart_receipt_path=tmp_path / "restart.json",
+            shadow_ledger_database_path=tmp_path / "shadow.sqlite3",
+            legacy_runtime_manifest_path=tmp_path / "legacy.json",
+            legacy_observer_database_path=tmp_path / "observer.sqlite3",
+            observation_seconds=5,
+            paths=paths,
+            runtime_executable=paths.current_link / ".venv" / "bin" / "python",
+            command_runner=runner,
+            sleeper=lambda _seconds: None,
+            clock_unix_ms=lambda: 123_456,
+        )
+
+    assert runner.mode == "stopped"
+    assert paths.active_unit_destination.read_bytes() == b"legacy-unit\n"
+    assert not paths.cutover_authorization_path.exists()
+    failure = json.loads(paths.failure_receipt.read_text(encoding="utf-8"))
+    assert failure["state"] == "MANUAL_RECOVERY_REQUIRED"
+    assert failure["authoritative_state_changed"] is False
     assert failure["legacy_service_restarted"] is False
 
 
