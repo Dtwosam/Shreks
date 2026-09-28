@@ -33,6 +33,7 @@ from .authoritative_runtime_state import (
     _insert_runtime_state_row,
     _runtime_state_row,
     build_fast_paper_authoritative_runtime_state,
+    decode_fast_paper_authoritative_runtime_state,
     load_latest_fast_paper_authoritative_runtime_state,
 )
 
@@ -532,6 +533,401 @@ def initialize_fast_paper_authoritative_handoff(
         binding=restored_binding,
         checkpoint=restored_checkpoint,
     )
+
+
+def refresh_pristine_fast_paper_authoritative_handoff(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    legacy_checkpoint: PaperCheckpointRecord,
+    *,
+    legacy_runtime_manifest_fingerprint_sha256: str,
+    fast_run_id: str,
+    database_path: str | Path,
+    created_at_unix_ms: int,
+) -> FastPaperAuthoritativeHandoffResult:
+    _require_non_negative_int(
+        "created_at_unix_ms",
+        created_at_unix_ms,
+    )
+    _require_manifest_and_policy(manifest, execution_policy)
+    _require_legacy_checkpoint(legacy_checkpoint)
+    database = _authoritative_database_path(manifest, database_path)
+
+    existing_binding = load_fast_paper_authoritative_binding(
+        manifest,
+        fast_run_id=fast_run_id,
+        database_path=database,
+    )
+    existing_checkpoint = load_latest_fast_paper_authoritative_checkpoint(
+        manifest,
+        existing_binding,
+    )
+    existing_runtime = load_latest_fast_paper_authoritative_runtime_state(
+        manifest,
+        existing_binding,
+    )
+    _require_pristine_refresh_source(
+        manifest,
+        execution_policy,
+        existing_binding,
+        existing_checkpoint,
+        existing_runtime,
+        legacy_checkpoint=legacy_checkpoint,
+        legacy_runtime_manifest_fingerprint_sha256=(
+            legacy_runtime_manifest_fingerprint_sha256
+        ),
+    )
+
+    replacement_binding = build_fast_paper_authoritative_binding(
+        manifest,
+        execution_policy,
+        legacy_checkpoint,
+        legacy_runtime_manifest_fingerprint_sha256=(
+            legacy_runtime_manifest_fingerprint_sha256
+        ),
+        fast_run_id=fast_run_id,
+        database_path=database,
+    )
+    replacement_state = build_initial_fast_paper_authoritative_state(
+        manifest,
+        execution_policy,
+        legacy_checkpoint,
+    )
+    if created_at_unix_ms < replacement_state.as_of_unix_ms:
+        raise FastPaperAuthoritativeHandoffError(
+            "handoff refresh time cannot precede final legacy state"
+        )
+    replacement_payload = encode_fast_paper_checkpoint(
+        fast_run_id,
+        0,
+        replacement_state,
+        created_at_unix_ms,
+    )
+    replacement_checkpoint = decode_fast_paper_checkpoint(
+        replacement_payload
+    )
+    replacement_runtime = build_fast_paper_authoritative_runtime_state(
+        manifest,
+        replacement_binding,
+        replacement_checkpoint,
+        market_positions=(),
+        execution_policy_fingerprint_sha256=(
+            execution_policy.policy_fingerprint_sha256
+        ),
+    )
+
+    if (
+        existing_binding == replacement_binding
+        and existing_checkpoint == replacement_checkpoint
+        and existing_runtime == replacement_runtime
+    ):
+        return FastPaperAuthoritativeHandoffResult(
+            binding=existing_binding,
+            checkpoint=existing_checkpoint,
+        )
+
+    replacement_binding_json = _canonical(
+        _binding_document(replacement_binding)
+    )
+    replacement_checkpoint_json = replacement_payload.decode("utf-8")
+    connection = _connect(database)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        _require_checkpoint_table(connection)
+        _require_exact_latest_legacy_checkpoint(
+            connection,
+            legacy_checkpoint,
+        )
+        _ensure_binding_table(connection)
+        _ensure_authoritative_runtime_state_table(connection)
+        _require_exact_pristine_rows_for_refresh(
+            connection,
+            existing_binding,
+            existing_checkpoint,
+            existing_runtime,
+        )
+
+        deleted_runtime = connection.execute(
+            """
+            DELETE FROM fast_paper_authoritative_runtime_states
+            WHERE fast_run_id = ?
+              AND paper_checkpoint_sequence = 0
+            """,
+            (fast_run_id,),
+        ).rowcount
+        deleted_checkpoint = connection.execute(
+            f"""
+            DELETE FROM {_CHECKPOINT_TABLE}
+            WHERE run_id = ? AND sequence = 0
+            """,
+            (fast_run_id,),
+        ).rowcount
+        deleted_binding = connection.execute(
+            f"""
+            DELETE FROM {_BINDING_TABLE}
+            WHERE fast_run_id = ?
+            """,
+            (fast_run_id,),
+        ).rowcount
+        if (
+            deleted_runtime != 1
+            or deleted_checkpoint != 1
+            or deleted_binding != 1
+        ):
+            raise FastPaperAuthoritativeHandoffError(
+                "pristine authoritative handoff changed during refresh"
+            )
+
+        connection.execute(
+            f"""
+            INSERT INTO {_BINDING_TABLE}(
+                fast_run_id,
+                binding_fingerprint_sha256,
+                binding_json
+            ) VALUES (?, ?, ?)
+            """,
+            (
+                fast_run_id,
+                replacement_binding.binding_fingerprint_sha256,
+                replacement_binding_json,
+            ),
+        )
+        connection.execute(
+            f"""
+            INSERT INTO {_CHECKPOINT_TABLE}(
+                run_id,
+                sequence,
+                checkpoint_schema_version,
+                state_as_of_unix_ms,
+                created_at_unix_ms,
+                payload_sha256,
+                payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                replacement_checkpoint.run_id,
+                replacement_checkpoint.sequence,
+                replacement_checkpoint.checkpoint_schema_version,
+                replacement_checkpoint.state_as_of_unix_ms,
+                replacement_checkpoint.created_at_unix_ms,
+                replacement_checkpoint.payload_sha256,
+                replacement_checkpoint_json,
+            ),
+        )
+        _insert_runtime_state_row(
+            connection,
+            replacement_binding,
+            replacement_runtime,
+            created_at_unix_ms=created_at_unix_ms,
+        )
+        connection.commit()
+    except FastPaperAuthoritativeHandoffError:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+    except (sqlite3.Error, UnicodeError, ValueError) as exc:
+        if connection.in_transaction:
+            connection.rollback()
+        raise FastPaperAuthoritativeHandoffError(
+            "pristine authoritative handoff refresh failed"
+        ) from exc
+    finally:
+        connection.close()
+
+    restored_binding = load_fast_paper_authoritative_binding(
+        manifest,
+        fast_run_id=fast_run_id,
+        database_path=database,
+    )
+    restored_checkpoint = load_latest_fast_paper_authoritative_checkpoint(
+        manifest,
+        restored_binding,
+    )
+    restored_runtime = load_latest_fast_paper_authoritative_runtime_state(
+        manifest,
+        restored_binding,
+    )
+    if (
+        restored_binding != replacement_binding
+        or restored_checkpoint != replacement_checkpoint
+        or restored_runtime != replacement_runtime
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "refreshed authoritative handoff readback mismatch"
+        )
+    return FastPaperAuthoritativeHandoffResult(
+        binding=restored_binding,
+        checkpoint=restored_checkpoint,
+    )
+
+
+def _require_pristine_refresh_source(
+    manifest: FastPaperRuntimeManifest,
+    execution_policy: FastPaperShadowExecutionPolicy,
+    binding: FastPaperAuthoritativeBinding,
+    checkpoint: FastPaperCheckpointRecord,
+    runtime_state,
+    *,
+    legacy_checkpoint: PaperCheckpointRecord,
+    legacy_runtime_manifest_fingerprint_sha256: str,
+) -> None:
+    if binding.fast_run_id == legacy_checkpoint.run_id:
+        raise FastPaperAuthoritativeHandoffError(
+            "Fast and legacy run IDs must remain distinct during refresh"
+        )
+    stable_binding = (
+        binding.release_source_sha,
+        binding.manifest_fingerprint_sha256,
+        binding.champion_version,
+        binding.champion_fingerprint_sha256,
+        binding.action_policy_version,
+        binding.execution_policy_fingerprint_sha256,
+        binding.risk_policy_version,
+        binding.fill_policy_version,
+        binding.position_action_policy_version,
+        binding.database_path,
+        binding.legacy_run_id,
+        binding.legacy_runtime_manifest_fingerprint_sha256,
+    )
+    expected_binding = (
+        manifest.release_source_sha,
+        manifest.manifest_fingerprint_sha256,
+        manifest.champion_version,
+        manifest.champion_fingerprint_sha256,
+        manifest.action_policy.version,
+        execution_policy.policy_fingerprint_sha256,
+        manifest.risk_policy_version,
+        manifest.fill_policy_version,
+        manifest.position_action_policy_version,
+        binding.database_path,
+        legacy_checkpoint.run_id,
+        legacy_runtime_manifest_fingerprint_sha256,
+    )
+    if stable_binding != expected_binding:
+        raise FastPaperAuthoritativeHandoffError(
+            "pristine authoritative handoff identity is incompatible with refresh"
+        )
+    if checkpoint.sequence != 0:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative handoff cannot refresh after PAPER checkpoint advancement"
+        )
+    if (
+        checkpoint.state.pending_buy is not None
+        or checkpoint.state.position_action_states
+        or any(
+            position.state is PaperPositionState.OPEN
+            for position in checkpoint.state.ledger.positions
+        )
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative handoff cannot refresh after economic state appeared"
+        )
+    if (
+        runtime_state.paper_checkpoint_sequence != 0
+        or runtime_state.paper_checkpoint_payload_sha256
+        != checkpoint.payload_sha256
+        or runtime_state.market_positions
+        or runtime_state.last_processed_source_sequence is not None
+        or runtime_state.last_processed_source_event_id is not None
+        or runtime_state.last_processed_decision_evidence_fingerprint_sha256
+        is not None
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative runtime state is not pristine enough to refresh"
+        )
+
+
+def _require_exact_pristine_rows_for_refresh(
+    connection: sqlite3.Connection,
+    binding: FastPaperAuthoritativeBinding,
+    checkpoint: FastPaperCheckpointRecord,
+    runtime_state,
+) -> None:
+    binding_rows = connection.execute(
+        f"""
+        SELECT binding_fingerprint_sha256, binding_json
+        FROM {_BINDING_TABLE}
+        WHERE fast_run_id = ?
+        """,
+        (binding.fast_run_id,),
+    ).fetchall()
+    checkpoint_rows = connection.execute(
+        f"""
+        SELECT payload_sha256, payload_json
+        FROM {_CHECKPOINT_TABLE}
+        WHERE run_id = ?
+        ORDER BY sequence ASC
+        """,
+        (binding.fast_run_id,),
+    ).fetchall()
+    runtime_rows = connection.execute(
+        """
+        SELECT payload_sha256, payload_json
+        FROM fast_paper_authoritative_runtime_states
+        WHERE fast_run_id = ?
+        ORDER BY paper_checkpoint_sequence ASC
+        """,
+        (binding.fast_run_id,),
+    ).fetchall()
+    if (
+        len(binding_rows) != 1
+        or len(checkpoint_rows) != 1
+        or len(runtime_rows) != 1
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative handoff namespace is not a single pristine row set"
+        )
+
+    binding_sha, binding_json = binding_rows[0]
+    if (
+        binding_sha != binding.binding_fingerprint_sha256
+        or not isinstance(binding_json, str)
+        or _decode_binding(binding_json) != binding
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative binding changed during refresh"
+        )
+
+    checkpoint_sha, checkpoint_json = checkpoint_rows[0]
+    if not isinstance(checkpoint_json, str):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative checkpoint payload is not text during refresh"
+        )
+    try:
+        restored_checkpoint = decode_fast_paper_checkpoint(
+            checkpoint_json.encode("utf-8"),
+            expected_sha256=checkpoint_sha,
+        )
+    except Exception as exc:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative checkpoint changed during refresh"
+        ) from exc
+    if restored_checkpoint != checkpoint:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative checkpoint changed during refresh"
+        )
+
+    runtime_sha, runtime_json = runtime_rows[0]
+    if (
+        not isinstance(runtime_json, str)
+        or hashlib.sha256(runtime_json.encode("utf-8")).hexdigest()
+        != runtime_sha
+    ):
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative runtime state changed during refresh"
+        )
+    try:
+        restored_runtime = decode_fast_paper_authoritative_runtime_state(
+            runtime_json
+        )
+    except Exception as exc:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative runtime state changed during refresh"
+        ) from exc
+    if restored_runtime != runtime_state:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative runtime state changed during refresh"
+        )
 
 
 def load_fast_paper_authoritative_binding(
