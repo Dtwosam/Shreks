@@ -523,9 +523,14 @@ def test_fast_mode_missing_or_symlinked_release_helper_fails_before_service_cont
         helper.symlink_to(source / ".venv" / "bin" / "python")
 
     runner = SystemctlRunner()
+    expected = (
+        "symlinks are not allowed inside stored release virtualenv"
+        if as_symlink
+        else "Fast-aware release manager"
+    )
     with pytest.raises(
         release_manager.ReleaseManagerError,
-        match="Fast-aware release manager",
+        match=expected,
     ):
         release_manager.activate_release_for_current_mode(
             target,
