@@ -139,6 +139,7 @@ def _legacy_state(
 
 def _patch_dependencies(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     *,
     legacy_state=None,
     shadow_status=AccountingValidationStatus.RECONCILED,
@@ -153,6 +154,9 @@ def _patch_dependencies(
     authoritative_open_positions: int = 0,
     authoritative_pending_buy: bool = False,
     authoritative_status=AccountingValidationStatus.RECONCILED,
+    shadow_decision_cursor_sequence: int | None = 42,
+    authoritative_decision_cursor_sequence: int | None = 42,
+    authoritative_decision_evidence_count: int = 0,
 ) -> None:
     if legacy_state is None:
         legacy_state = _legacy_state()
@@ -162,7 +166,30 @@ def _patch_dependencies(
         champion_version="fast-champion-v1",
         champion_fingerprint_sha256=_CHAMPION,
         action_policy=SimpleNamespace(version=7),
+        checkpoint_path=str(tmp_path / "shadow-decision-state.json"),
     )
+    shadow_cursor = (
+        None
+        if shadow_decision_cursor_sequence is None
+        else SimpleNamespace(
+            decision_sequence=shadow_decision_cursor_sequence,
+            decision_signature="shadow-baseline",
+            decision_ordinal=0,
+            decision_observed_at_unix_ms=1_900,
+        )
+    )
+    authoritative_decision_cursor = (
+        None
+        if authoritative_decision_cursor_sequence is None
+        else SimpleNamespace(
+            decision_sequence=authoritative_decision_cursor_sequence,
+            decision_signature="shadow-baseline",
+            decision_ordinal=0,
+            decision_observed_at_unix_ms=1_900,
+        )
+    )
+    shadow_state = SimpleNamespace(cursor=shadow_cursor)
+    Path(manifest.checkpoint_path).write_text("{}\n", encoding="utf-8")
     monkeypatch.setattr(
         cutover,
         "read_fast_paper_runtime_manifest",
@@ -172,6 +199,16 @@ def _patch_dependencies(
         cutover,
         "verify_fast_paper_runtime_bindings",
         lambda _manifest: None,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "read_fast_paper_runtime_state",
+        lambda _path: shadow_state,
+    )
+    monkeypatch.setattr(
+        cutover,
+        "build_fast_paper_runtime_state",
+        lambda _manifest, cursor: SimpleNamespace(cursor=cursor),
     )
     monkeypatch.setattr(
         cutover,
@@ -230,11 +267,23 @@ def _patch_dependencies(
         "encode_fast_paper_authoritative_cutover_environment",
         lambda _env: "sealed=environment\n",
     )
+    authoritative_evidence = tmp_path / "authoritative-decision-evidence"
+    authoritative_evidence.mkdir(exist_ok=True)
+    for index in range(authoritative_decision_evidence_count):
+        (authoritative_evidence / f"shadow-{index + 1:020d}.json").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
     monkeypatch.setattr(
         cutover,
         "validate_fast_paper_authoritative_cutover_environment",
         lambda _env, _manifest, authoritative_database_path: (
-            SimpleNamespace(database_path=str(authoritative_database_path))
+            SimpleNamespace(
+                database_path=str(authoritative_database_path),
+                decision_config=SimpleNamespace(
+                    evidence_directory=authoritative_evidence
+                ),
+            )
         ),
     )
     monkeypatch.setattr(
@@ -289,7 +338,9 @@ def _patch_dependencies(
         "bootstrap_fast_paper_authoritative_runtime",
         lambda _config: SimpleNamespace(
             decision_bootstrap=SimpleNamespace(
-                state=SimpleNamespace(cursor=None)
+                state=SimpleNamespace(
+                    cursor=authoritative_decision_cursor
+                )
             ),
             execution_bootstrap=authoritative_execution,
         ),
@@ -343,7 +394,7 @@ def test_cutover_preflight_ready_when_all_handoff_state_is_safe(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_dependencies(monkeypatch)
+    _patch_dependencies(monkeypatch, tmp_path)
 
     report = _assess(tmp_path)
 
@@ -360,8 +411,10 @@ def test_cutover_preflight_ready_when_all_handoff_state_is_safe(
         "authoritative_pending_buy_count": 0,
         "authoritative_open_position_count": 0,
         "authoritative_learned_cursor_empty": True,
-        "learned_decision_cursor_sequence": None,
-        "authoritative_first_cycle_cursor_compatible": True,
+        "learned_decision_cursor_sequence": 42,
+        "shadow_decision_cursor_sequence": 42,
+        "authoritative_decision_baseline_matches_shadow": True,
+        "authoritative_decision_evidence_count": 0,
         "authoritative_ledger_matches_legacy": True,
     }
     assert {gate["status"] for gate in report["gate_results"]} == {"PASS"}
@@ -379,6 +432,7 @@ def test_open_legacy_position_fails_closed_as_not_ready(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         legacy_state=_legacy_state(open_positions=1),
     )
 
@@ -394,6 +448,7 @@ def test_pending_legacy_entry_fails_pending_and_active_intent_gates(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         legacy_state=_legacy_state(pending_entry=True),
     )
 
@@ -411,6 +466,7 @@ def test_pending_legacy_exit_fails_deferred_execution_gate(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         legacy_state=_legacy_state(open_positions=1, pending_exits=1),
     )
 
@@ -444,6 +500,7 @@ def test_accounting_must_be_reconciled(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         shadow_status=shadow_status,
         legacy_status=legacy_status,
     )
@@ -460,6 +517,7 @@ def test_missing_final_legacy_checkpoint_is_not_ready(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         legacy_checkpoint_present=False,
     )
 
@@ -475,6 +533,7 @@ def test_promoted_champion_identity_drift_is_hard_error(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         registry_champion="9" * 64,
     )
 
@@ -489,7 +548,7 @@ def test_restart_receipt_fingerprint_drift_is_hard_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_dependencies(monkeypatch)
+    _patch_dependencies(monkeypatch, tmp_path)
     receipt = _restart_receipt()
     receipt["receipt_fingerprint_sha256"] = "0" * 64
     path = tmp_path / "restart.json"
@@ -529,7 +588,7 @@ def test_restart_receipt_identity_drift_is_hard_error(
     overrides,
     match: str,
 ) -> None:
-    _patch_dependencies(monkeypatch)
+    _patch_dependencies(monkeypatch, tmp_path)
     path = _write_restart(tmp_path / "restart.json", **overrides)
     legacy_manifest = tmp_path / "legacy-manifest.json"
     legacy_manifest.write_text("{}\n", encoding="utf-8")
@@ -555,6 +614,7 @@ def test_shadow_checkpoint_cannot_regress_behind_restart_proof(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         shadow_checkpoint_sequence=10,
     )
 
@@ -573,6 +633,7 @@ def test_shadow_binding_drift_is_hard_error(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         binding_fingerprint="9" * 64,
     )
 
@@ -587,7 +648,7 @@ def test_report_fingerprint_is_deterministic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_dependencies(monkeypatch)
+    _patch_dependencies(monkeypatch, tmp_path)
 
     report = _assess(tmp_path)
     material = dict(report)
@@ -606,7 +667,7 @@ def test_advanced_learned_cursor_requires_durable_cutover_baseline(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _patch_dependencies(monkeypatch)
+    _patch_dependencies(monkeypatch, tmp_path)
     original = cutover.bootstrap_fast_paper_authoritative_runtime
 
     def with_advanced_cursor(config):
@@ -641,6 +702,7 @@ def test_authoritative_handoff_must_bind_exact_final_legacy_checkpoint(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         authoritative_legacy_checkpoint_sha="9" * 64,
     )
     report = _assess(tmp_path)
@@ -657,6 +719,7 @@ def test_authoritative_runtime_must_remain_unexecuted_before_cutover(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         authoritative_checkpoint_sequence=1,
         authoritative_cursor_sequence=1,
         authoritative_open_positions=1,
@@ -679,12 +742,51 @@ def test_authoritative_runtime_accounting_must_reconcile(
 ) -> None:
     _patch_dependencies(
         monkeypatch,
+        tmp_path,
         authoritative_status=AccountingValidationStatus.INVALID,
     )
     report = _assess(tmp_path)
     assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
     assert (
         _gate(report, "AUTHORITATIVE_PAPER_ACCOUNTING_RECONCILED")["status"]
+        == "FAIL"
+    )
+
+
+def test_authoritative_decision_baseline_must_match_latest_shadow_cursor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        tmp_path,
+        shadow_decision_cursor_sequence=42,
+        authoritative_decision_cursor_sequence=41,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(
+            report,
+            "AUTHORITATIVE_DECISION_BASELINE_MATCHES_SHADOW",
+        )["status"]
+        == "FAIL"
+    )
+
+
+def test_authoritative_decision_evidence_must_be_empty_before_cutover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        tmp_path,
+        authoritative_decision_evidence_count=1,
+    )
+    report = _assess(tmp_path)
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(report, "AUTHORITATIVE_DECISION_EVIDENCE_EMPTY")["status"]
         == "FAIL"
     )
 
