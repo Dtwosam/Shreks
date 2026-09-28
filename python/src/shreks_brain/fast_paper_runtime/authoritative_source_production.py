@@ -221,7 +221,7 @@ def _write_quote_usd_source(
             destination,
         )
         _require_quote_usd_record_matches_persisted_market(
-            manifest,
+            decision_bootstrap,
             policy,
             evidence,
             restored.quote_usd_evidence,
@@ -350,16 +350,13 @@ def _quote_usd_from_market(
 
 
 def _require_quote_usd_record_matches_persisted_market(
-    manifest,
+    decision_bootstrap,
     policy,
     evidence,
     restored,
 ) -> None:
     expected = _quote_usd_for_decision(
-        type("_Bootstrap", (), {
-            "manifest": manifest,
-            "policy": type("_Policy", (), {})(),
-        })(),
+        decision_bootstrap,
         policy,
         evidence,
     )
@@ -1071,6 +1068,9 @@ def _unexecuted_decision(
             raise ValueError(
                 "authoritative non-initial runtime lacks processed decision identity"
             )
+        records = _decision_records(manifest, directory)
+        if not records:
+            return None
         expected = decision_cursor
     else:
         expected = processed + 1
