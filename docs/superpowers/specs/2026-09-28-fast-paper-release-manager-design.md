@@ -74,11 +74,16 @@ Before stopping PAPER it authenticates the staged target release:
 - sealed Fast runtime feature tool;
 - sealed authoritative Fast PAPER candidate unit.
 
-The target native Fast tools are materialized into immutable
-release-namespaced protected tool directories under the target release SHA.
+The target native Fast tools are materialized from the authenticated sealed
+wheel into the staged target release's private
+`.venv/shreks-fast-tools` directory with executable permissions. They remain
+release-local and are re-bound by exact SHA-256 in the target runtime manifest
+and BUY-writer policy.
+
 This staging may happen during Fast upgrade preflight and is non-economic: it
 does not alter the current service, `/etc/shreks`, authoritative PAPER state,
-or `/opt/shreks/current`.
+or `/opt/shreks/current`. It also does not depend on any historical operator
+choice for the source manifest's binary path layout.
 
 ## Routine release compatibility
 
