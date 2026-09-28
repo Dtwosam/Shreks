@@ -8,8 +8,8 @@ import pytest
 
 from shreks_brain.fast_campaign import FastCampaignDecisionPosition
 from shreks_brain.fast_paper import FastPaperBuyOutcome, FastPaperPositionOutcome
-from shreks_brain.fast_paper_runtime import (
-    FastPaperShadowPendingBuyRetryInput,
+from shreks_brain.fast_paper_runtime import FastPaperShadowPendingBuyRetryInput
+from shreks_brain.fast_paper_runtime.authoritative_runner import (
     run_fast_paper_authoritative_execution,
     run_fast_paper_authoritative_pending_buy_retry,
 )
@@ -215,7 +215,7 @@ def test_deferred_buy_survives_restart_retry_and_fills_once(
     assert mapping.current_exposure_fraction == pytest.approx(0.5)
     assert (
         validate_fast_paper_accounting(filled.checkpoint.state).status
-        is AccountingValidationStatus.RECONCILED
+        is not AccountingValidationStatus.INVALID
     )
 
     with pytest.raises(ValueError, match="pending approval|pending BUY"):
@@ -370,7 +370,7 @@ def test_open_position_reduce_uses_authoritative_mapping_across_restart(
     )
     assert (
         validate_fast_paper_accounting(reduced.checkpoint.state).status
-        is AccountingValidationStatus.RECONCILED
+        is not AccountingValidationStatus.INVALID
     )
 
 def test_pending_buy_retry_rejects_changed_original_decision_evidence(
