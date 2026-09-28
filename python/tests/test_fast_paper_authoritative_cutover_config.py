@@ -18,7 +18,10 @@ def _environment(manifest) -> dict[str, str]:
             "/etc/shreks/fast-paper-shadow-service-policy.json"
         ),
         "SHREKS_FAST_PAPER_DECISION_EVIDENCE_DIRECTORY": (
-            "/var/lib/shreks/fast-paper-shadow/decision"
+            "/var/lib/shreks/fast-paper-authoritative/decision"
+        ),
+        "SHREKS_FAST_PAPER_AUTHORITATIVE_DECISION_CHECKPOINT_PATH": (
+            "/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json"
         ),
         "SHREKS_FAST_PAPER_INTERVAL_SECONDS": "2.0",
         "SHREKS_FAST_PAPER_AUTHORITATIVE_EXECUTION_POLICY_PATH": (
