@@ -24,6 +24,7 @@ from .fast_paper_authoritative_cutover_baseline import (
     read_fast_paper_authoritative_cutover_baseline_receipt,
 )
 from .fast_paper_authoritative_cutover_config import (
+    encode_fast_paper_authoritative_cutover_environment,
     read_fast_paper_authoritative_cutover_environment,
     validate_fast_paper_authoritative_cutover_environment,
 )
@@ -41,7 +42,7 @@ from shreks_brain.observer_campaign.runtime_manifest import (
 from shreks_brain.paper_validation import load_latest_paper_checkpoint
 
 from .fast_paper_runtime.authoritative_handoff import (
-    refresh_pristine_fast_paper_authoritative_handoff,
+    initialize_fast_paper_authoritative_handoff,
 )
 from .fast_paper_runtime.authoritative_runtime import (
     bootstrap_fast_paper_authoritative_runtime,
@@ -59,6 +60,7 @@ _PACKAGE_PREFIX = (
 )
 _CANDIDATE_ASSET = "shreks-paper-campaign.fast-paper.service"
 _SOURCE_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _INVOCATION_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 _MIN_OBSERVATION_SECONDS = 5
 _MAX_OBSERVATION_SECONDS = 900
@@ -178,12 +180,14 @@ def preflight_fast_paper_physical_cutover(
     authoritative_release_wheel_path: str | Path,
     release_platform: str,
     baseline_receipt_path: str | Path,
+    final_fast_run_id: str,
     paths: FastPaperPhysicalCutoverPaths,
     runtime_executable: str | os.PathLike[str] | None = None,
     command_runner: CommandRunner | None = None,
 ) -> dict[str, object]:
     _require_root()
     expected_sha = _source_sha(expected_release_source_sha)
+    final_run_id = _run_id(final_fast_run_id)
     release = _require_release_runtime(
         paths,
         expected_sha,
@@ -238,6 +242,10 @@ def preflight_fast_paper_physical_cutover(
     _require_authorization_absent(paths.cutover_authorization_path)
 
     config = _load_authoritative_config(paths.authoritative_config_path)
+    if config.execution_config.run_id == final_run_id:
+        raise FastPaperPhysicalCutoverError(
+            "final Fast run id must differ from provisional host-preparation run id"
+        )
     snapshot = _capture_authoritative_snapshot(config)
     _require_pristine_authoritative_snapshot(snapshot, config)
 
@@ -253,7 +261,8 @@ def preflight_fast_paper_physical_cutover(
             ),
             "candidate_unit_sha256": hashlib.sha256(candidate).hexdigest(),
             "legacy_unit_sha256": hashlib.sha256(legacy_payload).hexdigest(),
-            "fast_run_id": host["fast_run_id"],
+            "provisional_fast_run_id": host["fast_run_id"],
+            "final_fast_run_id": final_run_id,
             "baseline_receipt_fingerprint_sha256": (
                 host["baseline_receipt_fingerprint_sha256"]
             ),
@@ -271,6 +280,7 @@ def activate_fast_paper_physical_cutover(
     authoritative_release_wheel_path: str | Path,
     release_platform: str,
     baseline_receipt_path: str | Path,
+    final_fast_run_id: str,
     fast_manifest_path: str | Path,
     champion_registry_path: str | Path,
     shadow_restart_receipt_path: str | Path,
@@ -287,6 +297,7 @@ def activate_fast_paper_physical_cutover(
     _require_root()
     duration = _observation_seconds(observation_seconds)
     expected_sha = _source_sha(expected_release_source_sha)
+    final_run_id = _run_id(final_fast_run_id)
     release = _require_release_runtime(
         paths,
         expected_sha,
@@ -305,6 +316,7 @@ def activate_fast_paper_physical_cutover(
         authoritative_release_wheel_path=authoritative_release_wheel_path,
         release_platform=release_platform,
         baseline_receipt_path=baseline_receipt_path,
+        final_fast_run_id=final_run_id,
         paths=paths,
         runtime_executable=runtime_executable,
         command_runner=runner,
@@ -318,10 +330,15 @@ def activate_fast_paper_physical_cutover(
         paths.active_unit_destination,
         "active legacy PAPER unit",
     )
+    config_payload, config_stat = _read_regular_no_follow(
+        paths.authoritative_config_path,
+        "authoritative Fast PAPER config",
+    )
     config = _load_authoritative_config(paths.authoritative_config_path)
     stopped_legacy = False
     authorization_created = False
     candidate_installed = False
+    config_retargeted = False
     fast_start_attempted = False
     pre_start_snapshot: DurableAuthoritativeSnapshot | None = None
 
@@ -335,12 +352,15 @@ def activate_fast_paper_physical_cutover(
         _require_stopped(stopped, "legacy PAPER")
         _require_shadow_quiescent(runner)
 
-        bootstrap = _refresh_final_legacy_handoff(
+        config, bootstrap = _initialize_final_legacy_handoff(
             config,
+            final_fast_run_id=final_run_id,
+            authoritative_config_path=paths.authoritative_config_path,
             legacy_runtime_manifest_path=legacy_runtime_manifest_path,
             legacy_observer_database_path=legacy_observer_database_path,
             created_at_unix_ms=_clock_value(clock),
         )
+        config_retargeted = True
         pre_start_snapshot = _capture_authoritative_snapshot(config)
         _require_pristine_authoritative_snapshot(
             pre_start_snapshot,
@@ -409,7 +429,7 @@ def activate_fast_paper_physical_cutover(
         )
         authorization_created = True
 
-        _replace_unit(paths.active_unit_destination, candidate)
+        _replace_file_atomically(paths.active_unit_destination, candidate)
         candidate_installed = True
         _require_success(
             runner(("systemctl", "daemon-reload")),
@@ -487,6 +507,7 @@ def activate_fast_paper_physical_cutover(
             "authorization_fingerprint_sha256": (
                 authorization["authorization_fingerprint_sha256"]
             ),
+            "final_fast_run_id": final_run_id,
             "candidate_unit_sha256": hashlib.sha256(candidate).hexdigest(),
             "legacy_unit_sha256": hashlib.sha256(legacy_payload).hexdigest(),
             "main_pid": after.main_pid,
@@ -525,6 +546,9 @@ def activate_fast_paper_physical_cutover(
                 legacy_stat=legacy_stat,
                 authorization_created=authorization_created,
                 candidate_installed=candidate_installed,
+                config_retargeted=config_retargeted,
+                original_config_payload=config_payload,
+                original_config_stat=config_stat,
                 fast_start_attempted=fast_start_attempted,
                 error=cutover_error,
             )
@@ -546,6 +570,9 @@ def _recover_failed_cutover(
     legacy_stat: os.stat_result,
     authorization_created: bool,
     candidate_installed: bool,
+    config_retargeted: bool,
+    original_config_payload: bytes,
+    original_config_stat: os.stat_result,
     fast_start_attempted: bool,
     error: BaseException,
 ) -> None:
@@ -562,8 +589,8 @@ def _recover_failed_cutover(
 
     if authorization_created:
         _remove_authorization(paths.cutover_authorization_path)
-    if candidate_installed:
-        _replace_unit(
+    if not fast_start_attempted and candidate_installed:
+        _replace_file_atomically(
             paths.active_unit_destination,
             legacy_payload,
             uid=legacy_stat.st_uid,
@@ -573,6 +600,14 @@ def _recover_failed_cutover(
         _require_success(
             runner(("systemctl", "daemon-reload")),
             "legacy PAPER rollback daemon reload",
+        )
+    if not fast_start_attempted and config_retargeted:
+        _replace_file_atomically(
+            paths.authoritative_config_path,
+            original_config_payload,
+            uid=original_config_stat.st_uid,
+            gid=original_config_stat.st_gid,
+            mode=stat.S_IMODE(original_config_stat.st_mode),
         )
 
     if not fast_start_attempted:
@@ -609,8 +644,10 @@ def _recover_failed_cutover(
             "state": "MANUAL_RECOVERY_REQUIRED",
             "release_source_sha": release.name,
             "authoritative_state_changed": state_changed,
-            "legacy_unit_restored": candidate_installed,
+            "legacy_unit_restored": False,
             "legacy_service_restarted": False,
+            "fast_unit_retained": candidate_installed,
+            "final_fast_config_retained": config_retargeted,
             "authorization_revoked": authorization_created,
             "production_paper_cutover": "STOPPED_MANUAL_RECOVERY",
             "service_control_authority": "EXERCISED_BY_PROTECTED_CEREMONY",
@@ -627,15 +664,26 @@ def _recover_failed_cutover(
     ) from error
 
 
-def _refresh_final_legacy_handoff(
-    config,
+def _initialize_final_legacy_handoff(
+    provisional_config,
     *,
+    final_fast_run_id: str,
+    authoritative_config_path: Path,
     legacy_runtime_manifest_path: str | Path,
     legacy_observer_database_path: str | Path,
     created_at_unix_ms: int,
 ):
     try:
-        before = bootstrap_fast_paper_authoritative_runtime(config)
+        provisional = bootstrap_fast_paper_authoritative_runtime(
+            provisional_config
+        )
+        if (
+            provisional.execution_bootstrap.binding.fast_run_id
+            == final_fast_run_id
+        ):
+            raise ValueError(
+                "final Fast run id must differ from provisional run id"
+            )
         legacy_payload, _ = _read_regular_no_follow(
             Path(legacy_runtime_manifest_path),
             "final legacy PAPER runtime manifest",
@@ -653,31 +701,65 @@ def _refresh_final_legacy_handoff(
             raise ValueError(
                 "final legacy PAPER checkpoint is missing"
             )
-        result = refresh_pristine_fast_paper_authoritative_handoff(
-            before.decision_bootstrap.manifest,
-            before.execution_bootstrap.execution_policy,
+        result = initialize_fast_paper_authoritative_handoff(
+            provisional.decision_bootstrap.manifest,
+            provisional.execution_bootstrap.execution_policy,
             legacy_checkpoint,
             legacy_runtime_manifest_fingerprint_sha256=(
                 legacy_manifest.manifest_fingerprint_sha256
             ),
-            fast_run_id=before.execution_bootstrap.binding.fast_run_id,
-            database_path=config.execution_config.database_path,
+            fast_run_id=final_fast_run_id,
+            database_path=provisional_config.execution_config.database_path,
             created_at_unix_ms=created_at_unix_ms,
         )
-        after = bootstrap_fast_paper_authoritative_runtime(config)
+
+        environment = read_fast_paper_authoritative_cutover_environment(
+            authoritative_config_path
+        )
+        final_environment = dict(environment)
+        final_environment[
+            "SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID"
+        ] = final_fast_run_id
+        final_config = validate_fast_paper_authoritative_cutover_environment(
+            final_environment,
+            provisional.decision_bootstrap.manifest,
+            authoritative_database_path=(
+                provisional_config.execution_config.database_path
+            ),
+        )
+        canonical = encode_fast_paper_authoritative_cutover_environment(
+            final_environment
+        ).encode("utf-8")
+        _payload, config_stat = _read_regular_no_follow(
+            authoritative_config_path,
+            "authoritative Fast PAPER config",
+        )
+        _replace_file_atomically(
+            authoritative_config_path,
+            canonical,
+            uid=config_stat.st_uid,
+            gid=config_stat.st_gid,
+            mode=stat.S_IMODE(config_stat.st_mode),
+        )
+        final_bootstrap = bootstrap_fast_paper_authoritative_runtime(
+            final_config
+        )
     except Exception as exc:
         raise FastPaperPhysicalCutoverError(
-            "final legacy-to-Fast handoff refresh failed closed"
+            "final legacy-to-Fast handoff initialization failed closed"
         ) from exc
     if (
-        after.execution_bootstrap.binding != result.binding
-        or after.execution_bootstrap.checkpoint != result.checkpoint
-        or after.execution_bootstrap.checkpoint.sequence != 0
+        final_bootstrap.execution_bootstrap.binding != result.binding
+        or final_bootstrap.execution_bootstrap.checkpoint
+        != result.checkpoint
+        or final_bootstrap.execution_bootstrap.checkpoint.sequence != 0
+        or final_bootstrap.execution_bootstrap.binding.fast_run_id
+        != final_fast_run_id
     ):
         raise FastPaperPhysicalCutoverError(
-            "refreshed authoritative handoff bootstrap mismatch"
+            "final authoritative handoff bootstrap mismatch"
         )
-    return after
+    return final_config, final_bootstrap
 
 
 def _candidate_unit_from_wheel(
@@ -1077,7 +1159,7 @@ def _verify_process(
         )
 
 
-def _replace_unit(
+def _replace_file_atomically(
     destination: Path,
     payload: bytes,
     *,
@@ -1404,6 +1486,19 @@ def _source_sha(value: object) -> str:
     return value
 
 
+def _run_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or _RUN_ID_RE.fullmatch(value) is None
+        or value.lower().startswith("replace-with")
+        or "placeholder" in value.lower()
+    ):
+        raise FastPaperPhysicalCutoverError(
+            "final Fast run id must be explicit canonical non-placeholder text"
+        )
+    return value
+
+
 def _observation_seconds(value: object) -> int:
     if (
         isinstance(value, bool)
@@ -1465,6 +1560,7 @@ def _production_paths() -> FastPaperPhysicalCutoverPaths:
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("expected_release_source_sha")
+    parser.add_argument("--final-fast-run-id", required=True)
     parser.add_argument("--authoritative-release-wheel-path", required=True)
     parser.add_argument("--release-platform", required=True)
     parser.add_argument("--baseline-receipt-path", required=True)
@@ -1502,6 +1598,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "release_platform": args.release_platform,
         "baseline_receipt_path": args.baseline_receipt_path,
+        "final_fast_run_id": args.final_fast_run_id,
         "paths": paths,
     }
     try:
