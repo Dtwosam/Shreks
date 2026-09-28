@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import math
@@ -776,7 +775,7 @@ def _produce_authoritative_buy_authority(
         risk_environment,
         as_of_unix_ms=evidence.evaluated_at_unix_ms,
     )
-    source_fingerprint = _source_fingerprint(
+    persisted_facts_fingerprint = _source_fingerprint(
         manifest=manifest,
         decision_evidence=evidence,
         feature_record=feature,
@@ -796,6 +795,22 @@ def _produce_authoritative_buy_authority(
         execution_healthy=writer_policy.execution_healthy,
         global_risk_halt=writer_policy.global_risk_halt,
     )
+    source_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "version": (
+                    FAST_PAPER_AUTHORITATIVE_BUY_AUTHORITY_WRITER_VERSION
+                ),
+                "persisted_facts_fingerprint_sha256": (
+                    persisted_facts_fingerprint
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    ).hexdigest()
     return build_fast_paper_authoritative_buy_authority_source_record(
         manifest,
         execution_bootstrap,
