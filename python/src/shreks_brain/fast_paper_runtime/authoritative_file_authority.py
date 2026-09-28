@@ -1355,7 +1355,7 @@ def _buy_record_fingerprint(
     record: FastPaperAuthoritativeBuyAuthoritySourceRecord,
 ) -> str:
     return hashlib.sha256(
-        _canonical_json(_buy_document_values(record.__dict__))
+        _canonical_json(_buy_document_values(_slot_values(record)))
     ).hexdigest()
 
 
