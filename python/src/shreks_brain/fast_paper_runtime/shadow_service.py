@@ -126,6 +126,7 @@ class FastPaperShadowServiceConfig:
     evidence_directory: Path
     cycle_interval_seconds: float
     maximum_decisions: int
+    checkpoint_path: Path | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -135,6 +136,11 @@ class FastPaperShadowServiceConfig:
         ):
             if not isinstance(getattr(self, name), Path):
                 raise ValueError(f"{name} must be Path")
+        if (
+            self.checkpoint_path is not None
+            and not isinstance(self.checkpoint_path, Path)
+        ):
+            raise ValueError("checkpoint_path must be Path or None")
         if (
             isinstance(self.cycle_interval_seconds, bool)
             or not isinstance(self.cycle_interval_seconds, (int, float))
@@ -272,7 +278,10 @@ def bootstrap_fast_paper_shadow_service(
             )
         _validate_service_paths(config, manifest)
         _verify_observer_candidate_table(manifest.observer_database_path)
-        state = _load_service_state(manifest)
+        state = _load_service_state(
+            manifest,
+            checkpoint_path=config.checkpoint_path,
+        )
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
         raise FastPaperShadowServiceError(
             "shadow service bootstrap failed closed"
@@ -398,6 +407,7 @@ def run_fast_paper_shadow_service_cycle(
                 current,
                 (cycle_input,),
                 evidence_directory=config.evidence_directory,
+                checkpoint_path=config.checkpoint_path,
             )
             processed += 1
     except (OSError, sqlite3.Error, TypeError, ValueError) as exc:
@@ -492,8 +502,14 @@ def main(argv: list[str] | None = None) -> int:
 
 def _load_service_state(
     manifest: FastPaperRuntimeManifest,
+    *,
+    checkpoint_path: Path | None = None,
 ) -> FastPaperRuntimeState:
-    checkpoint = Path(manifest.checkpoint_path).expanduser()
+    checkpoint = (
+        Path(manifest.checkpoint_path).expanduser()
+        if checkpoint_path is None
+        else checkpoint_path.expanduser()
+    )
     if checkpoint.is_symlink():
         raise ValueError("shadow service checkpoint must not be a symlink")
     if not checkpoint.exists():
@@ -523,9 +539,11 @@ def _validate_service_paths(
         )
     root = root.resolve(strict=True)
 
-    checkpoint = Path(manifest.checkpoint_path).expanduser().resolve(
-        strict=False
-    )
+    checkpoint = (
+        Path(manifest.checkpoint_path).expanduser()
+        if config.checkpoint_path is None
+        else config.checkpoint_path.expanduser()
+    ).resolve(strict=False)
     if not _is_within(checkpoint, root):
         raise ValueError(
             "shadow checkpoint must stay inside the dedicated shadow directory"
