@@ -429,3 +429,38 @@ def test_current_path_must_be_absent_or_symlink(tmp_path: Path):
         release_manager.activate_release(release_dir, paths, command_runner=runner)
 
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("as_symlink", (False, True))
+def test_legacy_release_activation_is_blocked_by_fast_paper_cutover_guard(
+    tmp_path: Path,
+    as_symlink: bool,
+) -> None:
+    paths = _paths(tmp_path)
+    release_dir = _stage(tmp_path / "bundle", paths, SHA_A, "a")
+    authorization = release_manager._fast_paper_cutover_authorization_path(
+        paths
+    )
+    authorization.parent.mkdir(parents=True, exist_ok=True)
+    if as_symlink:
+        authorization.symlink_to(tmp_path / "missing-authorization-target")
+    else:
+        authorization.write_text(
+            '{"state":"GRANTED_OR_REVOKED"}\n',
+            encoding="utf-8",
+        )
+    runner = SystemctlRunner()
+
+    with pytest.raises(
+        release_manager.ReleaseManagerError,
+        match="blocked after Fast PAPER cutover",
+    ):
+        release_manager.activate_release(
+            release_dir,
+            paths,
+            command_runner=runner,
+        )
+
+    assert runner.calls == []
+    assert not paths.current_link.exists()
+    assert not paths.systemd_dir.exists()

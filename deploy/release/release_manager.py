@@ -62,6 +62,9 @@ _RUNTIME_BINARY_PATHS = (
     "target/release/shreks-paper-evidence",
 )
 _CONTROL_MANIFEST_PATH = "RELEASE_MANIFEST.json"
+_FAST_PAPER_CUTOVER_AUTHORIZATION_NAME = (
+    "fast-paper-cutover-authorization.json"
+)
 _HOST_PLATFORM_BY_MACHINE = {
     "x86_64": "x86_64-unknown-linux-gnu",
     "aarch64": "aarch64-unknown-linux-gnu",
@@ -471,6 +474,38 @@ def _require_runtime_healthy(
         _require_runtime_processes_from_release(release_dir)
 
 
+def _fast_paper_cutover_authorization_path(
+    paths: ReleasePaths,
+) -> Path:
+    systemd_dir = Path(paths.systemd_dir)
+    if systemd_dir == Path("/etc/systemd/system"):
+        return Path(
+            "/etc/shreks"
+        ) / _FAST_PAPER_CUTOVER_AUTHORIZATION_NAME
+    try:
+        etc_root = systemd_dir.resolve(strict=False).parents[1]
+    except IndexError as exc:
+        raise ReleaseManagerError(
+            "systemd directory cannot resolve Fast PAPER cutover guard path"
+        ) from exc
+    return (
+        etc_root
+        / "shreks"
+        / _FAST_PAPER_CUTOVER_AUTHORIZATION_NAME
+    )
+
+
+def _require_no_active_fast_paper_cutover(
+    paths: ReleasePaths,
+) -> None:
+    authorization = _fast_paper_cutover_authorization_path(paths)
+    if authorization.exists() or authorization.is_symlink():
+        raise ReleaseManagerError(
+            "legacy release activation is blocked after Fast PAPER cutover; "
+            "use the Fast-aware release path"
+        )
+
+
 def _rollback_after_failure(
     previous: Path | None,
     failed_release: Path,
@@ -505,6 +540,7 @@ def activate_release(
 ) -> None:
     release_dir = Path(release_dir)
     _require_managed_release(release_dir, paths)
+    _require_no_active_fast_paper_cutover(paths)
     previous = _current_release(paths)
     same_release = previous is not None and previous.resolve() == release_dir.resolve()
 

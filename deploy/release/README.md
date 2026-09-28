@@ -999,8 +999,107 @@ runtime bootstrap. A successful final state is
 `READY_FOR_PROTECTED_PAPER_CUTOVER_REVIEW`.
 
 It does not invoke systemd, replace the active legacy PAPER unit, execute PAPER
-actions, sign/submit transactions, or enable LIVE. The physical service switch
-remains the separately protected cutover ceremony.
+actions, sign/submit transactions, or enable LIVE.
+
+### Perform the protected Fast PAPER authority cutover
+
+Run this only after the exact immutable release containing the physical-cutover
+CLI is active and protected host preparation reports
+`READY_FOR_PROTECTED_PAPER_CUTOVER_REVIEW`.
+
+Resolve the same wheel/platform used by final cutover preflight, then run the
+read-only physical preflight while legacy PAPER is still active:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
+  preflight "$CURRENT_SHA" \
+  --authoritative-release-wheel-path "${WHEELS[0]}" \
+  --release-platform "$RELEASE_PLATFORM" \
+  --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --final-fast-run-id <new-final-fast-run-id>
+```
+
+The mutation ceremony is one explicit command:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
+  activate "$CURRENT_SHA" \
+  --authoritative-release-wheel-path "${WHEELS[0]}" \
+  --release-platform "$RELEASE_PLATFORM" \
+  --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --final-fast-run-id <same-new-final-fast-run-id> \
+  --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --champion-registry-path "$CHAMPION_REGISTRY" \
+  --shadow-restart-receipt-path "$RESTART_RECEIPT" \
+  --shadow-ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --legacy-runtime-manifest-path <active-legacy-paper-runtime-manifest> \
+  --legacy-observer-database-path <active-legacy-observer-database> \
+  --observe-seconds 60
+```
+
+The command stops only `shreks-paper-campaign.service` and confirms it is
+inactive. Because legacy PAPER writes a checkpoint after every non-idempotent
+cycle, the ceremony then reads the exact final legacy checkpoint and creates a
+**fresh final Fast run namespace** at sequence 0 from that unchanged
+`PaperLedger`. The provisional host-preparation Fast namespace remains
+append-only history and is never rewritten or deleted.
+
+The ceremony atomically retargets only
+`SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID` in the canonical authoritative env
+to the explicitly supplied final Fast run ID and reboots the runtime bootstrap
+against that new namespace. The final run ID must differ from the provisional
+run ID and must be unused.
+
+Only after that initialization does it re-run the exact final
+`CUTOVER_PREFLIGHT_READY` proof, issue a release/run/binding-specific cutover
+authorization, atomically replace the active unit bytes with the sealed Fast
+candidate, daemon-reload, start the same service name, and observe the Fast
+runtime for the requested bounded window.
+
+A successful result is:
+
+```text
+state=PRODUCTION_PAPER_CUTOVER_ACTIVE
+legacy_paper_runtime=STOPPED
+authoritative_paper_runtime=FAST_LANE_LEARNED_ACTIVE
+production_paper_cutover=ACTIVE
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+The success receipt is root-private under:
+
+```text
+/root/shreks-fast-paper-cutover/cutover-<release-sha>.json
+```
+
+The authoritative runtime refuses normal startup without the protected
+`/etc/shreks/fast-paper-cutover-authorization.json`; its ordinary RUNNING
+status must report `production_paper_cutover=GRANTED_AND_ACTIVE`.
+
+Rollback is intentionally phase-bounded. A failure **before the first Fast
+start attempt** may restore the provisional authoritative env and restart the
+exact legacy release runtime because Fast has never held PAPER authority. The
+fresh final Fast namespace remains immutable unused history. Once a Fast start has been attempted, the legacy score-gated runtime is never
+restored as PAPER authority, even if no Fast economic checkpoint was committed.
+The command stops Fast, revokes authorization, **keeps the Fast unit and final
+Fast environment installed**, leaves PAPER authority stopped, and writes
+`cutover-failure-<release-sha>.json` with
+`state=MANUAL_RECOVERY_REQUIRED`. Without the authorization file, an
+accidental Fast service start fails closed.
+
+Do not manually restart legacy after that boundary. Recovery must preserve the
+Fast authoritative ledger and use a separately proven Fast recovery path.
+
+This ceremony never enables LIVE and never grants signing/submission authority.
+
+After a successful cutover, the legacy G2 release manager also fails closed if
+the protected cutover authorization exists. It performs that check before
+stopping any runtime service. This deliberately blocks ordinary automatic
+legacy-style deployments until the separately reviewed Fast-aware release path
+is installed; a later deployment must not silently put
+`shreks_brain.observer_campaign.runtime` back in charge of PAPER.
+
 
 ## Deploy a release
 

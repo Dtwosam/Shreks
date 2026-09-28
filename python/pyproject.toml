@@ -61,6 +61,7 @@ shreks-fast-paper-champion-promotion = "shreks_brain.fast_paper_champion_promoti
 shreks-fast-paper-cutover-preflight = "shreks_brain.fast_paper_cutover_preflight:main"
 shreks-fast-paper-authoritative-cutover-baseline = "shreks_brain.fast_paper_authoritative_cutover_baseline:main"
 shreks-fast-paper-authoritative-host-prepare = "shreks_brain.fast_paper_authoritative_host_prepare:main"
+shreks-fast-paper-physical-cutover = "shreks_brain.fast_paper_physical_cutover:main"
 
 [project.optional-dependencies]
 research = ["pyarrow==25.0.*"]

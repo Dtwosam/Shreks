@@ -122,6 +122,7 @@ def _fixture(tmp_path: Path):
         reduction_source_directory=roots["reductions"],
         pending_buy_retry_source_directory=roots["retries"],
         buy_writer_policy_path=(writer_root / "buy-writer-policy.json").resolve(),
+        cutover_authorization_path=(tmp_path / "cutover-authorization.json").resolve(),
     )
     return manifest, handoff, execution_bootstrap, config, writer_policy
 
@@ -464,7 +465,9 @@ def test_runtime_entrypoint_source_is_score_free_and_has_no_service_or_live_auth
         "resolve_fast_paper_authoritative_execution_authority",
         "resolve_fast_paper_authoritative_pending_buy_retry",
         "require_fast_paper_authoritative_reduction_source",
-        '"production_paper_cutover": "NOT_GRANTED"',
+        'production_paper_cutover: str = "NOT_GRANTED"',
+        'production_paper_cutover="GRANTED_AND_ACTIVE"',
+        '"signing_submission_authority": "NOT_GRANTED"',
         '"live": "DISABLED"',
     )
     forbidden = (
