@@ -134,8 +134,9 @@ authority.
 
 It must reject:
 
-- re-committing the current source identity as a new sequence;
 - source sequence regression;
+- changing one part of an existing learned source identity without an actual
+  source-sequence advance;
 - changing execution-policy fingerprint inside a run;
 - market mapping that does not exactly match OPEN ledger positions;
 - stale current checkpoint/runtime state;
@@ -201,11 +202,12 @@ No legacy row may be updated or deleted.
 8. stale current checkpoint is rejected;
 9. stale current runtime state is rejected;
 10. target sequence collision is rejected;
-11. source decision identity regression/replay is rejected;
-12. execution-policy fingerprint drift is rejected;
-13. injected insert/commit failure leaves neither target row;
-14. tampered runtime payload/fingerprint fails closed;
-15. source contains no scoring, action-selection, provider, service-control,
+11. source decision identity regression/inconsistent mutation is rejected;
+12. a deferred-execution checkpoint may preserve the current learned identity;
+13. execution-policy fingerprint drift is rejected;
+14. injected insert/commit failure leaves neither target row;
+15. tampered runtime payload/fingerprint fails closed;
+16. source contains no scoring, action-selection, provider, service-control,
     signing, submission or LIVE-enable authority.
 
 ## Following slice
