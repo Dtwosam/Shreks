@@ -354,6 +354,112 @@ def test_pending_buy_retry_writer_backpressures_without_executable_quote(
 
 
 
+
+def test_pending_retry_backpressures_stale_quote_usd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = SimpleNamespace(
+        observer_database_path="/tmp/observer.db",
+        quote_provider="jupiter",
+        quote_mint="quote",
+        quote_decimals=9,
+    )
+    service = SimpleNamespace(
+        probe_policy_version="probe-v1",
+        taker="wallet",
+        slippage_bps=50,
+        entry_input_amount_raw=1_000,
+        exit_input_amount_raw=2_000,
+        route_evidence_version="route-v1",
+        max_quote_age_ms=5_000,
+    )
+    decision = SimpleNamespace(manifest=manifest, policy=service)
+    execution = SimpleNamespace(
+        runtime_state=SimpleNamespace(
+            pending_buy=SimpleNamespace(target_exposure_fraction=0.25)
+        ),
+        checkpoint=SimpleNamespace(
+            state=SimpleNamespace(
+                as_of_unix_ms=100,
+                ledger=SimpleNamespace(starting_cash_usd=1_000.0),
+            )
+        ),
+    )
+    policy = SimpleNamespace(market_read_policy=SimpleNamespace())
+    evidence = SimpleNamespace(
+        feature_record=SimpleNamespace(
+            mint="mint",
+            quote_mint="quote",
+            decision_observed_at_unix_ms=90,
+        )
+    )
+    quote = SimpleNamespace(
+        state="EXECUTABLE",
+        observed_at_unix_ms=110,
+    )
+
+    monkeypatch.setattr(
+        writer,
+        "_resolve_candidate_id",
+        lambda *_args, **_kwargs: 7,
+    )
+
+    class Connection:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        writer,
+        "_open_query_only_database",
+        lambda _path: Connection(),
+    )
+    monkeypatch.setattr(writer, "_validate_schema", lambda _connection: None)
+    monkeypatch.setattr(
+        writer,
+        "_require_candidate_mint",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_base_decimals",
+        lambda *_args, **_kwargs: 6,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_quote",
+        lambda *_args, **_kwargs: quote,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_quote_usd_for_feature",
+        lambda *_args, **_kwargs: (
+            SimpleNamespace(
+                observed_at_unix_ms=99,
+                quote_to_usd_rate=150.0,
+            ),
+            SimpleNamespace(),
+        ),
+    )
+    monkeypatch.setattr(
+        writer,
+        "ObserverCampaignStore",
+        lambda _path: pytest.fail(
+            "stale quote/USD must backpressure before campaign reads"
+        ),
+    )
+
+    assert (
+        writer._pending_retry_input(
+            decision,
+            execution,
+            policy,
+            evidence,
+            evaluated_at_unix_ms=120,
+        )
+        is None
+    )
+
+
 def test_pending_retry_derives_only_fresh_entry_quote(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
