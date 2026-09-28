@@ -142,6 +142,7 @@ def _patch_dependencies(
     legacy_checkpoint_present: bool = True,
     registry_champion: str = _CHAMPION,
     binding_fingerprint: str = _BINDING,
+    shadow_checkpoint_sequence: int = 12,
 ) -> None:
     if legacy_state is None:
         legacy_state = _legacy_state()
@@ -185,7 +186,7 @@ def _patch_dependencies(
         cutover,
         "load_latest_fast_paper_shadow_ledger_checkpoint",
         lambda _manifest, _binding: SimpleNamespace(
-            sequence=12,
+            sequence=shadow_checkpoint_sequence,
             payload_sha256=_SHADOW_CHECKPOINT,
             state=SimpleNamespace(),
         ),
@@ -439,6 +440,24 @@ def test_restart_receipt_identity_drift_is_hard_error(
             legacy_observer_database_path=tmp_path / "observer.sqlite3",
             expected_release_sha=_RELEASE_SHA,
         )
+
+
+def test_shadow_checkpoint_cannot_regress_behind_restart_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_dependencies(
+        monkeypatch,
+        shadow_checkpoint_sequence=10,
+    )
+
+    report = _assess(tmp_path)
+
+    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
+    assert (
+        _gate(report, "SHADOW_CHECKPOINT_NOT_BEFORE_RESTART_PROOF")["status"]
+        == "FAIL"
+    )
 
 
 def test_shadow_binding_drift_is_hard_error(
