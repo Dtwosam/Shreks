@@ -536,6 +536,16 @@ def activate_fast_paper_physical_cutover(
         return receipt
     except Exception as cutover_error:
         if stopped_legacy:
+            try:
+                current_config_payload, _ = _read_regular_no_follow(
+                    paths.authoritative_config_path,
+                    "authoritative Fast PAPER config during recovery",
+                )
+                config_retargeted = (
+                    current_config_payload != config_payload
+                )
+            except Exception:
+                config_retargeted = True
             _recover_failed_cutover(
                 paths=paths,
                 runner=runner,
