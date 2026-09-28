@@ -336,15 +336,15 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
     source = _source(record, evidence)
     source = replace(
         source,
-        entry_authority=replace(
-            source.entry_authority,
-            intended_base_quantity=1.0,
-        ),
         risk_context=replace(
             source.risk_context,
             trading_capital_usd=(
                 bootstrap.checkpoint.state.ledger.starting_cash_usd
             ),
+        ),
+        quote_usd_evidence=replace(
+            source.quote_usd_evidence,
+            quote_to_usd_rate=100.0,
         ),
     )
     deferred = run_fast_paper_authoritative_service_execution(
@@ -374,9 +374,12 @@ def test_deferred_buy_retry_after_restart_does_not_advance_learned_cursor_twice(
                 deferred.checkpoint.state.ledger.starting_cash_usd
             ),
         ),
-        quote_usd_evidence=_usd(
-            record,
-            observed_at=at + 190,
+        quote_usd_evidence=replace(
+            _usd(
+                record,
+                observed_at=at + 190,
+            ),
+            quote_to_usd_rate=100.0,
         ),
     )
 
