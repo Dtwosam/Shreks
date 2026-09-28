@@ -928,8 +928,9 @@ authoritative_paper_accounting=RECONCILED
 authoritative_checkpoint_sequence=0
 authoritative_pending_buy=0
 authoritative_open_positions=0
-authoritative_learned_cursor=EMPTY
-learned_decision_cursor=EMPTY_UNTIL_DURABLE_BASELINE_EXISTS
+authoritative_learned_execution_cursor=EMPTY
+authoritative_decision_baseline=MATCHES_LATEST_SHADOW_CURSOR
+authoritative_decision_evidence=EMPTY
 authoritative_handoff=EXACT_FINAL_LEGACY_CHECKPOINT
 authoritative_ledger=UNCHANGED_FINAL_LEGACY_LEDGER
 legacy_final_checkpoint=PRESENT
@@ -954,10 +955,13 @@ live_authority=DISABLED
 
 Do not stop `shreks-paper-campaign.service`, stop the detached shadow,
 replace unit bytes, switch target membership, or treat this report as cutover
-authority. A durable learned-cursor cutover baseline, continuous authoritative
-BUY/OPEN/retry source production, and the protected host/cutover ceremony
-remain separately reviewed steps. An already-advanced learned decision cursor
-is intentionally NOT_READY until that baseline mechanism is sealed.
+authority. The protected cutover ceremony must quiesce the detached shadow,
+copy its exact authenticated learned-decision state to
+`/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json`, then
+re-run this preflight before the Fast runtime may become authoritative.
+
+Continuous authoritative BUY/OPEN/retry source production and the physical
+service switch remain separately reviewed steps.
 
 ## Deploy a release
 
