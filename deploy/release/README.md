@@ -1080,17 +1080,26 @@ status must report `production_paper_cutover=GRANTED_AND_ACTIVE`.
 Rollback is intentionally phase-bounded. A failure **before the first Fast
 start attempt** may restore the provisional authoritative env and restart the
 exact legacy release runtime because Fast has never held PAPER authority. The
-fresh final Fast namespace remains immutable unused history. Once a Fast start has been attempted, the
-legacy score-gated runtime is never restored as PAPER authority, even if no
-Fast economic checkpoint was committed. The command revokes authorization,
-restores legacy unit bytes only for filesystem recovery, leaves PAPER authority
-stopped, and writes `cutover-failure-<release-sha>.json` with
-`state=MANUAL_RECOVERY_REQUIRED`.
+fresh final Fast namespace remains immutable unused history. Once a Fast start has been attempted, the legacy score-gated runtime is never
+restored as PAPER authority, even if no Fast economic checkpoint was committed.
+The command stops Fast, revokes authorization, **keeps the Fast unit and final
+Fast environment installed**, leaves PAPER authority stopped, and writes
+`cutover-failure-<release-sha>.json` with
+`state=MANUAL_RECOVERY_REQUIRED`. Without the authorization file, an
+accidental Fast service start fails closed.
 
 Do not manually restart legacy after that boundary. Recovery must preserve the
 Fast authoritative ledger and use a separately proven Fast recovery path.
 
 This ceremony never enables LIVE and never grants signing/submission authority.
+
+After a successful cutover, the legacy G2 release manager also fails closed if
+the protected cutover authorization exists. It performs that check before
+stopping any runtime service. This deliberately blocks ordinary automatic
+legacy-style deployments until the separately reviewed Fast-aware release path
+is installed; a later deployment must not silently put
+`shreks_brain.observer_campaign.runtime` back in charge of PAPER.
+
 
 ## Deploy a release
 
