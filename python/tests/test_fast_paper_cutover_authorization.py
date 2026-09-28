@@ -140,6 +140,38 @@ def test_runtime_preflight_does_not_require_cutover_authorization(
     assert runtime.main(["--preflight"]) == 0
 
 
+def test_runtime_normal_start_fails_closed_without_cutover_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = SimpleNamespace(
+        cutover_authorization_path=Path("/missing-authorization.json")
+    )
+    monkeypatch.setattr(
+        runtime,
+        "load_fast_paper_authoritative_runtime_config",
+        lambda: config,
+    )
+    monkeypatch.setattr(
+        runtime,
+        "bootstrap_fast_paper_authoritative_runtime",
+        lambda _config: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "read_fast_paper_cutover_authorization",
+        lambda _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "run_fast_paper_authoritative_runtime",
+        lambda *_args, **_kwargs: pytest.fail(
+            "runtime must not start without cutover authorization"
+        ),
+    )
+
+    assert runtime.main([]) == 1
+
+
 def test_runtime_normal_start_requires_and_propagates_cutover_authorization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
