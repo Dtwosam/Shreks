@@ -29,6 +29,9 @@ from .fast_paper_runtime.codec import (
     read_fast_paper_runtime_state,
     verify_fast_paper_runtime_bindings,
 )
+from .fast_paper_runtime.shadow_execution_input import (
+    read_fast_paper_shadow_execution_policy,
+)
 from .fast_paper_runtime.shadow_buy_writer_policy import (
     read_fast_paper_shadow_buy_writer_policy,
     verify_fast_paper_shadow_buy_writer_policy_bindings,
@@ -273,6 +276,28 @@ def preflight_fast_paper_authoritative_host(
             expected_mode=_STATE_DIR_MODE,
         )
 
+    for authority in _authority_paths_from_config(config):
+        _require_path_metadata(
+            authority,
+            label="authoritative protected authority file",
+            expected_kind="file",
+            expected_uid=_ROOT_UID,
+            expected_gid=service_gid,
+            expected_mode=_CONFIG_MODE,
+        )
+    if config.decision_config.checkpoint_path is None:
+        raise FastPaperAuthoritativeHostPrepareError(
+            "authoritative decision checkpoint path is missing"
+        )
+    _require_path_metadata(
+        config.decision_config.checkpoint_path,
+        label="authoritative decision baseline checkpoint",
+        expected_kind="file",
+        expected_uid=service_uid,
+        expected_gid=service_gid,
+        expected_mode=0o600,
+    )
+
     baseline = _authenticate_baseline_receipt(
         Path(baseline_receipt_path),
         manifest=manifest,
@@ -363,6 +388,12 @@ def _authenticate_candidate_environment(
         )
         service_policy = read_fast_paper_shadow_service_policy(
             env["SHREKS_FAST_PAPER_SERVICE_POLICY_PATH"]
+        )
+        read_fast_paper_shadow_execution_policy(
+            manifest,
+            env[
+                "SHREKS_FAST_PAPER_AUTHORITATIVE_EXECUTION_POLICY_PATH"
+            ],
         )
         writer_policy = read_fast_paper_shadow_buy_writer_policy(
             env["SHREKS_FAST_PAPER_AUTHORITATIVE_BUY_WRITER_POLICY_PATH"]
@@ -482,6 +513,15 @@ def _authenticate_baseline_receipt(
             "authoritative baseline no longer equals shadow checkpoint"
         )
     return receipt
+
+
+def _authority_paths_from_config(config) -> tuple[Path, ...]:
+    return (
+        config.decision_config.manifest_path,
+        config.decision_config.policy_path,
+        config.execution_config.execution_policy_path,
+        config.buy_writer_policy_path,
+    )
 
 
 def _runtime_state_directories(config) -> tuple[Path, ...]:
