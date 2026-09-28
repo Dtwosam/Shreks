@@ -301,6 +301,14 @@ def preflight_fast_paper_authoritative_host(
         expected_mode=0o600,
     )
 
+    if (
+        config.cutover_authorization_path.exists()
+        or config.cutover_authorization_path.is_symlink()
+    ):
+        raise FastPaperAuthoritativeHostPrepareError(
+            "production cutover authorization must not exist during host preparation"
+        )
+
     baseline = _authenticate_baseline_receipt(
         Path(baseline_receipt_path),
         manifest=manifest,
