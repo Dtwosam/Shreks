@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from shreks_brain.fast_campaign import FastCampaignDecisionPosition
-from shreks_brain.fast_paper import FastPaperBuyOutcome
+from shreks_brain.fast_paper import FastPaperBuyOutcome, FastPaperPositionOutcome
 from shreks_brain.fast_paper_runtime import (
     FastPaperShadowPendingBuyRetryInput,
     run_fast_paper_authoritative_execution,
@@ -239,6 +239,139 @@ def test_deferred_buy_survives_restart_retry_and_fills_once(
     assert replay.checkpoint.sequence == 2
     assert len(replay.checkpoint.state.ledger.processed_intent_keys) == 1
 
+
+
+def test_open_position_reduce_uses_authoritative_mapping_across_restart(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    manifest, _database, policy, handoff = _fixture(tmp_path)
+
+    buy_record = _decision_record(
+        handoff.checkpoint,
+        sequence=1,
+        signature="authoritative-open-buy",
+    )
+    buy_at = buy_record.decision_observed_at_unix_ms
+    buy_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        buy_record,
+        action="BUY",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=buy_at + 200,
+        entry_observed_at=buy_at + 150,
+        exit_observed_at=buy_at + 155,
+    )
+    bought = run_fast_paper_authoritative_execution(
+        manifest,
+        handoff.binding,
+        policy,
+        _source(buy_record, buy_evidence),
+        committed_at_unix_ms=buy_at + 200,
+    )
+    assert bought.buy_result is not None
+    assert bought.buy_result.outcome is FastPaperBuyOutcome.FILLED
+    assert bought.checkpoint.sequence == 1
+    assert len(bought.runtime_state.market_positions) == 1
+
+    reduce_record = _decision_record(
+        handoff.checkpoint,
+        sequence=2,
+        signature="authoritative-open-reduce",
+    )
+    reduce_at = reduce_record.decision_observed_at_unix_ms
+    reduce_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        reduce_record,
+        action="REDUCE",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=reduce_at + 20,
+        entry_observed_at=reduce_at + 10,
+        exit_observed_at=reduce_at + 15,
+        reduction_observed_at=reduce_at + 12,
+        reduction_base_quantity=1.0,
+        reduction_input_amount_raw=1_000_000,
+    )
+    deferred = run_fast_paper_authoritative_execution(
+        manifest,
+        handoff.binding,
+        policy,
+        _source(reduce_record, reduce_evidence),
+        committed_at_unix_ms=reduce_at + 20,
+    )
+    assert deferred.position_result is not None
+    assert (
+        deferred.position_result.outcome
+        is FastPaperPositionOutcome.DEFERRED
+    )
+    assert deferred.checkpoint.sequence == 2
+    assert (
+        deferred.checkpoint.state.position_action_states[0].pending_exit
+        is not None
+    )
+    assert (
+        deferred.runtime_state.market_positions[0].current_exposure_fraction
+        == pytest.approx(0.5)
+    )
+
+    resolve_record = _decision_record(
+        handoff.checkpoint,
+        sequence=3,
+        signature="authoritative-open-resolve",
+    )
+    resolve_at = resolve_record.decision_observed_at_unix_ms
+    hold_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        resolve_record,
+        action="HOLD",
+        position=FastCampaignDecisionPosition(
+            kind="OPEN",
+            current_exposure_fraction=0.5,
+        ),
+        evaluated_at=resolve_at + 30,
+        entry_observed_at=resolve_at + 10,
+        exit_observed_at=resolve_at + 20,
+        reduction_observed_at=resolve_at + 21,
+        reduction_base_quantity=1.0,
+        reduction_input_amount_raw=1_000_000,
+    )
+    reduced = run_fast_paper_authoritative_execution(
+        manifest,
+        handoff.binding,
+        policy,
+        _source(resolve_record, hold_evidence),
+        committed_at_unix_ms=resolve_at + 30,
+    )
+
+    assert reduced.position_result is not None
+    assert (
+        reduced.position_result.outcome
+        is FastPaperPositionOutcome.REDUCED
+    )
+    assert reduced.checkpoint.sequence == 3
+    assert (
+        reduced.checkpoint.state.position_action_states[0].pending_exit
+        is None
+    )
+    assert len(reduced.runtime_state.market_positions) == 1
+    assert (
+        reduced.runtime_state.market_positions[0].current_exposure_fraction
+        == pytest.approx(0.25)
+    )
+    assert (
+        reduced.runtime_state.market_positions[0].current_base_quantity_raw
+        == 1_000_000
+    )
+    assert (
+        validate_fast_paper_accounting(reduced.checkpoint.state).status
+        is AccountingValidationStatus.RECONCILED
+    )
 
 def test_pending_buy_retry_rejects_changed_original_decision_evidence(
     monkeypatch: pytest.MonkeyPatch,
