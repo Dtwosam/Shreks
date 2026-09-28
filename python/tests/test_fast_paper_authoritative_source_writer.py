@@ -9,6 +9,7 @@ import pytest
 import shreks_brain.fast_paper_runtime.authoritative_source_writer as writer
 from shreks_brain.fast_paper import FastPaperBuyOutcome
 from shreks_brain.fast_paper_runtime.authoritative_service_execution import (
+    bootstrap_fast_paper_authoritative_service_execution,
     run_fast_paper_authoritative_service_execution,
 )
 from shreks_brain.fast_paper_runtime.codec import build_fast_paper_runtime_state
@@ -44,6 +45,7 @@ from test_fast_paper_shadow_decision import _executable, _record
 
 
 def _writer_policy(manifest, tmp_path: Path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     service = _service_policy(manifest)
     quote_policy = _quote_policy(manifest)
     operator = tmp_path / "operator-risk-control.json"
@@ -312,11 +314,11 @@ def test_pending_buy_retry_writer_backpressures_without_executable_quote(
             / "shadow-00000000000000000001.json"
         ),
     )
-    restored_execution = SimpleNamespace(
-        binding=deferred.binding,
-        execution_policy=deferred.execution_policy,
-        checkpoint=deferred.checkpoint,
-        runtime_state=deferred.runtime_state,
+    restored_execution = (
+        bootstrap_fast_paper_authoritative_service_execution(
+            manifest,
+            config.execution_config,
+        )
     )
     monkeypatch.setattr(
         writer,
