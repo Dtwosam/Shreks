@@ -118,8 +118,11 @@ authoritative_checkpoint_sequence=0
 authoritative_pending_buy=0
 authoritative_open_positions=0
 authoritative_learned_cursor=EMPTY
+learned_decision_cursor=EMPTY_UNTIL_DURABLE_BASELINE_EXISTS
 authoritative_accounting=RECONCILED
 ```
+
+Because the proven detached-shadow decision cursor may already be advanced, a pristine authoritative runtime is not start-compatible with that cursor yet. Until a separately persisted cutover baseline exists, preflight therefore requires the learned decision cursor itself to be empty; an advanced cursor is an explicit NOT_READY result rather than silently skipped history.
 
 The persisted authoritative binding must reference the exact latest legacy:
 
@@ -190,10 +193,12 @@ authoritative BUY/reduction/pending-retry formats currently have builders and
 readers, but no continuous production writer/publisher topology equivalent to
 the proven shadow supervisor source writers.
 
-The next slice must therefore adapt the existing persisted-evidence authority
-writers to the authoritative checkpoint/runtime pair and prove continuous
-BUY/HOLD/REDUCE/SELL plus pending-BUY retry source production without shadow
-ledger mutation.
+The next slice must therefore (a) add a durable learned-cursor cutover baseline
+that can be written only after the detached shadow is quiesced, and (b) adapt
+the existing persisted-evidence authority writers to the authoritative
+checkpoint/runtime pair. It must prove restart-safe first-decision continuation
+from that baseline plus continuous BUY/HOLD/REDUCE/SELL and pending-BUY retry
+source production without shadow ledger mutation.
 
 After that, protected host preparation may install the exact authoritative env
 and create the dedicated source directories. Only the final cutover ceremony
