@@ -1015,7 +1015,8 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
   preflight "$CURRENT_SHA" \
   --authoritative-release-wheel-path "${WHEELS[0]}" \
   --release-platform "$RELEASE_PLATFORM" \
-  --baseline-receipt-path "$BASELINE_RECEIPT"
+  --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --final-fast-run-id <new-final-fast-run-id>
 ```
 
 The mutation ceremony is one explicit command:
@@ -1026,6 +1027,7 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
   --authoritative-release-wheel-path "${WHEELS[0]}" \
   --release-platform "$RELEASE_PLATFORM" \
   --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --final-fast-run-id <same-new-final-fast-run-id> \
   --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
   --champion-registry-path "$CHAMPION_REGISTRY" \
   --shadow-restart-receipt-path "$RESTART_RECEIPT" \
@@ -1037,12 +1039,18 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
 
 The command stops only `shreks-paper-campaign.service` and confirms it is
 inactive. Because legacy PAPER writes a checkpoint after every non-idempotent
-cycle, the ceremony then reads the exact final legacy checkpoint and atomically
-refreshes only the still-pristine Fast sequence-0 binding/checkpoint/runtime
-rows from that unchanged final `PaperLedger`. Any prior Fast economic
-advancement makes that refresh fail closed.
+cycle, the ceremony then reads the exact final legacy checkpoint and creates a
+**fresh final Fast run namespace** at sequence 0 from that unchanged
+`PaperLedger`. The provisional host-preparation Fast namespace remains
+append-only history and is never rewritten or deleted.
 
-Only after that refresh does it re-run the exact final
+The ceremony atomically retargets only
+`SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID` in the canonical authoritative env
+to the explicitly supplied final Fast run ID and reboots the runtime bootstrap
+against that new namespace. The final run ID must differ from the provisional
+run ID and must be unused.
+
+Only after that initialization does it re-run the exact final
 `CUTOVER_PREFLIGHT_READY` proof, issue a release/run/binding-specific cutover
 authorization, atomically replace the active unit bytes with the sealed Fast
 candidate, daemon-reload, start the same service name, and observe the Fast
@@ -1070,8 +1078,9 @@ The authoritative runtime refuses normal startup without the protected
 status must report `production_paper_cutover=GRANTED_AND_ACTIVE`.
 
 Rollback is intentionally phase-bounded. A failure **before the first Fast
-start attempt** may restore/restart the exact legacy release runtime because Fast
-has never held PAPER authority. Once a Fast start has been attempted, the
+start attempt** may restore the provisional authoritative env and restart the
+exact legacy release runtime because Fast has never held PAPER authority. The
+fresh final Fast namespace remains immutable unused history. Once a Fast start has been attempted, the
 legacy score-gated runtime is never restored as PAPER authority, even if no
 Fast economic checkpoint was committed. The command revokes authorization,
 restores legacy unit bytes only for filesystem recovery, leaves PAPER authority
