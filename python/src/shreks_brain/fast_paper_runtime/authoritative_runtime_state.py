@@ -597,10 +597,15 @@ def _validate_last_processed_identity(
         last_processed_source_event_id,
         last_processed_decision_evidence_fingerprint_sha256,
     )
+    records = checkpoint.state.event_loop_state.records
     if any(value is None for value in identity):
         if any(value is not None for value in identity):
             raise ValueError(
                 "last processed learned identity fields must be all present or all absent"
+            )
+        if records:
+            raise ValueError(
+                "authoritative runtime state with Fast event records requires the latest learned identity"
             )
         return
     _require_positive_int(
@@ -615,20 +620,27 @@ def _validate_last_processed_identity(
         "last_processed_decision_evidence_fingerprint_sha256",
         last_processed_decision_evidence_fingerprint_sha256,
     )
-    records = checkpoint.state.event_loop_state.records
-    matching = tuple(
-        record
-        for record in records
-        if record.source_event_id == last_processed_source_event_id
-    )
-    if not matching:
+    if not records:
         raise ValueError(
             "last processed learned identity is not recorded in Fast PAPER event state"
         )
-    record = matching[-1]
-    if record.source_sequence != last_processed_source_sequence:
+    latest_sequence = max(record.source_sequence for record in records)
+    latest = tuple(
+        record
+        for record in records
+        if record.source_sequence == latest_sequence
+    )
+    if len(latest) != 1:
         raise ValueError(
-            "last processed learned source sequence does not match recorded Fast event"
+            "latest Fast PAPER source sequence is ambiguous"
+        )
+    record = latest[0]
+    if (
+        record.source_event_id != last_processed_source_event_id
+        or record.source_sequence != last_processed_source_sequence
+    ):
+        raise ValueError(
+            "last processed learned identity does not match the latest recorded Fast event"
         )
 
 
