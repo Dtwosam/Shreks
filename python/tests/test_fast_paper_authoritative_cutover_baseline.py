@@ -314,6 +314,37 @@ def test_authoritative_decision_root_must_be_empty(
     assert not destination.exists()
 
 
+def test_no_replace_cleanup_never_unlinks_concurrent_winner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    destination = tmp_path / "race.json"
+    original_open = baseline.os.open
+
+    def racing_open(path, flags, mode=0o777):
+        if Path(path) == destination:
+            fd = original_open(
+                destination,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            os.write(fd, b"winner")
+            os.close(fd)
+            raise FileExistsError("concurrent winner")
+        return original_open(path, flags, mode)
+
+    monkeypatch.setattr(baseline.os, "open", racing_open)
+    with pytest.raises(FileExistsError, match="concurrent winner"):
+        baseline._write_bytes_no_replace(
+            destination,
+            b"ours",
+            uid=os.geteuid(),
+            gid=os.getegid(),
+        )
+
+    assert destination.read_bytes() == b"winner"
+
+
 def test_baseline_provisioner_has_read_only_systemd_authority() -> None:
     source = Path(baseline.__file__).read_text(encoding="utf-8")
     pyproject = (
