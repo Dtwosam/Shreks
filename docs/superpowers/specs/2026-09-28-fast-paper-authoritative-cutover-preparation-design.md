@@ -184,11 +184,13 @@ Tests must prove:
 5. authoritative DB must equal manifest/legacy observer DB;
 6. placeholder Fast run IDs are rejected;
 7. cutover READY requires authoritative checkpoint sequence 0;
-8. READY requires no authoritative pending BUY/open position/learned cursor;
-9. authoritative binding must match the exact final legacy checkpoint;
-10. authoritative ledger must equal the unchanged final legacy ledger;
-11. Fast, legacy, and shadow accounting gates remain reconciled;
-12. Python, Rust, ARM64, and repository-safety CI remain green.
+8. READY requires no authoritative pending BUY/open position/learned execution cursor;
+9. the dedicated authoritative decision baseline must exactly match the latest authenticated shadow decision state;
+10. authoritative production decision evidence must be empty before cutover;
+11. authoritative binding must match the exact final legacy checkpoint;
+12. authoritative ledger must equal the unchanged final legacy ledger;
+13. Fast, legacy, and shadow accounting gates remain reconciled;
+14. Python, Rust, ARM64, and repository-safety CI remain green.
 
 ## Following slice
 
@@ -197,12 +199,14 @@ authoritative BUY/reduction/pending-retry formats currently have builders and
 readers, but no continuous production writer/publisher topology equivalent to
 the proven shadow supervisor source writers.
 
-The next slice must therefore (a) add a durable learned-cursor cutover baseline
-that can be written only after the detached shadow is quiesced, and (b) adapt
-the existing persisted-evidence authority writers to the authoritative
-checkpoint/runtime pair. It must prove restart-safe first-decision continuation
-from that baseline plus continuous BUY/HOLD/REDUCE/SELL and pending-BUY retry
-source production without shadow ledger mutation.
+The next slice must therefore (a) add the protected provisioning operation that
+copies the exact authenticated shadow decision checkpoint into the already
+implemented dedicated authoritative decision baseline only after the detached
+shadow is quiesced, and (b) adapt the existing persisted-evidence authority
+writers to the authoritative checkpoint/runtime pair. It must preserve the
+restart-safe first-decision continuation proved here while adding continuous
+BUY/HOLD/REDUCE/SELL and pending-BUY retry source production without shadow
+ledger mutation.
 
 After that, protected host preparation may install the exact authoritative env
 and create the dedicated source directories. Only the final cutover ceremony
