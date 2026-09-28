@@ -719,7 +719,11 @@ def main(argv: list[str] | None = None) -> int:
             receipt_path=args.receipt_path,
             expected_release_sha=args.expected_release_sha,
         )
-    except FastPaperAuthoritativeCutoverBaselineError as exc:
+    except (
+        FastPaperAuthoritativeCutoverBaselineError,
+        OSError,
+        ValueError,
+    ) as exc:
         print(
             _canonical(
                 {
