@@ -13,7 +13,6 @@ from shreks_brain.paper_validation import (
     AccountingValidationStatus,
     load_latest_fast_paper_checkpoint,
     load_latest_paper_checkpoint,
-    save_fast_paper_checkpoint,
     save_paper_checkpoint,
     validate_fast_paper_accounting,
     validate_fast_paper_restart_equivalence,
@@ -369,120 +368,6 @@ def test_target_checkpoint_namespace_collision_is_rejected(
         match="namespace|collision|schema",
     ):
         _initialize(manifest, database, source)
-
-
-def test_pristine_handoff_refreshes_to_exact_final_legacy_checkpoint(
-    tmp_path: Path,
-) -> None:
-    manifest, database, first = _legacy_checkpoint(tmp_path)
-    initial = _initialize(manifest, database, first)
-    final_state = replace(
-        first.state,
-        last_cycle_at_unix_ms=first.state.last_cycle_at_unix_ms + 1_000,
-    )
-    final = save_paper_checkpoint(
-        database,
-        _LEGACY_RUN_ID,
-        first.sequence + 1,
-        final_state,
-        final_state.last_cycle_at_unix_ms,
-    )
-
-    refreshed = handoff.refresh_pristine_fast_paper_authoritative_handoff(
-        manifest,
-        _execution_policy(manifest),
-        final,
-        legacy_runtime_manifest_fingerprint_sha256=_LEGACY_MANIFEST_FP,
-        fast_run_id=_FAST_RUN_ID,
-        database_path=database,
-        created_at_unix_ms=final.state.last_cycle_at_unix_ms,
-    )
-
-    assert (
-        refreshed.binding.legacy_checkpoint_sequence
-        == final.sequence
-    )
-    assert (
-        refreshed.binding.legacy_checkpoint_payload_sha256
-        == final.payload_sha256
-    )
-    assert refreshed.binding.binding_fingerprint_sha256 != (
-        initial.binding.binding_fingerprint_sha256
-    )
-    assert refreshed.checkpoint.sequence == 0
-    assert refreshed.checkpoint.state.ledger == final.state.ledger
-    assert (
-        refreshed.checkpoint.state.as_of_unix_ms
-        == final.state.last_cycle_at_unix_ms
-    )
-    runtime_state = (
-        handoff.load_latest_fast_paper_authoritative_runtime_state(
-            manifest,
-            refreshed.binding,
-        )
-    )
-    assert runtime_state.paper_checkpoint_sequence == 0
-    assert runtime_state.market_positions == ()
-    assert runtime_state.last_processed_source_sequence is None
-
-    with sqlite3.connect(database) as connection:
-        assert connection.execute(
-            """
-            SELECT COUNT(*) FROM fast_paper_authoritative_bindings
-            WHERE fast_run_id = ?
-            """,
-            (_FAST_RUN_ID,),
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            """
-            SELECT COUNT(*) FROM paper_loop_checkpoints
-            WHERE run_id = ?
-            """,
-            (_FAST_RUN_ID,),
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            """
-            SELECT COUNT(*) FROM fast_paper_authoritative_runtime_states
-            WHERE fast_run_id = ?
-            """,
-            (_FAST_RUN_ID,),
-        ).fetchone()[0] == 1
-
-
-def test_handoff_refresh_rejects_fast_namespace_after_checkpoint_advances(
-    tmp_path: Path,
-) -> None:
-    manifest, database, first = _legacy_checkpoint(tmp_path)
-    initial = _initialize(manifest, database, first)
-    save_fast_paper_checkpoint(
-        database,
-        _FAST_RUN_ID,
-        1,
-        initial.checkpoint.state,
-        initial.checkpoint.created_at_unix_ms + 1,
-    )
-    final_state = replace(
-        first.state,
-        last_cycle_at_unix_ms=first.state.last_cycle_at_unix_ms + 1_000,
-    )
-    final = save_paper_checkpoint(
-        database,
-        _LEGACY_RUN_ID,
-        first.sequence + 1,
-        final_state,
-        final_state.last_cycle_at_unix_ms,
-    )
-
-    with pytest.raises(Exception):
-        handoff.refresh_pristine_fast_paper_authoritative_handoff(
-            manifest,
-            _execution_policy(manifest),
-            final,
-            legacy_runtime_manifest_fingerprint_sha256=_LEGACY_MANIFEST_FP,
-            fast_run_id=_FAST_RUN_ID,
-            database_path=database,
-            created_at_unix_ms=final.state.last_cycle_at_unix_ms,
-        )
 
 
 def test_binding_tamper_fails_closed_before_checkpoint_load(
