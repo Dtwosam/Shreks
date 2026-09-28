@@ -68,6 +68,7 @@ from .shadow_execution_input import FastPaperShadowQuoteUsdEvidence
 from .shadow_executor import FastPaperShadowPendingBuyRetryInput
 from .shadow_open_quote_writer import (
     _persisted_exit_input_amounts,
+    _require_replayed_raw_authority,
     _select_reduction_reads,
 )
 from .shadow_pending_buy_retry_source import (
@@ -354,6 +355,14 @@ def run_fast_paper_authoritative_open_quote_writer_cycle(
     if position.kind == "FLAT":
         return 0
     mapping = _market_mapping(execution_bootstrap, market_key)
+    if feature.mint != mapping.mint:
+        raise ValueError(
+            "authoritative OPEN preview mint does not match durable mapping"
+        )
+    if feature.quote_mint != manifest.quote_mint:
+        raise ValueError(
+            "authoritative OPEN preview quote mint does not match runtime manifest"
+        )
 
     path = source_root / _reduction_filename(
         execution_bootstrap.runtime_state.state_fingerprint_sha256,
@@ -421,6 +430,32 @@ def run_fast_paper_authoritative_open_quote_writer_cycle(
     )
     if reads is None:
         return 0
+
+    quote_read_policy = FastPaperShadowQuoteReadPolicy(
+        version=policy.route_evidence_version,
+        candidate_id=candidate_id,
+        probe_policy_version=policy.probe_policy_version,
+        taker=policy.taker,
+        slippage_bps=policy.slippage_bps,
+        entry_input_amount_raw=policy.entry_input_amount_raw,
+        exit_input_amount_raw=mapping.current_base_quantity_raw,
+        max_quote_age_ms=policy.max_quote_age_ms,
+        reduction_reads=reads,
+    )
+    cycle = resolve_fast_paper_shadow_cycle_input(
+        manifest,
+        feature,
+        position,
+        quote_read_policy,
+        evaluated_at_unix_ms=evaluated_at,
+        max_exposure_fraction=policy.max_exposure_fraction,
+        force_sell=False,
+    )
+    _require_replayed_raw_authority(
+        cycle,
+        full_exit_input_amount_raw=mapping.current_base_quantity_raw,
+        reduction_reads=reads,
+    )
 
     record = build_fast_paper_authoritative_reduction_source_record(
         manifest,
