@@ -253,23 +253,29 @@ def test_authoritative_buy_authority_stale_after_checkpoint_advance(
         config.buy_authority_source_directory,
     )
 
+    skip_record = _decision_record(
+        bootstrap.checkpoint,
+        sequence=1,
+        signature="authoritative-file-stale-advance",
+    )
+    skip_at = skip_record.decision_observed_at_unix_ms
+    skip_evidence = _evidence_for(
+        monkeypatch,
+        manifest,
+        skip_record,
+        action="SKIP",
+        position=FastCampaignDecisionPosition(kind="FLAT"),
+        evaluated_at=skip_at + 20,
+        entry_observed_at=skip_at + 10,
+        exit_observed_at=skip_at + 15,
+    )
     result = run_fast_paper_authoritative_service_execution(
         manifest,
         bootstrap,
-        replace(
-            source,
-            decision_evidence=replace(
-                evidence,
-                decision=replace(evidence.decision, action="SKIP"),
-            ),
-            entry_authority=None,
-            risk_context=None,
-            market_regime=None,
-            quote_usd_evidence=None,
-        ),
-        source_observed_at_unix_ms=evidence.evaluated_at_unix_ms,
+        _source(skip_record, skip_evidence),
+        source_observed_at_unix_ms=skip_evidence.evaluated_at_unix_ms,
         risk_day_started_at_unix_ms=None,
-        committed_at_unix_ms=evidence.evaluated_at_unix_ms,
+        committed_at_unix_ms=skip_evidence.evaluated_at_unix_ms,
     )
     assert result.checkpoint.sequence == 1
     refreshed = bootstrap_fast_paper_authoritative_service_execution(
