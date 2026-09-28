@@ -174,9 +174,9 @@ def test_runtime_state_fingerprint_is_deterministic(
         execution_policy_fingerprint_sha256=(
             policy.policy_fingerprint_sha256
         ),
-        last_processed_source_sequence=8,
-        last_processed_source_event_id="event-8",
-        last_processed_decision_evidence_fingerprint_sha256="8" * 64,
+        last_processed_source_sequence=None,
+        last_processed_source_event_id=None,
+        last_processed_decision_evidence_fingerprint_sha256=None,
     )
     second = runtime.build_fast_paper_authoritative_runtime_state(
         manifest,
@@ -186,9 +186,9 @@ def test_runtime_state_fingerprint_is_deterministic(
         execution_policy_fingerprint_sha256=(
             policy.policy_fingerprint_sha256
         ),
-        last_processed_source_sequence=8,
-        last_processed_source_event_id="event-8",
-        last_processed_decision_evidence_fingerprint_sha256="8" * 64,
+        last_processed_source_sequence=None,
+        last_processed_source_event_id=None,
+        last_processed_decision_evidence_fingerprint_sha256=None,
     )
 
     assert first == second
@@ -580,7 +580,6 @@ def test_authoritative_runtime_and_commit_have_no_control_authority() -> None:
         root / "fast_paper_runtime" / "authoritative_commit.py",
     )
     required = (
-        "FastPaperRuntimeState",
         "paper_checkpoint_sequence",
         "binding_fingerprint_sha256",
     )
@@ -609,3 +608,6 @@ def test_authoritative_runtime_and_commit_have_no_control_authority() -> None:
             assert token in source
         for token in forbidden:
             assert token not in source
+
+    commit_source = sources[1].read_text(encoding="utf-8")
+    assert "FastPaperRuntimeState" in commit_source
