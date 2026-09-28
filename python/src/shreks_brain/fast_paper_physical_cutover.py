@@ -224,6 +224,7 @@ def preflight_fast_paper_physical_cutover(
         release,
         legacy,
         expected_module=_LEGACY_MODULE,
+        require_private_network=False,
     )
     _require_shadow_quiescent(runner)
     _require_authorization_absent(paths.cutover_authorization_path)
@@ -561,6 +562,7 @@ def _recover_failed_cutover(
             release,
             restored,
             expected_module=_LEGACY_MODULE,
+            require_private_network=False,
         )
         raise FastPaperPhysicalCutoverError(
             "physical PAPER cutover failed; legacy PAPER authority restored"
@@ -941,6 +943,7 @@ def _verify_process(
     state: SystemdState,
     *,
     expected_module: str,
+    require_private_network: bool = True,
 ) -> None:
     if state.fragment_path != str(paths.active_unit_destination):
         raise FastPaperPhysicalCutoverError(
@@ -950,10 +953,16 @@ def _verify_process(
         state.working_directory != "/opt/shreks/current"
         or state.user != "shreks"
         or state.group != "shreks"
-        or state.private_network.lower() not in ("yes", "true")
     ):
         raise FastPaperPhysicalCutoverError(
-            "PAPER service sandbox identity is not exact"
+            "PAPER service identity is not exact"
+        )
+    if (
+        require_private_network
+        and state.private_network.lower() not in ("yes", "true")
+    ):
+        raise FastPaperPhysicalCutoverError(
+            "authoritative Fast PAPER PrivateNetwork is not enabled"
         )
     proc = paths.proc_root / str(state.main_pid)
     try:
