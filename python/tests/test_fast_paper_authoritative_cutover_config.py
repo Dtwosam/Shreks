@@ -49,6 +49,9 @@ def _environment(manifest) -> dict[str, str]:
         "SHREKS_FAST_PAPER_AUTHORITATIVE_BUY_WRITER_POLICY_PATH": (
             "/etc/shreks/fast-paper-shadow-buy-writer-policy.json"
         ),
+        "SHREKS_FAST_PAPER_CUTOVER_AUTHORIZATION_PATH": (
+            "/etc/shreks/fast-paper-cutover-authorization.json"
+        ),
     }
 
 
@@ -83,6 +86,9 @@ def test_authoritative_cutover_environment_round_trips_and_binds_database(
         == Path(manifest.observer_database_path).resolve()
     )
     assert config.decision_config.maximum_decisions == 1
+    assert config.cutover_authorization_path == Path(
+        "/etc/shreks/fast-paper-cutover-authorization.json"
+    )
     assert config.decision_config.checkpoint_path == Path(
         "/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json"
     )
