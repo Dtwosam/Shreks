@@ -585,7 +585,7 @@ def test_release_upgrade_source_has_no_scoring_signing_or_live_authority() -> No
         "initialize_fast_paper_authoritative_release_handoff",
         "UPGRADE_IN_PROGRESS",
         "build_fast_paper_cutover_authorization",
-        "shreks-fast-paper-release-manager",
+        "FAST_PAPER_RELEASE_UPGRADE_ACTIVE",
         "signing_submission_authority",
         "live_authority",
     ):
