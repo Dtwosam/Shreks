@@ -157,6 +157,7 @@ def test_host_preflight_authenticates_writer_policy_and_runtime(
         reduction_source_directory=dirs[4],
         pending_buy_retry_source_directory=dirs[5],
         buy_writer_policy_path=tmp_path / "buy-policy.json",
+        cutover_authorization_path=tmp_path / "cutover-authorization.json",
     )
     manifest = SimpleNamespace(
         manifest_fingerprint_sha256="1" * 64,
