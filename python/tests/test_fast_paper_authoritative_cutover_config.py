@@ -46,6 +46,9 @@ def _environment(manifest) -> dict[str, str]:
         "SHREKS_FAST_PAPER_PENDING_BUY_RETRY_SOURCE_DIRECTORY": (
             "/var/lib/shreks/fast-paper-authoritative/pending-buy-retry-sources"
         ),
+        "SHREKS_FAST_PAPER_AUTHORITATIVE_BUY_WRITER_POLICY_PATH": (
+            "/etc/shreks/fast-paper-shadow-buy-writer-policy.json"
+        ),
     }
 
 
@@ -82,6 +85,9 @@ def test_authoritative_cutover_environment_round_trips_and_binds_database(
     assert config.decision_config.maximum_decisions == 1
     assert config.decision_config.checkpoint_path == Path(
         "/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json"
+    )
+    assert config.buy_writer_policy_path == Path(
+        "/etc/shreks/fast-paper-shadow-buy-writer-policy.json"
     )
 
 
