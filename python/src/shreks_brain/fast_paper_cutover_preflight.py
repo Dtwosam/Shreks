@@ -258,6 +258,16 @@ def assess_fast_paper_cutover_preflight(
             "isolated learned PAPER accounting must reconcile",
         ),
         _gate(
+            "SHADOW_CHECKPOINT_NOT_BEFORE_RESTART_PROOF",
+            (
+                shadow_sequence is not None
+                and shadow_sequence >= restart["post_checkpoint_sequence"]
+            ),
+            shadow_sequence,
+            restart["post_checkpoint_sequence"],
+            "current isolated PAPER checkpoint must not regress behind restart proof",
+        ),
+        _gate(
             "LEGACY_FINAL_CHECKPOINT_PRESENT",
             legacy_checkpoint is not None,
             legacy_sequence,
