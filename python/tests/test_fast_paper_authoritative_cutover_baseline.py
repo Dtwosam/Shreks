@@ -11,6 +11,7 @@ import pytest
 import shreks_brain.fast_paper_authoritative_cutover_baseline as baseline
 from shreks_brain.fast_paper_runtime.codec import (
     build_fast_paper_runtime_state,
+    write_fast_paper_runtime_manifest,
     write_fast_paper_runtime_state,
 )
 
@@ -53,6 +54,10 @@ def _setup(
     monkeypatch: pytest.MonkeyPatch,
 ):
     manifest = _manifest(tmp_path)
+    write_fast_paper_runtime_manifest(
+        manifest,
+        tmp_path / "manifest.json",
+    )
     source_state = build_fast_paper_runtime_state(
         manifest,
         cursor=None,
