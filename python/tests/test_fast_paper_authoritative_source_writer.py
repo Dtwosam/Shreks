@@ -353,6 +353,178 @@ def test_pending_buy_retry_writer_backpressures_without_executable_quote(
     ) == ()
 
 
+
+def test_pending_retry_derives_only_fresh_entry_quote(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = SimpleNamespace(
+        observer_database_path="/tmp/observer.db",
+        quote_provider="jupiter",
+        quote_mint="quote",
+        quote_decimals=9,
+    )
+    service = SimpleNamespace(
+        probe_policy_version="probe-v1",
+        taker="wallet",
+        slippage_bps=50,
+        entry_input_amount_raw=1_000,
+        exit_input_amount_raw=2_000,
+        route_evidence_version="route-v1",
+        max_quote_age_ms=5_000,
+    )
+    decision = SimpleNamespace(manifest=manifest, policy=service)
+    ledger = SimpleNamespace(starting_cash_usd=1_000.0)
+    execution = SimpleNamespace(
+        runtime_state=SimpleNamespace(
+            pending_buy=SimpleNamespace(target_exposure_fraction=0.25)
+        ),
+        checkpoint=SimpleNamespace(
+            state=SimpleNamespace(
+                as_of_unix_ms=100,
+                ledger=ledger,
+            )
+        ),
+    )
+    policy = SimpleNamespace(
+        market_read_policy=SimpleNamespace(),
+        operator_risk_control_path=Path("/tmp/operator.json"),
+        day_started_at_unix_ms=0,
+        data_healthy=True,
+        execution_healthy=True,
+        global_risk_halt=False,
+    )
+    feature = SimpleNamespace(
+        mint="mint",
+        quote_mint="quote",
+        decision_observed_at_unix_ms=90,
+    )
+    evidence = SimpleNamespace(feature_record=feature)
+    quote = SimpleNamespace(
+        state="EXECUTABLE",
+        observed_at_unix_ms=110,
+    )
+    usd = SimpleNamespace(
+        observed_at_unix_ms=111,
+        quote_to_usd_rate=150.0,
+    )
+    market_window = SimpleNamespace(
+        current=SimpleNamespace(
+            observed_at_unix_ms=112,
+            liquidity_usd=25_000.0,
+        )
+    )
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        writer,
+        "resolve_fast_paper_shadow_cycle_input",
+        lambda *_args, **_kwargs: pytest.fail(
+            "pending retry must not require full ENTRY+EXIT cycle evidence"
+        ),
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_candidate_id",
+        lambda *_args, **_kwargs: 7,
+    )
+
+    class Connection:
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(
+        writer,
+        "_open_query_only_database",
+        lambda _path: Connection(),
+    )
+    monkeypatch.setattr(writer, "_validate_schema", lambda _connection: None)
+    monkeypatch.setattr(
+        writer,
+        "_require_candidate_mint",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_base_decimals",
+        lambda *_args, **_kwargs: 6,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_resolve_quote",
+        lambda *_args, **_kwargs: quote,
+    )
+    monkeypatch.setattr(
+        writer,
+        "_quote_usd_for_feature",
+        lambda *_args, **_kwargs: (usd, market_window),
+    )
+    monkeypatch.setattr(
+        writer,
+        "ObserverPaperQuoteIdentity",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    class Campaign:
+        def __init__(self, _path):
+            pass
+
+        def latest_paper_quote(self, identity, _evaluated_at):
+            return SimpleNamespace(
+                identity=identity,
+                route_available=True,
+                quoted_at_unix_ms=quote.observed_at_unix_ms,
+                price_impact_pct=None,
+            )
+
+        def build_regime_market_window(self, *_args, **_kwargs):
+            pytest.fail(
+                "pending retry risk derivation must not require regime evidence"
+            )
+
+    monkeypatch.setattr(writer, "ObserverCampaignStore", Campaign)
+    monkeypatch.setattr(
+        writer,
+        "load_operator_risk_control_state",
+        lambda _path: SimpleNamespace(
+            updated_at_unix_ms=100,
+            kill_switch_active=False,
+            halt_new_entries=False,
+        ),
+    )
+    monkeypatch.setattr(
+        writer,
+        "FastDeterministicCampaignRiskEnvironment",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    risk = SimpleNamespace(name="risk")
+    monkeypatch.setattr(
+        writer,
+        "build_fast_deterministic_campaign_risk_context",
+        lambda *_args, **_kwargs: risk,
+    )
+    monkeypatch.setattr(
+        writer,
+        "FastPaperShadowPendingBuyRetryInput",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    result = writer._pending_retry_input(
+        decision,
+        execution,
+        policy,
+        evidence,
+        evaluated_at_unix_ms=120,
+    )
+
+    assert result is not None
+    retry, source_observed_at = result
+    assert retry.quote is quote
+    assert retry.quote_usd_evidence is usd
+    assert retry.risk_context is risk
+    assert source_observed_at == 112
+    assert captured["closed"] is True
+
+
 def test_authoritative_source_writer_has_no_shadow_ledger_or_external_network_authority() -> None:
     source = Path(writer.__file__).read_text(encoding="utf-8")
 
