@@ -215,6 +215,17 @@ def test_runtime_state_requires_exact_open_position_mapping(
     )
     mapping = _open_mapping(open_state)
 
+    with pytest.raises(ValueError, match="latest learned identity|event"):
+        runtime.build_fast_paper_authoritative_runtime_state(
+            manifest,
+            binding,
+            checkpoint,
+            market_positions=(mapping,),
+            execution_policy_fingerprint_sha256=(
+                policy.policy_fingerprint_sha256
+            ),
+        )
+
     built = runtime.build_fast_paper_authoritative_runtime_state(
         manifest,
         binding,
@@ -223,6 +234,9 @@ def test_runtime_state_requires_exact_open_position_mapping(
         execution_policy_fingerprint_sha256=(
             policy.policy_fingerprint_sha256
         ),
+        last_processed_source_sequence=1,
+        last_processed_source_event_id="event-buy",
+        last_processed_decision_evidence_fingerprint_sha256=_DECISION_FP,
     )
     assert built.market_positions == (mapping,)
 
