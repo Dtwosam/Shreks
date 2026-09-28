@@ -512,13 +512,16 @@ def run_fast_paper_authoritative_pending_buy_retry_writer_cycle(
         clock,
         minimum=checkpoint.state.as_of_unix_ms,
     )
-    retry_input, source_observed_at = _pending_retry_input(
+    retry_candidate = _pending_retry_input(
         decision_bootstrap,
         execution_bootstrap,
         writer_policy,
         evidence,
         evaluated_at_unix_ms=evaluated_at,
     )
+    if retry_candidate is None:
+        return 0
+    retry_input, source_observed_at = retry_candidate
     record = build_fast_paper_authoritative_pending_buy_retry_source_record(
         manifest,
         execution_bootstrap,
@@ -791,7 +794,7 @@ def _pending_retry_input(
     evidence: FastPaperShadowDecisionEvidence,
     *,
     evaluated_at_unix_ms: int,
-) -> tuple[FastPaperShadowPendingBuyRetryInput, int]:
+) -> tuple[FastPaperShadowPendingBuyRetryInput, int] | None:
     manifest = decision_bootstrap.manifest
     service = decision_bootstrap.policy
     feature = evidence.feature_record
@@ -832,9 +835,7 @@ def _pending_retry_input(
     )
     quote = cycle.entry_quote
     if quote.state != "EXECUTABLE":
-        raise ValueError(
-            "authoritative pending BUY retry requires executable persisted ENTRY quote"
-        )
+        return None
     usd, market_window = _quote_usd_for_feature(
         decision_bootstrap,
         writer_policy,
