@@ -22,11 +22,19 @@ from .authoritative_file_authority import (
     resolve_fast_paper_authoritative_execution_authority,
     resolve_fast_paper_authoritative_pending_buy_retry,
 )
+from .authoritative_source_writer import (
+    run_fast_paper_authoritative_source_writer_cycle,
+)
 from .authoritative_service_execution import (
     FastPaperAuthoritativeServiceExecutionBootstrap,
     FastPaperAuthoritativeServiceExecutionConfig,
     bootstrap_fast_paper_authoritative_service_execution,
     load_fast_paper_authoritative_service_execution_config,
+)
+from .shadow_buy_writer_policy import (
+    FastPaperShadowBuyWriterPolicy,
+    read_fast_paper_shadow_buy_writer_policy,
+    verify_fast_paper_shadow_buy_writer_policy_bindings,
 )
 from .shadow_service import (
     FastPaperShadowServiceBootstrap,
@@ -53,6 +61,7 @@ class FastPaperAuthoritativeRuntimeConfig:
     quote_usd_source_directory: Path
     reduction_source_directory: Path
     pending_buy_retry_source_directory: Path
+    buy_writer_policy_path: Path
 
     def __post_init__(self) -> None:
         if type(self.decision_config) is not FastPaperShadowServiceConfig:
@@ -71,6 +80,7 @@ class FastPaperAuthoritativeRuntimeConfig:
             "quote_usd_source_directory",
             "reduction_source_directory",
             "pending_buy_retry_source_directory",
+            "buy_writer_policy_path",
         ):
             value = getattr(self, name)
             if not isinstance(value, Path):
@@ -83,6 +93,7 @@ class FastPaperAuthoritativeRuntimeConfig:
 class FastPaperAuthoritativeRuntimeBootstrap:
     decision_bootstrap: FastPaperShadowServiceBootstrap
     execution_bootstrap: FastPaperAuthoritativeServiceExecutionBootstrap
+    buy_writer_policy: FastPaperShadowBuyWriterPolicy
 
     def __post_init__(self) -> None:
         if type(self.decision_bootstrap) is not FastPaperShadowServiceBootstrap:
@@ -95,6 +106,10 @@ class FastPaperAuthoritativeRuntimeBootstrap:
         ):
             raise ValueError(
                 "execution_bootstrap must be exact FastPaperAuthoritativeServiceExecutionBootstrap"
+            )
+        if type(self.buy_writer_policy) is not FastPaperShadowBuyWriterPolicy:
+            raise ValueError(
+                "buy_writer_policy must be exact FastPaperShadowBuyWriterPolicy"
             )
 
 
@@ -165,6 +180,9 @@ def load_fast_paper_authoritative_runtime_config(
             pending_buy_retry_source_directory=required_path(
                 "SHREKS_FAST_PAPER_PENDING_BUY_RETRY_SOURCE_DIRECTORY"
             ),
+            buy_writer_policy_path=required_path(
+                "SHREKS_FAST_PAPER_AUTHORITATIVE_BUY_WRITER_POLICY_PATH"
+            ),
         )
     except FastPaperAuthoritativeRuntimeError:
         raise
@@ -191,6 +209,14 @@ def bootstrap_fast_paper_authoritative_runtime(
                 config.execution_config,
             )
         )
+        buy_writer_policy = read_fast_paper_shadow_buy_writer_policy(
+            config.buy_writer_policy_path
+        )
+        verify_fast_paper_shadow_buy_writer_policy_bindings(
+            decision_bootstrap.manifest,
+            decision_bootstrap.policy,
+            buy_writer_policy,
+        )
         _validate_source_directories(config)
     except (
         FastPaperShadowServiceError,
@@ -204,6 +230,7 @@ def bootstrap_fast_paper_authoritative_runtime(
     return FastPaperAuthoritativeRuntimeBootstrap(
         decision_bootstrap=decision_bootstrap,
         execution_bootstrap=execution_bootstrap,
+        buy_writer_policy=buy_writer_policy,
     )
 
 
@@ -276,6 +303,27 @@ def run_fast_paper_authoritative_runtime_cycle(
         )
 
     try:
+        run_fast_paper_authoritative_source_writer_cycle(
+            bootstrap.decision_bootstrap,
+            bootstrap.execution_bootstrap,
+            bootstrap.buy_writer_policy,
+            decision_evidence_directory=(
+                config.decision_config.evidence_directory
+            ),
+            buy_authority_source_directory=(
+                config.buy_authority_source_directory
+            ),
+            quote_usd_source_directory=(
+                config.quote_usd_source_directory
+            ),
+            reduction_source_directory=(
+                config.reduction_source_directory
+            ),
+            pending_buy_retry_source_directory=(
+                config.pending_buy_retry_source_directory
+            ),
+            clock_unix_ms=lambda: now,
+        )
         result = run_fast_paper_authoritative_coordinated_cycle(
             bootstrap.decision_bootstrap,
             config.decision_config,
@@ -307,6 +355,7 @@ def run_fast_paper_authoritative_runtime_cycle(
         FastPaperAuthoritativeRuntimeBootstrap(
             decision_bootstrap=result.decision_bootstrap,
             execution_bootstrap=result.execution_bootstrap,
+            buy_writer_policy=bootstrap.buy_writer_policy,
         ),
         result.decisions_produced,
         result.executions_committed,
