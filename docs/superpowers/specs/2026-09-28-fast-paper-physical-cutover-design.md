@@ -69,7 +69,9 @@ Mutation order is:
 ```text
 stop legacy shreks-paper-campaign.service
 -> require inactive/dead
--> re-run final CUTOVER_PREFLIGHT_READY against stopped legacy state
+-> load the exact final legacy checkpoint
+-> atomically refresh the still-pristine provisional Fast handoff from that checkpoint
+-> re-run final CUTOVER_PREFLIGHT_READY against stopped legacy + refreshed Fast state
 -> create exact cutover authorization
 -> atomically replace shreks-paper-campaign.service bytes with sealed Fast unit
 -> systemctl daemon-reload
@@ -117,31 +119,43 @@ signing_submission_authority=NOT_GRANTED
 live_authority=DISABLED
 ```
 
+## Final handoff refresh
+
+Legacy PAPER persists a checkpoint after every non-idempotent cycle. Therefore
+a provisional Fast handoff created while legacy remains active cannot be treated
+as the final accounting boundary.
+
+After legacy is stopped, the ceremony reads the exact latest flat legacy
+checkpoint and atomically replaces only the still-pristine provisional Fast
+namespace:
+
+- exactly one Fast binding row;
+- exactly one Fast checkpoint at sequence 0;
+- exactly one Fast authoritative runtime-state row at checkpoint sequence 0.
+
+Refresh is forbidden after any Fast checkpoint advancement, learned execution
+cursor, pending BUY, mapped position, or incompatible release/policy identity.
+Legacy rows are never modified or deleted.
+
+The refreshed Fast sequence-0 checkpoint copies the final unchanged
+`PaperLedger`, then the normal cutover preflight proves exact final legacy
+identity and accounting equality before authorization is issued.
+
 ## Rollback boundary
 
-The ceremony snapshots all authoritative durable state before stopping legacy.
+There are two phases.
 
-If any failure occurs after legacy stop, the Fast service is stopped and the
-authorization is revoked.
+**Before the first Fast start attempt**, a failure may restore/restart the exact
+legacy unit. No Fast PAPER process has held authority yet; a non-economic
+provisional handoff refresh does not change that rule.
 
-Automatic legacy restart is permitted only when the authoritative snapshot is
-**exactly unchanged** from the pre-cutover snapshot.
+**At or after the first Fast start attempt**, the legacy score-gated runtime is
+never restored as PAPER authority. The Fast service is stopped, authorization
+is revoked, legacy unit bytes may be restored for filesystem recovery, but
+PAPER authority remains stopped for manual recovery (or a separately proven
+known-good Fast release).
 
-That means no change to:
-
-- learned decision state/cursor;
-- decision-directory members;
-- authoritative PAPER checkpoint;
-- authoritative runtime-state fingerprint/cursor;
-- pending BUY/open-position identity;
-- source-authority directory members.
-
-When unchanged, the legacy unit is restored if necessary, daemon-reloaded if
-necessary, and the exact release-local legacy runtime is restarted.
-
-If any authoritative durable state changed, the legacy unit bytes are restored
-but the legacy service is **not** restarted. PAPER authority remains stopped and
-a root-private receipt records:
+The failure receipt records:
 
 ```text
 state=MANUAL_RECOVERY_REQUIRED
@@ -193,10 +207,11 @@ Tests must prove:
 5. final cutover preflight executes only after legacy stop;
 6. sealed Fast unit replaces the active unit atomically;
 7. runtime starts with `GRANTED_AND_ACTIVE` status and LIVE disabled;
-8. unchanged-state failure restores legacy automatically;
-9. changed-state failure never restarts legacy and emits manual-recovery proof;
-10. unreviewed systemd operations are rejected by the command allowlist;
-11. Python, Rust, ARM64, and repository-safety CI remain green.
+8. final legacy checkpoint refresh replaces only a pristine Fast sequence-0 namespace;
+9. pre-Fast-start failure may restore legacy automatically;
+10. any failure at/after Fast start never restores legacy score authority, even if durable Fast state is unchanged;
+11. unreviewed systemd operations are rejected by the command allowlist;
+12. Python, Rust, ARM64, and repository-safety CI remain green.
 
 ## After this slice
 
