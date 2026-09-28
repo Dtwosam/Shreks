@@ -70,8 +70,9 @@ Mutation order is:
 stop legacy shreks-paper-campaign.service
 -> require inactive/dead
 -> load the exact final legacy checkpoint
--> atomically refresh the still-pristine provisional Fast handoff from that checkpoint
--> re-run final CUTOVER_PREFLIGHT_READY against stopped legacy + refreshed Fast state
+-> initialize a fresh final Fast run namespace from that checkpoint
+-> atomically retarget the authoritative env from the provisional run ID to the final run ID
+-> re-run final CUTOVER_PREFLIGHT_READY against stopped legacy + final Fast state
 -> create exact cutover authorization
 -> atomically replace shreks-paper-campaign.service bytes with sealed Fast unit
 -> systemctl daemon-reload
@@ -119,25 +120,33 @@ signing_submission_authority=NOT_GRANTED
 live_authority=DISABLED
 ```
 
-## Final handoff refresh
+## Final handoff initialization
 
 Legacy PAPER persists a checkpoint after every non-idempotent cycle. Therefore
-a provisional Fast handoff created while legacy remains active cannot be treated
+the provisional Fast run used for protected host preparation cannot be treated
 as the final accounting boundary.
 
+The operator supplies an explicit **final Fast run ID** before the ceremony.
+It must differ from the provisional run ID.
+
 After legacy is stopped, the ceremony reads the exact latest flat legacy
-checkpoint and atomically replaces only the still-pristine provisional Fast
-namespace:
+checkpoint and initializes a brand-new Fast namespace through the existing
+append-only authoritative handoff transaction:
 
-- exactly one Fast binding row;
-- exactly one Fast checkpoint at sequence 0;
-- exactly one Fast authoritative runtime-state row at checkpoint sequence 0.
+- one new Fast binding row;
+- one new Fast checkpoint at sequence 0;
+- one new authoritative runtime-state row at checkpoint sequence 0.
 
-Refresh is forbidden after any Fast checkpoint advancement, learned execution
-cursor, pending BUY, mapped position, or incompatible release/policy identity.
-Legacy rows are never modified or deleted.
+The provisional Fast rows are never deleted, updated, or reused. Legacy rows
+are never modified or deleted.
 
-The refreshed Fast sequence-0 checkpoint copies the final unchanged
+After the final namespace is committed, the protected authoritative environment
+is atomically rewritten with only
+`SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID` changed to the final run ID. The
+canonical environment is revalidated and the authoritative runtime must
+bootstrap the newly created binding/checkpoint exactly.
+
+The final Fast sequence-0 checkpoint copies the final unchanged
 `PaperLedger`, then the normal cutover preflight proves exact final legacy
 identity and accounting equality before authorization is issued.
 
@@ -207,11 +216,12 @@ Tests must prove:
 5. final cutover preflight executes only after legacy stop;
 6. sealed Fast unit replaces the active unit atomically;
 7. runtime starts with `GRANTED_AND_ACTIVE` status and LIVE disabled;
-8. final legacy checkpoint refresh replaces only a pristine Fast sequence-0 namespace;
-9. pre-Fast-start failure may restore legacy automatically;
-10. any failure at/after Fast start never restores legacy score authority, even if durable Fast state is unchanged;
-11. unreviewed systemd operations are rejected by the command allowlist;
-12. Python, Rust, ARM64, and repository-safety CI remain green.
+8. stopped legacy creates a fresh final Fast sequence-0 run without mutating provisional/legacy history;
+9. authoritative env retargeting changes only the Fast run ID and is canonical;
+10. pre-Fast-start failure may restore the provisional env and legacy authority;
+11. any failure at/after Fast start never restores legacy score authority, even if durable Fast state is unchanged;
+12. unreviewed systemd operations are rejected by the command allowlist;
+13. Python, Rust, ARM64, and repository-safety CI remain green.
 
 ## After this slice
 
