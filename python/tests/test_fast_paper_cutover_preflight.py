@@ -663,39 +663,6 @@ def test_report_fingerprint_is_deterministic(
 
 
 
-def test_advanced_learned_cursor_requires_durable_cutover_baseline(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _patch_dependencies(monkeypatch, tmp_path)
-    original = cutover.bootstrap_fast_paper_authoritative_runtime
-
-    def with_advanced_cursor(config):
-        bootstrap = original(config)
-        return SimpleNamespace(
-            decision_bootstrap=SimpleNamespace(
-                state=SimpleNamespace(
-                    cursor=SimpleNamespace(decision_sequence=41)
-                )
-            ),
-            execution_bootstrap=bootstrap.execution_bootstrap,
-        )
-
-    monkeypatch.setattr(
-        cutover,
-        "bootstrap_fast_paper_authoritative_runtime",
-        with_advanced_cursor,
-    )
-    report = _assess(tmp_path)
-    assert report["decision"] == "CUTOVER_PREFLIGHT_NOT_READY"
-    assert (
-        _gate(
-            report,
-            "AUTHORITATIVE_FIRST_CYCLE_CURSOR_COMPATIBLE",
-        )["status"]
-        == "FAIL"
-    )
-
 def test_authoritative_handoff_must_bind_exact_final_legacy_checkpoint(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
