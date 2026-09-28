@@ -232,6 +232,7 @@ def preflight_fast_paper_release_upgrade(
     *,
     paths: FastPaperReleaseUpgradePaths,
     runtime_executable: str | os.PathLike[str] | None = None,
+    command_runner: CommandRunner | None = None,
 ) -> dict[str, object]:
     _require_root()
     source = _load_source_context(
@@ -247,7 +248,8 @@ def preflight_fast_paper_release_upgrade(
         raise FastPaperReleaseUpgradeError(
             "target release must differ from current Fast PAPER release"
         )
-    state = _read_systemd_state(_default_command_runner)
+    runner = _default_command_runner if command_runner is None else command_runner
+    state = _read_systemd_state(runner)
     _require_running(state, "authoritative Fast PAPER service")
     _verify_fast_process(
         paths,
@@ -590,6 +592,7 @@ def activate_fast_paper_release_upgrade(
                         backup,
                         paths=paths,
                         runner=runner,
+                        sleeper=sleeper,
                     )
             except Exception as recovery_error:
                 raise FastPaperReleaseUpgradeError(
@@ -1122,6 +1125,7 @@ def _restore_source_before_target_start(
     *,
     paths: FastPaperReleaseUpgradePaths,
     runner: CommandRunner,
+    sleeper: Sleeper,
 ) -> None:
     _stop_all_runtime_best_effort(runner)
     for path, payload in backup.control_payloads.items():
@@ -1151,7 +1155,7 @@ def _restore_source_before_target_start(
         mode=stat.S_IMODE(backup.authorization_stat.st_mode),
     )
     _run(runner, ("systemctl", "start", _TARGET), "restart source Fast release")
-    running = _wait_running(runner, timeout_seconds=30, sleeper=time.sleep)
+    running = _wait_running(runner, timeout_seconds=30, sleeper=sleeper)
     _verify_fast_process(paths, backup.current_release, running)
 
 
