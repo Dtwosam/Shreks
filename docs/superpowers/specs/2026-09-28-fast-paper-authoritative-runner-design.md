@@ -106,7 +106,7 @@ Required behavior:
 - completed BUY retry cannot execute twice;
 - open-position mapping remains exactly aligned with OPEN `PaperLedger`
   positions;
-- authoritative atomic commit retains accounting reconciliation checks.
+- authoritative atomic commit retains accounting validation: INVALID is rejected, while an open position may remain INCOMPLETE until mark evidence exists.
 
 ## Authority firewall
 
@@ -145,8 +145,13 @@ LIVE=DISABLED
 5. completed retry cannot run again;
 6. tampered original decision evidence is rejected;
 7. authoritative market mapping and OPEN ledger position remain coherent;
-8. source contains no scoring, shadow-storage mutation, service-control,
+8. open-position accounting is never INVALID (INCOMPLETE remains valid when mark evidence is absent);
+9. source contains no scoring, shadow-storage mutation, service-control,
    signing/submission, or LIVE authority.
+
+## Public API boundary
+
+The existing `shreks_brain.fast_paper_runtime.__all__` contract remains sealed. The authoritative runner is imported explicitly from `fast_paper_runtime.authoritative_runner`, matching the existing authoritative handoff/commit modules and avoiding an unrelated package-surface expansion.
 
 ## Following slice
 
