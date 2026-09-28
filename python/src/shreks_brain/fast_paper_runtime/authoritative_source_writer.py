@@ -641,6 +641,14 @@ def _produce_authoritative_buy_authority(
         raise ValueError(
             "authoritative BUY execution evidence type is incompatible"
         )
+    if (
+        execution_evidence.champion_version != manifest.champion_version
+        or execution_evidence.champion_fingerprint_sha256
+        != manifest.champion_fingerprint_sha256
+    ):
+        raise ValueError(
+            "authoritative BUY execution evidence champion does not match runtime manifest"
+        )
 
     store = ObserverMarketStore(manifest.observer_database_path)
     market_window = store.load_window(
@@ -649,6 +657,13 @@ def _produce_authoritative_buy_authority(
         writer_policy.market_read_policy,
         required_quote_mint=manifest.quote_mint,
     )
+    if (
+        market_window.candidate.candidate_id != candidate_id
+        or market_window.candidate.mint != feature.mint
+    ):
+        raise ValueError(
+            "authoritative BUY market window candidate does not match learned decision"
+        )
     campaign = ObserverCampaignStore(manifest.observer_database_path)
     entry_identity = ObserverPaperQuoteIdentity(
         candidate_id=candidate_id,
@@ -665,7 +680,15 @@ def _produce_authoritative_buy_authority(
         entry_identity,
         evidence.evaluated_at_unix_ms,
     )
-    if raw_entry is None or not raw_entry.route_available:
+    if raw_entry is None:
+        raise ValueError(
+            "authoritative BUY persisted ENTRY price-impact evidence is missing"
+        )
+    if raw_entry.identity != entry_identity:
+        raise ValueError(
+            "authoritative BUY persisted ENTRY quote identity mismatch"
+        )
+    if not raw_entry.route_available:
         return None
     if (
         raw_entry.quoted_at_unix_ms
@@ -844,6 +867,33 @@ def _pending_retry_input(
         evaluated_at_unix_ms=evaluated_at_unix_ms,
     )
     campaign = ObserverCampaignStore(manifest.observer_database_path)
+    entry_identity = ObserverPaperQuoteIdentity(
+        candidate_id=candidate_id,
+        purpose=ObserverPaperQuotePurpose.ENTRY,
+        provider=manifest.quote_provider,
+        probe_policy_version=quote_policy.probe_policy_version,
+        input_mint=manifest.quote_mint,
+        output_mint=feature.mint,
+        taker=quote_policy.taker,
+        input_amount=quote_policy.entry_input_amount_raw,
+        slippage_bps=quote_policy.slippage_bps,
+    )
+    raw_entry = campaign.latest_paper_quote(
+        entry_identity,
+        evaluated_at_unix_ms,
+    )
+    if raw_entry is None:
+        return None
+    if raw_entry.identity != entry_identity:
+        raise ValueError(
+            "authoritative pending BUY persisted ENTRY quote identity mismatch"
+        )
+    if not raw_entry.route_available:
+        return None
+    if raw_entry.quoted_at_unix_ms != quote.observed_at_unix_ms:
+        raise ValueError(
+            "authoritative pending BUY persisted ENTRY quote timestamp drifted"
+        )
     regime_market = campaign.build_regime_market_window(
         evaluated_at_unix_ms,
         writer_policy.regime_read_policy,
@@ -858,14 +908,24 @@ def _pending_retry_input(
         raise ValueError(
             "authoritative pending BUY operator control is from the future"
         )
+    impact = _price_impact(raw_entry.price_impact_pct)
+    impact_notional = (
+        None
+        if impact is None
+        else _entry_notional_usd(
+            quote_policy.entry_input_amount_raw,
+            quote_decimals=manifest.quote_decimals,
+            quote_to_usd_rate=usd.quote_to_usd_rate,
+        )
+    )
     risk_environment = FastDeterministicCampaignRiskEnvironment(
         trading_capital_usd=(
             execution_bootstrap.checkpoint.state.ledger.starting_cash_usd
         ),
         day_started_at_unix_ms=writer_policy.day_started_at_unix_ms,
         liquidity_usd=market_window.current.liquidity_usd,
-        expected_price_impact_pct=None,
-        price_impact_notional_usd=None,
+        expected_price_impact_pct=impact,
+        price_impact_notional_usd=impact_notional,
         market_observed_at_unix_ms=min(
             market_window.current.observed_at_unix_ms,
             usd.observed_at_unix_ms,
@@ -949,6 +1009,13 @@ def _quote_usd_for_feature(
         writer_policy.market_read_policy,
         required_quote_mint=manifest.quote_mint,
     )
+    if (
+        window.candidate.candidate_id != candidate_id
+        or window.candidate.mint != feature.mint
+    ):
+        raise ValueError(
+            "authoritative quote/USD market window candidate does not match learned decision"
+        )
     current = window.current
     evidence = store.quote_asset_usd_evidence(
         candidate_id,
