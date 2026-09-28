@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -275,12 +276,67 @@ def _patch_common(monkeypatch, paths, config):
     )
     monkeypatch.setattr(
         cutover,
+        "_require_final_run_namespace_unused",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        cutover,
         "_initialize_final_legacy_handoff",
         lambda supplied_config, **_kwargs: (
             supplied_config,
             _bootstrap(),
         ),
     )
+
+
+def test_final_fast_run_namespace_must_be_unused_across_all_authoritative_tables(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "observer.sqlite3"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            """
+            CREATE TABLE fast_paper_authoritative_bindings (
+                fast_run_id TEXT PRIMARY KEY
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE paper_loop_checkpoints (
+                run_id TEXT NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE fast_paper_authoritative_runtime_states (
+                fast_run_id TEXT NOT NULL
+            )
+            """
+        )
+        connection.commit()
+    config = SimpleNamespace(
+        execution_config=SimpleNamespace(database_path=database)
+    )
+
+    cutover._require_final_run_namespace_unused(config, _FINAL_RUN_ID)
+
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "INSERT INTO paper_loop_checkpoints(run_id) VALUES (?)",
+            (_FINAL_RUN_ID,),
+        )
+        connection.commit()
+
+    with pytest.raises(
+        cutover.FastPaperPhysicalCutoverError,
+        match="already used",
+    ):
+        cutover._require_final_run_namespace_unused(
+            config,
+            _FINAL_RUN_ID,
+        )
 
 
 def test_final_handoff_initializes_fresh_run_and_retargets_environment(
