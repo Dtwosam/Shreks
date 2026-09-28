@@ -714,6 +714,66 @@ the source for closed-position exit timing. FL11.3 cannot change PAPER state,
 promote a champion, grant production cutover, sign/submit transactions, or
 enable LIVE.
 
+### Assess FL11.4 champion promotion readiness
+
+Only after FL11.1, FL11.2a, FL11.2b, and FL11.3 have been produced for
+the **same exact release, Fast Lane champion, shadow binding, and evidence
+window** may an operator assess promotion readiness.
+
+First create and review one canonical FL11.4 promotion-policy JSON. The policy
+has no repository default thresholds; it must explicitly set the accepted
+minimum after-cost expectancy/profit factor and the accepted maximum drawdown,
+cost burden, tail loss, expected-vs-realized error, entry slippage, capital
+utilization, missed-opportunity rate, and missed-opportunity mean. Use
+`encode_fast_paper_shadow_promotion_policy(...)` from
+`shreks_brain.fast_paper_shadow_promotion_readiness` so the reviewed policy is
+canonical and fingerprinted.
+
+Then run:
+
+```sh
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+
+sudo -u shreks \
+  "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-shadow-promotion-readiness" \
+  --manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --sample-proof-path <canonical-fl11.1-sample-proof.json> \
+  --trade-economics-path <canonical-fl11.2a-trade-economics.json> \
+  --missed-opportunity-path <canonical-fl11.2b-missed-opportunity.json> \
+  --latency-proof-path <canonical-fl11.3-latency-proof.json> \
+  --promotion-policy-path <reviewed-canonical-fl11.4-promotion-policy.json> \
+  --expected-release-sha "$CURRENT_SHA"
+```
+
+The command authenticates the runtime manifest and immutable champion binding,
+then independently verifies every input report's canonical bytes, report
+fingerprint, schema, authority firewall, release/champion/action-policy
+identity, ledger binding, evidence window, and FL11.1 sample-proof reference.
+Identity or fingerprint drift is a hard failure, not a weak-performance result.
+
+The readiness gates are explicit and report their observed and threshold
+values. Required unavailable metrics fail closed. FL11.2b must be fully
+scorable for every SKIP in the window; a window containing no SKIP decisions
+has explicit zero missed-opportunity rate and mean. FL11.3 must be
+`LATENCY_PROVEN`.
+
+The result is only `PROMOTION_READY` or `PROMOTION_NOT_READY`. Even
+`PROMOTION_READY` is evidence only:
+
+```text
+promotion_authority=NOT_GRANTED
+production_paper_cutover=NOT_GRANTED
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+Do not treat this command as champion activation. It does not write the Fast
+Lane champion artifact, mutate a registry/runtime manifest, change PAPER
+authority, sign/submit transactions, or enable LIVE. A separate later FL11.4
+transition must provide a Fast Lane-native atomic and auditable champion
+activation contract before any replacement of the approved champion.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
