@@ -604,3 +604,14 @@ def test_release_upgrade_source_has_no_scoring_signing_or_live_authority() -> No
         "systemctl disable",
     ):
         assert forbidden not in source
+
+
+def test_release_manager_console_launcher_is_registered() -> None:
+    pyproject = (
+        Path(__file__).resolve().parents[1] / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert (
+        'shreks-fast-paper-release-manager = '
+        '"shreks_brain.fast_paper_release_upgrade:main"'
+        in pyproject
+    )
