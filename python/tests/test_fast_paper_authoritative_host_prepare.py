@@ -145,9 +145,13 @@ def test_host_preflight_authenticates_writer_policy_and_runtime(
         decision_config=SimpleNamespace(
             evidence_directory=dirs[0],
             checkpoint_path=checkpoint,
+            manifest_path=tmp_path / "manifest.json",
             policy_path=tmp_path / "service-policy.json",
         ),
-        execution_config=SimpleNamespace(source_directory=dirs[1]),
+        execution_config=SimpleNamespace(
+            source_directory=dirs[1],
+            execution_policy_path=tmp_path / "execution-policy.json",
+        ),
         buy_authority_source_directory=dirs[2],
         quote_usd_source_directory=dirs[3],
         reduction_source_directory=dirs[4],
