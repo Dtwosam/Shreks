@@ -84,8 +84,8 @@ def _transition(
     policy,
     *,
     market_positions=(),
-    sequence: int | None = 10,
-    event_id: str | None = "event-10",
+    sequence: int | None = 1,
+    event_id: str | None = "event-buy",
     evidence_fp: str | None = _DECISION_FP,
 ):
     return commit.FastPaperAuthoritativeTransition(
@@ -280,8 +280,8 @@ def test_atomic_commit_writes_exact_checkpoint_runtime_pair(
         == result.checkpoint.payload_sha256
     )
     assert result.runtime_state.market_positions == (mapping,)
-    assert result.runtime_state.last_processed_source_sequence == 10
-    assert result.runtime_state.last_processed_source_event_id == "event-10"
+    assert result.runtime_state.last_processed_source_sequence == 1
+    assert result.runtime_state.last_processed_source_event_id == "event-buy"
 
     restored_checkpoint = load_latest_fast_paper_checkpoint(
         database,
@@ -332,8 +332,8 @@ def test_atomic_commit_rejects_stale_checkpoint_or_runtime(
             _transition(
                 first.checkpoint.state,
                 policy,
-                sequence=11,
-                event_id="event-11",
+                sequence=2,
+                event_id="event-2",
                 evidence_fp="b" * 64,
             ),
             sequence=1,
@@ -349,8 +349,8 @@ def test_atomic_commit_rejects_stale_checkpoint_or_runtime(
             _transition(
                 first.checkpoint.state,
                 policy,
-                sequence=11,
-                event_id="event-11",
+                sequence=2,
+                event_id="event-2",
                 evidence_fp="b" * 64,
             ),
             sequence=2,
@@ -392,8 +392,8 @@ def test_deferred_execution_commit_may_preserve_learned_identity(
         created_at_unix_ms=retry_state.as_of_unix_ms,
     )
 
-    assert retry.runtime_state.last_processed_source_sequence == 10
-    assert retry.runtime_state.last_processed_source_event_id == "event-10"
+    assert retry.runtime_state.last_processed_source_sequence == 1
+    assert retry.runtime_state.last_processed_source_event_id == "event-buy"
     assert (
         retry.runtime_state.last_processed_decision_evidence_fingerprint_sha256
         == _DECISION_FP
@@ -403,9 +403,9 @@ def test_deferred_execution_commit_may_preserve_learned_identity(
 @pytest.mark.parametrize(
     ("sequence", "event_id", "evidence_fp", "match"),
     (
-        (9, "event-9", "9" * 64, "regress|sequence"),
-        (10, "changed-event", _DECISION_FP, "identity|event"),
-        (10, "event-10", "b" * 64, "identity|fingerprint"),
+        (0, "event-0", "9" * 64, "sequence"),
+        (1, "changed-event", _DECISION_FP, "identity|event"),
+        (1, "event-buy", "b" * 64, "identity|fingerprint"),
     ),
 )
 def test_learned_identity_cannot_regress_or_mutate_in_place(
