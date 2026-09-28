@@ -12,6 +12,11 @@ import time
 from types import FrameType
 from typing import Callable
 
+from shreks_brain.fast_paper_cutover_authorization import (
+    read_fast_paper_cutover_authorization,
+    verify_fast_paper_cutover_authorization,
+)
+
 from .authoritative_coordinator import (
     FastPaperAuthoritativeCoordinatorResult,
     run_fast_paper_authoritative_coordinated_cycle,
@@ -62,6 +67,7 @@ class FastPaperAuthoritativeRuntimeConfig:
     reduction_source_directory: Path
     pending_buy_retry_source_directory: Path
     buy_writer_policy_path: Path
+    cutover_authorization_path: Path
 
     def __post_init__(self) -> None:
         if type(self.decision_config) is not FastPaperShadowServiceConfig:
@@ -81,6 +87,7 @@ class FastPaperAuthoritativeRuntimeConfig:
             "reduction_source_directory",
             "pending_buy_retry_source_directory",
             "buy_writer_policy_path",
+            "cutover_authorization_path",
         ):
             value = getattr(self, name)
             if not isinstance(value, Path):
@@ -182,6 +189,9 @@ def load_fast_paper_authoritative_runtime_config(
             ),
             buy_writer_policy_path=required_path(
                 "SHREKS_FAST_PAPER_AUTHORITATIVE_BUY_WRITER_POLICY_PATH"
+            ),
+            cutover_authorization_path=required_path(
+                "SHREKS_FAST_PAPER_CUTOVER_AUTHORIZATION_PATH"
             ),
         )
     except FastPaperAuthoritativeRuntimeError:
@@ -365,11 +375,25 @@ def run_fast_paper_authoritative_runtime_cycle(
 def run_fast_paper_authoritative_runtime(
     config: FastPaperAuthoritativeRuntimeConfig,
     *,
+    bootstrap: FastPaperAuthoritativeRuntimeBootstrap | None = None,
+    production_paper_cutover: str = "NOT_GRANTED",
     stop_event: Event | object | None = None,
     clock_unix_ms: Callable[[], int] | None = None,
     status_sink: Callable[[str], object] | None = None,
 ) -> tuple[int, int]:
-    bootstrap = bootstrap_fast_paper_authoritative_runtime(config)
+    if production_paper_cutover not in (
+        "NOT_GRANTED",
+        "GRANTED_AND_ACTIVE",
+    ):
+        raise FastPaperAuthoritativeRuntimeError(
+            "production PAPER cutover state is incompatible"
+        )
+    if bootstrap is None:
+        bootstrap = bootstrap_fast_paper_authoritative_runtime(config)
+    elif type(bootstrap) is not FastPaperAuthoritativeRuntimeBootstrap:
+        raise FastPaperAuthoritativeRuntimeError(
+            "bootstrap must be exact FastPaperAuthoritativeRuntimeBootstrap"
+        )
     event = Event() if stop_event is None else stop_event
     sink = print if status_sink is None else status_sink
     completed_cycles = 0
@@ -394,6 +418,7 @@ def run_fast_paper_authoritative_runtime(
                 completed_cycles=completed_cycles,
                 decisions_produced=decisions_produced,
                 executions_committed=executions_committed,
+                production_paper_cutover=production_paper_cutover,
             )
         )
         if event.wait(config.decision_config.cycle_interval_seconds):
@@ -411,8 +436,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         config = load_fast_paper_authoritative_runtime_config()
+        bootstrap = bootstrap_fast_paper_authoritative_runtime(config)
         if args == ["--preflight"]:
-            bootstrap = bootstrap_fast_paper_authoritative_runtime(config)
             print(
                 _status_line(
                     bootstrap,
@@ -420,15 +445,35 @@ def main(argv: list[str] | None = None) -> int:
                     completed_cycles=0,
                     decisions_produced=0,
                     executions_committed=0,
+                    production_paper_cutover="NOT_GRANTED",
                 )
             )
             return 0
+
+        try:
+            authorization = read_fast_paper_cutover_authorization(
+                config.cutover_authorization_path
+            )
+            verify_fast_paper_cutover_authorization(
+                authorization,
+                manifest=bootstrap.decision_bootstrap.manifest,
+                binding=bootstrap.execution_bootstrap.binding,
+                execution_policy=(
+                    bootstrap.execution_bootstrap.execution_policy
+                ),
+            )
+        except Exception as exc:
+            raise FastPaperAuthoritativeRuntimeError(
+                "production PAPER cutover authorization failed closed"
+            ) from exc
 
         event = Event()
         previous = _install_signal_handlers(event)
         try:
             run_fast_paper_authoritative_runtime(
                 config,
+                bootstrap=bootstrap,
+                production_paper_cutover="GRANTED_AND_ACTIVE",
                 stop_event=event,
             )
         finally:
@@ -494,6 +539,7 @@ def _status_line(
     completed_cycles: int,
     decisions_produced: int,
     executions_committed: int,
+    production_paper_cutover: str = "NOT_GRANTED",
 ) -> str:
     decision = bootstrap.decision_bootstrap
     execution = bootstrap.execution_bootstrap
@@ -504,7 +550,7 @@ def _status_line(
         "schema_version": _STATUS_SCHEMA_VERSION,
         "mode": "PAPER_AUTHORITATIVE_FAST",
         "state": state,
-        "production_paper_cutover": "NOT_GRANTED",
+        "production_paper_cutover": production_paper_cutover,
         "service_control_authority": "NOT_GRANTED",
         "signing_submission_authority": "NOT_GRANTED",
         "live": "DISABLED",
