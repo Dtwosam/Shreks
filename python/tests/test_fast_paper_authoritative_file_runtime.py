@@ -122,6 +122,7 @@ def _fixture(tmp_path: Path):
         reduction_source_directory=roots["reductions"],
         pending_buy_retry_source_directory=roots["retries"],
         buy_writer_policy_path=(writer_root / "buy-writer-policy.json").resolve(),
+        cutover_authorization_path=(tmp_path / "cutover-authorization.json").resolve(),
     )
     return manifest, handoff, execution_bootstrap, config, writer_policy
 
