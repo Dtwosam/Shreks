@@ -166,12 +166,14 @@ def test_runtime_normal_start_requires_and_propagates_cutover_authorization(
         "bootstrap_fast_paper_authoritative_runtime",
         lambda _config: bootstrap,
     )
+    def read_authorization(path):
+        observed["authorization_path"] = path
+        return _document()
+
     monkeypatch.setattr(
         runtime,
         "read_fast_paper_cutover_authorization",
-        lambda path: (
-            observed.setdefault("authorization_path", path) or _document()
-        ),
+        read_authorization,
     )
     monkeypatch.setattr(
         runtime,
