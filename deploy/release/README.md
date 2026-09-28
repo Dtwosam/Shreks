@@ -970,8 +970,37 @@ provisioning command requires the detached shadow to have already been
 quiesced; it only authenticates `systemctl show` state and performs the
 write-once non-economic decision-state copy.
 
-Continuous authoritative BUY/OPEN/retry source production and the physical
-service switch remain separately reviewed steps.
+Continuous authoritative BUY/OPEN/retry source production is now sealed in the
+authoritative runtime. Before the physical service switch, prepare the protected
+host without changing service state:
+
+```sh
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-authoritative-host-prepare" \
+  config-preflight "$CURRENT_SHA" /root/fast-paper-authoritative.env
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-authoritative-host-prepare" \
+  install-config "$CURRENT_SHA" /root/fast-paper-authoritative.env
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-authoritative-host-prepare" \
+  provision-roots "$CURRENT_SHA"
+
+# After the detached shadow is quiesced and the cutover-baseline command has
+# created BASELINE_RECEIPT:
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-authoritative-host-prepare" \
+  host-preflight "$CURRENT_SHA" "$BASELINE_RECEIPT"
+```
+
+The host-preparation command installs only the exact canonical
+`/etc/shreks/fast-paper-authoritative.env`, creates the dedicated
+`/var/lib/shreks/fast-paper-authoritative/*` source roots as
+`shreks:shreks 0700`, and re-authenticates the baseline checkpoint/receipt,
+reviewed BUY-writer policy, protected authority metadata, and authoritative
+runtime bootstrap. A successful final state is
+`READY_FOR_PROTECTED_PAPER_CUTOVER_REVIEW`.
+
+It does not invoke systemd, replace the active legacy PAPER unit, execute PAPER
+actions, sign/submit transactions, or enable LIVE. The physical service switch
+remains the separately protected cutover ceremony.
 
 ## Deploy a release
 
