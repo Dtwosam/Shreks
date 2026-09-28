@@ -181,13 +181,11 @@ class FastPaperReleaseUpgradePaths:
     def campaign_unit(self) -> Path:
         return self.systemd_dir / _UNIT
 
-    @property
-    def success_receipt(self) -> Path:
-        return self.receipt_root / "success.json"
+    def success_receipt_for(self, source_sha: str) -> Path:
+        return self.receipt_root / f"success-{source_sha}.json"
 
-    @property
-    def failure_receipt(self) -> Path:
-        return self.receipt_root / "failure.json"
+    def failure_receipt_for(self, source_sha: str) -> Path:
+        return self.receipt_root / f"failure-{source_sha}.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,28 +308,29 @@ def activate_fast_paper_release_upgrade(
         source,
         paths=paths,
     )
-    _require_no_receipt(paths)
+    _require_no_receipt(paths, target.identity.source_sha)
     state = _read_systemd_state(runner)
     _require_running(state, "authoritative Fast PAPER service")
     _verify_fast_process(paths, source.release, state)
 
-    backup = _capture_backup(source, paths)
+    backup: _Backup | None = None
     paper_stopped = False
     start_attempted = False
     handoff: FastPaperAuthoritativeReleaseHandoffResult | None = None
     started_at_unix_ms = 0
     try:
         _run(runner, ("systemctl", "stop", _UNIT), "stop Fast PAPER")
-        paper_stopped = True
         _require_stopped(
             _read_systemd_state(runner),
             "authoritative Fast PAPER service",
         )
+        paper_stopped = True
 
         source = _load_source_context(
             paths,
             runtime_executable=runtime_executable,
         )
+        backup = _capture_backup(source, paths)
         _replace_authorization_with_upgrade_marker(
             paths.authorization_path,
             source_release_sha=source.manifest.release_source_sha,
@@ -436,6 +435,10 @@ def activate_fast_paper_release_upgrade(
             binding=handoff.binding,
             execution_policy=target.execution_policy,
         )
+        if backup is None:
+            raise FastPaperReleaseUpgradeError(
+                "post-stop source backup was not captured"
+            )
         _replace_file_atomically(
             paths.authorization_path,
             candidate_payloads["authorization"],
@@ -534,7 +537,10 @@ def activate_fast_paper_release_upgrade(
             "live_authority": "DISABLED",
         }
         receipt = _finalize_receipt(material)
-        _write_receipt_no_replace(paths.success_receipt, receipt)
+        _write_receipt_no_replace(
+            paths.success_receipt_for(target.identity.source_sha),
+            receipt,
+        )
         return receipt
     except Exception as error:
         if paper_stopped:
@@ -569,10 +575,16 @@ def activate_fast_paper_release_upgrade(
                         }
                     )
                     _write_receipt_no_replace(
-                        paths.failure_receipt,
+                        paths.failure_receipt_for(
+                            target.identity.source_sha
+                        ),
                         failure,
                     )
                 else:
+                    if backup is None:
+                        raise FastPaperReleaseUpgradeError(
+                            "source rollback backup is unavailable"
+                        )
                     _restore_source_before_target_start(
                         source,
                         backup,
@@ -855,7 +867,10 @@ def _prepare_target_context(
             "target Fast PAPER authority reconstruction failed"
         ) from exc
 
-    target_run_id = f"fast-release-{identity.source_sha}"
+    target_run_id = _fresh_target_run_id(
+        source.config.execution_config.database_path,
+        identity.source_sha,
+    )
     environment = dict(source.environment)
     environment[
         "SHREKS_FAST_PAPER_AUTHORITATIVE_RUN_ID"
@@ -1376,6 +1391,69 @@ def _require_materialized_source_path(
         )
 
 
+def _fresh_target_run_id(
+    database_path: str | Path,
+    target_source_sha: str,
+) -> str:
+    import sqlite3
+
+    base = f"fast-release-{target_source_sha}"
+    database = Path(database_path)
+    if database.is_symlink() or not database.is_file():
+        raise FastPaperReleaseUpgradeError(
+            "authoritative database is unavailable for target run selection"
+        )
+    try:
+        connection = sqlite3.connect(
+            f"file:{database}?mode=ro",
+            uri=True,
+            timeout=1.0,
+        )
+    except sqlite3.Error as exc:
+        raise FastPaperReleaseUpgradeError(
+            "authoritative database cannot be opened for target run selection"
+        ) from exc
+    try:
+        for ordinal in range(1, 10_000):
+            candidate = base if ordinal == 1 else f"{base}.{ordinal}"
+            occupied = False
+            for table, column in (
+                ("fast_paper_authoritative_bindings", "fast_run_id"),
+                ("paper_loop_checkpoints", "run_id"),
+                (
+                    "fast_paper_authoritative_runtime_states",
+                    "fast_run_id",
+                ),
+                (
+                    "fast_paper_authoritative_release_handoffs",
+                    "target_run_id",
+                ),
+            ):
+                try:
+                    row = connection.execute(
+                        f"SELECT COUNT(*) FROM {table} WHERE {column} = ?",
+                        (candidate,),
+                    ).fetchone()
+                except sqlite3.OperationalError as exc:
+                    if "no such table" in str(exc).lower():
+                        continue
+                    raise
+                if row is None or row[0] != 0:
+                    occupied = True
+                    break
+            if not occupied:
+                return candidate
+    except sqlite3.Error as exc:
+        raise FastPaperReleaseUpgradeError(
+            "target Fast run namespace selection failed"
+        ) from exc
+    finally:
+        connection.close()
+    raise FastPaperReleaseUpgradeError(
+        "no fresh Fast release run namespace is available"
+    )
+
+
 def _require_current_release(current: Path) -> Path:
     if not current.is_symlink():
         raise FastPaperReleaseUpgradeError(
@@ -1556,10 +1634,16 @@ def _default_command_runner(
     )
 
 
-def _require_no_receipt(paths: FastPaperReleaseUpgradePaths) -> None:
+def _require_no_receipt(
+    paths: FastPaperReleaseUpgradePaths,
+    target_source_sha: str,
+) -> None:
     paths.receipt_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(paths.receipt_root, 0o700)
-    for path in (paths.success_receipt, paths.failure_receipt):
+    for path in (
+        paths.success_receipt_for(target_source_sha),
+        paths.failure_receipt_for(target_source_sha),
+    ):
         if path.exists() or path.is_symlink():
             raise FastPaperReleaseUpgradeError(
                 "Fast PAPER release upgrade receipt already exists"
