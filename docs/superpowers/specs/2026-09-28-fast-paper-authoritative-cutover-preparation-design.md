@@ -185,16 +185,20 @@ Tests must prove:
 
 ## Following slice
 
-The next slice is the explicit protected cutover ceremony.
+The physical cutover is **not** next yet. Repository inspection shows the
+authoritative BUY/reduction/pending-retry formats currently have builders and
+readers, but no continuous production writer/publisher topology equivalent to
+the proven shadow supervisor source writers.
 
-Only that slice may:
+The next slice must therefore adapt the existing persisted-evidence authority
+writers to the authoritative checkpoint/runtime pair and prove continuous
+BUY/HOLD/REDUCE/SELL plus pending-BUY retry source production without shadow
+ledger mutation.
 
-1. stop the legacy PAPER campaign service and the detached Fast PAPER shadow service;
-2. re-run this exact preflight against the newly final legacy checkpoint;
-3. atomically install the sealed Fast candidate as
-   `shreks-paper-campaign.service`;
-4. daemon-reload;
-5. start PAPER authority on the Fast runtime;
-6. run bounded protected production verification.
+After that, protected host preparation may install the exact authoritative env
+and create the dedicated source directories. Only the final cutover ceremony
+may stop the legacy PAPER campaign and detached shadow services, re-run this
+preflight against the newly final legacy checkpoint, replace the active unit,
+daemon-reload, and start Fast PAPER authority.
 
 LIVE remains disabled.
