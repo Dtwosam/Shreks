@@ -72,7 +72,7 @@ Static production roots are exact:
 /etc/shreks/fast-paper-shadow-service-policy.json
 /etc/shreks/fast-paper-shadow-execution-policy.json
 
-/var/lib/shreks/fast-paper-authoritative/decision
+/var/lib/shreks/fast-paper-shadow/decision
 /var/lib/shreks/fast-paper-authoritative/execution-sources
 /var/lib/shreks/fast-paper-authoritative/buy-authority-sources
 /var/lib/shreks/fast-paper-authoritative/quote-usd-sources
@@ -80,7 +80,7 @@ Static production roots are exact:
 /var/lib/shreks/fast-paper-authoritative/pending-buy-retry-sources
 ```
 
-The authoritative database path is not guessed. It must exactly equal the
+The learned decision evidence/checkpoint root intentionally remains the already-proven detached-shadow decision root. Cutover must stop the detached shadow service before the authoritative Fast PAPER service is started so only one process owns that learned cursor.\n\nThe authoritative database path is not guessed. It must exactly equal the
 observer database path sealed in the Fast runtime manifest and the legacy
 observer database supplied to cutover preflight.
 
@@ -189,7 +189,7 @@ The next slice is the explicit protected cutover ceremony.
 
 Only that slice may:
 
-1. stop the legacy PAPER campaign service;
+1. stop the legacy PAPER campaign service and the detached Fast PAPER shadow service;
 2. re-run this exact preflight against the newly final legacy checkpoint;
 3. atomically install the sealed Fast candidate as
    `shreks-paper-campaign.service`;
