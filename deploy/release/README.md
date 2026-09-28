@@ -1035,11 +1035,17 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
   --observe-seconds 60
 ```
 
-The command stops only `shreks-paper-campaign.service`, confirms it is
-inactive, re-runs the exact final `CUTOVER_PREFLIGHT_READY` proof against that
-now-final legacy checkpoint, issues a release/run/binding-specific cutover
-authorization, atomically replaces the active unit bytes with the sealed Fast
-candidate, daemon-reloads, starts the same service name, and observes the Fast
+The command stops only `shreks-paper-campaign.service` and confirms it is
+inactive. Because legacy PAPER writes a checkpoint after every non-idempotent
+cycle, the ceremony then reads the exact final legacy checkpoint and atomically
+refreshes only the still-pristine Fast sequence-0 binding/checkpoint/runtime
+rows from that unchanged final `PaperLedger`. Any prior Fast economic
+advancement makes that refresh fail closed.
+
+Only after that refresh does it re-run the exact final
+`CUTOVER_PREFLIGHT_READY` proof, issue a release/run/binding-specific cutover
+authorization, atomically replace the active unit bytes with the sealed Fast
+candidate, daemon-reload, start the same service name, and observe the Fast
 runtime for the requested bounded window.
 
 A successful result is:
@@ -1063,15 +1069,17 @@ The authoritative runtime refuses normal startup without the protected
 `/etc/shreks/fast-paper-cutover-authorization.json`; its ordinary RUNNING
 status must report `production_paper_cutover=GRANTED_AND_ACTIVE`.
 
-Rollback is intentionally asymmetric. If cutover fails and **no authoritative
-durable state changed**, the command revokes authorization and restores/restarts
-the exact legacy release runtime. If any learned decision/evidence, execution
-cursor, authoritative checkpoint/runtime state, pending BUY, position mapping,
-or source authority changed, it restores legacy unit bytes but leaves PAPER
-authority stopped and writes
-`cutover-failure-<release-sha>.json` with
-`state=MANUAL_RECOVERY_REQUIRED`. Do not manually restart legacy in that state
-without reconciling the authoritative namespace first.
+Rollback is intentionally phase-bounded. A failure **before the first Fast
+start attempt** may restore/restart the exact legacy release runtime because Fast
+has never held PAPER authority. Once a Fast start has been attempted, the
+legacy score-gated runtime is never restored as PAPER authority, even if no
+Fast economic checkpoint was committed. The command revokes authorization,
+restores legacy unit bytes only for filesystem recovery, leaves PAPER authority
+stopped, and writes `cutover-failure-<release-sha>.json` with
+`state=MANUAL_RECOVERY_REQUIRED`.
+
+Do not manually restart legacy after that boundary. Recovery must preserve the
+Fast authoritative ledger and use a separately proven Fast recovery path.
 
 This ceremony never enables LIVE and never grants signing/submission authority.
 
