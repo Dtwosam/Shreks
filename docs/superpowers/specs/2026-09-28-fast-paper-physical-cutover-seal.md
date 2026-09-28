@@ -89,9 +89,17 @@ Automatic release/deploy must **not**:
 
 ## Trusted-admin physical cutover boundary
 
-Only after the exact sealed release is active and ordinary production
-verification succeeds may a trusted administrator continue the separately
-reviewed ceremony:
+Only after the exact sealed release is active, release/service/process identity
+is physically verified, and the dedicated physical-cutover preflight can be
+satisfied may a trusted administrator continue the separately reviewed
+ceremony.
+
+The reusable legacy production verifier may also report legacy G1C behavioral
+acceptance. That gate remains authoritative for claims about continued G1C
+mint-state behavior, but it is not a substitute for — and does not weaken or
+strengthen — the dedicated final economic handoff gates. A later deployment
+acceptance record must preserve any such legacy result exactly rather than
+relabeling it.
 
 1. authenticate/install the canonical authoritative Fast PAPER host config;
 2. provision and verify dedicated authoritative source roots;
@@ -153,7 +161,10 @@ The sealed release/deploy step is successful only if:
 - sealed-main CI passes all four canonical gates;
 - the immutable release is bound to the exact seal SHA;
 - protected deployment activates exactly that release;
+- exact release/service/process identity is physically verified;
 - the legacy PAPER service remains healthy before the separate cutover ceremony;
+- any legacy behavioral verifier result is preserved accurately and is not
+  relabeled;
 - the physical-cutover CLI is release-local and executable;
 - no cutover authorization/revocation marker is created by automatic deploy;
 - LIVE remains disabled.
