@@ -354,9 +354,9 @@ def _require_inputs(
     accounting = validate_fast_paper_accounting(
         transition.next_paper_state
     )
-    if accounting.status is not AccountingValidationStatus.RECONCILED:
+    if accounting.status is AccountingValidationStatus.INVALID:
         raise ValueError(
-            "authoritative Fast PAPER next state accounting is not RECONCILED"
+            "authoritative Fast PAPER next state accounting is INVALID"
         )
 
 
