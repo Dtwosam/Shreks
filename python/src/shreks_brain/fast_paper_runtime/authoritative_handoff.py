@@ -28,6 +28,13 @@ from shreks_brain.paper_validation import (
 from .codec import verify_fast_paper_runtime_bindings
 from .models import FastPaperRuntimeManifest
 from .shadow_execution_input import FastPaperShadowExecutionPolicy
+from .authoritative_runtime_state import (
+    _ensure_authoritative_runtime_state_table,
+    _insert_runtime_state_row,
+    _runtime_state_row,
+    build_fast_paper_authoritative_runtime_state,
+    load_latest_fast_paper_authoritative_runtime_state,
+)
 
 
 FAST_PAPER_AUTHORITATIVE_BINDING_SCHEMA_NAME = (
@@ -335,6 +342,19 @@ def initialize_fast_paper_authoritative_handoff(
     checkpoint = decode_fast_paper_checkpoint(checkpoint_payload)
     checkpoint_json = checkpoint_payload.decode("utf-8")
     binding_json = _canonical(_binding_document(binding))
+    runtime_state = build_fast_paper_authoritative_runtime_state(
+        manifest,
+        binding,
+        checkpoint,
+        market_positions=(),
+        execution_policy_fingerprint_sha256=(
+            execution_policy.policy_fingerprint_sha256
+        ),
+    )
+    expected_runtime_row = _runtime_state_row(
+        runtime_state,
+        created_at_unix_ms=created_at_unix_ms,
+    )
 
     database = Path(binding.database_path)
     connection = _connect(database)
@@ -347,6 +367,7 @@ def initialize_fast_paper_authoritative_handoff(
             legacy_checkpoint,
         )
         _ensure_binding_table(connection)
+        _ensure_authoritative_runtime_state_table(connection)
 
         existing_binding = connection.execute(
             f"""
@@ -371,6 +392,21 @@ def initialize_fast_paper_authoritative_handoff(
             """,
             (fast_run_id,),
         ).fetchall()
+        existing_runtime_states = connection.execute(
+            """
+            SELECT
+                paper_checkpoint_sequence,
+                paper_checkpoint_payload_sha256,
+                state_schema_version,
+                created_at_unix_ms,
+                payload_sha256,
+                payload_json
+            FROM fast_paper_authoritative_runtime_states
+            WHERE fast_run_id = ?
+            ORDER BY paper_checkpoint_sequence ASC
+            """,
+            (fast_run_id,),
+        ).fetchall()
 
         expected_binding = (
             binding.binding_fingerprint_sha256,
@@ -384,10 +420,15 @@ def initialize_fast_paper_authoritative_handoff(
             checkpoint.payload_sha256,
             checkpoint_json,
         )
-        if existing_binding is not None or existing_checkpoints:
+        if (
+            existing_binding is not None
+            or existing_checkpoints
+            or existing_runtime_states
+        ):
             if (
                 existing_binding == expected_binding
                 and existing_checkpoints == [expected_checkpoint]
+                and existing_runtime_states == [expected_runtime_row]
             ):
                 connection.rollback()
                 idempotent = True
@@ -433,6 +474,12 @@ def initialize_fast_paper_authoritative_handoff(
                     checkpoint_json,
                 ),
             )
+            _insert_runtime_state_row(
+                connection,
+                binding,
+                runtime_state,
+                created_at_unix_ms=created_at_unix_ms,
+            )
             connection.commit()
     except FastPaperAuthoritativeHandoffError:
         if connection.in_transaction:
@@ -463,6 +510,16 @@ def initialize_fast_paper_authoritative_handoff(
     if restored_checkpoint != checkpoint:
         raise FastPaperAuthoritativeHandoffError(
             "authoritative Fast PAPER checkpoint readback mismatch"
+        )
+    restored_runtime_state = (
+        load_latest_fast_paper_authoritative_runtime_state(
+            manifest,
+            restored_binding,
+        )
+    )
+    if restored_runtime_state != runtime_state:
+        raise FastPaperAuthoritativeHandoffError(
+            "authoritative Fast PAPER runtime-state readback mismatch"
         )
     if idempotent and (
         restored_checkpoint.sequence != 0
