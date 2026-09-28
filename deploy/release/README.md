@@ -929,6 +929,7 @@ authoritative_checkpoint_sequence=0
 authoritative_pending_buy=0
 authoritative_open_positions=0
 authoritative_learned_cursor=EMPTY
+learned_decision_cursor=EMPTY_UNTIL_DURABLE_BASELINE_EXISTS
 authoritative_handoff=EXACT_FINAL_LEGACY_CHECKPOINT
 authoritative_ledger=UNCHANGED_FINAL_LEGACY_LEDGER
 legacy_final_checkpoint=PRESENT
@@ -953,8 +954,10 @@ live_authority=DISABLED
 
 Do not stop `shreks-paper-campaign.service`, stop the detached shadow,
 replace unit bytes, switch target membership, or treat this report as cutover
-authority. Continuous authoritative BUY/OPEN/retry source production and the
-protected host/cutover ceremony remain separately reviewed steps.
+authority. A durable learned-cursor cutover baseline, continuous authoritative
+BUY/OPEN/retry source production, and the protected host/cutover ceremony
+remain separately reviewed steps. An already-advanced learned decision cursor
+is intentionally NOT_READY until that baseline mechanism is sealed.
 
 ## Deploy a release
 
