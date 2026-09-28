@@ -45,11 +45,9 @@ from .authoritative_file_authority import (
     write_fast_paper_authoritative_pending_buy_retry_source_record,
     write_fast_paper_authoritative_reduction_source_record,
 )
-from .authoritative_runtime_state import (
-    fast_paper_authoritative_decision_position,
-)
 from .authoritative_service_execution import (
     FastPaperAuthoritativeServiceExecutionBootstrap,
+    fast_paper_authoritative_decision_position,
 )
 from .feed import fetch_fast_paper_runtime_feature_batch
 from .persisted_quotes import (
