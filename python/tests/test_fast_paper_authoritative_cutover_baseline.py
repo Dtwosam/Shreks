@@ -175,6 +175,55 @@ def test_provision_baseline_copies_exact_authenticated_state_write_once(
     ).read_bytes()
 
 
+def test_baseline_receipt_reader_rejects_fingerprint_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, _state, env_path, _root, _destination = _setup(
+        tmp_path,
+        monkeypatch,
+    )
+    receipt_path = tmp_path / "receipt.json"
+    receipt = baseline.provision_fast_paper_authoritative_cutover_baseline(
+        fast_manifest_path=tmp_path / "manifest.json",
+        authoritative_runtime_env_path=env_path,
+        receipt_path=receipt_path,
+        expected_release_sha=_RELEASE_SHA,
+        command_runner=lambda _command: _quiescent(),
+        clock_unix_ms=lambda: 50,
+    )
+    restored = (
+        baseline.read_fast_paper_authoritative_cutover_baseline_receipt(
+            receipt_path
+        )
+    )
+    assert restored == receipt
+    assert restored["shadow_checkpoint_path"] == str(
+        Path(manifest.checkpoint_path).resolve()
+    )
+
+    tampered = dict(receipt)
+    tampered["receipt_fingerprint_sha256"] = "0" * 64
+    receipt_path.write_text(
+        json.dumps(
+            tampered,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(
+        baseline.FastPaperAuthoritativeCutoverBaselineError,
+        match="fingerprint mismatch",
+    ):
+        baseline.read_fast_paper_authoritative_cutover_baseline_receipt(
+            receipt_path
+        )
+
+
 def test_active_shadow_fails_before_authoritative_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -267,6 +316,13 @@ def test_authoritative_decision_root_must_be_empty(
 
 def test_baseline_provisioner_has_read_only_systemd_authority() -> None:
     source = Path(baseline.__file__).read_text(encoding="utf-8")
+    pyproject = (
+        Path(__file__).resolve().parents[1] / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert (
+        'shreks-fast-paper-authoritative-cutover-baseline = '
+        '"shreks_brain.fast_paper_authoritative_cutover_baseline:main"'
+    ) in pyproject
 
     assert '"systemctl",' in source
     assert '"show",' in source
