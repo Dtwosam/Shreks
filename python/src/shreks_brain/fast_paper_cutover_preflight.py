@@ -23,7 +23,9 @@ from shreks_brain.fast_paper_runtime.authoritative_runtime import (
     bootstrap_fast_paper_authoritative_runtime,
 )
 from shreks_brain.fast_paper_runtime.codec import (
+    build_fast_paper_runtime_state,
     read_fast_paper_runtime_manifest,
+    read_fast_paper_runtime_state,
     verify_fast_paper_runtime_bindings,
 )
 from shreks_brain.fast_paper_runtime.shadow_ledger import (
@@ -197,6 +199,40 @@ def assess_fast_paper_cutover_preflight(
             "shadow checkpoint payload fingerprint",
         )
 
+    try:
+        shadow_decision_checkpoint = Path(
+            manifest.checkpoint_path
+        ).expanduser()
+        if shadow_decision_checkpoint.is_symlink():
+            raise ValueError(
+                "shadow learned decision checkpoint must not be a symlink"
+            )
+        if shadow_decision_checkpoint.exists():
+            if not shadow_decision_checkpoint.is_file():
+                raise ValueError(
+                    "shadow learned decision checkpoint must be a regular file"
+                )
+            shadow_decision_state = read_fast_paper_runtime_state(
+                shadow_decision_checkpoint
+            )
+            expected_shadow_decision_state = build_fast_paper_runtime_state(
+                manifest,
+                cursor=shadow_decision_state.cursor,
+            )
+            if shadow_decision_state != expected_shadow_decision_state:
+                raise ValueError(
+                    "shadow learned decision checkpoint does not authenticate against manifest"
+                )
+        else:
+            shadow_decision_state = build_fast_paper_runtime_state(
+                manifest,
+                cursor=None,
+            )
+    except Exception as exc:
+        raise FastPaperCutoverPreflightError(
+            "shadow learned decision checkpoint authentication failed"
+        ) from exc
+
     legacy_manifest = _read_legacy_manifest(legacy_runtime_manifest_path)
 
     try:
@@ -323,9 +359,19 @@ def assess_fast_paper_cutover_preflight(
         if learned_decision_cursor is None
         else learned_decision_cursor.decision_sequence
     )
-    pristine_cursor_start_compatible = (
-        learned_decision_cursor is None
-        and authoritative_cursor_empty
+    shadow_decision_cursor_sequence = (
+        None
+        if shadow_decision_state.cursor is None
+        else shadow_decision_state.cursor.decision_sequence
+    )
+    authoritative_decision_baseline_matches_shadow = (
+        authoritative_decision.state == shadow_decision_state
+    )
+    decision_evidence_root = (
+        authoritative_config.decision_config.evidence_directory
+    )
+    authoritative_decision_evidence_count = len(
+        tuple(decision_evidence_root.glob("shadow-*.json"))
     )
 
     gates = [
@@ -381,11 +427,18 @@ def assess_fast_paper_cutover_preflight(
             "authoritative Fast PAPER runner must not have processed learned economic decisions before cutover",
         ),
         _gate(
-            "AUTHORITATIVE_FIRST_CYCLE_CURSOR_COMPATIBLE",
-            pristine_cursor_start_compatible,
+            "AUTHORITATIVE_DECISION_BASELINE_MATCHES_SHADOW",
+            authoritative_decision_baseline_matches_shadow,
             learned_decision_cursor_sequence,
-            None,
-            "a pristine authoritative runtime cannot start from an already-advanced learned decision cursor until a durable cutover baseline is sealed",
+            shadow_decision_cursor_sequence,
+            "authoritative learned decision baseline must exactly equal the latest authenticated detached-shadow cursor",
+        ),
+        _gate(
+            "AUTHORITATIVE_DECISION_EVIDENCE_EMPTY",
+            authoritative_decision_evidence_count == 0,
+            authoritative_decision_evidence_count,
+            0,
+            "authoritative decision evidence must be empty before production cutover",
         ),
         _gate(
             "AUTHORITATIVE_HANDOFF_MATCHES_FINAL_LEGACY",
@@ -517,8 +570,14 @@ def assess_fast_paper_cutover_preflight(
         "learned_decision_cursor_sequence": (
             learned_decision_cursor_sequence
         ),
-        "authoritative_first_cycle_cursor_compatible": (
-            pristine_cursor_start_compatible
+        "shadow_decision_cursor_sequence": (
+            shadow_decision_cursor_sequence
+        ),
+        "authoritative_decision_baseline_matches_shadow": (
+            authoritative_decision_baseline_matches_shadow
+        ),
+        "authoritative_decision_evidence_count": (
+            authoritative_decision_evidence_count
         ),
         "authoritative_ledger_matches_legacy": (
             authoritative_ledger_matches_legacy
