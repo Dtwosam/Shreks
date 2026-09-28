@@ -584,7 +584,7 @@ def _emit_failure(error: BaseException) -> None:
         "schema_version": _STATUS_SCHEMA_VERSION,
         "mode": "PAPER_AUTHORITATIVE_FAST",
         "state": "FAILED",
-        "production_paper_cutover": production_paper_cutover,
+        "production_paper_cutover": "NOT_GRANTED",
         "service_control_authority": "NOT_GRANTED",
         "signing_submission_authority": "NOT_GRANTED",
         "live": "DISABLED",
