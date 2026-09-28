@@ -109,7 +109,10 @@ Gate:
 SHADOW_PAPER_ACCOUNTING_RECONCILED
 ```
 
-passes only when the accounting status is `RECONCILED`.
+passes only when the accounting status is `RECONCILED`. The latest isolated
+checkpoint sequence must also be greater than or equal to the restart proof's
+post-restart checkpoint sequence so the preflight cannot accept regressed
+shadow state.
 
 The shadow ledger is not required to be flat; it remains isolated evidence only.
 
@@ -224,9 +227,10 @@ Tests must prove:
 9. restart receipt fingerprint drift is rejected;
 10. restart receipt release/champion/manifest drift is rejected;
 11. shadow binding fingerprint drift is rejected;
-12. report fingerprint is deterministic;
-13. CLI is packaged;
-14. source contains no scoring/execution/checkpoint-write/systemd/signing/LIVE authority.
+12. shadow checkpoint regression behind the restart proof is not ready;
+13. report fingerprint is deterministic;
+14. CLI is packaged;
+15. source contains no scoring/execution/checkpoint-write/systemd/signing/LIVE authority.
 
 ## Following slice
 
