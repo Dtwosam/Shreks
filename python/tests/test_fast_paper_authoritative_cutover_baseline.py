@@ -93,6 +93,7 @@ def _setup(
         "_service_identity",
         lambda: (os.geteuid(), os.getegid()),
     )
+    monkeypatch.setattr(baseline.os, "fchown", lambda *_args: None)
     return manifest, source_state, env_path, decision_root, destination
 
 
@@ -133,6 +134,7 @@ def test_provision_baseline_copies_exact_authenticated_state_write_once(
         == source_state.state_fingerprint_sha256
     )
     assert receipt["decision_cursor_sequence"] is None
+    assert receipt["baseline_replayed"] is False
     assert receipt["shadow_active_state"] == "inactive"
     assert receipt["shadow_main_pid"] == 0
     assert receipt["production_paper_cutover"] == "NOT_GRANTED"
@@ -159,18 +161,18 @@ def test_provision_baseline_copies_exact_authenticated_state_write_once(
     ).hexdigest()
     assert tuple(decision_root.iterdir()) == (destination,)
 
-    with pytest.raises(
-        baseline.FastPaperAuthoritativeCutoverBaselineError,
-        match="already exists|empty",
-    ):
-        baseline.provision_fast_paper_authoritative_cutover_baseline(
-            fast_manifest_path=tmp_path / "manifest.json",
-            authoritative_runtime_env_path=env_path,
-            receipt_path=tmp_path / "receipts" / "second.json",
-            expected_release_sha=_RELEASE_SHA,
-            command_runner=command_runner,
-            clock_unix_ms=lambda: 12_346,
-        )
+    replay = baseline.provision_fast_paper_authoritative_cutover_baseline(
+        fast_manifest_path=tmp_path / "manifest.json",
+        authoritative_runtime_env_path=env_path,
+        receipt_path=tmp_path / "receipts" / "second.json",
+        expected_release_sha=_RELEASE_SHA,
+        command_runner=command_runner,
+        clock_unix_ms=lambda: 12_346,
+    )
+    assert replay["baseline_replayed"] is True
+    assert destination.read_bytes() == Path(
+        manifest.checkpoint_path
+    ).read_bytes()
 
 
 def test_active_shadow_fails_before_authoritative_write(
