@@ -997,7 +997,7 @@ def main(argv: list[str] | None = None) -> int:
                     "schema_name": (
                         "shreks.fast_paper_cutover_preflight_failure"
                     ),
-                    "schema_version": 1,
+                    "schema_version": FAST_PAPER_CUTOVER_PREFLIGHT_SCHEMA_VERSION,
                     "state": "FAILED",
                     "error_type": type(exc).__name__,
                     "production_paper_cutover": "NOT_GRANTED",
