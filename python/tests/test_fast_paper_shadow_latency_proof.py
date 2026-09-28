@@ -483,6 +483,153 @@ def test_missing_execution_source_stays_explicit_and_cannot_prove_latency(
     assert report["event_to_booked_entry_ms"]["p95"] is None
 
 
+def test_latency_proof_fails_closed_on_historical_source_binding_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    manifest, binding, policy, checkpoint0, posture0 = _runtime_fixture(
+        tmp_path,
+        zero_latency=True,
+    )
+    base, buy, skip = _decision_population(monkeypatch, manifest)
+    source_root = tmp_path / "sources"
+    retry_root = tmp_path / "retries"
+    decision_root = tmp_path / "decisions"
+    source_root.mkdir()
+    retry_root.mkdir()
+    _write_decisions(decision_root, buy, skip)
+
+    source_record = produce_fast_paper_shadow_execution_input_source_record(
+        manifest,
+        binding,
+        policy,
+        checkpoint0,
+        posture0,
+        _source(base, buy),
+        source_observed_at_unix_ms=buy.evaluated_at_unix_ms,
+        risk_day_started_at_unix_ms=0,
+    )
+    source_path = write_fast_paper_shadow_execution_input_source_record(
+        source_record,
+        source_root,
+    )
+    document = json.loads(source_path.read_text(encoding="utf-8"))
+    document["paper_checkpoint_payload_sha256"] = "f" * 64
+    source_path.write_text(
+        json.dumps(
+            document,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    manifest_path, policy_path = _authority_files(
+        tmp_path,
+        manifest,
+        policy,
+    )
+    sample_path = _write_sample(
+        tmp_path,
+        manifest=manifest,
+        binding=binding,
+        buy=buy,
+        skip=skip,
+    )
+
+    with pytest.raises(
+        latency.FastPaperShadowLatencyProofError,
+        match="binding|historical|source",
+    ):
+        _collect(
+            manifest=manifest,
+            binding=binding,
+            manifest_path=manifest_path,
+            policy_path=policy_path,
+            decision_root=decision_root,
+            source_root=source_root,
+            retry_root=retry_root,
+            sample_path=sample_path,
+            proof_policy=_proof_policy(max_unbooked=1.0),
+        )
+
+
+def test_latency_horizon_aggregation_reconciles_multiple_horizons() -> None:
+    base = {
+        "source_sequence": 1,
+        "source_event_id": "event-a",
+        "decision_evidence_fingerprint_sha256": "a" * 64,
+        "as_of_unix_ms": 1_000,
+        "evaluated_at_unix_ms": 1_010,
+        "selected_horizon_ms": 100,
+        "event_to_evaluation_ms": 10.0,
+        "decision_compute_ms": 0.2,
+    }
+    observations = (
+        latency._booked(
+            base,
+            status="BOOKED_IMMEDIATE",
+            booked_at_unix_ms=1_020,
+            retry_count=0,
+        ),
+        latency._booked(
+            {
+                **base,
+                "source_sequence": 2,
+                "source_event_id": "event-b",
+                "decision_evidence_fingerprint_sha256": "b" * 64,
+                "as_of_unix_ms": 2_000,
+                "evaluated_at_unix_ms": 2_020,
+                "selected_horizon_ms": 200,
+                "event_to_evaluation_ms": 20.0,
+                "decision_compute_ms": 0.4,
+            },
+            status="BOOKED_RETRY",
+            booked_at_unix_ms=2_100,
+            retry_count=1,
+        ),
+        latency._booked(
+            {
+                **base,
+                "source_sequence": 3,
+                "source_event_id": "event-c",
+                "decision_evidence_fingerprint_sha256": "c" * 64,
+                "as_of_unix_ms": 3_000,
+                "evaluated_at_unix_ms": 3_030,
+                "selected_horizon_ms": 200,
+                "event_to_evaluation_ms": 30.0,
+                "decision_compute_ms": 0.6,
+            },
+            status="BOOKED_RETRY",
+            booked_at_unix_ms=3_180,
+            retry_count=2,
+        ),
+    )
+
+    overall = latency._summarize_observations(observations)
+    by_horizon = latency._summarize_by_horizon(observations)
+    latency._reconcile_horizons(overall, by_horizon)
+
+    assert [item["selected_horizon_ms"] for item in by_horizon] == [
+        100,
+        200,
+    ]
+    assert sum(item["buy_decision_count"] for item in by_horizon) == 3
+    assert sum(item["booked_entry_count"] for item in by_horizon) == 3
+    assert overall["event_to_booked_entry_ms"] == {
+        "p50": 100.0,
+        "p95": 180.0,
+        "p99": 180.0,
+        "max": 180.0,
+    }
+    assert overall["event_to_booked_fraction_of_selected_horizon"][
+        "p95"
+    ] == pytest.approx(0.9)
+
+
 def test_latency_policy_codec_and_packaging_firewall() -> None:
     policy = _proof_policy()
     payload = latency.encode_fast_paper_shadow_latency_proof_policy(
