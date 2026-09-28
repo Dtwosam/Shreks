@@ -11,6 +11,7 @@ CONTROL_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_deploy_control"
 FAST_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_tools"
 FAST_RUNTIME_TOOLS_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_runtime_tools"
 SHADOW_COMMISSIONING_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_paper_shadow_commissioning"
+AUTHORITATIVE_COMMISSIONING_PACKAGE="$PYTHON_BUILD_ROOT/src/shreks_brain/_sealed_fast_paper_authoritative_commissioning"
 
 if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
   echo "SOURCE_SHA must be exactly 40 lowercase hex characters" >&2
@@ -132,6 +133,30 @@ stage_fast_paper_shadow_commissioning_package(
 )
 PY
 
+PYTHONPATH=python/src python - "$SOURCE_SHA" "$PLATFORM" "$AUTHORITATIVE_COMMISSIONING_PACKAGE" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_paper_authoritative_commissioning_assets import (
+    stage_fast_paper_authoritative_commissioning_package,
+)
+
+source_sha, platform, destination = sys.argv[1:]
+stage_fast_paper_authoritative_commissioning_package(
+    source_sha=source_sha,
+    platform=platform,
+    assets={
+        "shreks-paper-campaign.fast-paper.service": Path(
+            "deploy/systemd/shreks-paper-campaign.fast-paper.service"
+        ),
+        "shreks-fast-paper-authoritative.env.example": Path(
+            "deploy/systemd/shreks-fast-paper-authoritative.env.example"
+        ),
+    },
+    destination=Path(destination),
+)
+PY
+
 python -m pip wheel "$PYTHON_BUILD_ROOT" --no-deps -w "$WHEEL_OUT"
 
 mapfile -t WHEELS < <(find "$WHEEL_OUT" -maxdepth 1 -type f -name 'shreks_brain-*.whl' -print | sort)
@@ -230,6 +255,30 @@ verify_fast_paper_shadow_commissioning_wheel(
         ),
         "shreks-fast-paper-shadow.env.example": Path(
             "deploy/systemd/shreks-fast-paper-shadow.env.example"
+        ),
+    },
+)
+PY
+
+PYTHONPATH=python/src python - "${WHEELS[0]}" "$SOURCE_SHA" "$PLATFORM" <<'PY'
+from pathlib import Path
+import sys
+
+from shreks_brain.fast_paper_authoritative_commissioning_assets import (
+    verify_fast_paper_authoritative_commissioning_wheel,
+)
+
+wheel, source_sha, platform = sys.argv[1:]
+verify_fast_paper_authoritative_commissioning_wheel(
+    Path(wheel),
+    expected_source_sha=source_sha,
+    expected_platform=platform,
+    expected_assets={
+        "shreks-paper-campaign.fast-paper.service": Path(
+            "deploy/systemd/shreks-paper-campaign.fast-paper.service"
+        ),
+        "shreks-fast-paper-authoritative.env.example": Path(
+            "deploy/systemd/shreks-fast-paper-authoritative.env.example"
         ),
     },
 )
