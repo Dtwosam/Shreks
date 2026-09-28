@@ -52,6 +52,11 @@ from .authoritative_service_execution import (
 from .feed import fetch_fast_paper_runtime_feature_batch
 from .persisted_quotes import (
     FastPaperShadowQuoteReadPolicy,
+    _open_query_only_database,
+    _require_candidate_mint,
+    _resolve_base_decimals,
+    _resolve_quote,
+    _validate_schema,
     resolve_fast_paper_shadow_cycle_input,
 )
 from .shadow import (
@@ -893,16 +898,41 @@ def _pending_retry_input(
         max_quote_age_ms=service.max_quote_age_ms,
         reduction_reads=(),
     )
-    cycle = resolve_fast_paper_shadow_cycle_input(
-        manifest,
-        feature,
-        evidence.position,
-        quote_policy,
-        evaluated_at_unix_ms=evaluated_at_unix_ms,
-        max_exposure_fraction=pending.target_exposure_fraction,
+    connection = _open_query_only_database(
+        manifest.observer_database_path
     )
-    quote = cycle.entry_quote
+    try:
+        _validate_schema(connection)
+        _require_candidate_mint(
+            connection,
+            candidate_id=candidate_id,
+            expected_mint=feature.mint,
+        )
+        base_decimals = _resolve_base_decimals(
+            connection,
+            candidate_id=candidate_id,
+            evaluated_at_unix_ms=evaluated_at_unix_ms,
+        )
+        quote = _resolve_quote(
+            connection,
+            manifest=manifest,
+            record=feature,
+            read_policy=quote_policy,
+            purpose="entry",
+            input_mint=manifest.quote_mint,
+            output_mint=feature.mint,
+            input_amount_raw=quote_policy.entry_input_amount_raw,
+            base_decimals=base_decimals,
+            evaluated_at_unix_ms=evaluated_at_unix_ms,
+        )
+    finally:
+        connection.close()
     if quote.state != "EXECUTABLE":
+        return None
+    if (
+        quote.observed_at_unix_ms
+        < execution_bootstrap.checkpoint.state.as_of_unix_ms
+    ):
         return None
     usd, market_window = _quote_usd_for_feature(
         decision_bootstrap,
@@ -939,13 +969,6 @@ def _pending_retry_input(
         raise ValueError(
             "authoritative pending BUY persisted ENTRY quote timestamp drifted"
         )
-    regime_market = campaign.build_regime_market_window(
-        evaluated_at_unix_ms,
-        writer_policy.regime_read_policy,
-        writer_policy.safety_policy,
-        writer_policy.safety_probe_identity,
-        global_risk_halt=writer_policy.global_risk_halt,
-    )
     controls = load_operator_risk_control_state(
         writer_policy.operator_risk_control_path
     )
@@ -973,8 +996,8 @@ def _pending_retry_input(
         price_impact_notional_usd=impact_notional,
         market_observed_at_unix_ms=min(
             market_window.current.observed_at_unix_ms,
+            raw_entry.quoted_at_unix_ms,
             usd.observed_at_unix_ms,
-            regime_market.source_observed_at_unix_ms,
         ),
         data_healthy=writer_policy.data_healthy,
         execution_healthy=writer_policy.execution_healthy,
@@ -993,7 +1016,6 @@ def _pending_retry_input(
         quote.observed_at_unix_ms,
         usd.observed_at_unix_ms,
         market_window.current.observed_at_unix_ms,
-        regime_market.source_observed_at_unix_ms,
         controls.updated_at_unix_ms,
     )
     return (
