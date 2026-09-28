@@ -177,7 +177,13 @@ def test_quote_usd_writer_uses_exact_persisted_market_row_and_replays(
         venue="pump_fun_bonding_curve",
         observed_at_unix_ms=observed_at,
     )
-    window = SimpleNamespace(current=current)
+    window = SimpleNamespace(
+        current=current,
+        candidate=SimpleNamespace(
+            candidate_id=7,
+            mint=evidence.feature_record.mint,
+        ),
+    )
     usd_evidence = SimpleNamespace(
         market_row_id=17,
         candidate_id=7,
