@@ -159,8 +159,9 @@ legacy unit. No Fast PAPER process has held authority yet; a non-economic
 provisional handoff refresh does not change that rule.
 
 **At or after the first Fast start attempt**, the legacy score-gated runtime is
-never restored as PAPER authority. The Fast service is stopped, authorization
-is revoked, legacy unit bytes may be restored for filesystem recovery, but
+never restored as PAPER authority. The Fast service is stopped and
+authorization is revoked, but the Fast unit and final Fast environment remain
+installed. Without authorization an accidental service start fails closed.
 PAPER authority remains stopped for manual recovery (or a separately proven
 known-good Fast release).
 
@@ -173,6 +174,25 @@ legacy_service_restarted=false
 ```
 
 This prevents duplicate or divergent economic PAPER actions across namespaces.
+
+## Post-cutover deployment guard
+
+The existing G2 release manager installs the legacy campaign unit from ordinary
+release bundles. After a successful Fast cutover that behavior would silently
+restore score-gated PAPER authority on the next deployment.
+
+Therefore legacy-style release activation now checks for:
+
+```text
+/etc/shreks/fast-paper-cutover-authorization.json
+```
+
+before stopping any runtime service. If the authorization exists (or is a
+symlink), activation fails closed with no service-control command issued.
+
+This intentionally blocks ordinary automatic deployments after cutover until a
+separately reviewed Fast-aware release path is implemented. Failing deployment
+is safer than silently reverting PAPER authority.
 
 ## Command allowlist
 
@@ -221,7 +241,8 @@ Tests must prove:
 10. pre-Fast-start failure may restore the provisional env and legacy authority;
 11. any failure at/after Fast start never restores legacy score authority, even if durable Fast state is unchanged;
 12. unreviewed systemd operations are rejected by the command allowlist;
-13. Python, Rust, ARM64, and repository-safety CI remain green.
+13. ordinary legacy-style release activation is blocked after cutover before service stop;
+14. Python, Rust, ARM64, and repository-safety CI remain green.
 
 ## After this slice
 
