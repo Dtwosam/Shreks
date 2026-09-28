@@ -410,7 +410,6 @@ def test_runtime_missing_open_reduction_source_backpressures_without_decision(
     monkeypatch.setattr(
         runtime,
         "run_fast_paper_authoritative_coordinated_cycle",
-        "run_fast_paper_authoritative_source_writer_cycle",
         lambda *_args, **kwargs: (
             kwargs["reduction_read_resolver"](
                 SimpleNamespace(
