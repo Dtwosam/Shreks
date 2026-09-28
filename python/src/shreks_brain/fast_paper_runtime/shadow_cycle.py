@@ -103,6 +103,7 @@ def run_fast_paper_shadow_batch(
     inputs: tuple[FastPaperShadowCycleInput, ...],
     *,
     evidence_directory: str | Path,
+    checkpoint_path: str | Path | None = None,
 ) -> FastPaperRuntimeState:
     if type(manifest) is not FastPaperRuntimeManifest:
         raise ValueError(
@@ -141,6 +142,7 @@ def run_fast_paper_shadow_batch(
     _require_checkpoint_matches_expected(
         manifest,
         state,
+        checkpoint_path=checkpoint_path,
     )
     _validate_input_population(state, inputs)
 
@@ -185,10 +187,15 @@ def run_fast_paper_shadow_batch(
         _require_checkpoint_matches_expected(
             manifest,
             current,
+            checkpoint_path=checkpoint_path,
         )
         write_fast_paper_runtime_state(
             next_state,
-            manifest.checkpoint_path,
+            (
+                manifest.checkpoint_path
+                if checkpoint_path is None
+                else checkpoint_path
+            ),
         )
         current = next_state
 
@@ -267,8 +274,14 @@ def _prepare_evidence_directory(
 def _require_checkpoint_matches_expected(
     manifest: FastPaperRuntimeManifest,
     expected: FastPaperRuntimeState,
+    *,
+    checkpoint_path: str | Path | None = None,
 ) -> None:
-    checkpoint = Path(manifest.checkpoint_path).expanduser()
+    checkpoint = Path(
+        manifest.checkpoint_path
+        if checkpoint_path is None
+        else checkpoint_path
+    ).expanduser()
     if checkpoint.is_symlink():
         raise ValueError(
             "shadow checkpoint must not be a symlink"
