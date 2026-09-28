@@ -72,7 +72,8 @@ Static production roots are exact:
 /etc/shreks/fast-paper-shadow-service-policy.json
 /etc/shreks/fast-paper-shadow-execution-policy.json
 
-/var/lib/shreks/fast-paper-shadow/decision
+/var/lib/shreks/fast-paper-authoritative/decision
+/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json
 /var/lib/shreks/fast-paper-authoritative/execution-sources
 /var/lib/shreks/fast-paper-authoritative/buy-authority-sources
 /var/lib/shreks/fast-paper-authoritative/quote-usd-sources
@@ -80,7 +81,9 @@ Static production roots are exact:
 /var/lib/shreks/fast-paper-authoritative/pending-buy-retry-sources
 ```
 
-The learned decision evidence/checkpoint root intentionally remains the already-proven detached-shadow decision root. Cutover must stop the detached shadow service before the authoritative Fast PAPER service is started so only one process owns that learned cursor.\n\nThe authoritative database path is not guessed. It must exactly equal the
+The authoritative runtime owns a dedicated learned-decision evidence directory and checkpoint path. The cutover ceremony must seed that checkpoint from the exact latest authenticated detached-shadow decision state after the shadow is quiesced. Production decision evidence must still be empty at the cutover gate.
+
+The authoritative database path is not guessed. It must exactly equal the
 observer database path sealed in the Fast runtime manifest and the legacy
 observer database supplied to cutover preflight.
 
@@ -117,12 +120,13 @@ READY requires:
 authoritative_checkpoint_sequence=0
 authoritative_pending_buy=0
 authoritative_open_positions=0
-authoritative_learned_cursor=EMPTY
-learned_decision_cursor=EMPTY_UNTIL_DURABLE_BASELINE_EXISTS
+authoritative_learned_execution_cursor=EMPTY
+authoritative_decision_baseline=MATCHES_LATEST_SHADOW_CURSOR
+authoritative_decision_evidence=EMPTY
 authoritative_accounting=RECONCILED
 ```
 
-Because the proven detached-shadow decision cursor may already be advanced, a pristine authoritative runtime is not start-compatible with that cursor yet. Until a separately persisted cutover baseline exists, preflight therefore requires the learned decision cursor itself to be empty; an advanced cursor is an explicit NOT_READY result rather than silently skipped history.
+The learned decision cursor may already be advanced from shadow operation. That history is not replayed economically. Instead, the production decision checkpoint must exactly equal the latest authenticated shadow decision state, and the authoritative coordinator treats that cursor as the non-economic source baseline until the first new production decision commits. If a crash occurs after the first new decision evidence is written but before its economic commit, the dedicated production evidence file reconstructs the one-step cursor gap on restart.
 
 The persisted authoritative binding must reference the exact latest legacy:
 
