@@ -232,6 +232,7 @@ def assess_fast_paper_cutover_preflight(
             authoritative_environment
         ).encode("utf-8")
     ).hexdigest()
+    authoritative_decision = authoritative_bootstrap.decision_bootstrap
     authoritative_execution = authoritative_bootstrap.execution_bootstrap
     authoritative_binding = authoritative_execution.binding
     authoritative_checkpoint = authoritative_execution.checkpoint
@@ -316,6 +317,16 @@ def assess_fast_paper_cutover_preflight(
         and authoritative_runtime_state.last_processed_decision_evidence_fingerprint_sha256
         is None
     )
+    learned_decision_cursor = authoritative_decision.state.cursor
+    learned_decision_cursor_sequence = (
+        None
+        if learned_decision_cursor is None
+        else learned_decision_cursor.decision_sequence
+    )
+    pristine_cursor_start_compatible = (
+        learned_decision_cursor is None
+        and authoritative_cursor_empty
+    )
 
     gates = [
         _gate(
@@ -368,6 +379,13 @@ def assess_fast_paper_cutover_preflight(
             ),
             None,
             "authoritative Fast PAPER runner must not have processed learned economic decisions before cutover",
+        ),
+        _gate(
+            "AUTHORITATIVE_FIRST_CYCLE_CURSOR_COMPATIBLE",
+            pristine_cursor_start_compatible,
+            learned_decision_cursor_sequence,
+            None,
+            "a pristine authoritative runtime cannot start from an already-advanced learned decision cursor until a durable cutover baseline is sealed",
         ),
         _gate(
             "AUTHORITATIVE_HANDOFF_MATCHES_FINAL_LEGACY",
@@ -496,6 +514,12 @@ def assess_fast_paper_cutover_preflight(
         ),
         "authoritative_open_position_count": authoritative_open_positions,
         "authoritative_learned_cursor_empty": authoritative_cursor_empty,
+        "learned_decision_cursor_sequence": (
+            learned_decision_cursor_sequence
+        ),
+        "authoritative_first_cycle_cursor_compatible": (
+            pristine_cursor_start_compatible
+        ),
         "authoritative_ledger_matches_legacy": (
             authoritative_ledger_matches_legacy
         ),
