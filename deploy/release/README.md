@@ -856,6 +856,75 @@ PAPER ledger, stop or start a service, replace the legacy production PAPER
 authority, sign/submit, or enable LIVE. Those remain separate protected
 transition gates.
 
+### Assess production Fast Lane PAPER cutover preflight
+
+After one Fast Lane champion is recorded in the FL11.4 champion registry, use
+the read-only cutover preflight to prove whether the current learned and legacy
+PAPER state is safe enough for a later production-runner handoff.
+
+This command does **not** stop the legacy PAPER service or change PAPER
+authority.
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+CHAMPION_REGISTRY="/var/lib/shreks/fast-paper-promotion/champion-registry.json"
+RESTART_RECEIPT="/root/shreks-fast-paper-shadow-commissioning/restart-$CURRENT_SHA.json"
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-cutover-preflight" \
+  --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
+  --champion-registry-path "$CHAMPION_REGISTRY" \
+  --shadow-restart-receipt-path "$RESTART_RECEIPT" \
+  --shadow-ledger-database-path /var/lib/shreks/fast-paper-shadow/ledger.sqlite3 \
+  --legacy-runtime-manifest-path <active-legacy-paper-runtime-manifest> \
+  --legacy-observer-database-path <active-legacy-observer-database> \
+  --expected-release-sha "$CURRENT_SHA"
+```
+
+Supply the last two paths from the active protected legacy PAPER deployment
+configuration; do not infer or substitute a different database or manifest.
+
+The command authenticates the current Fast runtime and promoted champion,
+requires the exact physical restart proof for that release/champion, rejects a
+current shadow checkpoint older than the restart-proof checkpoint, reconciles
+the isolated learned PAPER ledger, then reads the latest checkpoint for the
+legacy manifest's exact `paper_run_id`.
+
+A ready result requires all of these to hold simultaneously:
+
+```text
+approved_fast_champion=EXACT
+shadow_restart_reconstruction=PROVEN
+shadow_checkpoint_not_before_restart_proof=PASS
+shadow_paper_accounting=RECONCILED
+legacy_final_checkpoint=PRESENT
+legacy_paper_accounting=RECONCILED
+legacy_open_positions=0
+legacy_pending_entries=0
+legacy_deferred_executions=0
+legacy_active_intents=0
+```
+
+The result is only `CUTOVER_PREFLIGHT_READY` or
+`CUTOVER_PREFLIGHT_NOT_READY`. Even a ready result retains:
+
+```text
+production_fast_paper_runner=NOT_PRESENT_IN_THIS_SLICE
+production_paper_cutover=NOT_GRANTED
+service_control_authority=NOT_GRANTED
+authoritative_paper_mutation=NOT_GRANTED
+signing_submission_authority=NOT_GRANTED
+live_authority=DISABLED
+```
+
+Do not stop `shreks-paper-campaign.service`, switch target membership, or
+treat this report as cutover authority. The next implementation slice must
+provide the production Fast Lane PAPER runner that starts from the unchanged
+authoritative `PaperLedger`; the protected cutover ceremony must then
+revalidate this gate after the legacy service is stopped.
+
 ## Deploy a release
 
 The normal production PAPER delivery path is now:
