@@ -77,6 +77,9 @@ def test_authoritative_cutover_environment_round_trips_and_binds_database(
         == Path(manifest.observer_database_path).resolve()
     )
     assert config.decision_config.maximum_decisions == 1
+    assert config.decision_config.checkpoint_path == Path(
+        "/var/lib/shreks/fast-paper-authoritative/decision/runtime-state.json"
+    )
 
 
 @pytest.mark.parametrize(
