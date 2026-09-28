@@ -941,6 +941,11 @@ def _pending_retry_input(
         candidate_id=candidate_id,
         evaluated_at_unix_ms=evaluated_at_unix_ms,
     )
+    if (
+        usd.observed_at_unix_ms
+        < execution_bootstrap.checkpoint.state.as_of_unix_ms
+    ):
+        return None
     campaign = ObserverCampaignStore(manifest.observer_database_path)
     entry_identity = ObserverPaperQuoteIdentity(
         candidate_id=candidate_id,
