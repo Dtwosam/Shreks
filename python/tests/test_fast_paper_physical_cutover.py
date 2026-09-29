@@ -20,6 +20,7 @@ _CHAMPION_FP = "f" * 64
 _BINDING_FP = "1" * 64
 _POLICY_FP = "2" * 64
 _FINAL_RUN_ID = "fast-final-run-1"
+_ROOT_MANAGER_PROOF_FP = "9" * 64
 
 
 def failure_marker_is_fail_closed(document: dict[str, object]) -> bool:
@@ -297,6 +298,13 @@ def _patch_common(monkeypatch, paths, config):
             _bootstrap(),
         ),
     )
+    monkeypatch.setattr(
+        cutover,
+        "_verify_release_manager_installation_proof",
+        lambda *_args, **_kwargs: {
+            "proof_fingerprint_sha256": _ROOT_MANAGER_PROOF_FP,
+        },
+    )
 
 
 def test_final_fast_run_namespace_must_be_unused_across_all_authoritative_tables(
@@ -569,6 +577,119 @@ def test_final_handoff_rejects_different_legacy_database_before_write(
         )
 
 
+def test_physical_preflight_rejects_root_manager_proof_before_systemd(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    monkeypatch.setattr(cutover, "_require_root", lambda: None)
+    monkeypatch.setattr(
+        cutover,
+        "_verify_release_manager_installation_proof",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            cutover.FastPaperPhysicalCutoverError(
+                "root helper proof rejected"
+            )
+        ),
+    )
+
+    def forbidden_runner(_command):
+        pytest.fail("invalid root-manager proof must fail before systemd")
+
+    with pytest.raises(
+        cutover.FastPaperPhysicalCutoverError,
+        match="root helper proof rejected",
+    ):
+        cutover.preflight_fast_paper_physical_cutover(
+            expected_release_source_sha=_SHA,
+            authoritative_release_wheel_path=tmp_path / "wheel.whl",
+            release_platform="x86_64-unknown-linux-gnu",
+            baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
+            final_fast_run_id=_FINAL_RUN_ID,
+            paths=paths,
+            runtime_executable=(
+                paths.current_link / ".venv" / "bin" / "python"
+            ),
+            command_runner=forbidden_runner,
+        )
+
+
+def test_root_manager_proof_drift_after_legacy_stop_restores_legacy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    config = _config(tmp_path)
+    runner = FakeRunner(paths)
+    _patch_common(monkeypatch, paths, config)
+    monkeypatch.setattr(
+        cutover,
+        "preflight_fast_paper_physical_cutover",
+        lambda **_kwargs: {
+            "state": "READY_FOR_PROTECTED_PAPER_CUTOVER",
+            "release_manager_installation_proof_fingerprint_sha256": (
+                _ROOT_MANAGER_PROOF_FP
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        cutover,
+        "_verify_release_manager_installation_proof",
+        lambda *_args, **_kwargs: {
+            "proof_fingerprint_sha256": "8" * 64,
+        },
+    )
+    monkeypatch.setattr(
+        cutover,
+        "_initialize_final_legacy_handoff",
+        lambda *_args, **_kwargs: pytest.fail(
+            "proof drift must fail before final Fast handoff"
+        ),
+    )
+
+    with pytest.raises(
+        cutover.FastPaperPhysicalCutoverError,
+        match="legacy PAPER authority restored",
+    ) as caught:
+        cutover.activate_fast_paper_physical_cutover(
+            expected_release_source_sha=_SHA,
+            authoritative_release_wheel_path=tmp_path / "wheel.whl",
+            release_platform="x86_64-unknown-linux-gnu",
+            baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
+            final_fast_run_id=_FINAL_RUN_ID,
+            fast_manifest_path=tmp_path / "manifest.json",
+            champion_registry_path=tmp_path / "registry.json",
+            shadow_restart_receipt_path=tmp_path / "restart.json",
+            shadow_ledger_database_path=tmp_path / "shadow.sqlite3",
+            legacy_runtime_manifest_path=tmp_path / "legacy.json",
+            legacy_observer_database_path=tmp_path / "observer.sqlite3",
+            observation_seconds=5,
+            paths=paths,
+            runtime_executable=(
+                paths.current_link / ".venv" / "bin" / "python"
+            ),
+            command_runner=runner,
+            sleeper=lambda _seconds: None,
+            clock_unix_ms=lambda: 123_456,
+        )
+
+    assert "root release-manager installation proof changed" in str(
+        caught.value.__cause__
+    )
+    assert runner.mode == "legacy"
+    assert (
+        ("systemctl", "start", cutover._UNIT)
+        in runner.commands
+    )
+    assert not paths.cutover_authorization_path.exists()
+
+
 def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -603,6 +724,9 @@ def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine
         authoritative_release_wheel_path=tmp_path / "wheel.whl",
         release_platform="x86_64-unknown-linux-gnu",
         baseline_receipt_path=tmp_path / "baseline.json",
+        release_manager_installation_proof_path=(
+            tmp_path / "release-manager-proof.json"
+        ),
         final_fast_run_id=_FINAL_RUN_ID,
         paths=paths,
         runtime_executable=paths.current_link / ".venv" / "bin" / "python",
@@ -611,6 +735,12 @@ def test_physical_preflight_requires_legacy_active_shadow_quiescent_and_pristine
 
     assert receipt["state"] == "READY_FOR_PROTECTED_PAPER_CUTOVER"
     assert receipt["production_paper_cutover"] == "NOT_GRANTED"
+    assert (
+        receipt[
+            "release_manager_installation_proof_fingerprint_sha256"
+        ]
+        == _ROOT_MANAGER_PROOF_FP
+    )
     assert runner.mode == "legacy"
 
 
@@ -633,7 +763,12 @@ def test_activation_stops_legacy_runs_final_preflight_then_starts_fast(
     monkeypatch.setattr(
         cutover,
         "preflight_fast_paper_physical_cutover",
-        lambda **_kwargs: {"state": "READY_FOR_PROTECTED_PAPER_CUTOVER"},
+        lambda **_kwargs: {
+            "state": "READY_FOR_PROTECTED_PAPER_CUTOVER",
+            "release_manager_installation_proof_fingerprint_sha256": (
+                _ROOT_MANAGER_PROOF_FP
+            ),
+        },
     )
     observed = {}
 
@@ -670,6 +805,9 @@ def test_activation_stops_legacy_runs_final_preflight_then_starts_fast(
         authoritative_release_wheel_path=tmp_path / "wheel.whl",
         release_platform="x86_64-unknown-linux-gnu",
         baseline_receipt_path=tmp_path / "baseline.json",
+        release_manager_installation_proof_path=(
+            tmp_path / "release-manager-proof.json"
+        ),
         final_fast_run_id=_FINAL_RUN_ID,
         fast_manifest_path=tmp_path / "manifest.json",
         champion_registry_path=tmp_path / "registry.json",
@@ -690,6 +828,12 @@ def test_activation_stops_legacy_runs_final_preflight_then_starts_fast(
     assert receipt["production_paper_cutover"] == "ACTIVE"
     assert receipt["authoritative_paper_runtime"] == "FAST_LANE_LEARNED_ACTIVE"
     assert receipt["live_authority"] == "DISABLED"
+    assert (
+        receipt[
+            "release_manager_installation_proof_fingerprint_sha256"
+        ]
+        == _ROOT_MANAGER_PROOF_FP
+    )
     assert runner.mode == "fast"
     assert paths.active_unit_destination.read_bytes() == b"fast-unit\n"
     assert paths.cutover_authorization_path.is_file()
@@ -711,7 +855,12 @@ def test_final_preflight_failure_restores_legacy_when_state_is_unchanged(
     monkeypatch.setattr(
         cutover,
         "preflight_fast_paper_physical_cutover",
-        lambda **_kwargs: {"state": "READY_FOR_PROTECTED_PAPER_CUTOVER"},
+        lambda **_kwargs: {
+            "state": "READY_FOR_PROTECTED_PAPER_CUTOVER",
+            "release_manager_installation_proof_fingerprint_sha256": (
+                _ROOT_MANAGER_PROOF_FP
+            ),
+        },
     )
     monkeypatch.setattr(
         cutover,
@@ -736,6 +885,9 @@ def test_final_preflight_failure_restores_legacy_when_state_is_unchanged(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
@@ -775,7 +927,12 @@ def test_post_start_failure_never_restores_legacy_authority(
     monkeypatch.setattr(
         cutover,
         "preflight_fast_paper_physical_cutover",
-        lambda **_kwargs: {"state": "READY_FOR_PROTECTED_PAPER_CUTOVER"},
+        lambda **_kwargs: {
+            "state": "READY_FOR_PROTECTED_PAPER_CUTOVER",
+            "release_manager_installation_proof_fingerprint_sha256": (
+                _ROOT_MANAGER_PROOF_FP
+            ),
+        },
     )
     monkeypatch.setattr(
         cutover,
@@ -810,6 +967,9 @@ def test_post_start_failure_never_restores_legacy_authority(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
@@ -858,7 +1018,12 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
     monkeypatch.setattr(
         cutover,
         "preflight_fast_paper_physical_cutover",
-        lambda **_kwargs: {"state": "READY_FOR_PROTECTED_PAPER_CUTOVER"},
+        lambda **_kwargs: {
+            "state": "READY_FOR_PROTECTED_PAPER_CUTOVER",
+            "release_manager_installation_proof_fingerprint_sha256": (
+                _ROOT_MANAGER_PROOF_FP
+            ),
+        },
     )
     monkeypatch.setattr(
         cutover,
@@ -888,6 +1053,9 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",

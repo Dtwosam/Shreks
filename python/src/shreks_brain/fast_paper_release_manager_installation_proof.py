@@ -54,6 +54,35 @@ _PROPERTIES = (
     "ActiveEnterTimestampMonotonic",
 )
 
+_PROOF_FIELDS = frozenset(
+    {
+        "schema_name",
+        "schema_version",
+        "status",
+        "release_source_sha",
+        "release_directory",
+        "wheel_relative_path",
+        "wheel_sha256",
+        "release_manager_wheel_member",
+        "release_manager_sha256",
+        "prior_release_manager_sha256",
+        "release_manager_replaced",
+        "release_manager_destination",
+        "release_bundle_wheel_member",
+        "release_bundle_sha256",
+        "release_bundle_destination",
+        "deploy_sudoers_sha256",
+        "deploy_sudoers_exact_rule",
+        "service_lifecycle_unchanged",
+        "installation_authority",
+        "physical_cutover_authority",
+        "paper_execution_authority",
+        "signing_submission_authority",
+        "live_authority",
+        "proof_fingerprint_sha256",
+    }
+)
+
 
 class FastPaperReleaseManagerInstallationProofError(RuntimeError):
     pass
@@ -274,6 +303,214 @@ def refresh_and_prove_fast_aware_release_manager(
     document["proof_fingerprint_sha256"] = _fingerprint(document)
     _write_receipt_no_replace(receipt, document)
     return document
+
+
+def read_fast_paper_release_manager_installation_proof(
+    path: str | Path,
+) -> dict[str, object]:
+    source = Path(path).expanduser()
+    payload, metadata = release_material._read_regular_no_follow(
+        source,
+        label="Fast-aware release-manager installation proof",
+    )
+    if (
+        metadata.st_uid != _ROOT_UID
+        or metadata.st_gid != _ROOT_GID
+        or stat.S_IMODE(metadata.st_mode) != _RECEIPT_MODE
+    ):
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof metadata is not root:root 0600"
+        )
+    try:
+        text = payload.decode("utf-8")
+        document = json.loads(
+            text,
+            object_pairs_hook=_reject_duplicate_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof is not canonical JSON"
+        ) from exc
+    if type(document) is not dict or frozenset(document) != _PROOF_FIELDS:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof has unknown or missing fields"
+        )
+    if text != _canonical(document) + "\n":
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof must use canonical JSON"
+        )
+    _validate_proof_document(document)
+    return document
+
+
+def verify_fast_paper_release_manager_installation_proof(
+    document: dict[str, object],
+    *,
+    expected_release_source_sha: str,
+    paths: InstallationProofPaths,
+    runtime_executable: str | os.PathLike[str] | None = None,
+) -> None:
+    if type(document) is not dict:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof must be an exact dictionary"
+        )
+    _validate_proof_document(document)
+    expected_sha = release_material._validate_source_sha(
+        expected_release_source_sha
+    )
+    if document["release_source_sha"] != expected_sha:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof release identity mismatch"
+        )
+    material = _release_material(
+        expected_sha=expected_sha,
+        paths=paths,
+        runtime_executable=runtime_executable,
+    )
+    expected = {
+        "release_directory": str(material["release_directory_path"]),
+        "wheel_relative_path": material["wheel_relative_path"],
+        "wheel_sha256": material["wheel_sha256"],
+        "release_manager_wheel_member": _MANAGER_MEMBER,
+        "release_manager_sha256": material["manager_sha256"],
+        "release_manager_destination": str(paths.manager_destination),
+        "release_bundle_wheel_member": _BUNDLE_MEMBER,
+        "release_bundle_sha256": material["bundle_sha256"],
+        "release_bundle_destination": str(paths.bundle_destination),
+    }
+    for name, value in expected.items():
+        if document[name] != value:
+            raise FastPaperReleaseManagerInstallationProofError(
+                f"installation proof {name} no longer matches current release"
+            )
+
+    manager_payload, manager_stat = release_material._read_regular_no_follow(
+        paths.manager_destination,
+        label="installed root release manager",
+    )
+    _require_executable_metadata(
+        manager_stat,
+        "installed root release manager",
+    )
+    if hashlib.sha256(manager_payload).hexdigest() != document[
+        "release_manager_sha256"
+    ]:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installed root release manager drifted after proof"
+        )
+
+    bundle_payload, bundle_stat = release_material._read_regular_no_follow(
+        paths.bundle_destination,
+        label="installed root release bundle companion",
+    )
+    _require_executable_metadata(
+        bundle_stat,
+        "installed root release bundle companion",
+    )
+    if hashlib.sha256(bundle_payload).hexdigest() != document[
+        "release_bundle_sha256"
+    ]:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installed root release_bundle.py drifted after proof"
+        )
+
+    sudoers = _sudoers_observation(paths.deploy_sudoers)
+    if sudoers["sha256"] != document["deploy_sudoers_sha256"]:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "deployment sudoers drifted after installation proof"
+        )
+
+
+def _validate_proof_document(document: dict[str, object]) -> None:
+    if frozenset(document) != _PROOF_FIELDS:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof has unknown or missing fields"
+        )
+    expected_static = {
+        "schema_name": _SCHEMA_NAME,
+        "schema_version": _SCHEMA_VERSION,
+        "status": "VERIFIED",
+        "release_manager_wheel_member": _MANAGER_MEMBER,
+        "release_bundle_wheel_member": _BUNDLE_MEMBER,
+        "deploy_sudoers_exact_rule": True,
+        "service_lifecycle_unchanged": True,
+        "physical_cutover_authority": "NOT_EXERCISED",
+        "paper_execution_authority": "UNCHANGED",
+        "signing_submission_authority": "NOT_GRANTED",
+        "live_authority": "DISABLED",
+    }
+    for name, value in expected_static.items():
+        if document.get(name) != value:
+            raise FastPaperReleaseManagerInstallationProofError(
+                f"installation proof {name} is incompatible"
+            )
+    if document.get("installation_authority") not in {
+        "EXERCISED_EXACT_RELEASE_BOUND_FAST_AWARE_MANAGER_ONLY",
+        "PROVEN_EXACT_RELEASE_BOUND_FAST_AWARE_MANAGER_ONLY",
+    }:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof authority is incompatible"
+        )
+    if type(document.get("release_manager_replaced")) is not bool:
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof replacement flag must be bool"
+        )
+    release_material._validate_source_sha(
+        document.get("release_source_sha")
+    )
+    for name in (
+        "wheel_sha256",
+        "release_manager_sha256",
+        "prior_release_manager_sha256",
+        "release_bundle_sha256",
+        "deploy_sudoers_sha256",
+        "proof_fingerprint_sha256",
+    ):
+        _require_sha256(name, document.get(name))
+    for name in (
+        "release_directory",
+        "wheel_relative_path",
+        "release_manager_destination",
+        "release_bundle_destination",
+    ):
+        value = document.get(name)
+        if not isinstance(value, str) or not value:
+            raise FastPaperReleaseManagerInstallationProofError(
+                f"installation proof {name} must be non-empty text"
+            )
+    if document["proof_fingerprint_sha256"] != _fingerprint(document):
+        raise FastPaperReleaseManagerInstallationProofError(
+            "installation proof fingerprint mismatch"
+        )
+
+
+def _require_sha256(name: str, value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or value != value.lower()
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise FastPaperReleaseManagerInstallationProofError(
+            f"{name} must be lowercase SHA-256 hex"
+        )
+    return value
+
+
+def _reject_duplicate_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON constant is forbidden: {value}")
 
 
 def _release_material(

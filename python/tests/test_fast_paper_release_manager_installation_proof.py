@@ -192,6 +192,127 @@ def test_refresh_replaces_only_manager_and_proves_exact_control_plane(
     assert len(setup["calls"]) == len(proof._UNITS) * 2
 
 
+def test_durable_proof_reauthenticates_current_helper_bundle_and_sudoers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    result = proof.refresh_and_prove_fast_aware_release_manager(
+        expected_release_source_sha=_RELEASE_SHA,
+        paths=setup["paths"],
+        receipt_path=setup["receipt"],
+        runtime_executable=setup["runtime_python"],
+        command_runner=setup["runner"],
+    )
+
+    restored = proof.read_fast_paper_release_manager_installation_proof(
+        setup["receipt"]
+    )
+    proof.verify_fast_paper_release_manager_installation_proof(
+        restored,
+        expected_release_source_sha=_RELEASE_SHA,
+        paths=setup["paths"],
+        runtime_executable=setup["runtime_python"],
+    )
+
+    assert restored == result
+
+
+def test_durable_proof_rejects_installed_manager_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    proof.refresh_and_prove_fast_aware_release_manager(
+        expected_release_source_sha=_RELEASE_SHA,
+        paths=setup["paths"],
+        receipt_path=setup["receipt"],
+        runtime_executable=setup["runtime_python"],
+        command_runner=setup["runner"],
+    )
+    document = proof.read_fast_paper_release_manager_installation_proof(
+        setup["receipt"]
+    )
+    setup["manager"].write_bytes(
+        b"#!/usr/bin/env python3\n# drift after proof\n"
+    )
+    setup["manager"].chmod(0o755)
+
+    with pytest.raises(
+        proof.FastPaperReleaseManagerInstallationProofError,
+        match="drifted after proof",
+    ):
+        proof.verify_fast_paper_release_manager_installation_proof(
+            document,
+            expected_release_source_sha=_RELEASE_SHA,
+            paths=setup["paths"],
+            runtime_executable=setup["runtime_python"],
+        )
+
+
+def test_durable_proof_rejects_sudoers_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    proof.refresh_and_prove_fast_aware_release_manager(
+        expected_release_source_sha=_RELEASE_SHA,
+        paths=setup["paths"],
+        receipt_path=setup["receipt"],
+        runtime_executable=setup["runtime_python"],
+        command_runner=setup["runner"],
+    )
+    document = proof.read_fast_paper_release_manager_installation_proof(
+        setup["receipt"]
+    )
+    setup["sudoers"].chmod(0o640)
+    setup["sudoers"].write_text(
+        proof._SUDOERS_LINE
+        + "\nshreks-deploy ALL=(root) NOPASSWD: /bin/sh\n",
+        encoding="utf-8",
+    )
+    setup["sudoers"].chmod(0o440)
+
+    with pytest.raises(
+        proof.FastPaperReleaseManagerInstallationProofError,
+        match="sudoers",
+    ):
+        proof.verify_fast_paper_release_manager_installation_proof(
+            document,
+            expected_release_source_sha=_RELEASE_SHA,
+            paths=setup["paths"],
+            runtime_executable=setup["runtime_python"],
+        )
+
+
+def test_durable_proof_rejects_fingerprint_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup = _layout(tmp_path, monkeypatch)
+    proof.refresh_and_prove_fast_aware_release_manager(
+        expected_release_source_sha=_RELEASE_SHA,
+        paths=setup["paths"],
+        receipt_path=setup["receipt"],
+        runtime_executable=setup["runtime_python"],
+        command_runner=setup["runner"],
+    )
+    document = json.loads(
+        setup["receipt"].read_text(encoding="utf-8")
+    )
+    document["proof_fingerprint_sha256"] = "0" * 64
+    setup["receipt"].write_bytes(_canonical(document))
+    setup["receipt"].chmod(0o600)
+
+    with pytest.raises(
+        proof.FastPaperReleaseManagerInstallationProofError,
+        match="fingerprint mismatch",
+    ):
+        proof.read_fast_paper_release_manager_installation_proof(
+            setup["receipt"]
+        )
+
+
 def test_exact_manager_is_proof_only_and_not_rewritten(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -37,6 +37,11 @@ from .fast_paper_cutover_authorization import (
     encode_fast_paper_cutover_authorization,
 )
 from .fast_paper_cutover_preflight import assess_fast_paper_cutover_preflight
+from .fast_paper_release_manager_installation_proof import (
+    InstallationProofPaths,
+    read_fast_paper_release_manager_installation_proof,
+    verify_fast_paper_release_manager_installation_proof,
+)
 from shreks_brain.observer_campaign.runtime_manifest import (
     decode_observer_paper_campaign_runtime_manifest,
 )
@@ -181,6 +186,7 @@ def preflight_fast_paper_physical_cutover(
     authoritative_release_wheel_path: str | Path,
     release_platform: str,
     baseline_receipt_path: str | Path,
+    release_manager_installation_proof_path: str | Path,
     final_fast_run_id: str,
     paths: FastPaperPhysicalCutoverPaths,
     runtime_executable: str | os.PathLike[str] | None = None,
@@ -193,6 +199,12 @@ def preflight_fast_paper_physical_cutover(
         paths,
         expected_sha,
         runtime_executable,
+    )
+    release_manager_proof = _verify_release_manager_installation_proof(
+        release_manager_installation_proof_path,
+        expected_release_source_sha=expected_sha,
+        paths=paths,
+        runtime_executable=runtime_executable,
     )
     service_uid, service_gid = _service_identity()
     host = preflight_fast_paper_authoritative_host(
@@ -269,6 +281,9 @@ def preflight_fast_paper_physical_cutover(
             "baseline_receipt_fingerprint_sha256": (
                 host["baseline_receipt_fingerprint_sha256"]
             ),
+            "release_manager_installation_proof_fingerprint_sha256": (
+                release_manager_proof["proof_fingerprint_sha256"]
+            ),
             "production_paper_cutover": "NOT_GRANTED",
             "service_control_authority": "NOT_EXERCISED",
             "signing_submission_authority": "NOT_GRANTED",
@@ -283,6 +298,7 @@ def activate_fast_paper_physical_cutover(
     authoritative_release_wheel_path: str | Path,
     release_platform: str,
     baseline_receipt_path: str | Path,
+    release_manager_installation_proof_path: str | Path,
     final_fast_run_id: str,
     fast_manifest_path: str | Path,
     champion_registry_path: str | Path,
@@ -316,6 +332,9 @@ def activate_fast_paper_physical_cutover(
         authoritative_release_wheel_path=authoritative_release_wheel_path,
         release_platform=release_platform,
         baseline_receipt_path=baseline_receipt_path,
+        release_manager_installation_proof_path=(
+            release_manager_installation_proof_path
+        ),
         final_fast_run_id=final_run_id,
         paths=paths,
         runtime_executable=runtime_executable,
@@ -351,6 +370,25 @@ def activate_fast_paper_physical_cutover(
         stopped = _read_systemd_state(runner)
         _require_stopped(stopped, "legacy PAPER")
         _require_shadow_quiescent(runner)
+        stopped_release_manager_proof = (
+            _verify_release_manager_installation_proof(
+                release_manager_installation_proof_path,
+                expected_release_source_sha=expected_sha,
+                paths=paths,
+                runtime_executable=runtime_executable,
+            )
+        )
+        if (
+            stopped_release_manager_proof[
+                "proof_fingerprint_sha256"
+            ]
+            != preflight[
+                "release_manager_installation_proof_fingerprint_sha256"
+            ]
+        ):
+            raise FastPaperPhysicalCutoverError(
+                "root release-manager installation proof changed during cutover"
+            )
 
         config, bootstrap = _initialize_final_legacy_handoff(
             config,
@@ -503,6 +541,11 @@ def activate_fast_paper_physical_cutover(
             ),
             "cutover_preflight_report_fingerprint_sha256": (
                 report["report_fingerprint_sha256"]
+            ),
+            "release_manager_installation_proof_fingerprint_sha256": (
+                stopped_release_manager_proof[
+                    "proof_fingerprint_sha256"
+                ]
             ),
             "authorization_fingerprint_sha256": (
                 authorization["authorization_fingerprint_sha256"]
@@ -1670,6 +1713,45 @@ def _canonical(value: object) -> str:
     )
 
 
+def _release_manager_proof_paths(
+    paths: FastPaperPhysicalCutoverPaths,
+) -> InstallationProofPaths:
+    return InstallationProofPaths(
+        current_link=paths.current_link,
+        manager_destination=Path(
+            "/usr/local/sbin/shreks-release-manager"
+        ),
+        bundle_destination=Path("/usr/local/sbin/release_bundle.py"),
+        deploy_sudoers=Path(
+            "/etc/sudoers.d/shreks-release-manager"
+        ),
+    )
+
+
+def _verify_release_manager_installation_proof(
+    proof_path: str | Path,
+    *,
+    expected_release_source_sha: str,
+    paths: FastPaperPhysicalCutoverPaths,
+    runtime_executable: str | os.PathLike[str] | None,
+) -> dict[str, object]:
+    try:
+        document = read_fast_paper_release_manager_installation_proof(
+            proof_path
+        )
+        verify_fast_paper_release_manager_installation_proof(
+            document,
+            expected_release_source_sha=expected_release_source_sha,
+            paths=_release_manager_proof_paths(paths),
+            runtime_executable=runtime_executable,
+        )
+    except Exception as exc:
+        raise FastPaperPhysicalCutoverError(
+            "Fast-aware root release-manager installation proof failed closed"
+        ) from exc
+    return document
+
+
 def _production_paths() -> FastPaperPhysicalCutoverPaths:
     return FastPaperPhysicalCutoverPaths(
         current_link=Path("/opt/shreks/current"),
@@ -1692,6 +1774,10 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--authoritative-release-wheel-path", required=True)
     parser.add_argument("--release-platform", required=True)
     parser.add_argument("--baseline-receipt-path", required=True)
+    parser.add_argument(
+        "--release-manager-installation-proof-path",
+        required=True,
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -1726,6 +1812,9 @@ def main(argv: list[str] | None = None) -> int:
         ),
         "release_platform": args.release_platform,
         "baseline_receipt_path": args.baseline_receipt_path,
+        "release_manager_installation_proof_path": (
+            args.release_manager_installation_proof_path
+        ),
         "final_fast_run_id": args.final_fast_run_id,
         "paths": paths,
     }
