@@ -1093,12 +1093,50 @@ Fast authoritative ledger and use a separately proven Fast recovery path.
 
 This ceremony never enables LIVE and never grants signing/submission authority.
 
-After a successful cutover, the legacy G2 release manager also fails closed if
+After a successful cutover, direct legacy G2 activation still fails closed if
 the protected cutover authorization exists. It performs that check before
-stopping any runtime service. This deliberately blocks ordinary automatic
-legacy-style deployments until the separately reviewed Fast-aware release path
-is installed; a later deployment must not silently put
+stopping any runtime service; a later deployment must never silently put
 `shreks_brain.observer_campaign.runtime` back in charge of PAPER.
+
+Releases containing the reviewed Fast-aware release manager add a mode-aware
+dispatch above that legacy guard. The deploy account still invokes only the
+historical narrow command:
+
+```text
+sudo /usr/local/sbin/shreks-release-manager install <archive> <checksum> <manifest>
+```
+
+Before cutover, that command uses the existing legacy activation path. After a
+valid Fast cutover/recovery guard path exists, the root manager stages and
+re-verifies the immutable target release, then invokes only:
+
+```text
+/opt/shreks/current/.venv/bin/shreks-fast-paper-release-manager \
+  activate-staged /opt/shreks/releases/<target-sha>
+```
+
+The Fast helper stops the current Fast PAPER writer first, reloads the exact
+post-stop state, installs an invalid `UPGRADE_IN_PROGRESS` authorization
+guard, creates a fresh append-only Fast-to-Fast handoff namespace, rotates the
+release-bound Fast control files and sealed Fast unit, verifies the complete
+target bootstrap, installs a new valid target authorization, then starts
+`shreks.target` and performs bounded runtime verification.
+
+A failure before the first target Fast start attempt may restore the exact
+post-stop source Fast release. At or after the first target start attempt,
+automatic rollback is forbidden: PAPER is stopped, authorization is revoked
+for manual recovery, and neither the prior Fast run nor the legacy score-gated
+runtime is restarted.
+
+**Host prerequisite:** ordinary releases transport but do not replace the
+root-owned `/usr/local/sbin/shreks-release-manager`. Before the first physical
+Fast PAPER cutover, use the existing trusted-administrator **Recover or update
+sealed deployment control scripts** procedure below on the exact active sealed
+release containing the Fast-aware dispatch. Do this while legacy PAPER is still
+authoritative. Confirm the installed manager is root-owned `0755` and keep the
+existing sudoers command shape unchanged. Do not postpone that refresh until
+after Fast cutover, because the old root manager intentionally blocks
+post-cutover deployment.
 
 
 ## Deploy a release

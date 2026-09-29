@@ -532,6 +532,68 @@ def _rollback_after_failure(
     _require_runtime_healthy(command_runner, previous)
 
 
+def _activate_fast_release(
+    release_dir: Path,
+    paths: ReleasePaths,
+    *,
+    command_runner: CommandRunner = _default_command_runner,
+) -> None:
+    release_dir = Path(release_dir)
+    _require_managed_release(release_dir, paths)
+    previous = _current_release(paths)
+    if previous is None:
+        raise ReleaseManagerError(
+            "Fast-aware release activation requires an active current release"
+        )
+    authorization = _fast_paper_cutover_authorization_path(paths)
+    if not authorization.exists() and not authorization.is_symlink():
+        raise ReleaseManagerError(
+            "Fast-aware release activation requires the protected cutover guard"
+        )
+    helper = previous / ".venv" / "bin" / "shreks-fast-paper-release-manager"
+    if helper.is_symlink() or not helper.is_file():
+        raise ReleaseManagerError(
+            "current release Fast-aware release manager is unavailable"
+        )
+    if not os.access(helper, os.X_OK):
+        raise ReleaseManagerError(
+            "current release Fast-aware release manager is not executable"
+        )
+    try:
+        command_runner(
+            (
+                str(helper),
+                "activate-staged",
+                str(release_dir),
+            )
+        )
+    except Exception as exc:
+        raise ReleaseManagerError(
+            "Fast-aware release activation failed closed"
+        ) from exc
+
+
+def activate_release_for_current_mode(
+    release_dir: Path,
+    paths: ReleasePaths,
+    *,
+    command_runner: CommandRunner = _default_command_runner,
+) -> None:
+    authorization = _fast_paper_cutover_authorization_path(paths)
+    if authorization.exists() or authorization.is_symlink():
+        _activate_fast_release(
+            release_dir,
+            paths,
+            command_runner=command_runner,
+        )
+        return
+    activate_release(
+        release_dir,
+        paths,
+        command_runner=command_runner,
+    )
+
+
 def activate_release(
     release_dir: Path,
     paths: ReleasePaths,
@@ -608,9 +670,13 @@ def main(argv: list[str] | None = None) -> int:
                 paths,
                 python_executable=args.python,
             )
-            activate_release(release_dir, paths)
+            activate_release_for_current_mode(release_dir, paths)
         else:
-            activate_existing(args.source_sha, paths)
+            release_dir = Path(paths.releases_dir) / validate_source_sha(
+                args.source_sha
+            )
+            _require_managed_release(release_dir, paths)
+            activate_release_for_current_mode(release_dir, paths)
     except (ReleaseManagerError, ReleaseBundleError):
         return 1
     return 0
