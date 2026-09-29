@@ -171,12 +171,13 @@ After this implementation is sealed and deployed while legacy PAPER remains
 authoritative, a trusted administrator may run the exact release-bound refresh
 on the protected host.
 
-Then:
+The physical-cutover preflight must then consume the durable proof directly,
+re-authenticate its release/helper/bundle/sudoers bindings before service
+control, and bind its proof fingerprint into the cutover preflight receipt.
+Activation must re-authenticate the same proof after legacy PAPER is stopped
+and require the fingerprint to remain unchanged before final Fast handoff.
 
-1. authenticate the durable installation proof;
-2. re-run `shreks-fast-paper-physical-cutover preflight`;
-3. require `READY_FOR_PROTECTED_PAPER_CUTOVER`;
-4. only then consider the separately authorized physical Fast PAPER cutover
-   ceremony.
+Only a resulting `READY_FOR_PROTECTED_PAPER_CUTOVER` may proceed to the
+separately authorized physical Fast PAPER cutover ceremony.
 
 LIVE remains disabled.
