@@ -573,18 +573,22 @@ def _materialize_target_fast_tools(
         expected_source_sha=expected_source_sha,
         expected_platform=expected_platform,
     )
-    root = (
+    tool_parent = (
         target_release
         / ".venv"
         / "fast-paper-tools"
-        / expected_source_sha
     )
-    if root.is_symlink():
+    root = tool_parent / expected_source_sha
+    if tool_parent.is_symlink() or root.is_symlink():
         raise FastPaperReleaseUpgradeError(
-            "target Fast tool root must not be a symlink"
+            "target Fast tool path must not contain a symlinked tool root"
         )
-    root.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
-    os.chmod(root.parent, 0o755)
+    tool_parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    if tool_parent.is_symlink() or not tool_parent.is_dir():
+        raise FastPaperReleaseUpgradeError(
+            "target Fast tool parent must be a regular directory"
+        )
+    os.chmod(tool_parent, 0o755)
 
     expected_payloads: dict[str, bytes] = {}
     try:
