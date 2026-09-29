@@ -225,6 +225,7 @@ def test_release_upgrade_source_has_no_legacy_trade_or_live_authority() -> None:
 
 def test_pre_start_restore_recovers_stopped_source_bytes_archive_and_release(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_release = tmp_path / ("a" * 40)
     target_release = tmp_path / ("b" * 40)
@@ -255,6 +256,7 @@ def test_pre_start_restore_recovers_stopped_source_bytes_archive_and_release(
     )
     uid = os.geteuid()
     gid = os.getegid()
+    monkeypatch.setattr(upgrade.os, "fchown", lambda *_args: None)
     protected = (
         upgrade.ProtectedFileSnapshot(
             path=protected_path,
