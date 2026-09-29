@@ -1050,8 +1050,20 @@ Run this only after the exact immutable release containing the physical-cutover
 CLI is active and protected host preparation reports
 `READY_FOR_PROTECTED_PAPER_CUTOVER_REVIEW`.
 
-Resolve the same wheel/platform used by final cutover preflight, then run the
-read-only physical preflight while legacy PAPER is still active:
+Resolve the same wheel/platform used by final cutover preflight and bind the
+exact root-manager proof produced by the release-bound refresh:
+
+```sh
+RELEASE_MANAGER_INSTALL_PROOF="/root/shreks-fast-paper-cutover/release-manager-installation-proof-$CURRENT_SHA.json"
+```
+
+The physical cutover command re-authenticates that proof against the current
+immutable release, installed root manager, installed release-bundle companion,
+and exact sudoers rule before any service-control operation. It re-authenticates
+the same proof again after legacy PAPER is stopped and requires the proof
+fingerprint to be unchanged across that boundary.
+
+Then run the read-only physical preflight while legacy PAPER is still active:
 
 ```sh
 sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
@@ -1059,6 +1071,7 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
   --authoritative-release-wheel-path "${WHEELS[0]}" \
   --release-platform "$RELEASE_PLATFORM" \
   --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --release-manager-installation-proof-path "$RELEASE_MANAGER_INSTALL_PROOF" \
   --final-fast-run-id <new-final-fast-run-id>
 ```
 
@@ -1070,6 +1083,7 @@ sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-physical-cutover" \
   --authoritative-release-wheel-path "${WHEELS[0]}" \
   --release-platform "$RELEASE_PLATFORM" \
   --baseline-receipt-path "$BASELINE_RECEIPT" \
+  --release-manager-installation-proof-path "$RELEASE_MANAGER_INSTALL_PROOF" \
   --final-fast-run-id <same-new-final-fast-run-id> \
   --fast-manifest-path /etc/shreks/fast-paper-runtime-manifest.json \
   --champion-registry-path "$CHAMPION_REGISTRY" \
