@@ -464,3 +464,139 @@ def test_legacy_release_activation_is_blocked_by_fast_paper_cutover_guard(
     assert runner.calls == []
     assert not paths.current_link.exists()
     assert not paths.systemd_dir.exists()
+
+
+def test_fast_aware_activation_delegates_to_current_release_upgrade_cli(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    previous = _stage(tmp_path / "previous", paths, SHA_B, "previous")
+    target = _stage(tmp_path / "target", paths, SHA_A, "target")
+    release_manager._atomic_switch(paths.current_link, previous)
+    authorization = release_manager._fast_paper_cutover_authorization_path(
+        paths
+    )
+    authorization.parent.mkdir(parents=True, exist_ok=True)
+    authorization.write_text("{}\n", encoding="utf-8")
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        release_manager,
+        "_host_release_platform",
+        lambda: release_manager._verify_stored_release(target).platform,
+    )
+
+    release_manager.activate_fast_release(
+        target,
+        paths,
+        observation_seconds=17,
+        command_runner=calls.append,
+    )
+
+    manifest = release_manager._verify_stored_release(target)
+    assert calls == [
+        (
+            str(previous / ".venv" / "bin" / "python"),
+            "-m",
+            "shreks_brain.fast_paper_release_upgrade",
+            str(target),
+            f"fast-paper-release-{manifest.source_sha}",
+            "--release-platform",
+            manifest.platform,
+            "--observe-seconds",
+            "17",
+        )
+    ]
+
+
+def test_install_dispatch_routes_to_fast_path_when_authorization_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    staged = tmp_path / SHA_A
+    staged.mkdir()
+    authorization = release_manager._fast_paper_cutover_authorization_path(
+        paths
+    )
+    authorization.parent.mkdir(parents=True, exist_ok=True)
+    authorization.write_text("{}\n", encoding="utf-8")
+    observed: list[tuple[str, Path]] = []
+
+    monkeypatch.setattr(
+        release_manager,
+        "_production_paths",
+        lambda: paths,
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "stage_release",
+        lambda *_args, **_kwargs: staged,
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "activate_release",
+        lambda release, _paths: observed.append(("legacy", release)),
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "activate_fast_release",
+        lambda release, _paths: observed.append(("fast", release)),
+    )
+
+    assert (
+        release_manager.main(
+            [
+                "install",
+                str(tmp_path / "archive"),
+                str(tmp_path / "checksum"),
+                str(tmp_path / "manifest"),
+            ]
+        )
+        == 0
+    )
+    assert observed == [("fast", staged)]
+
+
+def test_install_dispatch_keeps_legacy_path_before_fast_cutover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _paths(tmp_path)
+    staged = tmp_path / SHA_A
+    staged.mkdir()
+    observed: list[tuple[str, Path]] = []
+
+    monkeypatch.setattr(
+        release_manager,
+        "_production_paths",
+        lambda: paths,
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "stage_release",
+        lambda *_args, **_kwargs: staged,
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "activate_release",
+        lambda release, _paths: observed.append(("legacy", release)),
+    )
+    monkeypatch.setattr(
+        release_manager,
+        "activate_fast_release",
+        lambda release, _paths: observed.append(("fast", release)),
+    )
+
+    assert (
+        release_manager.main(
+            [
+                "install",
+                str(tmp_path / "archive"),
+                str(tmp_path / "checksum"),
+                str(tmp_path / "manifest"),
+            ]
+        )
+        == 0
+    )
+    assert observed == [("legacy", staged)]
