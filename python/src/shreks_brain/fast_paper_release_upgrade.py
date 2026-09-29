@@ -279,6 +279,11 @@ def activate_fast_paper_release(
         )
         _require_clean_handoff_boundary(source_bootstrap)
 
+        source_checkpoint = source_bootstrap.execution_bootstrap.checkpoint
+        handoff_created_at_unix_ms = max(
+            source_checkpoint.created_at_unix_ms,
+            source_checkpoint.state_as_of_unix_ms,
+        ) + 1
         handoff = initialize_fast_paper_authoritative_release_handoff(
             source_bootstrap.decision_bootstrap.manifest,
             target_manifest,
@@ -287,7 +292,7 @@ def activate_fast_paper_release(
             source_bootstrap.decision_bootstrap.state,
             target_fast_run_id=target_fast_run_id,
             database_path=source_config.execution_config.database_path,
-            created_at_unix_ms=_clock_value(clock),
+            created_at_unix_ms=handoff_created_at_unix_ms,
         )
         handoff_created = True
 
@@ -1120,7 +1125,18 @@ def _default_command_runner(command: tuple[str, ...]) -> HostCommandResult:
             and command[:3] == ("systemctl", "is-active", "--quiet")
             and command[3] in _RUNTIME_UNITS
         )
-        or command[0:2] == ("systemctl", "show")
+        or (
+            len(command) == 5
+            and command[:2] == ("systemctl", "show")
+            and command[2] in (_OBSERVE_UNIT, _EVIDENCE_UNIT)
+            and command[3:] == ("--property=MainPID", "--no-pager")
+        )
+        or (
+            len(command) == 5
+            and command[:3] == ("systemctl", "show", _UNIT)
+            and command[3].startswith("--property=")
+            and command[4] == "--no-pager"
+        )
         or (
             len(command) == 8
             and command[:3] == ("journalctl", "-u", _UNIT)
