@@ -561,6 +561,98 @@ def activate_release(
         raise ReleaseManagerError("release activation failed; previous state restored") from activation_error
 
 
+def _require_active_fast_paper_authorization(
+    paths: ReleasePaths,
+) -> Path:
+    authorization = _fast_paper_cutover_authorization_path(paths)
+    if authorization.is_symlink() or not authorization.is_file():
+        raise ReleaseManagerError(
+            "Fast-aware release activation requires an existing regular production authorization"
+        )
+    return authorization
+
+
+def activate_fast_release(
+    release_dir: Path,
+    paths: ReleasePaths,
+    *,
+    release_platform: str | None = None,
+    observation_seconds: int = 60,
+    command_runner: CommandRunner = _default_command_runner,
+) -> None:
+    release_dir = Path(release_dir)
+    manifest = _require_managed_release(release_dir, paths)
+    _require_active_fast_paper_authorization(paths)
+    previous = _current_release(paths)
+    if previous is None:
+        raise ReleaseManagerError(
+            "Fast-aware release activation requires an active source release"
+        )
+    if previous.resolve() == release_dir.resolve():
+        raise ReleaseManagerError(
+            "Fast-aware release activation requires a distinct target release"
+        )
+    if (
+        isinstance(observation_seconds, bool)
+        or not isinstance(observation_seconds, int)
+        or not 5 <= observation_seconds <= 900
+    ):
+        raise ReleaseManagerError(
+            "Fast-aware release observation must be 5 through 900 seconds"
+        )
+    platform = _host_release_platform() if release_platform is None else release_platform
+    if platform != manifest.platform:
+        raise ReleaseManagerError(
+            "Fast-aware target release platform mismatch"
+        )
+    source_python = previous / ".venv" / "bin" / "python"
+    if source_python.is_symlink() or not source_python.is_file():
+        raise ReleaseManagerError(
+            "active source release Python executable is unavailable"
+        )
+    target_run_id = f"fast-paper-release-{manifest.source_sha}"
+    command_runner(
+        (
+            str(source_python),
+            "-m",
+            "shreks_brain.fast_paper_release_upgrade",
+            str(release_dir),
+            target_run_id,
+            "--release-platform",
+            platform,
+            "--observe-seconds",
+            str(observation_seconds),
+        )
+    )
+    if command_runner is _default_command_runner:
+        activated = _current_release(paths)
+        if activated is None or activated.resolve() != release_dir.resolve():
+            raise ReleaseManagerError(
+                "Fast-aware release manager did not activate exact target release"
+            )
+        _require_runtime_healthy(command_runner, release_dir)
+
+
+def activate_fast_existing(
+    source_sha: str,
+    paths: ReleasePaths,
+    *,
+    release_platform: str | None = None,
+    observation_seconds: int = 60,
+    command_runner: CommandRunner = _default_command_runner,
+) -> None:
+    source_sha = validate_source_sha(source_sha)
+    release_dir = Path(paths.releases_dir) / source_sha
+    _require_managed_release(release_dir, paths)
+    activate_fast_release(
+        release_dir,
+        paths,
+        release_platform=release_platform,
+        observation_seconds=observation_seconds,
+        command_runner=command_runner,
+    )
+
+
 def activate_existing(
     source_sha: str,
     paths: ReleasePaths,
@@ -593,6 +685,19 @@ def _build_parser() -> argparse.ArgumentParser:
 
     existing = subparsers.add_parser("activate-existing")
     existing.add_argument("source_sha")
+
+    install_fast = subparsers.add_parser("install-fast")
+    install_fast.add_argument("archive", type=Path)
+    install_fast.add_argument("checksum", type=Path)
+    install_fast.add_argument("manifest", type=Path)
+    install_fast.add_argument("--python", default="/usr/bin/python3")
+    install_fast.add_argument("--release-platform")
+    install_fast.add_argument("--observe-seconds", type=int, default=60)
+
+    existing_fast = subparsers.add_parser("activate-fast-existing")
+    existing_fast.add_argument("source_sha")
+    existing_fast.add_argument("--release-platform")
+    existing_fast.add_argument("--observe-seconds", type=int, default=60)
     return parser
 
 
@@ -608,9 +713,34 @@ def main(argv: list[str] | None = None) -> int:
                 paths,
                 python_executable=args.python,
             )
-            activate_release(release_dir, paths)
-        else:
+            authorization = _fast_paper_cutover_authorization_path(paths)
+            if authorization.exists() or authorization.is_symlink():
+                activate_fast_release(release_dir, paths)
+            else:
+                activate_release(release_dir, paths)
+        elif args.command == "activate-existing":
             activate_existing(args.source_sha, paths)
+        elif args.command == "install-fast":
+            release_dir = stage_release(
+                args.archive,
+                args.checksum,
+                args.manifest,
+                paths,
+                python_executable=args.python,
+            )
+            activate_fast_release(
+                release_dir,
+                paths,
+                release_platform=args.release_platform,
+                observation_seconds=args.observe_seconds,
+            )
+        else:
+            activate_fast_existing(
+                args.source_sha,
+                paths,
+                release_platform=args.release_platform,
+                observation_seconds=args.observe_seconds,
+            )
     except (ReleaseManagerError, ReleaseBundleError):
         return 1
     return 0
