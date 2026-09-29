@@ -221,3 +221,171 @@ def test_release_upgrade_source_has_no_legacy_trade_or_live_authority() -> None:
         '("systemctl", "disable"',
     ):
         assert forbidden not in source
+
+
+def test_pre_start_restore_recovers_stopped_source_bytes_archive_and_release(
+    tmp_path: Path,
+) -> None:
+    source_release = tmp_path / ("a" * 40)
+    target_release = tmp_path / ("b" * 40)
+    source_release.mkdir()
+    target_release.mkdir()
+    current = tmp_path / "current"
+    current.symlink_to(target_release)
+
+    systemd = tmp_path / "systemd"
+    systemd.mkdir()
+    protected_path = tmp_path / "protected.json"
+    protected_path.write_bytes(b"target")
+    unit_path = systemd / upgrade._UNIT
+    unit_path.write_bytes(b"target-unit")
+    archive_source = tmp_path / "active" / "decision.json"
+    archive_source.parent.mkdir()
+    archive = tmp_path / "history" / "run-1" / "decision" / "decision.json"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"source-evidence")
+
+    paths = upgrade.FastPaperReleaseUpgradePaths(
+        current_link=current,
+        systemd_dir=systemd,
+        authoritative_config_path=tmp_path / "authoritative.env",
+        history_root=tmp_path / "history",
+        receipt_root=tmp_path / "receipts",
+        proc_root=tmp_path / "proc",
+    )
+    uid = os.geteuid()
+    gid = os.getegid()
+    protected = (
+        upgrade.ProtectedFileSnapshot(
+            path=protected_path,
+            payload=b"source",
+            uid=uid,
+            gid=gid,
+            mode=0o600,
+        ),
+    )
+    units = (
+        upgrade.ProtectedFileSnapshot(
+            path=unit_path,
+            payload=b"source-unit",
+            uid=uid,
+            gid=gid,
+            mode=0o644,
+        ),
+    )
+    archived = (
+        upgrade.ArchivedMember(
+            source=archive_source,
+            archive=archive,
+        ),
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]):
+        calls.append(command)
+        return upgrade.HostCommandResult(0, "", "")
+
+    upgrade._restore_pre_start(
+        paths,
+        protected=protected,
+        units=units,
+        archived=archived,
+        source_release=source_release,
+        runner=runner,
+        current_switched=True,
+        artifacts_rotated=True,
+    )
+
+    assert protected_path.read_bytes() == b"source"
+    assert unit_path.read_bytes() == b"source-unit"
+    assert archive_source.read_bytes() == b"source-evidence"
+    assert not archive.exists()
+    assert current.resolve() == source_release.resolve()
+    assert calls == [
+        ("systemctl", "daemon-reload"),
+        ("systemctl", "start", upgrade._TARGET),
+        *[
+            ("systemctl", "is-active", "--quiet", unit)
+            for unit in upgrade._RUNTIME_UNITS
+        ],
+    ]
+
+
+def test_post_start_recovery_helpers_quiesce_every_runtime_and_revoke_authorization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text("{}\n", encoding="utf-8")
+    authorization.chmod(0o600)
+    calls: list[tuple[str, ...]] = []
+
+    def runner(command: tuple[str, ...]):
+        calls.append(command)
+        return upgrade.HostCommandResult(0, "", "")
+
+    monkeypatch.setattr(
+        upgrade,
+        "_replace_preserving_metadata",
+        lambda path, payload: path.write_bytes(payload),
+    )
+
+    upgrade._stop_all_runtime(runner)
+    upgrade._write_revoked_authorization(
+        authorization,
+        target_release_source_sha="b" * 40,
+        target_fast_run_id="fast-paper-release-" + "b" * 40,
+        handoff_fingerprint_sha256="c" * 64,
+        error=RuntimeError("boom"),
+    )
+
+    assert calls == [
+        (
+            "systemctl",
+            "stop",
+            upgrade._UNIT,
+            upgrade._EVIDENCE_UNIT,
+            upgrade._OBSERVE_UNIT,
+        ),
+        ("systemctl", "stop", upgrade._TARGET),
+    ]
+    payload = __import__("json").loads(
+        authorization.read_text(encoding="utf-8")
+    )
+    assert payload["state"] == "REVOKED_MANUAL_RECOVERY"
+    assert (
+        payload["production_paper_cutover"]
+        == "STOPPED_MANUAL_RECOVERY"
+    )
+    assert payload["signing_submission_authority"] == "NOT_GRANTED"
+    assert payload["live_authority"] == "DISABLED"
+
+
+def test_paper_show_allowlist_accepts_only_exact_provenance_query(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        upgrade.subprocess,
+        "run",
+        lambda command, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="",
+            stderr="",
+        ),
+    )
+
+    upgrade._default_command_runner(upgrade._SHOW_COMMAND)
+
+    with pytest.raises(
+        upgrade.FastPaperReleaseUpgradeError,
+        match="allowlist",
+    ):
+        upgrade._default_command_runner(
+            (
+                "systemctl",
+                "show",
+                upgrade._UNIT,
+                "--property=Environment",
+                "--no-pager",
+            )
+        )
