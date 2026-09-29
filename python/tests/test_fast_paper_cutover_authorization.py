@@ -131,9 +131,9 @@ def test_runtime_preflight_does_not_require_cutover_authorization(
     )
     monkeypatch.setattr(
         runtime,
-        "read_fast_paper_cutover_authorization",
-        lambda _path: pytest.fail(
-            "preflight must not read production cutover authorization"
+        "read_and_verify_fast_paper_production_authorization",
+        lambda *_args, **_kwargs: pytest.fail(
+            "preflight must not read production authorization"
         ),
     )
 
@@ -158,8 +158,10 @@ def test_runtime_normal_start_fails_closed_without_cutover_authorization(
     )
     monkeypatch.setattr(
         runtime,
-        "read_fast_paper_cutover_authorization",
-        lambda _path: (_ for _ in ()).throw(FileNotFoundError("missing")),
+        "read_and_verify_fast_paper_production_authorization",
+        lambda *_args, **_kwargs: (
+            (_ for _ in ()).throw(FileNotFoundError("missing"))
+        ),
     )
     monkeypatch.setattr(
         runtime,
@@ -198,22 +200,15 @@ def test_runtime_normal_start_requires_and_propagates_cutover_authorization(
         "bootstrap_fast_paper_authoritative_runtime",
         lambda _config: bootstrap,
     )
-    def read_authorization(path):
+    def read_authorization(path, **kwargs):
         observed["authorization_path"] = path
+        observed["verify"] = kwargs
         return _document()
 
     monkeypatch.setattr(
         runtime,
-        "read_fast_paper_cutover_authorization",
+        "read_and_verify_fast_paper_production_authorization",
         read_authorization,
-    )
-    monkeypatch.setattr(
-        runtime,
-        "verify_fast_paper_cutover_authorization",
-        lambda document, **kwargs: observed.update(
-            authorization=document,
-            verify=kwargs,
-        ),
     )
     monkeypatch.setattr(
         runtime,
