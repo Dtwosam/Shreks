@@ -724,6 +724,17 @@ def _snapshot_units(paths):
 
 
 def _archive_release_bound_sources(config, archive_root: Path):
+    if archive_root.is_symlink():
+        raise FastPaperReleaseUpgradeError(
+            "release-history archive root must not be a symlink"
+        )
+    parent = archive_root.parent
+    if parent.is_symlink():
+        raise FastPaperReleaseUpgradeError(
+            "release-history parent must not be a symlink"
+        )
+    parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(parent, 0o700)
     roots = (
         ("decision", config.decision_config.evidence_directory),
         ("execution", config.execution_config.source_directory),
@@ -1275,7 +1286,7 @@ def _production_paths() -> FastPaperReleaseUpgradePaths:
             "/etc/shreks/fast-paper-authoritative.env"
         ),
         history_root=Path(
-            "/var/lib/shreks/fast-paper-authoritative/release-history"
+            "/root/shreks-fast-paper-release-upgrades/history"
         ),
         receipt_root=Path("/root/shreks-fast-paper-release-upgrades"),
     )
