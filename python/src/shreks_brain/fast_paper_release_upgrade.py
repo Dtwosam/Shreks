@@ -14,7 +14,16 @@ import tempfile
 import time
 from typing import Callable
 import uuid
+import zipfile
 
+from .fast_proof_tools import (
+    FAST_PROOF_TOOL_NAMES,
+    verify_fast_proof_tools_wheel,
+)
+from .fast_runtime_tools import (
+    FAST_RUNTIME_FEATURE_TOOL_NAME,
+    verify_fast_runtime_tools_wheel,
+)
 from .fast_paper_authoritative_cutover_config import (
     encode_fast_paper_authoritative_cutover_environment,
     read_fast_paper_authoritative_cutover_environment,
@@ -199,6 +208,12 @@ def activate_fast_paper_release(
         expected_sha=target_release.name,
         platform=release_platform,
     )
+    target_tools = _materialize_target_fast_tools(
+        target_release,
+        target_wheel,
+        expected_source_sha=target_release.name,
+        expected_platform=release_platform,
+    )
     (
         target_manifest,
         target_execution_policy,
@@ -207,6 +222,7 @@ def activate_fast_paper_release(
         source_bootstrap,
         source_release=source_release,
         target_release=target_release,
+        target_tools=target_tools,
     )
     verify_fast_paper_shadow_buy_writer_policy_bindings(
         target_manifest,
@@ -540,11 +556,132 @@ def _source_runtime(path: Path):
     return config, bootstrap, env
 
 
+def _materialize_target_fast_tools(
+    target_release: Path,
+    wheel_path: Path,
+    *,
+    expected_source_sha: str,
+    expected_platform: str,
+) -> dict[str, Path]:
+    proof_manifest = verify_fast_proof_tools_wheel(
+        wheel_path,
+        expected_source_sha=expected_source_sha,
+        expected_platform=expected_platform,
+    )
+    runtime_manifest = verify_fast_runtime_tools_wheel(
+        wheel_path,
+        expected_source_sha=expected_source_sha,
+        expected_platform=expected_platform,
+    )
+    root = (
+        target_release
+        / ".venv"
+        / "fast-paper-tools"
+        / expected_source_sha
+    )
+    if root.is_symlink():
+        raise FastPaperReleaseUpgradeError(
+            "target Fast tool root must not be a symlink"
+        )
+    root.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
+    os.chmod(root.parent, 0o755)
+
+    expected_payloads: dict[str, bytes] = {}
+    try:
+        with zipfile.ZipFile(wheel_path) as archive:
+            for record in proof_manifest.tools:
+                expected_payloads[record.name] = archive.read(
+                    "shreks_brain/_sealed_fast_tools/"
+                    f"{record.name}.bin"
+                )
+            expected_payloads[
+                FAST_RUNTIME_FEATURE_TOOL_NAME
+            ] = archive.read(
+                "shreks_brain/_sealed_fast_runtime_tools/"
+                f"{FAST_RUNTIME_FEATURE_TOOL_NAME}.bin"
+            )
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise FastPaperReleaseUpgradeError(
+            "target Fast sealed tools cannot be read"
+        ) from exc
+
+    expected_hashes = {
+        record.name: record.sha256
+        for record in proof_manifest.tools
+    }
+    expected_hashes[FAST_RUNTIME_FEATURE_TOOL_NAME] = (
+        runtime_manifest.sha256
+    )
+    if set(expected_payloads) != {
+        *FAST_PROOF_TOOL_NAMES,
+        FAST_RUNTIME_FEATURE_TOOL_NAME,
+    }:
+        raise FastPaperReleaseUpgradeError(
+            "target Fast sealed tool set is incomplete"
+        )
+    for name, payload in expected_payloads.items():
+        if hashlib.sha256(payload).hexdigest() != expected_hashes[name]:
+            raise FastPaperReleaseUpgradeError(
+                "target Fast sealed tool fingerprint mismatch"
+            )
+
+    if root.exists():
+        if not root.is_dir():
+            raise FastPaperReleaseUpgradeError(
+                "target Fast materialized tool root must be a directory"
+            )
+        if {child.name for child in root.iterdir()} != set(
+            expected_payloads
+        ):
+            raise FastPaperReleaseUpgradeError(
+                "target Fast materialized tool member set mismatch"
+            )
+        for name, payload in expected_payloads.items():
+            path = root / name
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or path.read_bytes() != payload
+                or stat.S_IMODE(path.stat().st_mode) != 0o755
+            ):
+                raise FastPaperReleaseUpgradeError(
+                    "target Fast materialized tool drift"
+                )
+        return {
+            name: (root / name).resolve(strict=True)
+            for name in expected_payloads
+        }
+
+    temporary = Path(
+        tempfile.mkdtemp(
+            prefix=f".{expected_source_sha}.",
+            dir=root.parent,
+        )
+    )
+    try:
+        temporary.chmod(0o755)
+        for name, payload in expected_payloads.items():
+            path = temporary / name
+            path.write_bytes(payload)
+            path.chmod(0o755)
+        os.replace(temporary, root)
+    finally:
+        if temporary.exists():
+            for child in temporary.iterdir():
+                child.unlink(missing_ok=True)
+            temporary.rmdir()
+    return {
+        name: (root / name).resolve(strict=True)
+        for name in expected_payloads
+    }
+
+
 def _build_target_authorities(
     source_bootstrap,
     *,
     source_release: Path,
     target_release: Path,
+    target_tools: dict[str, Path],
 ):
     source_manifest = source_bootstrap.decision_bootstrap.manifest
     target_manifest = build_fast_paper_runtime_manifest(
@@ -555,18 +692,12 @@ def _build_target_authorities(
             target_release,
             allow_external=True,
         ),
-        decision_binary_path=_target_file(
-            source_manifest.decision_binary_path,
-            source_release,
-            target_release,
-            allow_external=False,
-        ),
-        feature_feed_binary_path=_target_file(
-            source_manifest.feature_feed_binary_path,
-            source_release,
-            target_release,
-            allow_external=False,
-        ),
+        decision_binary_path=target_tools[
+            "shreks-fast-campaign-decision"
+        ],
+        feature_feed_binary_path=target_tools[
+            FAST_RUNTIME_FEATURE_TOOL_NAME
+        ],
         action_policy=source_manifest.action_policy,
         state_version=source_manifest.state_version,
         risk_policy_version=source_manifest.risk_policy_version,
@@ -595,12 +726,9 @@ def _build_target_authorities(
         ),
     )
     source_buy = source_bootstrap.buy_writer_policy
-    target_entry_binary = _target_file(
-        source_buy.entry_authority_binary_path,
-        source_release,
-        target_release,
-        allow_external=False,
-    )
+    target_entry_binary = target_tools[
+        "shreks-fast-entry-authority"
+    ]
     target_buy = build_fast_paper_shadow_buy_writer_policy(
         market_read_policy=source_buy.market_read_policy,
         regime_read_policy=source_buy.regime_read_policy,
