@@ -137,10 +137,10 @@ After the append-only successor namespace is created, all active release-bound
 files are moved to:
 
 ```text
-/var/lib/shreks/fast-paper-authoritative/release-history/<source-fast-run-id>/
+/root/shreks-fast-paper-release-upgrades/history/<source-fast-run-id>/
 ```
 
-The active decision checkpoint is not archived; it is atomically replaced by
+The archive is root-private and outside every service-writable Fast PAPER source root.\n\nThe active decision checkpoint is not archived; it is atomically replaced by
 the target-manifest decision state with the exact carried cursor.
 
 The active execution/BUY/USD/reduction/retry roots therefore begin empty for the
