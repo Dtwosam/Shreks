@@ -51,6 +51,7 @@ _ERROR_CODES = frozenset(
         "CANDIDATE_ATTRIBUTION_INVALID",
         "MINT_STATE_READ_FAILED",
         "MINT_STATE_VALUE_INVALID",
+        "COLLECTOR_EVIDENCE_READ_FAILED",
     }
 )
 
@@ -72,6 +73,8 @@ class MintStateAcceptanceSample:
     mint_observed_at_unix_ms: int | None
     previous_mint_observed_at_unix_ms: int | None
     next_mint_observed_at_unix_ms: int | None = None
+    collector_evidence_before_decision: bool = False
+    collector_evidence_after_decision: bool = False
 
     def __post_init__(self) -> None:
         _require_positive_int("candidate_id", self.candidate_id)
@@ -89,6 +92,14 @@ class MintStateAcceptanceSample:
             "next_mint_observed_at_unix_ms",
             self.next_mint_observed_at_unix_ms,
         )
+        if type(self.collector_evidence_before_decision) is not bool:
+            raise MintStateAcceptanceError(
+                "collector_evidence_before_decision must be bool"
+            )
+        if type(self.collector_evidence_after_decision) is not bool:
+            raise MintStateAcceptanceError(
+                "collector_evidence_after_decision must be bool"
+            )
 
 
 def derive_mint_state_refresh_age_ms(
@@ -130,6 +141,9 @@ def evaluate_mint_state_acceptance_samples(
     missing = 0
     missing_later_observed = 0
     missing_unresolved = 0
+    unresolved_with_collector_evidence_before = 0
+    unresolved_with_collector_evidence_after = 0
+    unresolved_without_collector_evidence = 0
     stale = 0
     invalid = 0
     max_selected_age: int | None = None
@@ -147,6 +161,12 @@ def evaluate_mint_state_acceptance_samples(
                 invalid += 1
             if next_mint is None:
                 missing_unresolved += 1
+                if sample.collector_evidence_before_decision:
+                    unresolved_with_collector_evidence_before += 1
+                elif sample.collector_evidence_after_decision:
+                    unresolved_with_collector_evidence_after += 1
+                else:
+                    unresolved_without_collector_evidence += 1
             elif next_mint <= sample.decision_as_of_unix_ms:
                 invalid += 1
             else:
@@ -201,6 +221,15 @@ def evaluate_mint_state_acceptance_samples(
         "selected_missing_mint_count": missing,
         "selected_missing_mint_later_observed_count": missing_later_observed,
         "selected_missing_mint_unresolved_count": missing_unresolved,
+        "selected_missing_mint_unresolved_with_collector_evidence_before_decision_count": (
+            unresolved_with_collector_evidence_before
+        ),
+        "selected_missing_mint_unresolved_with_collector_evidence_after_decision_count": (
+            unresolved_with_collector_evidence_after
+        ),
+        "selected_missing_mint_unresolved_without_collector_evidence_count": (
+            unresolved_without_collector_evidence
+        ),
         "selected_stale_mint_count": stale,
         "invalid_observation_count": invalid,
         "max_selected_mint_age_ms": max_selected_age,
@@ -375,6 +404,26 @@ def analyze_mint_state_acceptance(
                         "historical mint-state value is invalid",
                         code="MINT_STATE_VALUE_INVALID",
                     ) from error
+                collector_before = False
+                collector_after = False
+                if current is None and next_mint is None:
+                    try:
+                        collector_before, collector_after = (
+                            _collector_companion_evidence(
+                                connection,
+                                candidate_id=candidate_id,
+                                decision_as_of_unix_ms=(
+                                    checkpoint.state_as_of_unix_ms
+                                ),
+                                window_start_unix_ms=window_start_unix_ms,
+                                window_end_unix_ms=window_end_unix_ms,
+                            )
+                        )
+                    except sqlite3.Error as error:
+                        raise MintStateAcceptanceError(
+                            "collector companion evidence read failed",
+                            code="COLLECTOR_EVIDENCE_READ_FAILED",
+                        ) from error
                 samples.append(
                     MintStateAcceptanceSample(
                         candidate_id=candidate_id,
@@ -382,6 +431,8 @@ def analyze_mint_state_acceptance(
                         mint_observed_at_unix_ms=current,
                         previous_mint_observed_at_unix_ms=previous_mint,
                         next_mint_observed_at_unix_ms=next_mint,
+                        collector_evidence_before_decision=collector_before,
+                        collector_evidence_after_decision=collector_after,
                     )
                 )
 
@@ -413,6 +464,103 @@ def analyze_mint_state_acceptance(
         ) from error
     finally:
         connection.close()
+
+
+def _collector_companion_evidence(
+    connection: sqlite3.Connection,
+    *,
+    candidate_id: int,
+    decision_as_of_unix_ms: int,
+    window_start_unix_ms: int,
+    window_end_unix_ms: int,
+) -> tuple[bool, bool]:
+    """Return bounded evidence that the safety collector touched this candidate.
+
+    paper_quote_snapshots are written only by SafetyEvidenceCollector. Holder
+    distributions are also collector evidence and make the diagnostic resilient
+    when Jupiter quote storage failed for an otherwise selected candidate.
+    """
+
+    if candidate_id <= 0:
+        raise MintStateAcceptanceError(
+            "collector companion candidate id must be positive",
+            code="MINT_STATE_VALUE_INVALID",
+        )
+    for name, value in (
+        ("decision_as_of_unix_ms", decision_as_of_unix_ms),
+        ("window_start_unix_ms", window_start_unix_ms),
+        ("window_end_unix_ms", window_end_unix_ms),
+    ):
+        _require_non_negative_int(name, value)
+    if not (
+        window_start_unix_ms
+        <= decision_as_of_unix_ms
+        <= window_end_unix_ms
+    ):
+        raise MintStateAcceptanceError(
+            "collector companion evidence window is invalid",
+            code="MINT_STATE_VALUE_INVALID",
+        )
+
+    before = connection.execute(
+        """
+        SELECT 1
+        FROM (
+            SELECT quoted_at_unix_ms AS observed_at_unix_ms
+            FROM paper_quote_snapshots
+            WHERE candidate_id = ?
+              AND quoted_at_unix_ms BETWEEN ? AND ?
+            UNION ALL
+            SELECT observed_at_unix_ms
+            FROM token_holder_distributions
+            WHERE candidate_id = ?
+              AND observed_at_unix_ms BETWEEN ? AND ?
+        )
+        LIMIT 1
+        """,
+        (
+            candidate_id,
+            window_start_unix_ms,
+            decision_as_of_unix_ms,
+            candidate_id,
+            window_start_unix_ms,
+            decision_as_of_unix_ms,
+        ),
+    ).fetchone()
+    if before is not None:
+        return True, False
+
+    if decision_as_of_unix_ms >= window_end_unix_ms:
+        return False, False
+
+    after = connection.execute(
+        """
+        SELECT 1
+        FROM (
+            SELECT quoted_at_unix_ms AS observed_at_unix_ms
+            FROM paper_quote_snapshots
+            WHERE candidate_id = ?
+              AND quoted_at_unix_ms > ?
+              AND quoted_at_unix_ms <= ?
+            UNION ALL
+            SELECT observed_at_unix_ms
+            FROM token_holder_distributions
+            WHERE candidate_id = ?
+              AND observed_at_unix_ms > ?
+              AND observed_at_unix_ms <= ?
+        )
+        LIMIT 1
+        """,
+        (
+            candidate_id,
+            decision_as_of_unix_ms,
+            window_end_unix_ms,
+            candidate_id,
+            decision_as_of_unix_ms,
+            window_end_unix_ms,
+        ),
+    ).fetchone()
+    return False, after is not None
 
 
 def _decode_checkpoint_row(row: sqlite3.Row):
