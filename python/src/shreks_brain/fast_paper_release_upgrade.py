@@ -24,6 +24,7 @@ from .fast_paper_physical_cutover import (
     FastPaperPhysicalCutoverPaths,
     HostCommandResult,
     _candidate_unit_from_wheel,
+    _SHOW_COMMAND,
     _read_authoritative_statuses,
     _read_regular_no_follow,
     _read_systemd_state,
@@ -1161,12 +1162,7 @@ def _default_command_runner(command: tuple[str, ...]) -> HostCommandResult:
             and command[2] in (_OBSERVE_UNIT, _EVIDENCE_UNIT)
             and command[3:] == ("--property=MainPID", "--no-pager")
         )
-        or (
-            len(command) == 5
-            and command[:3] == ("systemctl", "show", _UNIT)
-            and command[3].startswith("--property=")
-            and command[4] == "--no-pager"
-        )
+        or command == _SHOW_COMMAND
         or (
             len(command) == 8
             and command[:3] == ("journalctl", "-u", _UNIT)
