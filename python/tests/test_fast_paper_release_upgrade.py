@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from types import SimpleNamespace
+import zipfile
 
 import pytest
 
@@ -64,6 +66,121 @@ def test_clean_release_boundary_requires_equal_cursors_and_no_pending_buy() -> N
                 execution_sequence=17,
                 pending_buy=object(),
             )
+        )
+
+
+def test_materialize_target_fast_tools_uses_verified_wheel_payloads_and_is_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sha = "b" * 40
+    release = tmp_path / sha
+    (release / ".venv").mkdir(parents=True)
+    wheel = release / "wheelhouse" / "shreks_brain.whl"
+    wheel.parent.mkdir()
+
+    payloads = {
+        "shreks-fast-campaign-decision": b"decision",
+        "shreks-fast-entry-authority": b"entry",
+        "export_fast_training_features": b"training",
+        upgrade.FAST_RUNTIME_FEATURE_TOOL_NAME: b"runtime",
+    }
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for name in upgrade.FAST_PROOF_TOOL_NAMES:
+            archive.writestr(
+                "shreks_brain/_sealed_fast_tools/"
+                f"{name}.bin",
+                payloads[name],
+            )
+        archive.writestr(
+            "shreks_brain/_sealed_fast_runtime_tools/"
+            f"{upgrade.FAST_RUNTIME_FEATURE_TOOL_NAME}.bin",
+            payloads[upgrade.FAST_RUNTIME_FEATURE_TOOL_NAME],
+        )
+
+    proof = SimpleNamespace(
+        tools=tuple(
+            SimpleNamespace(
+                name=name,
+                sha256=hashlib.sha256(payloads[name]).hexdigest(),
+            )
+            for name in upgrade.FAST_PROOF_TOOL_NAMES
+        )
+    )
+    runtime = SimpleNamespace(
+        sha256=hashlib.sha256(
+            payloads[upgrade.FAST_RUNTIME_FEATURE_TOOL_NAME]
+        ).hexdigest()
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "verify_fast_proof_tools_wheel",
+        lambda *_args, **_kwargs: proof,
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "verify_fast_runtime_tools_wheel",
+        lambda *_args, **_kwargs: runtime,
+    )
+
+    first = upgrade._materialize_target_fast_tools(
+        release,
+        wheel,
+        expected_source_sha=sha,
+        expected_platform="x86_64-unknown-linux-gnu",
+    )
+    second = upgrade._materialize_target_fast_tools(
+        release,
+        wheel,
+        expected_source_sha=sha,
+        expected_platform="x86_64-unknown-linux-gnu",
+    )
+
+    assert second == first
+    assert set(first) == {
+        *upgrade.FAST_PROOF_TOOL_NAMES,
+        upgrade.FAST_RUNTIME_FEATURE_TOOL_NAME,
+    }
+    for name, path in first.items():
+        assert path.read_bytes() == payloads[name]
+        assert path.stat().st_mode & 0o777 == 0o755
+        assert str(path).startswith(str((release / ".venv").resolve()))
+
+
+def test_materialize_target_fast_tools_rejects_symlinked_tool_parent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sha = "b" * 40
+    release = tmp_path / sha
+    (release / ".venv").mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (release / ".venv" / "fast-paper-tools").symlink_to(outside)
+    wheel = release / "wheelhouse" / "shreks_brain.whl"
+    wheel.parent.mkdir()
+    wheel.write_bytes(b"unused")
+
+    monkeypatch.setattr(
+        upgrade,
+        "verify_fast_proof_tools_wheel",
+        lambda *_args, **_kwargs: SimpleNamespace(tools=()),
+    )
+    monkeypatch.setattr(
+        upgrade,
+        "verify_fast_runtime_tools_wheel",
+        lambda *_args, **_kwargs: SimpleNamespace(sha256="0" * 64),
+    )
+
+    with pytest.raises(
+        upgrade.FastPaperReleaseUpgradeError,
+        match="symlinked tool root",
+    ):
+        upgrade._materialize_target_fast_tools(
+            release,
+            wheel,
+            expected_source_sha=sha,
+            expected_platform="x86_64-unknown-linux-gnu",
         )
 
 
