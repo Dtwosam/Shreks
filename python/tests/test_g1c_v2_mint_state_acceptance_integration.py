@@ -166,6 +166,51 @@ def test_mint_acceptance_timeout_reports_only_sanitized_progress_stage() -> None
         assert forbidden not in timeout_text
 
 
+def test_unresolved_collector_diagnostics_remain_aggregate_and_partitioned() -> None:
+    workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
+
+    validation_start = workflow.index('MINT_ACCEPTANCE_VALIDATION="$(')
+    validation_end = workflow.index(
+        'mapfile -t MINT_ACCEPTANCE_LINES <<<"$MINT_ACCEPTANCE_VALIDATION"',
+        validation_start,
+    )
+    validation_text = workflow[validation_start:validation_end]
+
+    assert (
+        "selected_missing_mint_unresolved_with_collector_evidence_before_decision_count"
+        in validation_text
+    )
+    assert (
+        "selected_missing_mint_unresolved_with_collector_evidence_after_decision_count"
+        in validation_text
+    )
+    assert (
+        "selected_missing_mint_unresolved_without_collector_evidence_count"
+        in validation_text
+    )
+    assert (
+        "mint acceptance unresolved collector diagnostics are inconsistent"
+        in validation_text
+    )
+
+    shell_text = workflow[validation_end : validation_end + 5200]
+    for required in (
+        "g1c_v2_mint_state_unresolved_collector_before_decision=",
+        "g1c_v2_mint_state_unresolved_collector_after_decision=",
+        "g1c_v2_mint_state_unresolved_without_collector_evidence=",
+    ):
+        assert required in shell_text
+
+    for forbidden in (
+        "g1c_v2_mint_state_missing_candidate_id=",
+        "g1c_v2_mint_state_missing_mint=",
+        "g1c_v2_mint_state_missing_observed_at=",
+        "g1c_v2_mint_state_collector_candidate_id=",
+        "g1c_v2_mint_state_collector_mint=",
+    ):
+        assert forbidden not in shell_text
+
+
 def test_production_verifier_remote_script_is_valid_bash() -> None:
     workflow = _VERIFY_WORKFLOW.read_text(encoding="utf-8")
     lines = workflow.splitlines()
@@ -258,6 +303,9 @@ def test_behavioral_failed_reports_bounded_missing_mint_followup_diagnostics() -
     for required in (
         '"selected_missing_mint_later_observed_count"',
         '"selected_missing_mint_unresolved_count"',
+        '"selected_missing_mint_unresolved_with_collector_evidence_before_decision_count"',
+        '"selected_missing_mint_unresolved_with_collector_evidence_after_decision_count"',
+        '"selected_missing_mint_unresolved_without_collector_evidence_count"',
         'max_selected_missing_mint_followup_delay_ms',
     ):
         assert required in validation_text
@@ -266,6 +314,9 @@ def test_behavioral_failed_reports_bounded_missing_mint_followup_diagnostics() -
     for required in (
         "g1c_v2_mint_state_missing_later_observed=",
         "g1c_v2_mint_state_missing_unresolved=",
+        "g1c_v2_mint_state_unresolved_collector_before_decision=",
+        "g1c_v2_mint_state_unresolved_collector_after_decision=",
+        "g1c_v2_mint_state_unresolved_without_collector_evidence=",
         "g1c_v2_mint_state_max_missing_followup_delay_ms=",
     ):
         assert required in shell_text
