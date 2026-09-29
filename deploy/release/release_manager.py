@@ -713,7 +713,11 @@ def main(argv: list[str] | None = None) -> int:
                 paths,
                 python_executable=args.python,
             )
-            activate_release(release_dir, paths)
+            authorization = _fast_paper_cutover_authorization_path(paths)
+            if authorization.exists() or authorization.is_symlink():
+                activate_fast_release(release_dir, paths)
+            else:
+                activate_release(release_dir, paths)
         elif args.command == "activate-existing":
             activate_existing(args.source_sha, paths)
         elif args.command == "install-fast":
