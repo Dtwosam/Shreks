@@ -88,6 +88,49 @@ shreks_brain/_sealed_deploy_control/paper_manifest_manager.py
 
 The wheel itself is a manifest-hashed release payload. During release construction, `build_release.sh` opens the completed wheel and verifies those two members are byte-for-byte identical to the exact sealed checkout before the wheel enters the release bundle. This transports the one-time root control-plane repair without changing the top-level manifest schema or making old verified releases unverifiable.
 
+### Refresh the root release manager before first Fast PAPER cutover
+
+Before the first physical legacy-to-Fast PAPER cutover, the separately installed
+root helper must be refreshed to the exact Fast-aware version transported by the
+current immutable release.
+
+Resolve the exact current release and run the release-bound proof from that
+release's virtualenv:
+
+```sh
+set -euo pipefail
+
+CURRENT_RELEASE="$(readlink -f /opt/shreks/current)"
+CURRENT_SHA="$(basename "$CURRENT_RELEASE")"
+PROOF="/root/shreks-fast-paper-cutover/release-manager-installation-proof-$CURRENT_SHA.json"
+
+sudo install -d -o root -g root -m 0700 /root/shreks-fast-paper-cutover
+
+sudo "$CURRENT_RELEASE/.venv/bin/shreks-fast-paper-release-manager-install-proof" \
+  "$CURRENT_SHA" \
+  --receipt-path "$PROOF"
+```
+
+The command authenticates the current release manifest and manifest-hashed
+wheel, extracts the sealed `release_manager.py` and `release_bundle.py`
+members, requires the installed `/usr/local/sbin/release_bundle.py` to match
+the exact sealed companion, and atomically refreshes only
+`/usr/local/sbin/shreks-release-manager` when its bytes are stale.
+
+It proves that `/etc/sudoers.d/shreks-release-manager` remains exactly the
+historical one-line `install` rule and that observe/evidence/PAPER service
+lifecycle identity did not change during the helper refresh. The root-private
+receipt is no-replace mode `0600`.
+
+This command does not stop/start/restart/reload any service, does not create a
+Fast PAPER cutover authorization, does not execute PAPER actions, and does not
+grant signing/submission or LIVE authority.
+
+After the proof is reviewed, re-run the existing protected physical-cutover
+`preflight`. Do not run `activate` unless that preflight returns
+`READY_FOR_PROTECTED_PAPER_CUTOVER` and the separately reviewed cutover
+ceremony is explicitly being performed.
+
 ### Sealed offline Fast Lane proof tools
 
 Verified releases also transport the native offline executables required by the FL9 evidence path inside the same manifest-hashed wheel rather than expanding the historical G2 top-level payload allowlist:
