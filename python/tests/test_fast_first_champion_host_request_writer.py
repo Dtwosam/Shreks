@@ -405,6 +405,131 @@ def test_cli_builds_test_evaluation_policy_without_hidden_defaults(
     assert request.evaluation_policy == _evaluation_policy()
 
 
+def test_cli_explicitly_supports_no_evaluation_segmentation_boundaries(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    proof, database, policy_path, _, _ = _sources(monkeypatch, tmp_path)
+    request_path = tmp_path / "request-empty-boundaries.json"
+    host_run = tmp_path / "run-empty-boundaries"
+
+    code = writer.main(
+        [
+            "--proof-workspace",
+            str(proof),
+            "--observer-database",
+            str(database),
+            "--hydration-policy",
+            str(policy_path),
+            "--training-economics-overlay",
+            str(tmp_path / "training-economics"),
+            "--training-execution-cost-policy",
+            str(tmp_path / "training-cost-policy.json"),
+            "--request-destination",
+            str(request_path),
+            "--host-run-destination",
+            str(host_run),
+            "--future-path-label-version",
+            "1",
+            "--counterfactual-base-quantity",
+            "2.0",
+            "--horizon-ms",
+            "10000",
+            "--minimum-decision-observed-at-unix-ms",
+            "1300",
+            "--minimum-raw-rows-per-partition",
+            "300",
+            "--minimum-test-scored-observations",
+            "100",
+            "--evaluation-policy-version",
+            "fl9-v2-first-champion-test-evaluation-v1",
+            "--probability-bucket-count",
+            "10",
+            "--no-liquidity-capacity-quote-boundaries",
+            "--no-round-trip-cost-bps-boundaries",
+            "--binary-log-loss-clip-epsilon",
+            "1e-12",
+            "--champion-version",
+            "fl9-v2-first-champion-runtime-v1",
+            "--model-version-prefix",
+            "fl9-v2-first-champion",
+            "--training-policy-version",
+            "fl9-v2-first-champion-training-v1",
+            "--reason",
+            "reviewed score-free Fast PAPER champion bootstrap",
+        ]
+    )
+    status = json.loads(capsys.readouterr().out)
+    request = decode_fast_first_champion_host_request(
+        request_path.read_text(encoding="utf-8")
+    )
+
+    assert code == 0
+    assert status["status"] == "SUCCEEDED"
+    assert request.evaluation_policy == FastForecastEvaluationPolicy(
+        version="fl9-v2-first-champion-test-evaluation-v1",
+        partition=FastForecastEvaluationPartition.TEST,
+        probability_bucket_count=10,
+        liquidity_capacity_quote_boundaries=(),
+        round_trip_cost_bps_boundaries=(),
+        binary_log_loss_clip_epsilon=1e-12,
+    )
+
+
+def test_cli_requires_explicit_boundary_choice(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    proof, database, policy_path, _, _ = _sources(monkeypatch, tmp_path)
+
+    with pytest.raises(SystemExit):
+        writer.main(
+            [
+                "--proof-workspace",
+                str(proof),
+                "--observer-database",
+                str(database),
+                "--hydration-policy",
+                str(policy_path),
+                "--training-economics-overlay",
+                str(tmp_path / "training-economics"),
+                "--training-execution-cost-policy",
+                str(tmp_path / "training-cost-policy.json"),
+                "--request-destination",
+                str(tmp_path / "request.json"),
+                "--host-run-destination",
+                str(tmp_path / "run"),
+                "--future-path-label-version",
+                "1",
+                "--counterfactual-base-quantity",
+                "2.0",
+                "--horizon-ms",
+                "10000",
+                "--minimum-decision-observed-at-unix-ms",
+                "1300",
+                "--minimum-raw-rows-per-partition",
+                "300",
+                "--minimum-test-scored-observations",
+                "100",
+                "--evaluation-policy-version",
+                "fl9-v2-first-champion-test-evaluation-v1",
+                "--probability-bucket-count",
+                "10",
+                "--binary-log-loss-clip-epsilon",
+                "1e-12",
+                "--champion-version",
+                "fl9-v2-first-champion-runtime-v1",
+                "--model-version-prefix",
+                "fl9-v2-first-champion",
+                "--training-policy-version",
+                "fl9-v2-first-champion-training-v1",
+                "--reason",
+                "reviewed score-free Fast PAPER champion bootstrap",
+            ]
+        )
+
+
 def test_writer_source_has_no_network_trading_or_live_authority() -> None:
     source = (
         Path(__file__).resolve().parents[1]

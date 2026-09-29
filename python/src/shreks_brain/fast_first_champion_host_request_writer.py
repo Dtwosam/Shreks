@@ -363,19 +363,29 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         type=int,
     )
-    parser.add_argument(
+    liquidity_group = parser.add_mutually_exclusive_group(required=True)
+    liquidity_group.add_argument(
         "--liquidity-capacity-quote-boundary",
         action="append",
-        required=True,
         type=float,
         dest="liquidity_boundaries",
     )
-    parser.add_argument(
+    liquidity_group.add_argument(
+        "--no-liquidity-capacity-quote-boundaries",
+        action="store_true",
+        dest="no_liquidity_boundaries",
+    )
+    cost_group = parser.add_mutually_exclusive_group(required=True)
+    cost_group.add_argument(
         "--round-trip-cost-bps-boundary",
         action="append",
-        required=True,
         type=float,
         dest="cost_boundaries",
+    )
+    cost_group.add_argument(
+        "--no-round-trip-cost-bps-boundaries",
+        action="store_true",
+        dest="no_cost_boundaries",
     )
     parser.add_argument(
         "--binary-log-loss-clip-epsilon",
@@ -392,11 +402,15 @@ def main(argv: list[str] | None = None) -> int:
         version=args.evaluation_policy_version,
         partition=FastForecastEvaluationPartition.TEST,
         probability_bucket_count=args.probability_bucket_count,
-        liquidity_capacity_quote_boundaries=tuple(
-            args.liquidity_boundaries
+        liquidity_capacity_quote_boundaries=(
+            ()
+            if args.no_liquidity_boundaries
+            else tuple(args.liquidity_boundaries)
         ),
-        round_trip_cost_bps_boundaries=tuple(
-            args.cost_boundaries
+        round_trip_cost_bps_boundaries=(
+            ()
+            if args.no_cost_boundaries
+            else tuple(args.cost_boundaries)
         ),
         binary_log_loss_clip_epsilon=(
             args.binary_log_loss_clip_epsilon
