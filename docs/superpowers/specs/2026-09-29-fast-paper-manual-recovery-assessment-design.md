@@ -1,7 +1,7 @@
 # Fast PAPER Manual-Recovery Assessment — Design
 
 **Date:** 2026-09-29  
-**Base main SHA:** `ff4c61143f51b3dcf5cd8db17985bf912dcb1a2d`
+**Base main SHA:** `0b360b8b9455cba504f3b2161da13418dd7c2fef`
 
 ## Purpose
 
