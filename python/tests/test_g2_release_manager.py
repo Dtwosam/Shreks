@@ -480,10 +480,11 @@ def test_fast_aware_activation_delegates_to_current_release_upgrade_cli(
     authorization.parent.mkdir(parents=True, exist_ok=True)
     authorization.write_text("{}\n", encoding="utf-8")
     calls: list[tuple[str, ...]] = []
+    target_platform = release_manager._verify_stored_release(target).platform
     monkeypatch.setattr(
         release_manager,
         "_host_release_platform",
-        lambda: release_manager._verify_stored_release(target).platform,
+        lambda: target_platform,
     )
 
     release_manager.activate_fast_release(
