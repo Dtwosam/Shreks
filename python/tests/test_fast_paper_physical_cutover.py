@@ -772,6 +772,9 @@ def test_final_preflight_failure_restores_legacy_when_state_is_unchanged(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
@@ -851,6 +854,9 @@ def test_post_start_failure_never_restores_legacy_authority(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
@@ -934,6 +940,9 @@ def test_post_start_failure_with_unchanged_state_still_never_restores_legacy(
             authoritative_release_wheel_path=tmp_path / "wheel.whl",
             release_platform="x86_64-unknown-linux-gnu",
             baseline_receipt_path=tmp_path / "baseline.json",
+            release_manager_installation_proof_path=(
+                tmp_path / "release-manager-proof.json"
+            ),
             final_fast_run_id=_FINAL_RUN_ID,
             fast_manifest_path=tmp_path / "manifest.json",
             champion_registry_path=tmp_path / "registry.json",
