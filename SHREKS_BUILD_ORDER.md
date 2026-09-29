@@ -4,7 +4,7 @@
 **Repository:** `Dtwosam/Shreks`  
 **Architecture:** Rust Fast Lane + Python research/learning/control plane  
 **Purpose:** Defines the required implementation order for the Fast Lane rebuild while preserving already-proven Shreks infrastructure.  
-**Last updated:** 2026-09-24
+**Last updated:** 2026-09-29
 
 ---
 
@@ -596,27 +596,21 @@ Never claim a phase complete without exact verification evidence.
 
 ---
 
-# 6. CURRENT POSITION — 2026-09-26
+# 6. CURRENT POSITION — 2026-09-29
 
 ### Canonical production PAPER release
 
-The latest physically accepted immutable PAPER release is:
+The physically active immutable PAPER release observed on 2026-09-29 is:
 
-`816e7c6591d216369b60f893cc5dfe5785e88652`
+`2e71bbadd1f88812bc3ad0ba121b5ab14c08dc03`
 
-Protected deploy/verify run `36178349929` proved for that exact release:
+The active legacy PAPER service remains healthy and authoritative. The detached
+Fast PAPER shadow unit has been installed but remains dormant/inactive, and no
+Fast PAPER production cutover has occurred.
 
-```text
-g1c_v2_mint_state_physical_acceptance=PASS
-fl9_v2_discovery_status=FOUND_COMPATIBLE
-paper_manifest_manager_status=MATCHED_CURRENT_RELEASE
-```
-
-The physical acceptance record is
-`docs/superpowers/specs/2026-09-25-g1c-v2-mint-state-physical-acceptance-pass.md`.
-
-The release-bound mint-state gate is therefore closed. Do not continue treating
-the older 2026-09-24 pre-expiry mint-refresh acceptance as the active next gate.
+The current release also has a verified root-manager installation proof. LIVE,
+signing/submission, Fast shadow start, and production Fast PAPER cutover remain
+separately gated.
 
 ### Repository architecture correction
 
@@ -668,7 +662,8 @@ Do not:
 
 The repository already contains:
 
-- immutable Fast Lane forecast champion artifacts;
+- the immutable Fast Lane forecast-champion schema, builders, codecs, and
+  canonical first-champion host-run producer;
 - Rust `shreks-fast-campaign-decision`;
 - direct continuous `BUY/SKIP/HOLD/REDUCE/SELL` comparison;
 - `run_fast_learned_chronological_campaign(...)`;
@@ -676,10 +671,43 @@ The repository already contains:
 - `execute_fast_paper_buy(...)`;
 - score-free `assess_fast_entry_risk(...)`;
 - the same authoritative `PaperLedger` accounting type used by PAPER
-  execution.
+  execution;
+- the complete Fast PAPER shadow, evidence, promotion, cutover, and
+  release-management implementation.
 
-The missing boundary is production runtime integration, not another scoring or
-model-fitting authority layer.
+### Physical champion-presence correction
+
+Protected production inspection on 2026-09-29 found no canonical file with
+schema:
+
+`shreks.fast_lane_forecast_champion`
+
+under the protected Shreks evidence roots or the active immutable release.
+
+Historical FL9 V2 attempts are not substitutes. The 2026-09-16 attempt failed
+closed because the decision quote mint did not match its hydration quote
+policy. That historical request remains bound to its old release and must not
+be relabeled or reused.
+
+Therefore the earlier planning statement that an immutable champion was already
+physically available is not true for the current VPS. The code path exists; the
+physical champion artifact does not.
+
+### Immediate prerequisite — one bounded score-free champion bootstrap
+
+Before Fast shadow authority can be installed, complete the separately sealed
+one-attempt bootstrap defined by:
+
+`docs/superpowers/specs/2026-09-29-fast-paper-champion-bootstrap-authority-seal.md`
+
+The bootstrap may use only the existing canonical forecast-champion producer
+with fresh exact-release proof, hydration, economics, and request inputs. It
+does not reopen the forbidden scoring control path and does not grant PAPER
+promotion, service-start, cutover, signing/submission, or LIVE authority.
+
+After an authenticated immutable champion physically exists, resume the Fast
+PAPER migration at protected shadow authority construction and host
+preparation.
 
 ### Active next gate — migrate PAPER authority to the learned Fast Lane path
 
@@ -711,10 +739,13 @@ Current authority remains:
 
 ```text
 LEGACY_SCORE_PAPER_RUNTIME=KNOWN_ARCHITECTURE_DEBT_DO_NOT_EXTEND
+FAST_LANE_FORECAST_CHAMPION_PHYSICAL_PRESENCE=ABSENT
+FAST_CHAMPION_BOOTSTRAP_AUTHORITY=PENDING_SEAL
 FAST_LANE_PAPER_PRODUCTION_AUTHORITY=NOT_YET_GRANTED
 SCORING_CONTROL_PATH=FORBIDDEN
-MODEL_FITTING_PRODUCTION_AUTHORITY=NOT_GRANTED
+GENERAL_MODEL_FITTING_PRODUCTION_AUTHORITY=NOT_GRANTED
 PAPER_PROMOTION=BLOCKED
+SIGNING_SUBMISSION_AUTHORITY=NOT_GRANTED
 LIVE=DISABLED
 ```
 
