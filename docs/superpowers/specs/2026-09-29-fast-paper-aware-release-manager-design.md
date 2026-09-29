@@ -94,8 +94,20 @@ Routine Fast-aware activation requires exact trading semantics:
 - same authoritative observer database;
 - same PAPER evidence and learned-decision checkpoint paths.
 
-Release-local executable paths are retargeted from the current immutable release
-to the staged target release and must contain the exact same reviewed bytes.
+The target release wheel's sealed Fast proof/runtime-tool manifests are verified
+against the exact target source SHA and platform. The decision, entry-authority,
+and runtime-feature native binaries are then materialized idempotently under:
+
+```text
+<target-release>/.venv/fast-paper-tools/<target-release-sha>/
+```
+
+The materialized directory and files are non-symlink, root-created executable
+payloads whose bytes must exactly match the authenticated sealed wheel members.
+The target manifest and BUY-writer policy bind those exact materialized files.
+The append-only release handoff then proves their decision/feed hashes remain
+identical to the source trading semantics; BUY-writer binding independently
+proves the entry-authority hash remains identical.
 
 The execution policy is rebuilt against the target manifest using the exact
 source risk/fill/position policy objects.
