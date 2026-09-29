@@ -331,7 +331,8 @@ def test_installation_proof_source_has_no_paper_cutover_or_live_authority() -> N
     for required in (
         proof._MANAGER_MEMBER,
         proof._BUNDLE_MEMBER,
-        proof._SUDOERS_LINE,
+        "/usr/local/sbin/shreks-release-manager install ",
+        "/var/tmp/shreks-release-*.RELEASE_MANIFEST.json",
         "EXERCISED_EXACT_RELEASE_BOUND_FAST_AWARE_MANAGER_ONLY",
         "physical_cutover_authority",
         "paper_execution_authority",
