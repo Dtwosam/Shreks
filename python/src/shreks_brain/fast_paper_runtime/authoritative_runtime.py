@@ -12,9 +12,8 @@ import time
 from types import FrameType
 from typing import Callable
 
-from shreks_brain.fast_paper_cutover_authorization import (
-    read_fast_paper_cutover_authorization,
-    verify_fast_paper_cutover_authorization,
+from shreks_brain.fast_paper_production_authorization import (
+    read_and_verify_fast_paper_production_authorization,
 )
 
 from .authoritative_coordinator import (
@@ -451,11 +450,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         try:
-            authorization = read_fast_paper_cutover_authorization(
-                config.cutover_authorization_path
-            )
-            verify_fast_paper_cutover_authorization(
-                authorization,
+            read_and_verify_fast_paper_production_authorization(
+                config.cutover_authorization_path,
                 manifest=bootstrap.decision_bootstrap.manifest,
                 binding=bootstrap.execution_bootstrap.binding,
                 execution_policy=(
@@ -464,7 +460,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except Exception as exc:
             raise FastPaperAuthoritativeRuntimeError(
-                "production PAPER cutover authorization failed closed"
+                "production PAPER authorization failed closed"
             ) from exc
 
         event = Event()
