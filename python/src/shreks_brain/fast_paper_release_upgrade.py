@@ -467,7 +467,7 @@ def activate_fast_paper_release(
         return result
     except Exception as upgrade_error:
         try:
-            runner(("systemctl", "stop", _TARGET))
+            _stop_all_runtime(runner)
         except Exception:
             pass
         if not target_start_attempted:
@@ -879,6 +879,25 @@ def _atomic_switch(current_link: Path, target_release: Path) -> None:
         os.replace(temporary, current_link)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _stop_all_runtime(runner: CommandRunner) -> None:
+    _require_success(
+        runner(
+            (
+                "systemctl",
+                "stop",
+                _UNIT,
+                _EVIDENCE_UNIT,
+                _OBSERVE_UNIT,
+            )
+        ),
+        "runtime service stop",
+    )
+    _require_success(
+        runner(("systemctl", "stop", _TARGET)),
+        "runtime target stop",
+    )
 
 
 def _stop_supporting_runtime(runner: CommandRunner) -> None:
