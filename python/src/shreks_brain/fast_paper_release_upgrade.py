@@ -249,10 +249,7 @@ def activate_fast_paper_release(
                 "Fast PAPER release-upgrade receipt already exists"
             )
 
-    protected = _snapshot_protected_files(
-        paths,
-        source_config,
-    )
+    protected: tuple[ProtectedFileSnapshot, ...] = ()
     current_units = _snapshot_units(paths)
     archived: tuple[ArchivedMember, ...] = ()
     target_start_attempted = False
@@ -279,6 +276,10 @@ def activate_fast_paper_release(
             paths.authoritative_config_path
         )
         _require_clean_handoff_boundary(source_bootstrap)
+        protected = _snapshot_protected_files(
+            paths,
+            source_config,
+        )
 
         source_checkpoint = source_bootstrap.execution_bootstrap.checkpoint
         handoff_created_at_unix_ms = max(
