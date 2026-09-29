@@ -142,6 +142,103 @@ def test_missing_mint_without_bounded_followup_is_unresolved() -> None:
     assert result["max_selected_missing_mint_followup_delay_ms"] is None
 
 
+def test_unresolved_mint_is_partitioned_by_bounded_collector_evidence() -> None:
+    before = MintStateAcceptanceSample(
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        collector_evidence_before_decision=True,
+    )
+    after = MintStateAcceptanceSample(
+        candidate_id=8,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+        collector_evidence_after_decision=True,
+    )
+    absent = MintStateAcceptanceSample(
+        candidate_id=9,
+        decision_as_of_unix_ms=2_000_000,
+        mint_observed_at_unix_ms=None,
+        previous_mint_observed_at_unix_ms=None,
+    )
+
+    result = evaluate_mint_state_acceptance_samples(
+        (before, after, absent),
+        max_critical_data_age_ms=900_000,
+        evidence_cycle_interval_ms=60_000,
+    )
+
+    assert result["status"] == "FAILED"
+    assert result["selected_missing_mint_unresolved_count"] == 3
+    assert (
+        result[
+            "selected_missing_mint_unresolved_with_collector_evidence_before_decision_count"
+        ]
+        == 1
+    )
+    assert (
+        result[
+            "selected_missing_mint_unresolved_with_collector_evidence_after_decision_count"
+        ]
+        == 1
+    )
+    assert (
+        result[
+            "selected_missing_mint_unresolved_without_collector_evidence_count"
+        ]
+        == 1
+    )
+
+
+def test_collector_companion_evidence_lookup_is_bounded_and_identity_free() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    connection.executescript(
+        """
+        CREATE TABLE paper_quote_snapshots (
+            id INTEGER PRIMARY KEY,
+            candidate_id INTEGER NOT NULL,
+            quoted_at_unix_ms INTEGER NOT NULL
+        );
+        CREATE TABLE token_holder_distributions (
+            id INTEGER PRIMARY KEY,
+            candidate_id INTEGER NOT NULL,
+            observed_at_unix_ms INTEGER NOT NULL
+        );
+        INSERT INTO paper_quote_snapshots
+            (id, candidate_id, quoted_at_unix_ms)
+        VALUES
+            (1, 7, 1999000),
+            (2, 8, 2005000),
+            (3, 9, 2100000);
+        """
+    )
+
+    assert acceptance._collector_companion_evidence(
+        connection,
+        candidate_id=7,
+        decision_as_of_unix_ms=2_000_000,
+        window_start_unix_ms=1_990_000,
+        window_end_unix_ms=2_010_000,
+    ) == (True, False)
+    assert acceptance._collector_companion_evidence(
+        connection,
+        candidate_id=8,
+        decision_as_of_unix_ms=2_000_000,
+        window_start_unix_ms=1_990_000,
+        window_end_unix_ms=2_010_000,
+    ) == (False, True)
+    assert acceptance._collector_companion_evidence(
+        connection,
+        candidate_id=9,
+        decision_as_of_unix_ms=2_000_000,
+        window_start_unix_ms=1_990_000,
+        window_end_unix_ms=2_010_000,
+    ) == (False, False)
+
+
 def test_future_mint_row_never_satisfies_historical_selection() -> None:
     result = evaluate_mint_state_acceptance_samples(
         (
