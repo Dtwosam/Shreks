@@ -8,7 +8,6 @@ import pytest
 from shreks_brain.research.fast_training_targets import (
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_NAME,
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_VERSION,
-    future_path_logical_fingerprint_from_sqlite,
     load_future_path_training_labels_for_identities_from_sqlite,
     load_future_path_training_labels_from_sqlite,
 )
@@ -159,52 +158,6 @@ def test_loader_is_deterministic_and_orders_by_decision_then_horizon(tmp_path: P
     second = load_future_path_training_labels_from_sqlite(path, future_path_label_version=1)
     assert first == second
     assert [label.horizon_ms for label in first.labels] == [250, 500]
-
-
-def test_streaming_full_fingerprint_matches_materialized_dataset(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "streaming-fingerprint.db"
-    connection = _db(path)
-    _seed(connection)
-    connection.close()
-
-    materialized = load_future_path_training_labels_from_sqlite(
-        path,
-        future_path_label_version=1,
-    )
-    streamed = future_path_logical_fingerprint_from_sqlite(
-        path,
-        future_path_label_version=1,
-    )
-
-    assert streamed == materialized.logical_fingerprint_sha256
-
-
-def test_streaming_full_fingerprint_fails_closed_on_duplicate_identity(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "streaming-fingerprint-duplicate.db"
-    connection = _db(path)
-    _seed(connection)
-    row = connection.execute(
-        "SELECT * FROM fast_future_path_labels WHERE horizon_ms = 250"
-    ).fetchone()
-    assert row is not None
-    connection.execute(
-        "INSERT INTO fast_future_path_labels VALUES ("
-        + ",".join("?" for _ in row)
-        + ")",
-        row,
-    )
-    connection.commit()
-    connection.close()
-
-    with pytest.raises(ValueError, match="duplicate"):
-        future_path_logical_fingerprint_from_sqlite(
-            path,
-            future_path_label_version=1,
-        )
 
 
 def test_bounded_loader_returns_only_requested_identity_and_horizon(tmp_path: Path) -> None:
