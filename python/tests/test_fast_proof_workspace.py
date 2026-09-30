@@ -21,8 +21,10 @@ from shreks_brain.fast_proof_workspace import (
     FAST_PROOF_WORKSPACE_SCHEMA_NAME,
     FAST_PROOF_WORKSPACE_SCHEMA_VERSION,
     FastProofWorkspaceArtifact,
+    FastProofWorkspaceManifestArtifact,
     prepare_fast_proof_workspace,
     read_fast_proof_workspace,
+    read_fast_proof_workspace_manifest_bounded,
 )
 from shreks_brain.research.fast_training_features import FastTrainingFeatureDataset
 
@@ -172,6 +174,42 @@ def test_prepare_workspace_materializes_exporter_and_seals_feature_evidence(
         "features.jsonl",
         "manifest.json",
     }
+
+
+def test_bounded_workspace_reader_matches_strict_manifest_without_dataset_retention(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"stable-observer-db")
+    toolset, _ = _toolset(tmp_path)
+    monkeypatch.setattr(
+        workspace_module,
+        "materialize_fast_proof_tools",
+        lambda *_args, **_kwargs: toolset,
+    )
+    destination = tmp_path / "workspace"
+    strict = prepare_fast_proof_workspace(
+        database_path=database,
+        destination=destination,
+        tool_root=tmp_path / "proof-tools",
+        expected_source_sha=SOURCE_SHA,
+        expected_platform=PLATFORM,
+        timeout_seconds=30,
+    )
+
+    monkeypatch.setattr(
+        workspace_module,
+        "read_fast_training_feature_jsonl",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded reader must not materialize the feature dataset")
+        ),
+    )
+    bounded = read_fast_proof_workspace_manifest_bounded(destination)
+
+    assert type(bounded) is FastProofWorkspaceManifestArtifact
+    assert bounded.path == destination.resolve()
+    assert bounded.manifest == strict.manifest
 
 
 def test_workspace_treats_exporter_created_empty_wal_as_absent(

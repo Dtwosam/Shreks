@@ -32,6 +32,7 @@ from .fast_training_economics import (
     FastTrainingExecutionCostPolicy,
     build_entry_counterfactual_context_from_training_economics,
     read_fast_training_economics_overlay,
+    read_fast_training_economics_overlay_for_horizon,
 )
 from .fast_training_features import (
     FAST_TRAINING_FEATURE_SCHEMA_NAME,
@@ -39,6 +40,7 @@ from .fast_training_features import (
     FastTrainingFeatureDataset,
     feature_logical_fingerprint_sha256,
     read_fast_training_feature_jsonl,
+    read_fast_training_feature_jsonl_for_identities,
     read_fast_training_feature_parquet,
     write_fast_training_feature_parquet,
 )
@@ -47,6 +49,7 @@ from .fast_training_targets import (
     FUTURE_PATH_TRAINING_DATASET_SCHEMA_VERSION,
     FuturePathTrainingLabelDataset,
     future_path_logical_fingerprint_sha256,
+    load_future_path_training_labels_for_identities_from_sqlite,
     load_future_path_training_labels_from_sqlite,
     read_future_path_training_parquet,
     write_future_path_training_parquet,
@@ -239,6 +242,7 @@ def build_fast_training_bundle_from_runtime_sources(
     counterfactual_base_quantity: float,
     training_economics_overlay_path: str | Path,
     training_execution_cost_policy: FastTrainingExecutionCostPolicy,
+    horizon_ms: int | None = None,
 ) -> FastTrainingBundle:
     """Build the exact logical FL8.1 bundle from authenticated read-only sources."""
     _positive_int("future_path_label_version", future_path_label_version)
@@ -255,29 +259,64 @@ def build_fast_training_bundle_from_runtime_sources(
         raise ValueError(
             "training_execution_cost_policy must be an exact FastTrainingExecutionCostPolicy"
         )
+    if horizon_ms is not None:
+        _positive_int("horizon_ms", horizon_ms)
 
-    features = read_fast_training_feature_jsonl(feature_jsonl_path)
-    future_path = load_future_path_training_labels_from_sqlite(
-        sqlite_path,
-        future_path_label_version=future_path_label_version,
-    )
-    overlay = read_fast_training_economics_overlay(
-        training_economics_overlay_path
-    )
-
-    if (
-        overlay.manifest.feature_source_jsonl_sha256
-        != features.source_sha256
-    ):
-        raise ValueError(
-            "training economics overlay feature-source fingerprint does not match runtime features"
+    if horizon_ms is None:
+        features = read_fast_training_feature_jsonl(feature_jsonl_path)
+        future_path = load_future_path_training_labels_from_sqlite(
+            sqlite_path,
+            future_path_label_version=future_path_label_version,
         )
-    if (
-        overlay.manifest.future_path_logical_fingerprint_sha256
-        != future_path.logical_fingerprint_sha256
-    ):
-        raise ValueError(
-            "training economics overlay FL4 logical fingerprint does not match runtime labels"
+        overlay = read_fast_training_economics_overlay(
+            training_economics_overlay_path
+        )
+        if (
+            overlay.manifest.feature_source_jsonl_sha256
+            != features.source_sha256
+        ):
+            raise ValueError(
+                "training economics overlay feature-source fingerprint does not match runtime features"
+            )
+        if (
+            overlay.manifest.future_path_logical_fingerprint_sha256
+            != future_path.logical_fingerprint_sha256
+        ):
+            raise ValueError(
+                "training economics overlay FL4 logical fingerprint does not match runtime labels"
+            )
+    else:
+        overlay = read_fast_training_economics_overlay_for_horizon(
+            training_economics_overlay_path,
+            horizon_ms=horizon_ms,
+            label_version=future_path_label_version,
+        )
+        decision_identities = tuple(
+            (
+                row.decision_signature,
+                row.decision_ordinal,
+                row.decision_sequence,
+                row.mint,
+                row.quote_mint,
+                row.venue,
+                row.decision_observed_at_unix_ms,
+            )
+            for row in overlay.rows
+        )
+        features = read_fast_training_feature_jsonl_for_identities(
+            feature_jsonl_path,
+            decision_identities=decision_identities,
+            expected_source_sha256=(
+                overlay.manifest.feature_source_jsonl_sha256
+            ),
+        )
+        future_path = (
+            load_future_path_training_labels_for_identities_from_sqlite(
+                sqlite_path,
+                future_path_label_version=future_path_label_version,
+                horizon_ms=horizon_ms,
+                decision_identities=decision_identities,
+            )
         )
     if (
         overlay.manifest.future_path_label_version

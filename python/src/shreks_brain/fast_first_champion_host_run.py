@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import gc
 from dataclasses import dataclass
 import hashlib
 import json
@@ -28,7 +29,9 @@ from shreks_brain.fast_first_champion_preparation import (
     prepare_fast_first_champion_evidence,
     read_fast_first_champion_preparation,
 )
-from shreks_brain.fast_proof_workspace import read_fast_proof_workspace
+from shreks_brain.fast_proof_workspace import (
+    read_fast_proof_workspace_manifest_bounded,
+)
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
 )
@@ -664,7 +667,7 @@ def run_fast_first_champion_host_request(
             "first champion host hydration policy fingerprint mismatch"
         )
 
-    proof_workspace = read_fast_proof_workspace(proof_path)
+    proof_workspace = read_fast_proof_workspace_manifest_bounded(proof_path)
     if (
         proof_workspace.manifest.release_source_sha
         != request.expected_release_source_sha
@@ -685,12 +688,11 @@ def run_fast_first_champion_host_request(
         counterfactual_base_quantity=request.counterfactual_base_quantity,
         training_economics_overlay_path=training_economics_overlay_path,
         training_execution_cost_policy=request.training_execution_cost_policy,
+        horizon_ms=request.horizon_ms,
     )
     if (
         bundle.features.source_sha256
         != proof_workspace.manifest.feature_jsonl_sha256
-        or bundle.features.logical_fingerprint_sha256
-        != proof_workspace.manifest.feature_logical_fingerprint_sha256
     ):
         raise ValueError(
             "first champion host training bundle does not match proof workspace"
@@ -710,6 +712,9 @@ def run_fast_first_champion_host_request(
             request.minimum_test_scored_observations
         ),
     )
+    bundle_fingerprint = bundle.manifest.bundle_fingerprint_sha256
+    del bundle
+    gc.collect()
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
@@ -791,7 +796,7 @@ def run_fast_first_champion_host_request(
             raise ValueError(
                 "first champion host training economics source changed during execution"
             )
-        proof_after = read_fast_proof_workspace(proof_path)
+        proof_after = read_fast_proof_workspace_manifest_bounded(proof_path)
         if proof_after.manifest != proof_workspace.manifest:
             raise ValueError(
                 "first champion host proof workspace source changed during execution"
@@ -801,7 +806,7 @@ def run_fast_first_champion_host_request(
             request=request,
             hydration_fingerprint=hydration_fingerprint,
             proof_workspace=proof_workspace,
-            bundle=bundle,
+            expected_training_bundle_fingerprint_sha256=bundle_fingerprint,
             plan=plan,
             preparation=preparation,
         )
@@ -1089,7 +1094,7 @@ def _validate_preparation_chain(
     request: FastFirstChampionHostRequest,
     hydration_fingerprint: str,
     proof_workspace,
-    bundle,
+    expected_training_bundle_fingerprint_sha256: str,
     plan: FastFirstChampionEvidencePlan,
     preparation,
 ) -> None:
@@ -1105,7 +1110,7 @@ def _validate_preparation_chain(
         )
     if (
         plan.training_bundle_fingerprint_sha256
-        != bundle.manifest.bundle_fingerprint_sha256
+        != expected_training_bundle_fingerprint_sha256
         or manifest.training_bundle_fingerprint_sha256
         != plan.training_bundle_fingerprint_sha256
     ):

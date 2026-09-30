@@ -22,7 +22,9 @@ from shreks_brain.fast_first_champion_host_run import (
     build_fast_first_champion_host_request,
     encode_fast_first_champion_host_request,
 )
-from shreks_brain.fast_proof_workspace import read_fast_proof_workspace
+from shreks_brain.fast_proof_workspace import (
+    read_fast_proof_workspace_manifest_bounded,
+)
 from shreks_brain.research.fast_training_economics import (
     decode_fast_training_execution_cost_policy,
     fast_training_execution_cost_policy_fingerprint_sha256,
@@ -145,7 +147,7 @@ def write_fast_first_champion_host_request_from_sources(
             "first champion host request writer requires TEST evaluation"
         )
 
-    proof_workspace = read_fast_proof_workspace(proof_path)
+    proof_workspace = read_fast_proof_workspace_manifest_bounded(proof_path)
     policy_payload = _read_text_stable(
         policy_path,
         label="hydration policy",
@@ -270,7 +272,7 @@ def write_fast_first_champion_host_request_from_sources(
             raise ValueError(
                 "training economics overlay source changed during request creation"
             )
-        proof_after = read_fast_proof_workspace(proof_path)
+        proof_after = read_fast_proof_workspace_manifest_bounded(proof_path)
         if proof_after.manifest != proof_workspace.manifest:
             raise ValueError(
                 "proof workspace source changed during request creation"

@@ -134,7 +134,7 @@ def _install_fakes(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(
         host_module,
-        "read_fast_proof_workspace",
+        "read_fast_proof_workspace_manifest_bounded",
         lambda _path: proof_artifact,
     )
     monkeypatch.setattr(

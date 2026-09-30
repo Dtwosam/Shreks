@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +17,9 @@ from shreks_brain.fast_proof_tools import (
 )
 from shreks_brain.research.fast_training_features import (
     FastTrainingFeatureDataset,
+    _canonicalize as _canonicalize_feature,
+    _iter_feature_mappings,
+    _record_from_mapping,
     read_fast_training_feature_jsonl,
 )
 
@@ -136,6 +139,20 @@ class FastProofWorkspaceArtifact:
         if type(self.features) is not FastTrainingFeatureDataset:
             raise ValueError(
                 "features must be exact FastTrainingFeatureDataset"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class FastProofWorkspaceManifestArtifact:
+    path: Path
+    manifest: FastProofWorkspaceManifest
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.path, Path):
+            raise ValueError("path must be Path")
+        if type(self.manifest) is not FastProofWorkspaceManifest:
+            raise ValueError(
+                "manifest must be exact FastProofWorkspaceManifest"
             )
 
 
@@ -349,6 +366,181 @@ def prepare_fast_proof_workspace(
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+def read_fast_proof_workspace_manifest_bounded(
+    path: str | Path,
+) -> FastProofWorkspaceManifestArtifact:
+    root = Path(path).expanduser().resolve()
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError(
+            "Fast proof workspace must be an existing real directory"
+        )
+    entries = set()
+    for child in root.iterdir():
+        if child.is_symlink() or not child.is_file():
+            raise ValueError(
+                "Fast proof workspace may contain regular files only"
+            )
+        entries.add(child.name)
+    if entries != _ROOT_ENTRIES:
+        raise ValueError(
+            "Fast proof workspace has unknown or missing entries"
+        )
+
+    document = _load_canonical(
+        (root / _MANIFEST_FILE).read_text(encoding="utf-8"),
+        label="Fast proof workspace manifest",
+    )
+    if frozenset(document) != _MANIFEST_KEYS:
+        raise ValueError(
+            "Fast proof workspace manifest has unknown or missing fields"
+        )
+    try:
+        manifest = FastProofWorkspaceManifest(
+            schema_name=document["schema_name"],
+            schema_version=document["schema_version"],
+            release_source_sha=document["release_source_sha"],
+            platform=document["platform"],
+            proof_tools_manifest_fingerprint_sha256=document[
+                "proof_tools_manifest_fingerprint_sha256"
+            ],
+            exporter_sha256=document["exporter_sha256"],
+            observer_database_sha256=document[
+                "observer_database_sha256"
+            ],
+            observer_database_wal_sha256=document[
+                "observer_database_wal_sha256"
+            ],
+            feature_jsonl_sha256=document["feature_jsonl_sha256"],
+            feature_logical_fingerprint_sha256=document[
+                "feature_logical_fingerprint_sha256"
+            ],
+            row_count=document["row_count"],
+            min_decision_sequence=document["min_decision_sequence"],
+            max_decision_sequence=document["max_decision_sequence"],
+            min_decision_observed_at_unix_ms=document[
+                "min_decision_observed_at_unix_ms"
+            ],
+            max_decision_observed_at_unix_ms=document[
+                "max_decision_observed_at_unix_ms"
+            ],
+            artifact_fingerprint_sha256=document[
+                "artifact_fingerprint_sha256"
+            ],
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"Fast proof workspace manifest is invalid: {exc}"
+        ) from exc
+
+    material = dict(document)
+    claimed = material.pop("artifact_fingerprint_sha256")
+    if _sha256_canonical(material) != claimed:
+        raise ValueError(
+            "Fast proof workspace artifact fingerprint mismatch"
+        )
+
+    feature_path = root / _FEATURE_FILE
+    source_digest = hashlib.sha256()
+    logical_digest = hashlib.sha256()
+    logical_digest.update(b"[")
+    seen: set[tuple[str, int]] = set()
+    previous_sort: tuple[object, ...] | None = None
+    previous_sequence: int | None = None
+    row_count = 0
+    min_sequence: int | None = None
+    max_sequence: int | None = None
+    min_time: int | None = None
+    max_time: int | None = None
+
+    for mapping in _iter_feature_mappings(feature_path, source_digest):
+        record = _record_from_mapping(mapping)
+        key = (record.decision_signature, record.decision_ordinal)
+        if key in seen:
+            raise ValueError(
+                "training feature dataset contains a duplicate decision identity"
+            )
+        seen.add(key)
+        sort_key = (
+            record.decision_sequence,
+            record.decision_signature,
+            record.decision_ordinal,
+        )
+        if previous_sort is not None and sort_key < previous_sort:
+            raise ValueError(
+                "training feature rows are not in canonical order"
+            )
+        if (
+            previous_sequence is not None
+            and record.decision_sequence <= previous_sequence
+        ):
+            raise ValueError(
+                "training feature decision sequences must strictly increase"
+            )
+        previous_sort = sort_key
+        previous_sequence = record.decision_sequence
+
+        if row_count:
+            logical_digest.update(b",")
+        logical_digest.update(
+            json.dumps(
+                _canonicalize_feature(asdict(record)),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            ).encode("utf-8")
+        )
+        row_count += 1
+        observed_at = record.decision_observed_at_unix_ms
+        min_sequence = (
+            record.decision_sequence
+            if min_sequence is None
+            else min(min_sequence, record.decision_sequence)
+        )
+        max_sequence = (
+            record.decision_sequence
+            if max_sequence is None
+            else max(max_sequence, record.decision_sequence)
+        )
+        min_time = (
+            observed_at if min_time is None else min(min_time, observed_at)
+        )
+        max_time = (
+            observed_at if max_time is None else max(max_time, observed_at)
+        )
+
+    if row_count == 0:
+        raise ValueError("training feature dataset cannot be empty")
+    logical_digest.update(b"]")
+
+    if source_digest.hexdigest() != manifest.feature_jsonl_sha256:
+        raise ValueError(
+            "Fast proof workspace feature file hash mismatch"
+        )
+    if (
+        logical_digest.hexdigest()
+        != manifest.feature_logical_fingerprint_sha256
+        or row_count != manifest.row_count
+    ):
+        raise ValueError(
+            "Fast proof workspace feature evidence does not match manifest"
+        )
+    if (
+        min_sequence != manifest.min_decision_sequence
+        or max_sequence != manifest.max_decision_sequence
+        or min_time != manifest.min_decision_observed_at_unix_ms
+        or max_time != manifest.max_decision_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "Fast proof workspace feature bounds do not match manifest"
+        )
+
+    return FastProofWorkspaceManifestArtifact(
+        path=root,
+        manifest=manifest,
+    )
 
 
 def read_fast_proof_workspace(

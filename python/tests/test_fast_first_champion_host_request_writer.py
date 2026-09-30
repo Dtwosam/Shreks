@@ -97,7 +97,7 @@ def _sources(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(
         writer,
-        "read_fast_proof_workspace",
+        "read_fast_proof_workspace_manifest_bounded",
         lambda path: proof_artifact,
     )
     monkeypatch.setattr(
@@ -302,7 +302,7 @@ def test_writer_rejects_proof_workspace_mutation(
             ),
         )
 
-    monkeypatch.setattr(writer, "read_fast_proof_workspace", _read)
+    monkeypatch.setattr(writer, "read_fast_proof_workspace_manifest_bounded", _read)
     request_path = tmp_path / "request.json"
 
     with pytest.raises(ValueError, match="proof workspace.*changed|source.*changed"):
