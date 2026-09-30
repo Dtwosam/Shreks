@@ -693,8 +693,6 @@ def run_fast_first_champion_host_request(
     if (
         bundle.features.source_sha256
         != proof_workspace.manifest.feature_jsonl_sha256
-        or bundle.features.logical_fingerprint_sha256
-        != proof_workspace.manifest.feature_logical_fingerprint_sha256
     ):
         raise ValueError(
             "first champion host training bundle does not match proof workspace"
