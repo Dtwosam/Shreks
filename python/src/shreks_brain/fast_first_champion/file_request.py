@@ -672,6 +672,7 @@ def run_fast_first_champion_file_request(
         counterfactual_base_quantity=request.counterfactual_base_quantity,
         training_economics_overlay_path=training_economics_overlay_path,
         training_execution_cost_policy=request.training_execution_cost_policy,
+        horizon_ms=request.horizon_ms,
     )
     if bundle.features.source_sha256 != before.feature_jsonl_sha256:
         raise ValueError(
