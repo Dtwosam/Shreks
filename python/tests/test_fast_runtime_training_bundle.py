@@ -364,6 +364,13 @@ def test_runtime_sources_horizon_bounded_path_avoids_full_materializers(
 
     monkeypatch.setattr(
         training_bundle_module,
+        "read_fast_training_feature_jsonl",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded bundle must not retain the full feature population")
+        ),
+    )
+    monkeypatch.setattr(
+        training_bundle_module,
         "load_future_path_training_labels_from_sqlite",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("bounded bundle must not materialize all FL4 horizons")
