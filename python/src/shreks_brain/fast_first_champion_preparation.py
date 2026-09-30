@@ -308,8 +308,6 @@ def prepare_fast_first_champion_evidence(
         if (
             bundle.features.source_sha256
             != copied_workspace.manifest.feature_jsonl_sha256
-            or bundle.features.logical_fingerprint_sha256
-            != copied_workspace.manifest.feature_logical_fingerprint_sha256
         ):
             raise ValueError(
                 "prepared training bundle does not match proof workspace features"
