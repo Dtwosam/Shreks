@@ -325,6 +325,8 @@ def prepare_fast_first_champion_evidence(
             hydration_policy=hydration_policy,
             destination=hydration_path,
         )
+        del bundle
+        gc.collect()
         hydration = read_fast_forecast_context_hydration_artifact(
             hydration_path
         )
@@ -367,8 +369,6 @@ def prepare_fast_first_champion_evidence(
         )
         request_path = staging / _REQUEST_FILE
         write_fast_first_champion_file_request(request, request_path)
-        del bundle
-        gc.collect()
         first_champion = run_fast_first_champion_file_request(request_path)
         first_champion = read_fast_first_champion_artifact(
             staging / _CHAMPION_DIR
