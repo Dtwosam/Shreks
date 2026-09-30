@@ -262,6 +262,7 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
                 tmp_path / "training-economics"
             ).resolve(),
             "training_execution_cost_policy": _training_economics_policy(),
+            "horizon_ms": HORIZON_MS,
         }
     ]
 
