@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import gc
 import hashlib
 import json
 from pathlib import Path
@@ -21,7 +22,9 @@ from shreks_brain.fast_first_champion import (
     run_fast_first_champion_file_request,
     write_fast_first_champion_file_request,
 )
-from shreks_brain.fast_proof_workspace import read_fast_proof_workspace
+from shreks_brain.fast_proof_workspace import (
+    read_fast_proof_workspace_manifest_bounded,
+)
 from shreks_brain.fast_validation import FastChronologicalValidationPolicy
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
@@ -261,7 +264,7 @@ def prepare_fast_first_champion_evidence(
             "first champion preparation destination already exists"
         )
 
-    source_workspace = read_fast_proof_workspace(source_workspace_path)
+    source_workspace = read_fast_proof_workspace_manifest_bounded(source_workspace_path)
     before = _capture_database(database)
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
@@ -279,8 +282,8 @@ def prepare_fast_first_champion_evidence(
             copied_workspace_path,
             symlinks=False,
         )
-        copied_workspace = read_fast_proof_workspace(copied_workspace_path)
-        source_workspace_after_copy = read_fast_proof_workspace(
+        copied_workspace = read_fast_proof_workspace_manifest_bounded(copied_workspace_path)
+        source_workspace_after_copy = read_fast_proof_workspace_manifest_bounded(
             source_workspace_path
         )
         if (
@@ -291,15 +294,6 @@ def prepare_fast_first_champion_evidence(
             raise ValueError(
                 "proof workspace source changed during preparation copy"
             )
-        if (
-            copied_workspace.features.source_sha256
-            != source_workspace.features.source_sha256
-            or copied_workspace.features.logical_fingerprint_sha256
-            != source_workspace.features.logical_fingerprint_sha256
-        ):
-            raise ValueError(
-                "copied proof workspace feature evidence mismatch"
-            )
 
         feature_path = copied_workspace_path / "features.jsonl"
         bundle = build_fast_training_bundle_from_runtime_sources(
@@ -309,6 +303,7 @@ def prepare_fast_first_champion_evidence(
             counterfactual_base_quantity=counterfactual_base_quantity,
             training_economics_overlay_path=economics_overlay,
             training_execution_cost_policy=training_execution_cost_policy,
+            horizon_ms=horizon_ms,
         )
         if (
             bundle.features.source_sha256
@@ -334,7 +329,7 @@ def prepare_fast_first_champion_evidence(
         )
         _validate_hydration_chain(
             hydration=hydration,
-            bundle=bundle,
+            expected_training_bundle_fingerprint_sha256=bundle_fingerprint,
             proof_workspace=copied_workspace,
             database_snapshot=before,
             validation_policy=validation_policy,
@@ -371,6 +366,9 @@ def prepare_fast_first_champion_evidence(
         )
         request_path = staging / _REQUEST_FILE
         write_fast_first_champion_file_request(request, request_path)
+        bundle_fingerprint = bundle.manifest.bundle_fingerprint_sha256
+        del bundle
+        gc.collect()
         first_champion = run_fast_first_champion_file_request(request_path)
         first_champion = read_fast_first_champion_artifact(
             staging / _CHAMPION_DIR
@@ -405,7 +403,7 @@ def prepare_fast_first_champion_evidence(
             training_execution_cost_policy_fingerprint_sha256=(
                 training_cost_policy_fingerprint
             ),
-            bundle=bundle,
+            training_bundle_fingerprint_sha256=bundle_fingerprint,
             hydration=hydration,
             request=request,
             request_path=request_path,
@@ -558,7 +556,7 @@ def read_fast_first_champion_preparation(
             "first champion preparation artifact fingerprint mismatch"
         )
 
-    proof_workspace = read_fast_proof_workspace(root / _PROOF_DIR)
+    proof_workspace = read_fast_proof_workspace_manifest_bounded(root / _PROOF_DIR)
     hydration = read_fast_forecast_context_hydration_artifact(
         root / _HYDRATION_DIR
     )
@@ -594,7 +592,7 @@ def read_fast_first_champion_preparation(
 def _validate_hydration_chain(
     *,
     hydration,
-    bundle,
+    expected_training_bundle_fingerprint_sha256: str,
     proof_workspace,
     database_snapshot: _DatabaseSnapshot,
     validation_policy: FastChronologicalValidationPolicy,
@@ -682,7 +680,7 @@ def _validate_first_champion_chain(
         )
     if (
         manifest.training_bundle_fingerprint_sha256
-        != bundle.manifest.bundle_fingerprint_sha256
+        != expected_training_bundle_fingerprint_sha256
         or manifest.training_bundle_fingerprint_sha256
         != hydration.manifest.training_bundle_fingerprint_sha256
     ):
@@ -831,7 +829,7 @@ def _manifest_material(
     database_snapshot: _DatabaseSnapshot,
     training_economics_overlay_manifest_fingerprint_sha256: str,
     training_execution_cost_policy_fingerprint_sha256: str,
-    bundle,
+    training_bundle_fingerprint_sha256: str,
     hydration,
     request: FastFirstChampionFileRequest,
     request_path: Path,
@@ -869,7 +867,7 @@ def _manifest_material(
             training_execution_cost_policy_fingerprint_sha256
         ),
         "training_bundle_fingerprint_sha256": (
-            bundle.manifest.bundle_fingerprint_sha256
+            training_bundle_fingerprint_sha256
         ),
         "validation_policy_fingerprint_sha256": (
             hydrated.validation_policy_fingerprint_sha256
