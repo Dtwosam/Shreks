@@ -259,6 +259,90 @@ def _iter_feature_mappings(
             yield value
 
 
+def read_fast_training_feature_jsonl_for_identities(
+    path: str | Path,
+    *,
+    decision_identities: tuple[tuple[object, ...], ...],
+    expected_source_sha256: str,
+) -> FastTrainingFeatureDataset:
+    if (
+        not isinstance(decision_identities, tuple)
+        or not decision_identities
+        or not all(
+            isinstance(identity, tuple) and len(identity) == 7
+            for identity in decision_identities
+        )
+    ):
+        raise ValueError(
+            "decision_identities must be a non-empty tuple of seven-field identities"
+        )
+    if len(set(decision_identities)) != len(decision_identities):
+        raise ValueError("decision_identities contain a duplicate identity")
+    _require_sha256("expected_source_sha256", expected_source_sha256)
+
+    requested = set(decision_identities)
+    source = Path(path)
+    source_digest = hashlib.sha256()
+    selected: dict[
+        tuple[object, ...], FastTrainingFeatureRecord
+    ] = {}
+    seen: set[tuple[str, int]] = set()
+    previous_sort: tuple[object, ...] | None = None
+    previous_sequence: int | None = None
+
+    for mapping in _iter_feature_mappings(source, source_digest):
+        record = _record_from_mapping(mapping)
+        key = (record.decision_signature, record.decision_ordinal)
+        if key in seen:
+            raise ValueError(
+                "training feature dataset contains a duplicate decision identity"
+            )
+        seen.add(key)
+        sort_key = (
+            record.decision_sequence,
+            record.decision_signature,
+            record.decision_ordinal,
+        )
+        if previous_sort is not None and sort_key < previous_sort:
+            raise ValueError("training feature rows are not in canonical order")
+        if (
+            previous_sequence is not None
+            and record.decision_sequence <= previous_sequence
+        ):
+            raise ValueError(
+                "training feature decision sequences must strictly increase"
+            )
+        previous_sort = sort_key
+        previous_sequence = record.decision_sequence
+
+        identity = record.decision_identity
+        if identity in requested:
+            selected[identity] = record
+
+    source_sha256 = source_digest.hexdigest()
+    if source_sha256 != expected_source_sha256:
+        raise ValueError(
+            "training feature source fingerprint does not match expected source"
+        )
+
+    missing = [
+        identity
+        for identity in decision_identities
+        if identity not in selected
+    ]
+    if missing:
+        raise ValueError(
+            "training feature source is missing a requested decision identity"
+        )
+
+    records = tuple(selected[identity] for identity in decision_identities)
+    return FastTrainingFeatureDataset(
+        records=records,
+        logical_fingerprint_sha256=feature_logical_fingerprint_sha256(records),
+        source_sha256=source_sha256,
+    )
+
+
 def feature_logical_fingerprint_sha256(
     records: tuple[FastTrainingFeatureRecord, ...],
 ) -> str:
