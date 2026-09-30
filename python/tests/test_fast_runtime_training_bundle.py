@@ -8,6 +8,7 @@ import subprocess
 import pytest
 
 import shreks_brain.research.counterfactual_source as counterfactual_source_module
+import shreks_brain.research.fast_training_bundle as training_bundle_module
 from shreks_brain.research.counterfactual_parquet import (
     build_counterfactual_dataset,
     read_counterfactual_parquet,
@@ -351,6 +352,45 @@ def test_runtime_sources_build_exact_bundle_without_pyarrow(
     assert swap_runtime.endpoint_cost_adjusted_return_bps == pytest.approx(
         swap_buy_now["return_bps"]
     )
+
+
+def test_runtime_sources_horizon_bounded_path_avoids_full_materializers(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database, features_path, overlay_path = _write_mixed_training_economics_fixture(
+        tmp_path
+    )
+
+    monkeypatch.setattr(
+        training_bundle_module,
+        "load_future_path_training_labels_from_sqlite",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded bundle must not materialize all FL4 horizons")
+        ),
+    )
+    monkeypatch.setattr(
+        training_bundle_module,
+        "read_fast_training_economics_overlay",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("bounded bundle must not retain the full economics overlay")
+        ),
+    )
+
+    bundle = build_fast_training_bundle_from_runtime_sources(
+        feature_jsonl_path=features_path,
+        sqlite_path=database,
+        future_path_label_version=1,
+        counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
+        horizon_ms=500,
+    )
+
+    assert bundle.manifest.decision_count == 2
+    assert bundle.manifest.future_path_label_row_count == 2
+    assert {label.horizon_ms for label in bundle.future_path_labels.labels} == {500}
+    assert {label.label_version for label in bundle.future_path_labels.labels} == {1}
 
 
 def test_component_builder_rejects_tampered_feature_or_future_path_fingerprint(
