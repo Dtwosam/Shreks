@@ -314,6 +314,7 @@ def prepare_fast_first_champion_evidence(
             raise ValueError(
                 "prepared training bundle does not match proof workspace features"
             )
+        bundle_fingerprint = bundle.manifest.bundle_fingerprint_sha256
 
         hydration_path = staging / _HYDRATION_DIR
         write_fast_forecast_context_hydration_artifact(
@@ -366,7 +367,6 @@ def prepare_fast_first_champion_evidence(
         )
         request_path = staging / _REQUEST_FILE
         write_fast_first_champion_file_request(request, request_path)
-        bundle_fingerprint = bundle.manifest.bundle_fingerprint_sha256
         del bundle
         gc.collect()
         first_champion = run_fast_first_champion_file_request(request_path)
@@ -389,7 +389,7 @@ def prepare_fast_first_champion_evidence(
             first_champion=first_champion,
             request=request,
             hydration=hydration,
-            bundle=bundle,
+            expected_training_bundle_fingerprint_sha256=bundle_fingerprint,
             proof_workspace=copied_workspace,
             database_snapshot=before,
         )
@@ -609,7 +609,7 @@ def _validate_hydration_chain(
         )
     if (
         manifest.training_bundle_fingerprint_sha256
-        != bundle.manifest.bundle_fingerprint_sha256
+        != expected_training_bundle_fingerprint_sha256
     ):
         raise ValueError(
             "context hydration training bundle fingerprint mismatch"
@@ -637,7 +637,7 @@ def _validate_first_champion_chain(
     first_champion,
     request: FastFirstChampionFileRequest,
     hydration,
-    bundle,
+    expected_training_bundle_fingerprint_sha256: str,
     proof_workspace,
     database_snapshot: _DatabaseSnapshot,
 ) -> None:
