@@ -107,6 +107,133 @@ class FuturePathTrainingLabelDataset:
     label_version: int
 
 
+def future_path_logical_fingerprint_from_sqlite(
+    path: str | Path,
+    *,
+    future_path_label_version: int,
+) -> str:
+    """Authenticate the full FL4 logical population without retaining it."""
+
+    _require_positive_int(
+        "future_path_label_version",
+        future_path_label_version,
+    )
+    source = Path(path)
+    if not source.is_file():
+        raise ValueError(
+            "future-path training SQLite source must be an existing file"
+        )
+
+    uri = f"file:{quote(str(source.resolve()), safe='/')}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        raise ValueError(
+            "could not open future-path training SQLite source read-only"
+        ) from exc
+    connection.row_factory = sqlite3.Row
+    try:
+        duplicate = connection.execute(
+            """SELECT 1
+               FROM fast_future_path_labels
+               WHERE label_version = ?
+               GROUP BY decision_signature, decision_ordinal,
+                        horizon_ms, label_version
+               HAVING COUNT(*) > 1
+               LIMIT 1""",
+            (future_path_label_version,),
+        ).fetchone()
+        if duplicate is not None:
+            raise ValueError(
+                "future-path training labels contain a duplicate decision/horizon"
+            )
+
+        rows = connection.execute(
+            """SELECT
+                   l.decision_signature, l.decision_ordinal, l.decision_sequence,
+                   l.decision_mint, l.decision_quote_mint, l.decision_venue,
+                   l.decision_observed_at_unix_ms, l.decision_entry_price_quote,
+                   l.decision_entry_total_quote,
+                   l.coverage_complete_through_unix_ms, l.coverage_contiguous,
+                   l.horizon_ms, l.label_version, l.completeness, l.event_count,
+                   l.no_trade_events, l.endpoint_signature, l.endpoint_ordinal,
+                   l.endpoint_observed_at_unix_ms, l.endpoint_price_quote,
+                   l.endpoint_return_bps, l.mfe_bps, l.mae_bps,
+                   l.time_to_peak_ms, l.time_to_trough_ms, l.reversal_occurred,
+                   l.first_reversal_after_ms, l.min_exit_capacity_base,
+                   l.endpoint_exit_capacity_base, l.route_unavailability_observed,
+                   l.best_cost_adjusted_return_bps,
+                   l.endpoint_cost_adjusted_return_bps,
+                   d.sequence AS canonical_decision_sequence,
+                   d.mint AS canonical_decision_mint,
+                   d.quote_mint AS canonical_decision_quote_mint,
+                   d.venue AS canonical_decision_venue,
+                   d.observed_at_unix_ms AS canonical_decision_observed_at_unix_ms,
+                   d.price_quote AS canonical_decision_price_quote,
+                   e.sequence AS canonical_endpoint_sequence,
+                   e.mint AS canonical_endpoint_mint,
+                   e.quote_mint AS canonical_endpoint_quote_mint,
+                   e.venue AS canonical_endpoint_venue,
+                   e.observed_at_unix_ms AS canonical_endpoint_observed_at_unix_ms,
+                   e.price_quote AS canonical_endpoint_price_quote
+               FROM fast_future_path_labels AS l
+               LEFT JOIN fast_events AS d
+                 ON d.signature = l.decision_signature
+                AND d.ordinal = l.decision_ordinal
+               LEFT JOIN fast_events AS e
+                 ON e.signature = l.endpoint_signature
+                AND e.ordinal = l.endpoint_ordinal
+               WHERE l.label_version = ?
+               ORDER BY l.decision_sequence ASC, l.horizon_ms ASC,
+                        l.decision_signature ASC, l.decision_ordinal ASC""",
+            (future_path_label_version,),
+        )
+
+        digest = hashlib.sha256()
+        digest.update(b"[")
+        row_count = 0
+        previous_sort: tuple[object, ...] | None = None
+        for row in rows:
+            _validate_canonical_sources(connection, row)
+            label = _label_from_row(row, future_path_label_version)
+            sort_key = (
+                label.decision_sequence,
+                label.horizon_ms,
+                label.decision_signature,
+                label.decision_ordinal,
+            )
+            if previous_sort is not None and sort_key < previous_sort:
+                raise ValueError(
+                    "future-path training labels are not in canonical order"
+                )
+            previous_sort = sort_key
+            if row_count:
+                digest.update(b",")
+            digest.update(
+                json.dumps(
+                    _canonicalize(asdict(label)),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    allow_nan=False,
+                ).encode("utf-8")
+            )
+            row_count += 1
+
+        if row_count == 0:
+            raise ValueError(
+                "future-path training label query returned no rows for label version"
+            )
+        digest.update(b"]")
+        return digest.hexdigest()
+    except sqlite3.Error as exc:
+        raise ValueError(
+            "future-path training SQLite source is incompatible"
+        ) from exc
+    finally:
+        connection.close()
+
+
 def load_future_path_training_labels_from_sqlite(
     path: str | Path,
     *,
