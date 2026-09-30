@@ -111,7 +111,7 @@ def _install_component_fakes(
 
     monkeypatch.setattr(
         preparation_module,
-        "read_fast_proof_workspace",
+        "read_fast_proof_workspace_manifest_bounded",
         _read_workspace,
     )
 
