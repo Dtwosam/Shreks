@@ -13,6 +13,7 @@ from shreks_brain.research.fast_training_features import (
     FAST_TRAINING_FEATURE_SCHEMA_VERSION,
     feature_logical_fingerprint_sha256,
     read_fast_training_feature_jsonl,
+    read_fast_training_feature_jsonl_for_identities,
 )
 
 
@@ -187,6 +188,45 @@ def test_feature_reader_does_not_use_whole_file_read_bytes(
     dataset = read_fast_training_feature_jsonl(path)
     assert len(dataset.records) == 2
     assert tuple(record.decision_sequence for record in dataset.records) == (2, 3)
+
+
+def test_identity_bounded_reader_authenticates_full_source_and_retains_subset(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "bounded-features.jsonl"
+    _write(
+        path,
+        [
+            feature_row(signature="a", sequence=2, observed_at=1_100),
+            feature_row(signature="b", sequence=3, observed_at=1_200),
+            feature_row(signature="c", sequence=4, observed_at=1_300),
+        ],
+    )
+    full = read_fast_training_feature_jsonl(path)
+    requested = (
+        full.records[0].decision_identity,
+        full.records[2].decision_identity,
+    )
+
+    selected = read_fast_training_feature_jsonl_for_identities(
+        path,
+        decision_identities=requested,
+        expected_source_sha256=full.source_sha256,
+    )
+
+    assert selected.source_sha256 == full.source_sha256
+    assert tuple(record.decision_identity for record in selected.records) == requested
+    assert len(selected.records) == 2
+    assert selected.logical_fingerprint_sha256 == (
+        feature_logical_fingerprint_sha256(selected.records)
+    )
+
+    with pytest.raises(ValueError, match="source fingerprint"):
+        read_fast_training_feature_jsonl_for_identities(
+            path,
+            decision_identities=requested,
+            expected_source_sha256="0" * 64,
+        )
 
 
 def test_logical_fingerprint_matches_legacy_canonical_bytes(tmp_path: Path) -> None:
