@@ -501,3 +501,99 @@ def test_point_in_time_candidate_resolution_ignores_future_candidate_discovery(
     )
 
     assert resolved.candidate_id == chain_id
+
+def test_point_in_time_candidate_resolution_uses_required_venue_to_break_cross_venue_ambiguity(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    bonding_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="BondingPair",
+        discovered_at_unix_ms=50,
+        venue="pump_fun_bonding_curve",
+    )
+    pump_swap_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="PumpSwapPair",
+        discovered_at_unix_ms=60,
+        venue="pump_swap",
+    )
+    _insert_snapshot(
+        path,
+        bonding_id,
+        observed_at_unix_ms=100,
+        venue="pump_fun_bonding_curve",
+        pair_address="BondingPair",
+    )
+    _insert_snapshot(
+        path,
+        pump_swap_id,
+        observed_at_unix_ms=110,
+        venue="pump_swap",
+        pair_address="PumpSwapPair",
+    )
+
+    store = ObserverMarketStore(path)
+    with pytest.raises(ObserverMarketReadError, match="ambiguous"):
+        store.resolve_candidate_at(
+            "Mint111",
+            200,
+            preferred_discovery_source="dexscreener",
+        )
+
+    resolved = store.resolve_candidate_at(
+        "Mint111",
+        200,
+        preferred_discovery_source="dexscreener",
+        required_venue="pump_swap",
+    )
+
+    assert resolved.candidate_id == pump_swap_id
+    assert resolved.venue == "pump_swap"
+
+
+def test_point_in_time_candidate_resolution_still_fails_closed_for_same_venue_ambiguity(
+    tmp_path,
+):
+    path = tmp_path / "observer.sqlite3"
+    _create_database(path)
+    first_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="PumpSwapPairA",
+        discovered_at_unix_ms=50,
+        venue="pump_swap",
+    )
+    second_id = _insert_candidate(
+        path,
+        discovery_source="dexscreener",
+        pair_address="PumpSwapPairB",
+        discovered_at_unix_ms=60,
+        venue="pump_swap",
+    )
+    _insert_snapshot(
+        path,
+        first_id,
+        observed_at_unix_ms=100,
+        venue="pump_swap",
+        pair_address="PumpSwapPairA",
+    )
+    _insert_snapshot(
+        path,
+        second_id,
+        observed_at_unix_ms=110,
+        venue="pump_swap",
+        pair_address="PumpSwapPairB",
+    )
+
+    with pytest.raises(ObserverMarketReadError, match="ambiguous"):
+        ObserverMarketStore(path).resolve_candidate_at(
+            "Mint111",
+            200,
+            preferred_discovery_source="dexscreener",
+            required_venue="pump_swap",
+        )
+
