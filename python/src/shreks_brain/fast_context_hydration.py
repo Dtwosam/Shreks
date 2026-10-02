@@ -530,7 +530,14 @@ def hydrate_fast_forecast_evaluation_contexts(
             )
 
         try:
-            candidate = market_store.resolve_candidate(record.mint)
+            candidate = market_store.resolve_candidate_at(
+                record.mint,
+                record.decision_observed_at_unix_ms,
+                preferred_discovery_source=(
+                    hydration_policy.regime_read_policy.source_priority[0]
+                ),
+                required_venue=record.venue,
+            )
         except ValueError as exc:
             raise ValueError(
                 f"context candidate resolution failed for {record.decision_signature}: {exc}"
