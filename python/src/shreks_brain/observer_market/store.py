@@ -153,6 +153,7 @@ class ObserverMarketStore:
         as_of_unix_ms: int,
         *,
         preferred_discovery_source: str,
+        required_venue: str | None = None,
     ) -> ObserverCandidateIdentity:
         """Resolve one candidate using only snapshot ownership known by as-of time."""
         _require_non_empty_string("mint", mint)
@@ -160,6 +161,10 @@ class ObserverMarketStore:
         _require_non_empty_string(
             "preferred_discovery_source",
             preferred_discovery_source,
+        )
+        _require_optional_non_empty_string(
+            "required_venue",
+            required_venue,
         )
 
         connection = self._connect()
@@ -179,6 +184,7 @@ class ObserverMarketStore:
                     AND s.observed_at_unix_ms <= ?
                    WHERE c.mint = ?
                      AND c.discovered_at_unix_ms <= ?
+                     AND (? IS NULL OR c.venue = ?)
                    GROUP BY
                        c.id,
                        c.mint,
@@ -187,7 +193,13 @@ class ObserverMarketStore:
                        c.discovered_at_unix_ms,
                        c.venue
                    ORDER BY c.id ASC""",
-                (as_of_unix_ms, mint, as_of_unix_ms),
+                (
+                    as_of_unix_ms,
+                    mint,
+                    as_of_unix_ms,
+                    required_venue,
+                    required_venue,
+                ),
             ).fetchall()
         except sqlite3.Error as error:
             raise ObserverMarketReadError(
