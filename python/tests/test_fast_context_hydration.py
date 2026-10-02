@@ -105,8 +105,18 @@ class _FakeMarketStore:
     def __init__(self, _path) -> None:
         pass
 
-    def resolve_candidate(self, mint: str):
+    def resolve_candidate_at(
+        self,
+        mint: str,
+        as_of_unix_ms: int,
+        *,
+        preferred_discovery_source: str,
+        required_venue: str | None = None,
+    ):
         record = self.records_by_mint[mint]
+        assert as_of_unix_ms == record.decision_observed_at_unix_ms
+        assert preferred_discovery_source == "dexscreener"
+        assert required_venue == record.venue
         return ObserverCandidateIdentity(
             candidate_id=record.decision_sequence,
             mint=mint,
@@ -300,15 +310,28 @@ def test_hydrator_rejects_candidate_venue_mismatch(
         for record in bundle.features.records
         if record.decision_observed_at_unix_ms >= 2_000
     )
-    original = _FakeMarketStore.resolve_candidate
+    original = _FakeMarketStore.resolve_candidate_at
 
-    def _wrong(self, mint):
-        candidate = original(self, mint)
+    def _wrong(
+        self,
+        mint,
+        as_of_unix_ms,
+        *,
+        preferred_discovery_source,
+        required_venue=None,
+    ):
+        candidate = original(
+            self,
+            mint,
+            as_of_unix_ms,
+            preferred_discovery_source=preferred_discovery_source,
+            required_venue=required_venue,
+        )
         if mint == first_eval.mint:
             return replace(candidate, venue="wrong-venue")
         return candidate
 
-    monkeypatch.setattr(_FakeMarketStore, "resolve_candidate", _wrong)
+    monkeypatch.setattr(_FakeMarketStore, "resolve_candidate_at", _wrong)
     database = tmp_path / "shreks.db"
     database.write_bytes(b"observer-fixture")
 
