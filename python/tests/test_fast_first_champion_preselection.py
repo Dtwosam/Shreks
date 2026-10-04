@@ -194,6 +194,7 @@ def _records():
         mint="AcceptedMintA",
         venue="pump_swap",
         decision_observed_at_unix_ms=10_000,
+        snapshot_as_of_unix_ms=10_000,
     )
     incident = replace(
         source[1],
@@ -202,6 +203,7 @@ def _records():
         mint=_INCIDENT_MINT,
         venue="pump_swap",
         decision_observed_at_unix_ms=10_100,
+        snapshot_as_of_unix_ms=10_100,
     )
     third = replace(
         source[2],
@@ -210,6 +212,7 @@ def _records():
         mint="AcceptedMintB",
         venue="pump_swap",
         decision_observed_at_unix_ms=10_200,
+        snapshot_as_of_unix_ms=10_200,
     )
     return (first, incident, third)
 
@@ -400,7 +403,7 @@ def test_preselection_source_has_no_target_model_execution_or_live_authority() -
         "target_value",
         "model_performance",
         "FastForecastTarget",
-        "build_fast_first_champion",
+        "build_fast_first_champion(",
         "TradeIntent",
         "RuntimeMode.LIVE",
         "sign_transaction",
