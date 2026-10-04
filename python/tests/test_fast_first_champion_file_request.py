@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import shreks_brain.fast_first_champion.file_request as file_request_module
+import shreks_brain.fast_first_champion_preselection as preselection_module
 from fast_chronological_fixtures import HORIZON_MS, TEST_END, chronological_bundle
 from fast_forecast_evaluation_fixtures import (
     build_run,
@@ -16,6 +17,13 @@ from fast_forecast_evaluation_fixtures import (
     evaluation_policy,
 )
 from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
+from shreks_brain.fast_first_champion_preselection import (
+    FAST_FIRST_CHAMPION_TRADABLE_PRESELECTION_SCHEMA_NAME,
+    FAST_FIRST_CHAMPION_TRADABLE_PRESELECTION_SCHEMA_VERSION,
+    FastFirstChampionTradableAcceptedDecision,
+    FastFirstChampionTradablePreselectionManifest,
+    read_fast_first_champion_tradable_preselection,
+)
 from shreks_brain.research.fast_training_bundle import (
     bundle_logical_fingerprint_sha256,
 )
@@ -94,12 +102,98 @@ def _runtime_bundle_for(features: Path):
     )
 
 
+def _preselection(tmp_path: Path):
+    root = tmp_path / "tradable-preselection"
+    root.mkdir()
+    accepted = tuple(
+        sorted(
+            (
+                FastFirstChampionTradableAcceptedDecision(
+                    decision_signature=record.decision_signature,
+                    decision_ordinal=record.decision_ordinal,
+                    decision_sequence=record.decision_sequence,
+                    mint=record.mint,
+                    quote_mint=record.quote_mint,
+                    venue=record.venue,
+                    decision_observed_at_unix_ms=(
+                        record.decision_observed_at_unix_ms
+                    ),
+                    candidate_id=record.decision_sequence,
+                    snapshot_row_id=record.decision_sequence + 10_000,
+                    assessment_fingerprint_sha256="d" * 64,
+                )
+                for record in chronological_bundle().features.records
+            ),
+            key=preselection_module._accepted_sort_key,
+        )
+    )
+    accepted_path = root / "accepted.jsonl"
+    accepted_path.write_text(
+        "".join(
+            preselection_module._canonical_json(
+                preselection_module._accepted_document(value)
+            )
+            + "\n"
+            for value in accepted
+        ),
+        encoding="utf-8",
+    )
+    material = {
+        "schema_name": (
+            FAST_FIRST_CHAMPION_TRADABLE_PRESELECTION_SCHEMA_NAME
+        ),
+        "schema_version": (
+            FAST_FIRST_CHAMPION_TRADABLE_PRESELECTION_SCHEMA_VERSION
+        ),
+        "policy_version": "fl9-tradable-universe-v1",
+        "policy_fingerprint_sha256": "a" * 64,
+        "proof_workspace_artifact_fingerprint_sha256": "b" * 64,
+        "feature_source_jsonl_sha256": "c" * 64,
+        "minimum_decision_observed_at_unix_ms": 0,
+        "observer_database_sha256": "e" * 64,
+        "observer_database_wal_sha256": None,
+        "assessed_row_count": len(accepted),
+        "eligible_row_count": len(accepted),
+        "eligibility_reason_counts": [["eligible", len(accepted)]],
+        "accepted_identity_fingerprint_sha256": (
+            preselection_module._accepted_identity_fingerprint(accepted)
+        ),
+        "candidate_binding_fingerprint_sha256": (
+            preselection_module._candidate_binding_fingerprint(accepted)
+        ),
+        "assessment_evidence_fingerprint_sha256": "f" * 64,
+        "accepted_file_sha256": hashlib.sha256(
+            accepted_path.read_bytes()
+        ).hexdigest(),
+    }
+    manifest_values = dict(material)
+    manifest_values["eligibility_reason_counts"] = (
+        ("eligible", len(accepted)),
+    )
+    manifest = FastFirstChampionTradablePreselectionManifest(
+        **manifest_values,
+        artifact_fingerprint_sha256=(
+            preselection_module._sha256_canonical(material)
+        ),
+    )
+    (root / "manifest.json").write_text(
+        preselection_module._canonical_json(
+            preselection_module._manifest_document(manifest)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    artifact = read_fast_first_champion_tradable_preselection(root)
+    return root, artifact
+
+
 def _request(tmp_path: Path):
     features = tmp_path / "features.jsonl"
     database = tmp_path / "shreks.db"
     features.write_text('{"sealed":"feature-source"}\n', encoding="utf-8")
     database.write_bytes(b"sealed-sqlite-source")
     contexts = _context_corpus(tmp_path)
+    preselection_path, preselection = _preselection(tmp_path)
     economics_overlay = tmp_path / "training-economics"
     economics_overlay.mkdir()
     (economics_overlay / "rows.jsonl").write_text(
@@ -116,6 +210,10 @@ def _request(tmp_path: Path):
         feature_jsonl_path=features.name,
         observer_database_path=database.name,
         context_corpus_path=contexts.name,
+        tradable_preselection_path=preselection_path.name,
+        expected_tradable_preselection_artifact_fingerprint_sha256=(
+            preselection.manifest.artifact_fingerprint_sha256
+        ),
         training_economics_overlay_path="training-economics",
         expected_training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
         training_execution_cost_policy=_training_economics_policy(),
@@ -179,6 +277,14 @@ def test_file_request_is_canonical_self_authenticating_and_round_trips(
 
     document = json.loads(payload)
     assert document["request"]["evaluation_policy"]["partition"] == "TEST"
+    assert document["request"]["tradable_preselection_path"] == (
+        "tradable-preselection"
+    )
+    assert document["request"][
+        "expected_tradable_preselection_artifact_fingerprint_sha256"
+    ] == read_fast_first_champion_tradable_preselection(
+        tmp_path / "tradable-preselection"
+    ).manifest.artifact_fingerprint_sha256
     assert document["request"]["training_economics_overlay_path"] == "training-economics"
     assert document["request"][
         "expected_training_economics_overlay_manifest_fingerprint_sha256"
@@ -231,6 +337,7 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
 
     assert reopened.manifest == artifact.manifest
     assert reopened.context_corpus == artifact.context_corpus
+    assert reopened.tradable_preselection == artifact.tradable_preselection
     assert reopened.champion == artifact.champion
     assert reopened.evaluation_reports == artifact.evaluation_reports
     assert artifact.manifest.schema_name == FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME
@@ -263,12 +370,21 @@ def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
             ).resolve(),
             "training_execution_cost_policy": _training_economics_policy(),
             "horizon_ms": HORIZON_MS,
+            "decision_identities": (
+                file_request_module._decision_identities_for_validation_policy(
+                    read_fast_first_champion_tradable_preselection(
+                        tmp_path / "tradable-preselection"
+                    ),
+                    chronological_policy(),
+                )
+            ),
         }
     ]
 
     assert {entry.name for entry in destination.iterdir()} == {
         "request.json",
         "contexts.json",
+        "tradable-preselection",
         "champion.json",
         "manifest.json",
         *{
