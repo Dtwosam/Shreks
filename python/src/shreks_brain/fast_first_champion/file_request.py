@@ -727,6 +727,23 @@ def run_fast_first_champion_file_request(
     context_corpus = decode_fast_forecast_evaluation_context_corpus(
         context_payload
     )
+    validation_domain_identities = _decision_identities_for_validation_policy(
+        preselection,
+        request.validation_policy,
+    )
+    context_domain_identities = set(
+        _context_identities_for_validation_policy(
+            preselection,
+            request.validation_policy,
+        )
+    )
+    if any(
+        context.decision_identity not in context_domain_identities
+        for context in context_corpus.contexts
+    ):
+        raise ValueError(
+            "first champion context identity is outside authenticated validation/TEST domain"
+        )
     if (
         before.training_economics_overlay_manifest_fingerprint_sha256
         != request.expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -742,10 +759,7 @@ def run_fast_first_champion_file_request(
         training_economics_overlay_path=training_economics_overlay_path,
         training_execution_cost_policy=request.training_execution_cost_policy,
         horizon_ms=request.horizon_ms,
-        decision_identities=_decision_identities_for_validation_policy(
-            preselection,
-            request.validation_policy,
-        ),
+        decision_identities=validation_domain_identities,
     )
     if bundle.features.source_sha256 != before.feature_jsonl_sha256:
         raise ValueError(
@@ -1077,15 +1091,18 @@ def read_fast_first_champion_artifact(
         raise ValueError(
             "first champion tradable preselection does not match manifest/request"
         )
-    accepted_identities = set(
-        tradable_preselection.decision_identities
+    context_domain_identities = set(
+        _context_identities_for_validation_policy(
+            tradable_preselection,
+            request.validation_policy,
+        )
     )
     if any(
-        context.decision_identity not in accepted_identities
+        context.decision_identity not in context_domain_identities
         for context in context_corpus.contexts
     ):
         raise ValueError(
-            "first champion context identity is absent from tradable preselection"
+            "first champion context identity is outside authenticated validation/TEST domain"
         )
     if (
         context_corpus.context_fingerprint_sha256
@@ -1538,6 +1555,38 @@ def _decision_identities_for_validation_policy(
     if not selected:
         raise ValueError(
             "tradable preselection has no accepted decisions in validation policy domain"
+        )
+    return selected
+
+
+def _context_identities_for_validation_policy(
+    preselection: FastFirstChampionTradablePreselectionArtifact,
+    policy: FastChronologicalValidationPolicy,
+) -> tuple[tuple[object, ...], ...]:
+    if (
+        type(preselection)
+        is not FastFirstChampionTradablePreselectionArtifact
+    ):
+        raise ValueError(
+            "preselection must be exact tradable preselection artifact"
+        )
+    if type(policy) is not FastChronologicalValidationPolicy:
+        raise ValueError(
+            "validation policy must be exact FastChronologicalValidationPolicy"
+        )
+    selected = tuple(
+        value.decision_identity
+        for value in preselection.accepted_decisions
+        if any(
+            fold.validation_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+            for fold in policy.folds
+        )
+    )
+    if not selected:
+        raise ValueError(
+            "tradable preselection has no accepted decisions in validation/TEST domain"
         )
     return selected
 
