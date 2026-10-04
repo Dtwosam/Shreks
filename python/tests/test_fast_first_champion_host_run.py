@@ -12,6 +12,11 @@ import shreks_brain.fast_first_champion_host_run as host_module
 from fast_chronological_fixtures import HORIZON_MS, chronological_bundle
 from fast_forecast_evaluation_fixtures import evaluation_policy
 from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
+from shreks_brain.fast_first_champion_preselection import (
+    FastFirstChampionTradableAcceptedDecision,
+    FastFirstChampionTradablePreselectionArtifact,
+    FastFirstChampionTradablePreselectionManifest,
+)
 from shreks_brain.fast_first_champion_host_run import (
     FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_NAME,
     FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION,
@@ -83,6 +88,8 @@ def _request(tmp_path: Path):
         proof_workspace_path="proof-source",
         observer_database_path="shreks.db",
         hydration_policy_path="hydration-policy.json",
+        tradable_preselection_path="tradable-preselection-source",
+        expected_tradable_preselection_artifact_fingerprint_sha256="f" * 64,
         training_economics_overlay_path="training-economics",
         expected_training_economics_overlay_manifest_fingerprint_sha256="b" * 64,
         training_execution_cost_policy=_training_economics_policy(),
@@ -132,6 +139,52 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         manifest=proof_manifest,
         features=bundle.features,
     )
+
+    preselection_source = tmp_path / "tradable-preselection-source"
+    preselection_source.mkdir()
+    (preselection_source / "placeholder").write_bytes(
+        b"sealed-tradable-preselection"
+    )
+    accepted = tuple(
+        FastFirstChampionTradableAcceptedDecision(
+            decision_signature=record.decision_signature,
+            decision_ordinal=record.decision_ordinal,
+            decision_sequence=record.decision_sequence,
+            mint=record.mint,
+            quote_mint=record.quote_mint,
+            venue=record.venue,
+            decision_observed_at_unix_ms=record.decision_observed_at_unix_ms,
+            candidate_id=record.decision_sequence,
+            snapshot_row_id=record.decision_sequence + 10_000,
+            assessment_fingerprint_sha256="d" * 64,
+        )
+        for record in bundle.features.records
+        if record.decision_observed_at_unix_ms >= 1_300
+    )
+    preselection_manifest = FastFirstChampionTradablePreselectionManifest(
+        schema_name="shreks.fast_first_champion_tradable_preselection",
+        schema_version=1,
+        policy_version="fl9-tradable-universe-v1",
+        policy_fingerprint_sha256="a" * 64,
+        proof_workspace_artifact_fingerprint_sha256="2" * 64,
+        feature_source_jsonl_sha256=feature_sha,
+        minimum_decision_observed_at_unix_ms=1_300,
+        observer_database_sha256="e" * 64,
+        observer_database_wal_sha256=None,
+        assessed_row_count=len(accepted),
+        eligible_row_count=len(accepted),
+        eligibility_reason_counts=(("eligible", len(accepted)),),
+        accepted_identity_fingerprint_sha256="b" * 64,
+        candidate_binding_fingerprint_sha256="c" * 64,
+        assessment_evidence_fingerprint_sha256="d" * 64,
+        accepted_file_sha256="e" * 64,
+        artifact_fingerprint_sha256="f" * 64,
+    )
+    preselection_artifact = FastFirstChampionTradablePreselectionArtifact(
+        path=preselection_source,
+        manifest=preselection_manifest,
+        accepted_decisions=accepted,
+    )
     monkeypatch.setattr(
         host_module,
         "read_fast_proof_workspace_manifest_bounded",
@@ -139,8 +192,19 @@ def _install_fakes(monkeypatch, tmp_path: Path):
     )
     monkeypatch.setattr(
         host_module,
+        "read_fast_first_champion_tradable_preselection",
+        lambda _path: preselection_artifact,
+    )
+    bundle_calls = []
+
+    def _bundle(**kwargs):
+        bundle_calls.append(kwargs)
+        return bundle
+
+    monkeypatch.setattr(
+        host_module,
         "build_fast_training_bundle_from_runtime_sources",
-        lambda **_kwargs: bundle,
+        _bundle,
     )
 
     hydration = tmp_path / "hydration-policy.json"
@@ -181,6 +245,9 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         plan = prep_holder["plan"]
         request = SimpleNamespace(
             validation_policy=plan.validation_policy,
+            expected_tradable_preselection_artifact_fingerprint_sha256=(
+                preselection_manifest.artifact_fingerprint_sha256
+            ),
             evaluation_policy=kwargs["evaluation_policy"],
             expected_training_economics_overlay_manifest_fingerprint_sha256=(
                 "b" * 64
@@ -211,6 +278,15 @@ def _install_fakes(monkeypatch, tmp_path: Path):
             manifest=SimpleNamespace(
                 proof_workspace_release_source_sha=RELEASE_SHA,
                 proof_workspace_artifact_fingerprint_sha256="2" * 64,
+                tradable_preselection_artifact_fingerprint_sha256=(
+                    preselection_manifest.artifact_fingerprint_sha256
+                ),
+                tradable_preselection_accepted_identity_fingerprint_sha256=(
+                    preselection_manifest.accepted_identity_fingerprint_sha256
+                ),
+                tradable_preselection_candidate_binding_fingerprint_sha256=(
+                    preselection_manifest.candidate_binding_fingerprint_sha256
+                ),
                 training_economics_overlay_manifest_fingerprint_sha256=(
                     "b" * 64
                 ),
@@ -271,6 +347,8 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         "build_fast_first_champion_evidence_plan",
         _plan,
     )
+    prep_holder["preselection"] = preselection_artifact
+    prep_holder["bundle_calls"] = bundle_calls
     return bundle, proof_artifact, prep_holder
 
 
@@ -284,6 +362,13 @@ def test_host_request_codec_is_canonical_and_authenticated(
     assert request.schema_version == FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION
     assert request.selection_clock == FAST_FIRST_CHAMPION_HOST_SELECTION_CLOCK
     assert request.minimum_decision_observed_at_unix_ms == 1_300
+    assert request.tradable_preselection_path == (
+        "tradable-preselection-source"
+    )
+    assert (
+        request.expected_tradable_preselection_artifact_fingerprint_sha256
+        == "f" * 64
+    )
     assert request.training_economics_overlay_path == "training-economics"
     assert request.expected_training_economics_overlay_manifest_fingerprint_sha256 == "b" * 64
     assert request.training_execution_cost_policy == _training_economics_policy()
@@ -322,7 +407,7 @@ def test_host_run_captures_clock_plans_and_cross_links_preparation(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    bundle, proof, _ = _install_fakes(monkeypatch, tmp_path)
+    bundle, proof, holder = _install_fakes(monkeypatch, tmp_path)
     database = tmp_path / "shreks.db"
     database.write_bytes(b"observer-host-db")
     request_path = tmp_path / "host-request.json"
@@ -345,6 +430,16 @@ def test_host_run_captures_clock_plans_and_cross_links_preparation(
     assert artifact.manifest.training_bundle_fingerprint_sha256 == (
         bundle.manifest.bundle_fingerprint_sha256
     )
+    assert artifact.manifest.tradable_preselection_artifact_fingerprint_sha256 == (
+        "f" * 64
+    )
+    assert artifact.tradable_preselection == holder["preselection"]
+    assert holder["bundle_calls"][0]["decision_identities"] == tuple(
+        value.decision_identity
+        for value in holder["preselection"].accepted_before(
+            SELECTION_AT - HORIZON_MS
+        )
+    )
     assert artifact.plan.selection_at_unix_ms == SELECTION_AT
     assert artifact.plan.minimum_decision_observed_at_unix_ms == 1_300
     assert artifact.plan.validation_policy == (
@@ -356,6 +451,7 @@ def test_host_run_captures_clock_plans_and_cross_links_preparation(
     assert {value.name for value in (tmp_path / "host-run").iterdir()} == {
         "request.json",
         "hydration-policy.json",
+        "tradable-preselection",
         "plan.json",
         "preparation",
         "manifest.json",
