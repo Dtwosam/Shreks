@@ -473,6 +473,7 @@ def hydrate_fast_forecast_evaluation_contexts(
     validation_policy: FastChronologicalValidationPolicy,
     horizon_ms: int,
     hydration_policy: FastForecastContextHydrationPolicy,
+    candidate_ids_by_identity: dict[tuple[object, ...], int] | None = None,
 ) -> FastForecastContextHydrationResult:
     _validate_inputs(
         bundle=bundle,
@@ -510,7 +511,14 @@ def hydrate_fast_forecast_evaluation_contexts(
             "context population contains an identity absent from the training bundle"
         )
 
-    market_store = ObserverMarketStore(database)
+    candidate_bindings = _normalize_candidate_bindings(
+        candidate_ids_by_identity
+    )
+    market_store = (
+        ObserverMarketStore(database)
+        if candidate_bindings is None
+        else None
+    )
     campaign_store = ObserverCampaignStore(database)
     contexts: list[FastForecastEvaluationContext] = []
     available = 0
@@ -529,27 +537,39 @@ def hydrate_fast_forecast_evaluation_contexts(
                 "decision quote mint does not match hydration quote policy"
             )
 
-        try:
-            candidate = market_store.resolve_candidate_at(
-                record.mint,
-                record.decision_observed_at_unix_ms,
-                preferred_discovery_source=(
-                    hydration_policy.regime_read_policy.source_priority[0]
-                ),
-                required_venue=record.venue,
-            )
-        except ValueError as exc:
-            raise ValueError(
-                f"context candidate resolution failed for {record.decision_signature}: {exc}"
-            ) from exc
-        if candidate.discovered_at_unix_ms > record.decision_observed_at_unix_ms:
-            raise ValueError(
-                "observer candidate was discovered after the decision timestamp"
-            )
-        if candidate.venue != record.venue:
-            raise ValueError(
-                "observer candidate venue does not match decision venue"
-            )
+        if candidate_bindings is None:
+            assert market_store is not None
+            try:
+                candidate = market_store.resolve_candidate_at(
+                    record.mint,
+                    record.decision_observed_at_unix_ms,
+                    preferred_discovery_source=(
+                        hydration_policy.regime_read_policy.source_priority[0]
+                    ),
+                    required_venue=record.venue,
+                )
+            except ValueError as exc:
+                raise ValueError(
+                    f"context candidate resolution failed for {record.decision_signature}: {exc}"
+                ) from exc
+            if (
+                candidate.discovered_at_unix_ms
+                > record.decision_observed_at_unix_ms
+            ):
+                raise ValueError(
+                    "observer candidate was discovered after the decision timestamp"
+                )
+            if candidate.venue != record.venue:
+                raise ValueError(
+                    "observer candidate venue does not match decision venue"
+                )
+            candidate_id = candidate.candidate_id
+        else:
+            candidate_id = candidate_bindings.get(identity)
+            if candidate_id is None:
+                raise ValueError(
+                    "context population identity is absent from authenticated candidate bindings"
+                )
 
         regime_market = campaign_store.build_regime_market_window(
             record.decision_observed_at_unix_ms,
@@ -565,7 +585,7 @@ def hydrate_fast_forecast_evaluation_contexts(
         )
 
         quote_identity = ObserverPaperQuoteIdentity(
-            candidate_id=candidate.candidate_id,
+            candidate_id=candidate_id,
             purpose=ObserverPaperQuotePurpose.EXIT,
             provider=hydration_policy.exit_quote_provider,
             probe_policy_version=(
@@ -651,6 +671,7 @@ def write_fast_forecast_context_hydration_artifact(
     horizon_ms: int,
     hydration_policy: FastForecastContextHydrationPolicy,
     destination: str | Path,
+    candidate_ids_by_identity: dict[tuple[object, ...], int] | None = None,
 ) -> FastForecastContextHydrationArtifactManifest:
     _validate_inputs(
         bundle=bundle,
@@ -676,6 +697,7 @@ def write_fast_forecast_context_hydration_artifact(
         validation_policy=validation_policy,
         horizon_ms=horizon_ms,
         hydration_policy=hydration_policy,
+        candidate_ids_by_identity=candidate_ids_by_identity,
     )
     after = _capture_database(database)
     if after != before:
@@ -933,6 +955,65 @@ def read_fast_forecast_context_hydration_artifact(
             manifest.population_validation_run_fingerprint_sha256
         ),
     )
+
+
+def _normalize_candidate_bindings(
+    value: dict[tuple[object, ...], int] | None,
+) -> dict[tuple[object, ...], int] | None:
+    if value is None:
+        return None
+    if type(value) is not dict or not value:
+        raise ValueError(
+            "candidate_ids_by_identity must be a non-empty exact dict when supplied"
+        )
+    normalized: dict[tuple[object, ...], int] = {}
+    for identity, candidate_id in value.items():
+        if not isinstance(identity, tuple) or len(identity) != 7:
+            raise ValueError(
+                "candidate binding identity must use exact seven-field tuple"
+            )
+        (
+            signature,
+            ordinal,
+            sequence,
+            mint,
+            quote_mint,
+            venue,
+            observed_at,
+        ) = identity
+        for name, text in (
+            ("decision_signature", signature),
+            ("mint", mint),
+            ("quote_mint", quote_mint),
+            ("venue", venue),
+        ):
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(
+                    f"{name} in candidate binding must be non-empty text"
+                )
+        for name, number, positive in (
+            ("decision_ordinal", ordinal, False),
+            ("decision_sequence", sequence, True),
+            ("decision_observed_at_unix_ms", observed_at, False),
+        ):
+            if isinstance(number, bool) or not isinstance(number, int):
+                raise ValueError(
+                    f"{name} in candidate binding must be an integer"
+                )
+            if number < 0 or (positive and number == 0):
+                raise ValueError(
+                    f"{name} in candidate binding is out of range"
+                )
+        if (
+            isinstance(candidate_id, bool)
+            or not isinstance(candidate_id, int)
+            or candidate_id <= 0
+        ):
+            raise ValueError(
+                "candidate binding candidate_id must be a positive integer"
+            )
+        normalized[identity] = candidate_id
+    return normalized
 
 
 def _validate_inputs(
