@@ -390,6 +390,57 @@ def test_preselection_refuses_overwrite(
         )
 
 
+def test_preselection_cli_builds_only_immutable_input_artifact(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _FakeTradableStore.calls = []
+    monkeypatch.setattr(
+        preselection_module,
+        "Fl9TradableUniverseStore",
+        _FakeTradableStore,
+    )
+    proof = _write_proof_workspace(tmp_path / "proof", _records())
+    database = tmp_path / "observer.sqlite3"
+    database.write_bytes(b"stable-observer-fixture")
+    destination = tmp_path / "preselection"
+
+    code = preselection_module.main(
+        [
+            "--proof-workspace",
+            str(proof),
+            "--observer-database",
+            str(database),
+            "--minimum-decision-observed-at-unix-ms",
+            "10000",
+            "--destination",
+            str(destination),
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["artifact_path"] == str(destination.resolve())
+    assert payload["assessed_row_count"] == 3
+    assert payload["eligible_row_count"] == 2
+    assert len(payload["artifact_fingerprint_sha256"]) == 64
+    assert read_fast_first_champion_tradable_preselection(
+        destination
+    ).manifest.artifact_fingerprint_sha256 == payload[
+        "artifact_fingerprint_sha256"
+    ]
+
+    pyproject = (
+        Path(__file__).resolve().parents[1] / "pyproject.toml"
+    ).read_text(encoding="utf-8")
+    assert (
+        'shreks-fast-first-champion-preselection = '
+        '"shreks_brain.fast_first_champion_preselection:main"'
+        in pyproject
+    )
+
+
 def test_preselection_source_has_no_target_model_execution_or_live_authority() -> None:
     source = (
         Path(__file__).resolve().parents[1]
