@@ -155,8 +155,19 @@ class FastFirstChampionTradablePreselectionManifest:
             raise ValueError(
                 "unsupported first-champion tradable preselection policy"
             )
-        for name in (
+        _require_sha256(
             "policy_fingerprint_sha256",
+            self.policy_fingerprint_sha256,
+        )
+        if self.policy_fingerprint_sha256 != (
+            fl9_tradable_universe_policy_fingerprint_sha256(
+                Fl9TradableUniversePolicy()
+            )
+        ):
+            raise ValueError(
+                "preselection policy fingerprint does not match sealed FL9 policy"
+            )
+        for name in (
             "proof_workspace_artifact_fingerprint_sha256",
             "feature_source_jsonl_sha256",
             "observer_database_sha256",
