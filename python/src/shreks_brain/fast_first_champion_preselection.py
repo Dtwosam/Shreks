@@ -519,9 +519,10 @@ def build_fast_first_champion_tradable_preselection(
             ),
             "accepted_file_sha256": accepted_hasher.hexdigest(),
         }
+        manifest_values = dict(material)
+        manifest_values["eligibility_reason_counts"] = reason_counts
         manifest = FastFirstChampionTradablePreselectionManifest(
-            **material,
-            eligibility_reason_counts=reason_counts,
+            **manifest_values,
             artifact_fingerprint_sha256=_sha256_canonical(material),
         )
         manifest_path = staging / _MANIFEST_FILE
