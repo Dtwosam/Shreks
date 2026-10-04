@@ -1347,6 +1347,17 @@ def _validate_reopened_chain(
     preparation,
 ) -> None:
     if (
+        tradable_preselection.manifest.proof_workspace_artifact_fingerprint_sha256
+        != manifest.proof_workspace_artifact_fingerprint_sha256
+        or tradable_preselection.manifest.feature_source_jsonl_sha256
+        != manifest.feature_source_jsonl_sha256
+        or tradable_preselection.manifest.minimum_decision_observed_at_unix_ms
+        != request.minimum_decision_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "first champion host tradable preselection does not match proof/request"
+        )
+    if (
         request.expected_tradable_preselection_artifact_fingerprint_sha256
         != manifest.tradable_preselection_artifact_fingerprint_sha256
         or tradable_preselection.manifest.artifact_fingerprint_sha256
