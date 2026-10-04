@@ -311,6 +311,50 @@ def test_writer_rejects_hydration_policy_mutation_and_publishes_nothing(
     assert not request_path.exists()
 
 
+def test_writer_rejects_observer_database_mutation_and_publishes_nothing(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    proof, database, policy_path, *_ = _sources(monkeypatch, tmp_path)
+    request_path = tmp_path / "request.json"
+    original_encode = writer.encode_fast_first_champion_host_request
+
+    def _mutating_encode(request):
+        payload = original_encode(request)
+        database.write_bytes(database.read_bytes() + b"-mutated")
+        return payload
+
+    monkeypatch.setattr(
+        writer,
+        "encode_fast_first_champion_host_request",
+        _mutating_encode,
+    )
+
+    with pytest.raises(ValueError, match="database snapshot.*changed"):
+        writer.write_fast_first_champion_host_request_from_sources(
+            proof_workspace_path=proof,
+            observer_database_path=database,
+            hydration_policy_path=policy_path,
+            tradable_preselection_path=tmp_path / "tradable-preselection",
+            training_economics_overlay_path=tmp_path / "training-economics",
+            training_execution_cost_policy_path=tmp_path / "training-cost-policy.json",
+            request_destination=request_path,
+            host_run_destination=tmp_path / "run",
+            future_path_label_version=1,
+            counterfactual_base_quantity=2.0,
+            horizon_ms=30_000,
+            minimum_decision_observed_at_unix_ms=1_300,
+            minimum_raw_rows_per_partition=20,
+            minimum_test_scored_observations=10,
+            evaluation_policy=_evaluation_policy(),
+            champion_version="fl9-first-host-v1",
+            model_version_prefix="fl9-first",
+            training_policy_version="fl9-first-naive-v1",
+            reason="first genuine PAPER-host champion",
+        )
+    assert not request_path.exists()
+
+
 def test_writer_rejects_proof_workspace_mutation(
     monkeypatch,
     tmp_path: Path,
