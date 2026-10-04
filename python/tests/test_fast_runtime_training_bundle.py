@@ -400,6 +400,123 @@ def test_runtime_sources_horizon_bounded_path_avoids_full_materializers(
     assert {label.label_version for label in bundle.future_path_labels.labels} == {1}
 
 
+def test_runtime_sources_can_restrict_to_exact_decision_identity_population(
+    tmp_path: Path,
+) -> None:
+    database, features_path, overlay_path = _write_mixed_training_economics_fixture(
+        tmp_path
+    )
+    baseline = build_fast_training_bundle_from_runtime_sources(
+        feature_jsonl_path=features_path,
+        sqlite_path=database,
+        future_path_label_version=1,
+        counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
+        horizon_ms=500,
+    )
+    selected = (baseline.features.records[1].decision_identity,)
+
+    restricted = build_fast_training_bundle_from_runtime_sources(
+        feature_jsonl_path=features_path,
+        sqlite_path=database,
+        future_path_label_version=1,
+        counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
+        horizon_ms=500,
+        decision_identities=selected,
+    )
+
+    assert restricted.manifest.decision_count == 1
+    assert restricted.manifest.future_path_label_row_count == 1
+    assert restricted.features.source_sha256 == baseline.features.source_sha256
+    assert tuple(
+        value.decision_identity for value in restricted.features.records
+    ) == selected
+    assert {
+        (
+            value.decision_signature,
+            value.decision_ordinal,
+            value.decision_sequence,
+            value.decision_mint,
+            value.decision_quote_mint,
+            restricted.features.records[0].venue,
+            value.decision_observed_at_unix_ms,
+        )
+        for value in restricted.future_path_labels.labels
+    } == set(selected)
+    assert {
+        row["decision_id"] for row in restricted.counterfactual_rows
+    } == {
+        (
+            f"{selected[0][0]}:{selected[0][1]}:"
+            "h500:v1"
+        )
+    }
+
+
+def test_runtime_sources_restricted_identity_must_exist_in_overlay(
+    tmp_path: Path,
+) -> None:
+    database, features_path, overlay_path = _write_mixed_training_economics_fixture(
+        tmp_path
+    )
+    baseline = build_fast_training_bundle_from_runtime_sources(
+        feature_jsonl_path=features_path,
+        sqlite_path=database,
+        future_path_label_version=1,
+        counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
+        horizon_ms=500,
+    )
+    identity = list(baseline.features.records[0].decision_identity)
+    identity[0] = "missing-decision"
+
+    with pytest.raises(ValueError, match="absent.*economics overlay"):
+        build_fast_training_bundle_from_runtime_sources(
+            feature_jsonl_path=features_path,
+            sqlite_path=database,
+            future_path_label_version=1,
+            counterfactual_base_quantity=2.0,
+            training_economics_overlay_path=overlay_path,
+            training_execution_cost_policy=_training_cost_policy(),
+            horizon_ms=500,
+            decision_identities=(tuple(identity),),
+        )
+
+
+def test_runtime_sources_restriction_requires_explicit_horizon(
+    tmp_path: Path,
+) -> None:
+    database, features_path, overlay_path = _write_mixed_training_economics_fixture(
+        tmp_path
+    )
+    baseline = build_fast_training_bundle_from_runtime_sources(
+        feature_jsonl_path=features_path,
+        sqlite_path=database,
+        future_path_label_version=1,
+        counterfactual_base_quantity=2.0,
+        training_economics_overlay_path=overlay_path,
+        training_execution_cost_policy=_training_cost_policy(),
+        horizon_ms=500,
+    )
+
+    with pytest.raises(ValueError, match="requires an explicit horizon"):
+        build_fast_training_bundle_from_runtime_sources(
+            feature_jsonl_path=features_path,
+            sqlite_path=database,
+            future_path_label_version=1,
+            counterfactual_base_quantity=2.0,
+            training_economics_overlay_path=overlay_path,
+            training_execution_cost_policy=_training_cost_policy(),
+            decision_identities=(
+                baseline.features.records[0].decision_identity,
+            ),
+        )
+
+
 def test_component_builder_rejects_tampered_feature_or_future_path_fingerprint(
     tmp_path: Path,
 ) -> None:
