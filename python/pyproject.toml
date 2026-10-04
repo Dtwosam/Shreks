@@ -12,6 +12,7 @@ dependencies = []
 [project.scripts]
 shreks-fast-deterministic-campaign = "shreks_brain.fast_deterministic_campaign.cli:main"
 shreks-fast-proof-workspace = "shreks_brain.fast_proof_workspace:main"
+shreks-fast-first-champion-preselection = "shreks_brain.fast_first_champion_preselection:main"
 shreks-fast-first-champion-run = "shreks_brain.fast_first_champion_host_run:main"
 shreks-fast-context-policy-from-runtime = "shreks_brain.fast_runtime_hydration_policy:main"
 shreks-fast-first-champion-request = "shreks_brain.fast_first_champion_host_request_writer:main"
