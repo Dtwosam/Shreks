@@ -441,6 +441,44 @@ def test_preselection_cli_builds_only_immutable_input_artifact(
     )
 
 
+def test_preselection_rejects_rewritten_policy_fingerprint(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _FakeTradableStore.calls = []
+    monkeypatch.setattr(
+        preselection_module,
+        "Fl9TradableUniverseStore",
+        _FakeTradableStore,
+    )
+    proof = _write_proof_workspace(tmp_path / "proof", _records())
+    database = tmp_path / "observer.sqlite3"
+    database.write_bytes(b"stable-observer-fixture")
+    destination = tmp_path / "preselection"
+
+    build_fast_first_champion_tradable_preselection(
+        proof_workspace_path=proof,
+        observer_database_path=database,
+        minimum_decision_observed_at_unix_ms=10_000,
+        destination=destination,
+    )
+    manifest_path = destination / "manifest.json"
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    document["policy_fingerprint_sha256"] = "0" * 64
+    material = dict(document)
+    material.pop("artifact_fingerprint_sha256")
+    document["artifact_fingerprint_sha256"] = (
+        preselection_module._sha256_canonical(material)
+    )
+    manifest_path.write_text(
+        preselection_module._canonical_json(document) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="sealed FL9 policy"):
+        read_fast_first_champion_tradable_preselection(destination)
+
+
 def test_preselection_source_has_no_target_model_execution_or_live_authority() -> None:
     source = (
         Path(__file__).resolve().parents[1]
