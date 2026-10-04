@@ -1069,6 +1069,10 @@ def read_fast_first_champion_artifact(
         != manifest.tradable_preselection_artifact_fingerprint_sha256
         or tradable_preselection.manifest.artifact_fingerprint_sha256
         != request.expected_tradable_preselection_artifact_fingerprint_sha256
+        or tradable_preselection.manifest.observer_database_sha256
+        != manifest.observer_database_sha256
+        or tradable_preselection.manifest.observer_database_wal_sha256
+        != manifest.observer_database_wal_sha256
     ):
         raise ValueError(
             "first champion tradable preselection does not match manifest/request"
