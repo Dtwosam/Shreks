@@ -26,6 +26,8 @@ The module must provide:
 - assessment-evidence fingerprint;
 - reason counts;
 - strict source stability checks;
+- exact observer database/WAL fingerprint binding;
+- release-local `shreks-fast-first-champion-preselection` CLI;
 - immutable destination semantics.
 
 RED tests:
@@ -95,6 +97,7 @@ Preparation must:
 
 - accept exact preselection artifact;
 - validate proof feature SHA and policy/fingerprint binding;
+- require the live observer database/WAL snapshot to equal the preselection snapshot before doing expensive work;
 - select identities within the validation fold from accepted decisions;
 - build the bundle using only accepted identities;
 - pass candidate bindings to hydration;
@@ -120,6 +123,7 @@ Runner must:
 
 - strict-read preselection;
 - verify artifact fingerprint;
+- require the observer database/WAL snapshot to equal the authenticated preselection snapshot;
 - restrict its training bundle to accepted identities in its validation-policy time domain;
 - prove context identities are a subset/equal expected validation population;
 - bind preselection fingerprint into final artifact manifest.
@@ -140,13 +144,15 @@ Host writer requires an existing immutable preselection artifact and validates:
 - proof-workspace artifact fingerprint;
 - feature-source SHA;
 - fixed minimum decision timestamp;
-- frozen FL9 policy;
+- frozen FL9 policy and exact policy fingerprint;
+- exact observer database/WAL snapshot equality before and after request serialization;
 - request preselection fingerprint.
 
 Host run:
 
 - strict-reads preselection;
 - validates the request binding;
+- requires the observer database/WAL snapshot to equal the authenticated preselection snapshot before selection/planning;
 - captures selection clock as before;
 - selects accepted identities before `selection_at - horizon`;
 - builds filtered bundle;
@@ -164,6 +170,7 @@ Add/extend tests proving:
 - candidate binding from preselection is reused without venue re-resolution;
 - all old unrestricted library callers still work;
 - V1 request old schema is rejected, not silently upgraded;
+- observer DB/WAL drift is rejected at writer, host, preparation, nested runner, and strict artifact readback boundaries;
 - V2 cohort/champion path remains unchanged;
 - no score threshold/scoring-control path is introduced;
 - no PAPER shadow/cutover/signing/LIVE authority is introduced.
