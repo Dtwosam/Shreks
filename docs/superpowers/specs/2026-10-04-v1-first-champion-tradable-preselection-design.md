@@ -208,7 +208,7 @@ For every hydrated decision identity:
 
 No decision absent from preselection may produce a hydration context.
 
-The preparation manifest binds the preselection artifact fingerprint and candidate-binding fingerprint so the context/champion chain cannot be reopened against a different accepted population.
+The generic hydration artifact schema remains unchanged. Candidate-binding authority is authenticated at the preparation-chain boundary instead: the preparation manifest binds the preselection artifact fingerprint and candidate-binding fingerprint, and strict preparation/host readback proves the hydration child belongs to that exact chain. This prevents reopening the context/champion chain against a different accepted population without forcing a generic hydration schema migration.
 
 ## Failure behavior
 
