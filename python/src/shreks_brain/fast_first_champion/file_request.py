@@ -708,6 +708,15 @@ def run_fast_first_champion_file_request(
         context_path=context_path,
         training_economics_overlay_path=training_economics_overlay_path,
     )
+    if (
+        preselection.manifest.observer_database_sha256
+        != before.observer_database_sha256
+        or preselection.manifest.observer_database_wal_sha256
+        != before.observer_database_wal_sha256
+    ):
+        raise ValueError(
+            "first champion tradable preselection observer database snapshot mismatch"
+        )
     context_payload = context_path.read_text(encoding="utf-8")
     if hashlib.sha256(context_payload.encode("utf-8")).hexdigest() != (
         before.context_corpus_file_sha256
