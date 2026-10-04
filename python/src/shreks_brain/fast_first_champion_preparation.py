@@ -326,6 +326,15 @@ def prepare_fast_first_champion_evidence(
             "preparation tradable preselection does not match proof workspace"
         )
     before = _capture_database(database)
+    if (
+        preselection_source.manifest.observer_database_sha256
+        != before.database_sha256
+        or preselection_source.manifest.observer_database_wal_sha256
+        != before.wal_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection observer database snapshot mismatch"
+        )
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
