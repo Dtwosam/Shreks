@@ -105,6 +105,10 @@ def _sources(monkeypatch, tmp_path: Path):
             proof_workspace_artifact_fingerprint_sha256="a" * 64,
             feature_source_jsonl_sha256="c" * 64,
             minimum_decision_observed_at_unix_ms=1_300,
+            observer_database_sha256=writer._sha256_file_stable(
+                database
+            ),
+            observer_database_wal_sha256=None,
         ),
     )
     monkeypatch.setattr(
@@ -372,6 +376,10 @@ def test_writer_rejects_preselection_bound_to_different_proof(
                 proof_workspace_artifact_fingerprint_sha256="9" * 64,
                 feature_source_jsonl_sha256="c" * 64,
                 minimum_decision_observed_at_unix_ms=1_300,
+                observer_database_sha256=writer._sha256_file_stable(
+                    database
+                ),
+                observer_database_wal_sha256=None,
             )
         ),
     )
