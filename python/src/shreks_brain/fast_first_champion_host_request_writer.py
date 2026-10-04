@@ -189,22 +189,6 @@ def write_fast_first_champion_host_request_from_sources(
         raise ValueError(
             "tradable preselection observer database snapshot mismatch"
         )
-    database_wal_path = Path(str(database_path) + "-wal")
-    current_database_sha256 = _sha256_file_stable(database_path)
-    current_database_wal_sha256 = (
-        _sha256_file_stable(database_wal_path)
-        if database_wal_path.is_file()
-        else None
-    )
-    if (
-        preselection.manifest.observer_database_sha256
-        != current_database_sha256
-        or preselection.manifest.observer_database_wal_sha256
-        != current_database_wal_sha256
-    ):
-        raise ValueError(
-            "tradable preselection observer database snapshot mismatch"
-        )
     policy_payload = _read_text_stable(
         policy_path,
         label="hydration policy",
