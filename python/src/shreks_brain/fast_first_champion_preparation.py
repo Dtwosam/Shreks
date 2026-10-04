@@ -717,7 +717,6 @@ def _validate_hydration_chain(
     hydration,
     expected_training_bundle_fingerprint_sha256: str,
     proof_workspace,
-    tradable_preselection: FastFirstChampionTradablePreselectionArtifact,
     database_snapshot: _DatabaseSnapshot,
     validation_policy: FastChronologicalValidationPolicy,
     horizon_ms: int,
@@ -763,6 +762,7 @@ def _validate_first_champion_chain(
     hydration,
     expected_training_bundle_fingerprint_sha256: str,
     proof_workspace,
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact,
     database_snapshot: _DatabaseSnapshot,
 ) -> None:
     if first_champion.request != request:
