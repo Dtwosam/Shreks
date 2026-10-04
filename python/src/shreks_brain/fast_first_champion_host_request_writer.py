@@ -335,6 +335,19 @@ def write_fast_first_champion_host_request_from_sources(
             raise ValueError(
                 "observer database source changed during request creation"
             )
+        database_wal_after = Path(str(database_path) + "-wal")
+        if (
+            _sha256_file_stable(database_path) != database_sha256
+            or (
+                _sha256_file_stable(database_wal_after)
+                if database_wal_after.is_file()
+                else None
+            )
+            != database_wal_sha256
+        ):
+            raise ValueError(
+                "observer database snapshot changed during request creation"
+            )
         if staging.read_bytes() != payload:
             raise ValueError(
                 "staged first champion host request bytes changed"
