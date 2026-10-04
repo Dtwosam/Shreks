@@ -391,6 +391,11 @@ def build_fast_training_bundle_from_runtime_sources(
         raise ValueError(
             "runtime FL4 component contains duplicate decision/horizon identities"
         )
+    active_overlay_rows = (
+        overlay.rows
+        if requested_decision_identities is None
+        else overlay_rows
+    )
     overlay_by_key = {
         (
             row.decision_signature,
@@ -398,13 +403,9 @@ def build_fast_training_bundle_from_runtime_sources(
             row.horizon_ms,
             row.future_path_label_version,
         ): row
-        for row in (
-            overlay.rows
-            if requested_decision_identities is None
-            else overlay_rows
-        )
+        for row in active_overlay_rows
     }
-    if len(overlay_by_key) != len(overlay.rows):
+    if len(overlay_by_key) != len(active_overlay_rows):
         raise ValueError(
             "training economics overlay contains duplicate decision/horizon identities"
         )
