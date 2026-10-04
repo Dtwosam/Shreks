@@ -356,6 +356,7 @@ def test_file_request_rejects_training_only_context_before_bundle_build(
     corpus = build_fast_forecast_evaluation_context_corpus(
         (*base_contexts, training_context)
     )
+    contexts.unlink()
     write_fast_forecast_evaluation_context_corpus(
         corpus,
         contexts,
