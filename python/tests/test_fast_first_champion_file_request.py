@@ -157,7 +157,13 @@ def _preselection(tmp_path: Path):
         "observer_database_sha256": hashlib.sha256(
             (tmp_path / "shreks.db").read_bytes()
         ).hexdigest(),
-        "observer_database_wal_sha256": None,
+        "observer_database_wal_sha256": (
+            hashlib.sha256(
+                Path(str(tmp_path / "shreks.db") + "-wal").read_bytes()
+            ).hexdigest()
+            if Path(str(tmp_path / "shreks.db") + "-wal").is_file()
+            else None
+        ),
         "assessed_row_count": len(accepted),
         "eligible_row_count": len(accepted),
         "eligibility_reason_counts": [["eligible", len(accepted)]],
@@ -193,11 +199,17 @@ def _preselection(tmp_path: Path):
     return root, artifact
 
 
-def _request(tmp_path: Path):
+def _request(
+    tmp_path: Path,
+    *,
+    wal_bytes: bytes | None = None,
+):
     features = tmp_path / "features.jsonl"
     database = tmp_path / "shreks.db"
     features.write_text('{"sealed":"feature-source"}\n', encoding="utf-8")
     database.write_bytes(b"sealed-sqlite-source")
+    if wal_bytes is not None:
+        Path(str(database) + "-wal").write_bytes(wal_bytes)
     contexts = _context_corpus(tmp_path)
     preselection_path, preselection = _preselection(tmp_path)
     economics_overlay = tmp_path / "training-economics"
@@ -426,9 +438,11 @@ def test_file_request_authenticates_sqlite_wal_and_request_bytes(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    _, request_path, _, database, _, destination = _request(tmp_path)
+    _, request_path, _, database, _, destination = _request(
+        tmp_path,
+        wal_bytes=b"wal-before",
+    )
     wal = Path(str(database) + "-wal")
-    wal.write_bytes(b"wal-before")
     bundle = _runtime_bundle_for(tmp_path / "features.jsonl")
 
     def _runtime_bundle(**_kwargs):
