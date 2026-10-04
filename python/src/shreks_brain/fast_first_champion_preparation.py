@@ -863,6 +863,15 @@ def _validate_reopened_chain(
             "preparation proof workspace does not match manifest"
         )
     if (
+        preselection_manifest.proof_workspace_artifact_fingerprint_sha256
+        != proof_manifest.artifact_fingerprint_sha256
+        or preselection_manifest.feature_source_jsonl_sha256
+        != proof_manifest.feature_jsonl_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection does not match proof workspace"
+        )
+    if (
         preselection_manifest.artifact_fingerprint_sha256
         != manifest.tradable_preselection_artifact_fingerprint_sha256
         or preselection_manifest.accepted_identity_fingerprint_sha256
