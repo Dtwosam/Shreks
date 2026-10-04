@@ -174,6 +174,22 @@ def write_fast_first_champion_host_request_from_sources(
             "tradable preselection does not match proof workspace/request floor"
         )
     database_wal_path = Path(str(database_path) + "-wal")
+    database_sha256 = _sha256_file_stable(database_path)
+    database_wal_sha256 = (
+        _sha256_file_stable(database_wal_path)
+        if database_wal_path.is_file()
+        else None
+    )
+    if (
+        preselection.manifest.observer_database_sha256
+        != database_sha256
+        or preselection.manifest.observer_database_wal_sha256
+        != database_wal_sha256
+    ):
+        raise ValueError(
+            "tradable preselection observer database snapshot mismatch"
+        )
+    database_wal_path = Path(str(database_path) + "-wal")
     current_database_sha256 = _sha256_file_stable(database_path)
     current_database_wal_sha256 = (
         _sha256_file_stable(database_wal_path)
