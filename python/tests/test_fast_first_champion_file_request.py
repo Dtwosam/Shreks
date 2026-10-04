@@ -146,7 +146,11 @@ def _preselection(tmp_path: Path):
             FAST_FIRST_CHAMPION_TRADABLE_PRESELECTION_SCHEMA_VERSION
         ),
         "policy_version": "fl9-tradable-universe-v1",
-        "policy_fingerprint_sha256": "a" * 64,
+        "policy_fingerprint_sha256": (
+            preselection_module.fl9_tradable_universe_policy_fingerprint_sha256(
+                preselection_module.Fl9TradableUniversePolicy()
+            )
+        ),
         "proof_workspace_artifact_fingerprint_sha256": "b" * 64,
         "feature_source_jsonl_sha256": "c" * 64,
         "minimum_decision_observed_at_unix_ms": 0,
