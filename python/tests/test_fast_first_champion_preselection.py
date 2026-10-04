@@ -30,7 +30,6 @@ from shreks_brain.fl9_tradable_universe import (
     fl9_tradable_universe_policy_fingerprint_sha256,
 )
 from shreks_brain.research.fast_training_features import (
-    _canonicalize,
     feature_logical_fingerprint_sha256,
 )
 
@@ -139,7 +138,7 @@ def _write_proof_workspace(
         for record in records:
             handle.write(
                 json.dumps(
-                    _canonicalize(asdict(record)),
+                    asdict(record),
                     sort_keys=True,
                     separators=(",", ":"),
                     ensure_ascii=False,
