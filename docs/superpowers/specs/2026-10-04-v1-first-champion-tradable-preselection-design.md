@@ -113,6 +113,27 @@ The manifest binds:
 
 The artifact is immutable and refuses overwrite.
 
+## Observer snapshot binding
+
+The preselection is valid only for the exact observer database/WAL snapshot
+against which its point-in-time assessments were constructed.
+
+The canonical host-request writer must reject the preselection unless:
+
+- the current observer database SHA-256 equals the preselection manifest;
+- WAL presence/absence and SHA-256 equal the preselection manifest.
+
+The host runner repeats the same equality check before capturing the selection
+clock or building the chronological plan. Any database or WAL drift therefore
+invalidates the preselection and requires a fresh preselection plus fresh host
+request. It must not be silently re-assessed inside the consumed request.
+
+Operationally, preselection construction, request creation, and the eventual
+authorized host invocation must therefore use one deliberately stable observer
+snapshot (for example, within a separately reviewed bounded quiescence/input
+preparation ceremony).
+
+
 ## Selection bounds
 
 The preselection artifact is not allowed to use the future host selection clock.
