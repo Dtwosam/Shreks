@@ -332,6 +332,7 @@ def build_fast_first_champion_tradable_preselection(
     assessment_hasher = hashlib.sha256()
     feature_hasher = hashlib.sha256()
     seen: set[tuple[object, ...]] = set()
+    seen_keys: set[tuple[str, int]] = set()
     assessed_row_count = 0
 
     with feature_path.open("rb") as handle:
@@ -364,6 +365,15 @@ def build_fast_first_champion_tradable_preselection(
                 < minimum_decision_observed_at_unix_ms
             ):
                 continue
+            key = (
+                record.decision_signature,
+                record.decision_ordinal,
+            )
+            if key in seen_keys:
+                raise ValueError(
+                    "preselection feature population contains duplicate signature/ordinal"
+                )
+            seen_keys.add(key)
             identity = record.decision_identity
             if identity in seen:
                 raise ValueError(
