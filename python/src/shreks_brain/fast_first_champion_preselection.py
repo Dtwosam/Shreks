@@ -447,9 +447,7 @@ def build_fast_first_champion_tradable_preselection(
                     snapshot_row_id=assessment.snapshot_row_id,
                     assessment_fingerprint_sha256=(
                         hashlib.sha256(
-                            _canonical_json(
-                                asdict(assessment)
-                            ).encode("utf-8")
+                            assessment_line.encode("utf-8")
                         ).hexdigest()
                     ),
                 )
