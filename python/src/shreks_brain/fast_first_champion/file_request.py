@@ -1064,6 +1064,16 @@ def read_fast_first_champion_artifact(
         raise ValueError(
             "first champion tradable preselection does not match manifest/request"
         )
+    accepted_identities = set(
+        tradable_preselection.decision_identities
+    )
+    if any(
+        context.decision_identity not in accepted_identities
+        for context in context_corpus.contexts
+    ):
+        raise ValueError(
+            "first champion context identity is absent from tradable preselection"
+        )
     if (
         context_corpus.context_fingerprint_sha256
         != manifest.context_fingerprint_sha256
