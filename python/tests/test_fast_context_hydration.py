@@ -319,7 +319,16 @@ def test_hydrator_authenticated_candidate_bindings_fail_closed_on_missing_identi
         value.decision_identity: value.decision_sequence
         for value in bundle.features.records
     }
-    missing = next(iter(bindings))
+    fold = chronological_policy().folds[0]
+    missing = next(
+        value.decision_identity
+        for value in bundle.features.records
+        if (
+            fold.validation_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+        )
+    )
     del bindings[missing]
 
     with pytest.raises(ValueError, match="absent.*candidate bindings"):
