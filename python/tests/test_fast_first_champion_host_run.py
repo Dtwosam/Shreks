@@ -140,6 +140,9 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         features=bundle.features,
     )
 
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"observer-host-db")
+
     preselection_source = tmp_path / "tradable-preselection-source"
     preselection_source.mkdir()
     (preselection_source / "placeholder").write_bytes(
@@ -169,7 +172,7 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         proof_workspace_artifact_fingerprint_sha256="2" * 64,
         feature_source_jsonl_sha256=feature_sha,
         minimum_decision_observed_at_unix_ms=1_300,
-        observer_database_sha256="e" * 64,
+        observer_database_sha256=_sha(database.read_bytes()),
         observer_database_wal_sha256=None,
         assessed_row_count=len(accepted),
         eligible_row_count=len(accepted),
@@ -456,6 +459,24 @@ def test_host_run_captures_clock_plans_and_cross_links_preparation(
         "preparation",
         "manifest.json",
     }
+
+
+def test_host_run_rejects_preselection_database_snapshot_drift(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _install_fakes(monkeypatch, tmp_path)
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"observer-host-db-mutated")
+    request_path = tmp_path / "host-request.json"
+    request_path.write_text(
+        encode_fast_first_champion_host_request(_request(tmp_path)),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="preselection.*database.*snapshot"):
+        run_fast_first_champion_host_request(request_path)
+    assert not (tmp_path / "host-run").exists()
 
 
 def test_host_run_rejects_hydration_policy_fingerprint_mismatch(
