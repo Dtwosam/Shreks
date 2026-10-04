@@ -330,6 +330,52 @@ def test_file_request_is_canonical_self_authenticating_and_round_trips(
     )
 
 
+def test_file_request_rejects_training_only_context_before_bundle_build(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _, request_path, _, _, contexts, destination = _request(tmp_path)
+    bundle = chronological_bundle()
+    fold = chronological_policy().folds[0]
+    training_record = next(
+        record
+        for record in bundle.features.records
+        if (
+            fold.training_started_at_unix_ms
+            <= record.decision_observed_at_unix_ms
+            < fold.training_ended_at_unix_ms
+        )
+    )
+    _, run = build_run()
+    base_contexts = evaluation_contexts(run)
+    training_context = replace(
+        base_contexts[0],
+        decision_identity=training_record.decision_identity,
+        as_of_unix_ms=training_record.decision_observed_at_unix_ms,
+    )
+    corpus = build_fast_forecast_evaluation_context_corpus(
+        (*base_contexts, training_context)
+    )
+    write_fast_forecast_evaluation_context_corpus(
+        corpus,
+        contexts,
+    )
+
+    monkeypatch.setattr(
+        file_request_module,
+        "build_fast_training_bundle_from_runtime_sources",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError(
+                "context domain mismatch must fail before bundle construction"
+            )
+        ),
+    )
+
+    with pytest.raises(ValueError, match="validation/TEST domain"):
+        run_fast_first_champion_file_request(request_path)
+    assert not destination.exists()
+
+
 def test_file_request_runs_runtime_bundle_and_atomically_publishes_evidence(
     monkeypatch,
     tmp_path: Path,
