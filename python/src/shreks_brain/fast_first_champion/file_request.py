@@ -24,6 +24,10 @@ from shreks_brain.fast_validation import (
     FastChronologicalFold,
     FastChronologicalValidationPolicy,
 )
+from shreks_brain.fast_first_champion_preselection import (
+    FastFirstChampionTradablePreselectionArtifact,
+    read_fast_first_champion_tradable_preselection,
+)
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
 )
@@ -45,14 +49,15 @@ from .context_corpus import (
 FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_NAME = (
     "shreks.fast_first_champion_file_request"
 )
-FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION = 2
+FAST_FIRST_CHAMPION_FILE_REQUEST_SCHEMA_VERSION = 3
 FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_NAME = (
     "shreks.fast_first_champion_artifact"
 )
-FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION = 2
+FAST_FIRST_CHAMPION_ARTIFACT_SCHEMA_VERSION = 3
 
 _REQUEST_FILE = "request.json"
 _CONTEXT_FILE = "contexts.json"
+_PRESELECTION_DIR = "tradable-preselection"
 _CHAMPION_FILE = "champion.json"
 _MANIFEST_FILE = "manifest.json"
 
@@ -60,6 +65,8 @@ _REQUEST_FIELDS = (
     "feature_jsonl_path",
     "observer_database_path",
     "context_corpus_path",
+    "tradable_preselection_path",
+    "expected_tradable_preselection_artifact_fingerprint_sha256",
     "training_economics_overlay_path",
     "expected_training_economics_overlay_manifest_fingerprint_sha256",
     "training_execution_cost_policy",
@@ -119,6 +126,7 @@ _MANIFEST_KEYS = frozenset(
         "observer_database_wal_sha256",
         "context_corpus_file_sha256",
         "context_fingerprint_sha256",
+        "tradable_preselection_artifact_fingerprint_sha256",
         "training_economics_overlay_manifest_fingerprint_sha256",
         "training_execution_cost_policy_fingerprint_sha256",
         "training_bundle_fingerprint_sha256",
@@ -149,6 +157,8 @@ class FastFirstChampionFileRequest:
     feature_jsonl_path: str
     observer_database_path: str
     context_corpus_path: str
+    tradable_preselection_path: str
+    expected_tradable_preselection_artifact_fingerprint_sha256: str
     training_economics_overlay_path: str
     expected_training_economics_overlay_manifest_fingerprint_sha256: str
     training_execution_cost_policy: FastTrainingExecutionCostPolicy
@@ -177,6 +187,7 @@ class FastFirstChampionFileRequest:
             "feature_jsonl_path",
             "observer_database_path",
             "context_corpus_path",
+            "tradable_preselection_path",
             "training_economics_overlay_path",
             "destination_path",
             "champion_version",
@@ -186,6 +197,10 @@ class FastFirstChampionFileRequest:
             "training_policy_version",
         ):
             _require_non_empty(name, getattr(self, name))
+        _require_sha256(
+            "expected_tradable_preselection_artifact_fingerprint_sha256",
+            self.expected_tradable_preselection_artifact_fingerprint_sha256,
+        )
         _require_sha256(
             "expected_training_economics_overlay_manifest_fingerprint_sha256",
             self.expected_training_economics_overlay_manifest_fingerprint_sha256,
@@ -287,6 +302,7 @@ class FastFirstChampionArtifactManifest:
     observer_database_wal_sha256: str | None
     context_corpus_file_sha256: str
     context_fingerprint_sha256: str
+    tradable_preselection_artifact_fingerprint_sha256: str
     training_economics_overlay_manifest_fingerprint_sha256: str
     training_execution_cost_policy_fingerprint_sha256: str
     training_bundle_fingerprint_sha256: str
@@ -307,6 +323,7 @@ class FastFirstChampionArtifactManifest:
             "observer_database_sha256",
             "context_corpus_file_sha256",
             "context_fingerprint_sha256",
+            "tradable_preselection_artifact_fingerprint_sha256",
             "training_economics_overlay_manifest_fingerprint_sha256",
             "training_execution_cost_policy_fingerprint_sha256",
             "training_bundle_fingerprint_sha256",
@@ -351,6 +368,7 @@ class FastFirstChampionArtifact:
     manifest: FastFirstChampionArtifactManifest
     request: FastFirstChampionFileRequest
     context_corpus: FastForecastEvaluationContextCorpus
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact
     champion: FastForecastChampionArtifact
     evaluation_reports: tuple[FastForecastEvaluationReport, ...]
 
@@ -368,6 +386,13 @@ class FastFirstChampionArtifact:
         if type(self.context_corpus) is not FastForecastEvaluationContextCorpus:
             raise ValueError(
                 "context_corpus must be exact FastForecastEvaluationContextCorpus"
+            )
+        if (
+            type(self.tradable_preselection)
+            is not FastFirstChampionTradablePreselectionArtifact
+        ):
+            raise ValueError(
+                "tradable_preselection must be exact preselection artifact"
             )
         if type(self.champion) is not FastForecastChampionArtifact:
             raise ValueError("champion must be exact FastForecastChampionArtifact")
@@ -400,6 +425,8 @@ def build_fast_first_champion_file_request(
     feature_jsonl_path: str,
     observer_database_path: str,
     context_corpus_path: str,
+    tradable_preselection_path: str,
+    expected_tradable_preselection_artifact_fingerprint_sha256: str,
     training_economics_overlay_path: str,
     expected_training_economics_overlay_manifest_fingerprint_sha256: str,
     training_execution_cost_policy: FastTrainingExecutionCostPolicy,
@@ -422,6 +449,10 @@ def build_fast_first_champion_file_request(
         feature_jsonl_path=feature_jsonl_path,
         observer_database_path=observer_database_path,
         context_corpus_path=context_corpus_path,
+        tradable_preselection_path=tradable_preselection_path,
+        expected_tradable_preselection_artifact_fingerprint_sha256=(
+            expected_tradable_preselection_artifact_fingerprint_sha256
+        ),
         training_economics_overlay_path=training_economics_overlay_path,
         expected_training_economics_overlay_manifest_fingerprint_sha256=(
             expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -450,6 +481,10 @@ def build_fast_first_champion_file_request(
         feature_jsonl_path=feature_jsonl_path,
         observer_database_path=observer_database_path,
         context_corpus_path=context_corpus_path,
+        tradable_preselection_path=tradable_preselection_path,
+        expected_tradable_preselection_artifact_fingerprint_sha256=(
+            expected_tradable_preselection_artifact_fingerprint_sha256
+        ),
         training_economics_overlay_path=training_economics_overlay_path,
         expected_training_economics_overlay_manifest_fingerprint_sha256=(
             expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -537,6 +572,16 @@ def decode_fast_first_champion_file_request(
             context_corpus_path=_text(
                 raw["context_corpus_path"],
                 "context_corpus_path",
+            ),
+            tradable_preselection_path=_text(
+                raw["tradable_preselection_path"],
+                "tradable_preselection_path",
+            ),
+            expected_tradable_preselection_artifact_fingerprint_sha256=_text(
+                raw[
+                    "expected_tradable_preselection_artifact_fingerprint_sha256"
+                ],
+                "expected_tradable_preselection_artifact_fingerprint_sha256",
             ),
             training_economics_overlay_path=_text(
                 raw["training_economics_overlay_path"],
@@ -632,6 +677,21 @@ def run_fast_first_champion_file_request(
     feature_path = _resolve_source(base, request.feature_jsonl_path)
     database_path = _resolve_source(base, request.observer_database_path)
     context_path = _resolve_source(base, request.context_corpus_path)
+    preselection_path = _resolve_artifact_directory(
+        base,
+        request.tradable_preselection_path,
+        label="tradable preselection",
+    )
+    preselection = read_fast_first_champion_tradable_preselection(
+        preselection_path
+    )
+    if (
+        preselection.manifest.artifact_fingerprint_sha256
+        != request.expected_tradable_preselection_artifact_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion tradable preselection fingerprint mismatch"
+        )
     training_economics_overlay_path = _resolve_source_directory(
         base,
         request.training_economics_overlay_path,
@@ -648,6 +708,15 @@ def run_fast_first_champion_file_request(
         context_path=context_path,
         training_economics_overlay_path=training_economics_overlay_path,
     )
+    if (
+        preselection.manifest.observer_database_sha256
+        != before.observer_database_sha256
+        or preselection.manifest.observer_database_wal_sha256
+        != before.observer_database_wal_sha256
+    ):
+        raise ValueError(
+            "first champion tradable preselection observer database snapshot mismatch"
+        )
     context_payload = context_path.read_text(encoding="utf-8")
     if hashlib.sha256(context_payload.encode("utf-8")).hexdigest() != (
         before.context_corpus_file_sha256
@@ -658,6 +727,23 @@ def run_fast_first_champion_file_request(
     context_corpus = decode_fast_forecast_evaluation_context_corpus(
         context_payload
     )
+    validation_domain_identities = _decision_identities_for_validation_policy(
+        preselection,
+        request.validation_policy,
+    )
+    context_domain_identities = set(
+        _context_identities_for_validation_policy(
+            preselection,
+            request.validation_policy,
+        )
+    )
+    if any(
+        context.decision_identity not in context_domain_identities
+        for context in context_corpus.contexts
+    ):
+        raise ValueError(
+            "first champion context identity is outside authenticated validation/TEST domain"
+        )
     if (
         before.training_economics_overlay_manifest_fingerprint_sha256
         != request.expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -673,6 +759,7 @@ def run_fast_first_champion_file_request(
         training_economics_overlay_path=training_economics_overlay_path,
         training_execution_cost_policy=request.training_execution_cost_policy,
         horizon_ms=request.horizon_ms,
+        decision_identities=validation_domain_identities,
     )
     if bundle.features.source_sha256 != before.feature_jsonl_sha256:
         raise ValueError(
@@ -713,6 +800,13 @@ def run_fast_first_champion_file_request(
         raise ValueError(
             "first champion source fingerprint changed during execution"
         )
+    preselection_after = read_fast_first_champion_tradable_preselection(
+        preselection_path
+    )
+    if preselection_after.manifest != preselection.manifest:
+        raise ValueError(
+            "first champion tradable preselection changed during execution"
+        )
     if source.read_text(encoding="utf-8") != request_payload:
         raise ValueError(
             "first champion request changed during execution"
@@ -734,6 +828,18 @@ def run_fast_first_champion_file_request(
             context_payload,
             encoding="utf-8",
         )
+        shutil.copytree(
+            preselection_path,
+            staging / _PRESELECTION_DIR,
+            symlinks=False,
+        )
+        copied_preselection = read_fast_first_champion_tradable_preselection(
+            staging / _PRESELECTION_DIR
+        )
+        if copied_preselection.manifest != preselection.manifest:
+            raise ValueError(
+                "copied first champion tradable preselection does not match source"
+            )
         write_fast_forecast_champion(
             result.champion,
             staging / _CHAMPION_FILE,
@@ -781,6 +887,9 @@ def run_fast_first_champion_file_request(
             "context_fingerprint_sha256": (
                 context_corpus.context_fingerprint_sha256
             ),
+            "tradable_preselection_artifact_fingerprint_sha256": (
+                preselection.manifest.artifact_fingerprint_sha256
+            ),
             "training_economics_overlay_manifest_fingerprint_sha256": (
                 before.training_economics_overlay_manifest_fingerprint_sha256
             ),
@@ -817,6 +926,9 @@ def run_fast_first_champion_file_request(
             ],
             context_fingerprint_sha256=material[
                 "context_fingerprint_sha256"
+            ],
+            tradable_preselection_artifact_fingerprint_sha256=material[
+                "tradable_preselection_artifact_fingerprint_sha256"
             ],
             training_economics_overlay_manifest_fingerprint_sha256=material[
                 "training_economics_overlay_manifest_fingerprint_sha256"
@@ -901,6 +1013,9 @@ def read_fast_first_champion_artifact(
             context_fingerprint_sha256=document[
                 "context_fingerprint_sha256"
             ],
+            tradable_preselection_artifact_fingerprint_sha256=document[
+                "tradable_preselection_artifact_fingerprint_sha256"
+            ],
             training_economics_overlay_manifest_fingerprint_sha256=document[
                 "training_economics_overlay_manifest_fingerprint_sha256"
             ],
@@ -932,6 +1047,7 @@ def read_fast_first_champion_artifact(
     expected_entries = {
         _REQUEST_FILE,
         _CONTEXT_FILE,
+        _PRESELECTION_DIR,
         _CHAMPION_FILE,
         _MANIFEST_FILE,
         *(value.file_name for value in manifest.evaluation_reports),
@@ -957,6 +1073,37 @@ def read_fast_first_champion_artifact(
     context_corpus = read_fast_forecast_evaluation_context_corpus(
         context_path
     )
+    tradable_preselection = (
+        read_fast_first_champion_tradable_preselection(
+            root / _PRESELECTION_DIR
+        )
+    )
+    if (
+        tradable_preselection.manifest.artifact_fingerprint_sha256
+        != manifest.tradable_preselection_artifact_fingerprint_sha256
+        or tradable_preselection.manifest.artifact_fingerprint_sha256
+        != request.expected_tradable_preselection_artifact_fingerprint_sha256
+        or tradable_preselection.manifest.observer_database_sha256
+        != manifest.observer_database_sha256
+        or tradable_preselection.manifest.observer_database_wal_sha256
+        != manifest.observer_database_wal_sha256
+    ):
+        raise ValueError(
+            "first champion tradable preselection does not match manifest/request"
+        )
+    context_domain_identities = set(
+        _context_identities_for_validation_policy(
+            tradable_preselection,
+            request.validation_policy,
+        )
+    )
+    if any(
+        context.decision_identity not in context_domain_identities
+        for context in context_corpus.contexts
+    ):
+        raise ValueError(
+            "first champion context identity is outside authenticated validation/TEST domain"
+        )
     if (
         context_corpus.context_fingerprint_sha256
         != manifest.context_fingerprint_sha256
@@ -1065,6 +1212,7 @@ def read_fast_first_champion_artifact(
         manifest=manifest,
         request=request,
         context_corpus=context_corpus,
+        tradable_preselection=tradable_preselection,
         champion=champion,
         evaluation_reports=tuple(reports),
     )
@@ -1083,6 +1231,10 @@ def _request_document(
         feature_jsonl_path=request.feature_jsonl_path,
         observer_database_path=request.observer_database_path,
         context_corpus_path=request.context_corpus_path,
+        tradable_preselection_path=request.tradable_preselection_path,
+        expected_tradable_preselection_artifact_fingerprint_sha256=(
+            request.expected_tradable_preselection_artifact_fingerprint_sha256
+        ),
         training_economics_overlay_path=request.training_economics_overlay_path,
         expected_training_economics_overlay_manifest_fingerprint_sha256=(
             request.expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -1112,6 +1264,8 @@ def _request_document_from_values(
     feature_jsonl_path: str,
     observer_database_path: str,
     context_corpus_path: str,
+    tradable_preselection_path: str,
+    expected_tradable_preselection_artifact_fingerprint_sha256: str,
     training_economics_overlay_path: str,
     expected_training_economics_overlay_manifest_fingerprint_sha256: str,
     training_execution_cost_policy: FastTrainingExecutionCostPolicy,
@@ -1134,6 +1288,10 @@ def _request_document_from_values(
         "feature_jsonl_path": feature_jsonl_path,
         "observer_database_path": observer_database_path,
         "context_corpus_path": context_corpus_path,
+        "tradable_preselection_path": tradable_preselection_path,
+        "expected_tradable_preselection_artifact_fingerprint_sha256": (
+            expected_tradable_preselection_artifact_fingerprint_sha256
+        ),
         "training_economics_overlay_path": training_economics_overlay_path,
         "expected_training_economics_overlay_manifest_fingerprint_sha256": (
             expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -1352,6 +1510,87 @@ def _resolve_source(base: Path, value: str) -> Path:
     return path
 
 
+def _resolve_artifact_directory(
+    base: Path,
+    value: str,
+    *,
+    label: str,
+) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = base / path
+    path = path.resolve()
+    if path.is_symlink() or not path.is_dir():
+        raise ValueError(
+            f"first champion {label} directory is missing or unsafe: {value}"
+        )
+    return path
+
+
+def _decision_identities_for_validation_policy(
+    preselection: FastFirstChampionTradablePreselectionArtifact,
+    policy: FastChronologicalValidationPolicy,
+) -> tuple[tuple[object, ...], ...]:
+    if (
+        type(preselection)
+        is not FastFirstChampionTradablePreselectionArtifact
+    ):
+        raise ValueError(
+            "preselection must be exact tradable preselection artifact"
+        )
+    if type(policy) is not FastChronologicalValidationPolicy:
+        raise ValueError(
+            "validation policy must be exact FastChronologicalValidationPolicy"
+        )
+    selected = tuple(
+        value.decision_identity
+        for value in preselection.accepted_decisions
+        if any(
+            fold.training_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+            for fold in policy.folds
+        )
+    )
+    if not selected:
+        raise ValueError(
+            "tradable preselection has no accepted decisions in validation policy domain"
+        )
+    return selected
+
+
+def _context_identities_for_validation_policy(
+    preselection: FastFirstChampionTradablePreselectionArtifact,
+    policy: FastChronologicalValidationPolicy,
+) -> tuple[tuple[object, ...], ...]:
+    if (
+        type(preselection)
+        is not FastFirstChampionTradablePreselectionArtifact
+    ):
+        raise ValueError(
+            "preselection must be exact tradable preselection artifact"
+        )
+    if type(policy) is not FastChronologicalValidationPolicy:
+        raise ValueError(
+            "validation policy must be exact FastChronologicalValidationPolicy"
+        )
+    selected = tuple(
+        value.decision_identity
+        for value in preselection.accepted_decisions
+        if any(
+            fold.validation_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+            for fold in policy.folds
+        )
+    )
+    if not selected:
+        raise ValueError(
+            "tradable preselection has no accepted decisions in validation/TEST domain"
+        )
+    return selected
+
+
 def _resolve_source_directory(base: Path, value: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute():
@@ -1470,6 +1709,9 @@ def _manifest_document(
         ),
         "context_corpus_file_sha256": value.context_corpus_file_sha256,
         "context_fingerprint_sha256": value.context_fingerprint_sha256,
+        "tradable_preselection_artifact_fingerprint_sha256": (
+            value.tradable_preselection_artifact_fingerprint_sha256
+        ),
         "training_economics_overlay_manifest_fingerprint_sha256": (
             value.training_economics_overlay_manifest_fingerprint_sha256
         ),

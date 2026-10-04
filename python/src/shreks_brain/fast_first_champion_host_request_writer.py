@@ -25,6 +25,9 @@ from shreks_brain.fast_first_champion_host_run import (
 from shreks_brain.fast_proof_workspace import (
     read_fast_proof_workspace_manifest_bounded,
 )
+from shreks_brain.fast_first_champion_preselection import (
+    read_fast_first_champion_tradable_preselection,
+)
 from shreks_brain.research.fast_training_economics import (
     decode_fast_training_execution_cost_policy,
     fast_training_execution_cost_policy_fingerprint_sha256,
@@ -64,6 +67,7 @@ def write_fast_first_champion_host_request_from_sources(
     proof_workspace_path: str | Path,
     observer_database_path: str | Path,
     hydration_policy_path: str | Path,
+    tradable_preselection_path: str | Path,
     training_economics_overlay_path: str | Path,
     training_execution_cost_policy_path: str | Path,
     request_destination: str | Path,
@@ -95,6 +99,16 @@ def write_fast_first_champion_host_request_from_sources(
         raise ValueError(
             "hydration policy path must be an existing regular file"
         )
+    preselection_path = Path(
+        tradable_preselection_path
+    ).expanduser().resolve()
+    if preselection_path.is_symlink() or not preselection_path.is_dir():
+        raise ValueError(
+            "tradable preselection path must be an existing real directory"
+        )
+    preselection = read_fast_first_champion_tradable_preselection(
+        preselection_path
+    )
     economics_overlay_path = Path(
         training_economics_overlay_path
     ).expanduser().resolve()
@@ -148,6 +162,33 @@ def write_fast_first_champion_host_request_from_sources(
         )
 
     proof_workspace = read_fast_proof_workspace_manifest_bounded(proof_path)
+    if (
+        preselection.manifest.proof_workspace_artifact_fingerprint_sha256
+        != proof_workspace.manifest.artifact_fingerprint_sha256
+        or preselection.manifest.feature_source_jsonl_sha256
+        != proof_workspace.manifest.feature_jsonl_sha256
+        or preselection.manifest.minimum_decision_observed_at_unix_ms
+        != minimum_decision_observed_at_unix_ms
+    ):
+        raise ValueError(
+            "tradable preselection does not match proof workspace/request floor"
+        )
+    database_wal_path = Path(str(database_path) + "-wal")
+    database_sha256 = _sha256_file_stable(database_path)
+    database_wal_sha256 = (
+        _sha256_file_stable(database_wal_path)
+        if database_wal_path.is_file()
+        else None
+    )
+    if (
+        preselection.manifest.observer_database_sha256
+        != database_sha256
+        or preselection.manifest.observer_database_wal_sha256
+        != database_wal_sha256
+    ):
+        raise ValueError(
+            "tradable preselection observer database snapshot mismatch"
+        )
     policy_payload = _read_text_stable(
         policy_path,
         label="hydration policy",
@@ -190,6 +231,10 @@ def write_fast_first_champion_host_request_from_sources(
         proof_workspace_path=str(proof_path),
         observer_database_path=str(database_path),
         hydration_policy_path=str(policy_path),
+        tradable_preselection_path=str(preselection_path),
+        expected_tradable_preselection_artifact_fingerprint_sha256=(
+            preselection.manifest.artifact_fingerprint_sha256
+        ),
         training_economics_overlay_path=str(economics_overlay_path),
         expected_training_economics_overlay_manifest_fingerprint_sha256=(
             economics_manifest_fingerprint
@@ -255,6 +300,15 @@ def write_fast_first_champion_host_request_from_sources(
             raise ValueError(
                 "training execution cost policy source changed during request creation"
             )
+        preselection_after = (
+            read_fast_first_champion_tradable_preselection(
+                preselection_path
+            )
+        )
+        if preselection_after.manifest != preselection.manifest:
+            raise ValueError(
+                "tradable preselection source changed during request creation"
+            )
         if (
             _read_training_economics_overlay_manifest_fingerprint(
                 economics_overlay_path
@@ -280,6 +334,19 @@ def write_fast_first_champion_host_request_from_sources(
         if database_path.is_symlink() or not database_path.is_file():
             raise ValueError(
                 "observer database source changed during request creation"
+            )
+        database_wal_after = Path(str(database_path) + "-wal")
+        if (
+            _sha256_file_stable(database_path) != database_sha256
+            or (
+                _sha256_file_stable(database_wal_after)
+                if database_wal_after.is_file()
+                else None
+            )
+            != database_wal_sha256
+        ):
+            raise ValueError(
+                "observer database snapshot changed during request creation"
             )
         if staging.read_bytes() != payload:
             raise ValueError(
@@ -326,6 +393,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--proof-workspace", required=True)
     parser.add_argument("--observer-database", required=True)
     parser.add_argument("--hydration-policy", required=True)
+    parser.add_argument("--tradable-preselection", required=True)
     parser.add_argument("--training-economics-overlay", required=True)
     parser.add_argument("--training-execution-cost-policy", required=True)
     parser.add_argument("--request-destination", required=True)
@@ -422,6 +490,7 @@ def main(argv: list[str] | None = None) -> int:
         proof_workspace_path=args.proof_workspace,
         observer_database_path=args.observer_database,
         hydration_policy_path=args.hydration_policy,
+        tradable_preselection_path=args.tradable_preselection,
         training_economics_overlay_path=args.training_economics_overlay,
         training_execution_cost_policy_path=(
             args.training_execution_cost_policy

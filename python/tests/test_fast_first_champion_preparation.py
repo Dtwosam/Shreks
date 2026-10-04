@@ -21,6 +21,15 @@ from shreks_brain.fast_evaluation import FastForecastEvaluationPartition
 from shreks_brain.fast_first_champion import (
     decode_fast_first_champion_file_request,
 )
+from shreks_brain.fast_first_champion_preselection import (
+    FastFirstChampionTradableAcceptedDecision,
+    FastFirstChampionTradablePreselectionArtifact,
+    FastFirstChampionTradablePreselectionManifest,
+)
+from shreks_brain.fl9_tradable_universe import (
+    Fl9TradableUniversePolicy,
+    fl9_tradable_universe_policy_fingerprint_sha256,
+)
 from shreks_brain.research.fast_training_bundle import (
     bundle_logical_fingerprint_sha256,
 )
@@ -81,6 +90,7 @@ def _install_component_fakes(
     monkeypatch,
     *,
     proof_source: Path,
+    preselection_source: Path,
     database: Path,
     wal: Path,
     mutate_database: bool = False,
@@ -99,6 +109,54 @@ def _install_component_fakes(
         observer_database_wal_sha256=None,
     )
 
+    accepted = tuple(
+        FastFirstChampionTradableAcceptedDecision(
+            decision_signature=record.decision_signature,
+            decision_ordinal=record.decision_ordinal,
+            decision_sequence=record.decision_sequence,
+            mint=record.mint,
+            quote_mint=record.quote_mint,
+            venue=record.venue,
+            decision_observed_at_unix_ms=record.decision_observed_at_unix_ms,
+            candidate_id=record.decision_sequence,
+            snapshot_row_id=record.decision_sequence + 10_000,
+            assessment_fingerprint_sha256="d" * 64,
+        )
+        for record in bundle.features.records
+    )
+    preselection_manifest = FastFirstChampionTradablePreselectionManifest(
+        schema_name="shreks.fast_first_champion_tradable_preselection",
+        schema_version=1,
+        policy_version="fl9-tradable-universe-v1",
+        policy_fingerprint_sha256=(
+            fl9_tradable_universe_policy_fingerprint_sha256(
+                Fl9TradableUniversePolicy()
+            )
+        ),
+        proof_workspace_artifact_fingerprint_sha256=(
+            proof_manifest.artifact_fingerprint_sha256
+        ),
+        feature_source_jsonl_sha256=feature_sha,
+        minimum_decision_observed_at_unix_ms=0,
+        observer_database_sha256=_sha(database.read_bytes()),
+        observer_database_wal_sha256=(
+            _sha(wal.read_bytes()) if wal.is_file() else None
+        ),
+        assessed_row_count=len(accepted),
+        eligible_row_count=len(accepted),
+        eligibility_reason_counts=(("eligible", len(accepted)),),
+        accepted_identity_fingerprint_sha256="b" * 64,
+        candidate_binding_fingerprint_sha256="c" * 64,
+        assessment_evidence_fingerprint_sha256="d" * 64,
+        accepted_file_sha256="e" * 64,
+        artifact_fingerprint_sha256="f" * 64,
+    )
+    preselection_artifact = FastFirstChampionTradablePreselectionArtifact(
+        path=preselection_source,
+        manifest=preselection_manifest,
+        accepted_decisions=accepted,
+    )
+
     def _read_workspace(path):
         return SimpleNamespace(
             path=Path(path),
@@ -113,6 +171,11 @@ def _install_component_fakes(
         preparation_module,
         "read_fast_proof_workspace_manifest_bounded",
         _read_workspace,
+    )
+    monkeypatch.setattr(
+        preparation_module,
+        "read_fast_first_champion_tradable_preselection",
+        lambda _path: preselection_artifact,
     )
 
     monkeypatch.setattr(
@@ -131,7 +194,12 @@ def _install_component_fakes(
         horizon_ms,
         hydration_policy,
         destination,
+        candidate_ids_by_identity=None,
     ):
+        assert candidate_ids_by_identity == {
+            value.decision_identity: value.candidate_id
+            for value in accepted
+        }
         root = Path(destination)
         root.mkdir()
         contexts = root / "contexts.json"
@@ -215,6 +283,9 @@ def _install_component_fakes(
                 hydration.manifest.contexts_file_sha256
             ),
             context_fingerprint_sha256="6" * 64,
+            tradable_preselection_artifact_fingerprint_sha256=(
+                preselection_manifest.artifact_fingerprint_sha256
+            ),
             training_economics_overlay_manifest_fingerprint_sha256="a" * 64,
             training_execution_cost_policy_fingerprint_sha256=(
                 fast_training_execution_cost_policy_fingerprint_sha256(
@@ -267,6 +338,9 @@ def _prepare(monkeypatch, tmp_path: Path, **fake_overrides):
     proof.mkdir()
     (proof / "features.jsonl").write_bytes(b"sealed-feature-jsonl\n")
     (proof / "manifest.json").write_bytes(b"sealed-proof-manifest\n")
+    preselection = tmp_path / "tradable-preselection-source"
+    preselection.mkdir()
+    (preselection / "placeholder").write_bytes(b"sealed-preselection")
     database = tmp_path / "shreks.db"
     database.write_bytes(b"stable-observer-database")
     wal = Path(str(database) + "-wal")
@@ -275,6 +349,7 @@ def _prepare(monkeypatch, tmp_path: Path, **fake_overrides):
     bundle, proof_manifest = _install_component_fakes(
         monkeypatch,
         proof_source=proof,
+        preselection_source=preselection,
         database=database,
         wal=wal,
         **fake_overrides,
@@ -293,6 +368,8 @@ def _prepare(monkeypatch, tmp_path: Path, **fake_overrides):
     artifact = prepare_fast_first_champion_evidence(
         proof_workspace_path=proof,
         observer_database_path=database,
+        tradable_preselection_path=preselection,
+        expected_tradable_preselection_artifact_fingerprint_sha256="f" * 64,
         training_economics_overlay_path=economics_overlay,
         training_execution_cost_policy=_training_economics_policy(),
         destination=destination,
@@ -345,6 +422,7 @@ def test_preparation_atomically_cross_links_sealed_components(
     )
     assert {value.name for value in destination.iterdir()} == {
         "proof-workspace",
+        "tradable-preselection",
         "context-hydration",
         "first-champion-request.json",
         "first-champion",
@@ -358,6 +436,11 @@ def test_preparation_atomically_cross_links_sealed_components(
     )
     assert request.feature_jsonl_path == "proof-workspace/features.jsonl"
     assert request.context_corpus_path == "context-hydration/contexts.json"
+    assert request.tradable_preselection_path == "tradable-preselection"
+    assert (
+        request.expected_tradable_preselection_artifact_fingerprint_sha256
+        == "f" * 64
+    )
     assert request.destination_path == "first-champion"
     assert request.validation_policy == chronological_policy()
 

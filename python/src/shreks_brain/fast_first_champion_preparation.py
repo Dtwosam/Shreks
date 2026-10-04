@@ -25,6 +25,10 @@ from shreks_brain.fast_first_champion import (
 from shreks_brain.fast_proof_workspace import (
     read_fast_proof_workspace_manifest_bounded,
 )
+from shreks_brain.fast_first_champion_preselection import (
+    FastFirstChampionTradablePreselectionArtifact,
+    read_fast_first_champion_tradable_preselection,
+)
 from shreks_brain.fast_validation import FastChronologicalValidationPolicy
 from shreks_brain.research.fast_training_bundle import (
     build_fast_training_bundle_from_runtime_sources,
@@ -38,9 +42,10 @@ from shreks_brain.research.fast_training_economics import (
 FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_NAME = (
     "shreks.fast_first_champion_preparation"
 )
-FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_VERSION = 2
+FAST_FIRST_CHAMPION_PREPARATION_SCHEMA_VERSION = 3
 
 _PROOF_DIR = "proof-workspace"
+_PRESELECTION_DIR = "tradable-preselection"
 _HYDRATION_DIR = "context-hydration"
 _REQUEST_FILE = "first-champion-request.json"
 _CHAMPION_DIR = "first-champion"
@@ -48,6 +53,7 @@ _MANIFEST_FILE = "manifest.json"
 _ROOT_ENTRIES = frozenset(
     {
         _PROOF_DIR,
+        _PRESELECTION_DIR,
         _HYDRATION_DIR,
         _REQUEST_FILE,
         _CHAMPION_DIR,
@@ -66,6 +72,9 @@ _MANIFEST_KEYS = frozenset(
         "proof_workspace_export_database_wal_sha256",
         "observer_database_sha256",
         "observer_database_wal_sha256",
+        "tradable_preselection_artifact_fingerprint_sha256",
+        "tradable_preselection_accepted_identity_fingerprint_sha256",
+        "tradable_preselection_candidate_binding_fingerprint_sha256",
         "training_economics_overlay_manifest_fingerprint_sha256",
         "training_execution_cost_policy_fingerprint_sha256",
         "training_bundle_fingerprint_sha256",
@@ -99,6 +108,9 @@ class FastFirstChampionPreparationManifest:
     proof_workspace_export_database_wal_sha256: str | None
     observer_database_sha256: str
     observer_database_wal_sha256: str | None
+    tradable_preselection_artifact_fingerprint_sha256: str
+    tradable_preselection_accepted_identity_fingerprint_sha256: str
+    tradable_preselection_candidate_binding_fingerprint_sha256: str
     training_economics_overlay_manifest_fingerprint_sha256: str
     training_execution_cost_policy_fingerprint_sha256: str
     training_bundle_fingerprint_sha256: str
@@ -133,6 +145,9 @@ class FastFirstChampionPreparationManifest:
             "proof_workspace_feature_logical_fingerprint_sha256",
             "proof_workspace_export_database_sha256",
             "observer_database_sha256",
+            "tradable_preselection_artifact_fingerprint_sha256",
+            "tradable_preselection_accepted_identity_fingerprint_sha256",
+            "tradable_preselection_candidate_binding_fingerprint_sha256",
             "training_economics_overlay_manifest_fingerprint_sha256",
             "training_execution_cost_policy_fingerprint_sha256",
             "training_bundle_fingerprint_sha256",
@@ -172,6 +187,7 @@ class FastFirstChampionPreparationArtifact:
     path: Path
     manifest: FastFirstChampionPreparationManifest
     proof_workspace: object
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact
     context_hydration: object
     request: FastFirstChampionFileRequest
     first_champion: object
@@ -182,6 +198,13 @@ class FastFirstChampionPreparationArtifact:
         if type(self.manifest) is not FastFirstChampionPreparationManifest:
             raise ValueError(
                 "manifest must be exact FastFirstChampionPreparationManifest"
+            )
+        if (
+            type(self.tradable_preselection)
+            is not FastFirstChampionTradablePreselectionArtifact
+        ):
+            raise ValueError(
+                "tradable_preselection must be exact preselection artifact"
             )
         if type(self.request) is not FastFirstChampionFileRequest:
             raise ValueError(
@@ -206,6 +229,8 @@ def prepare_fast_first_champion_evidence(
     *,
     proof_workspace_path: str | Path,
     observer_database_path: str | Path,
+    tradable_preselection_path: str | Path,
+    expected_tradable_preselection_artifact_fingerprint_sha256: str,
     training_economics_overlay_path: str | Path,
     training_execution_cost_policy: FastTrainingExecutionCostPolicy,
     destination: str | Path,
@@ -232,6 +257,32 @@ def prepare_fast_first_champion_evidence(
     if database.is_symlink() or not database.is_file():
         raise ValueError(
             "preparation observer database must be an existing regular file"
+        )
+    preselection_source_path = Path(
+        tradable_preselection_path
+    ).expanduser().resolve()
+    if (
+        preselection_source_path.is_symlink()
+        or not preselection_source_path.is_dir()
+    ):
+        raise ValueError(
+            "preparation tradable preselection must be an existing real directory"
+        )
+    _require_sha256(
+        "expected_tradable_preselection_artifact_fingerprint_sha256",
+        expected_tradable_preselection_artifact_fingerprint_sha256,
+    )
+    preselection_source = (
+        read_fast_first_champion_tradable_preselection(
+            preselection_source_path
+        )
+    )
+    if (
+        preselection_source.manifest.artifact_fingerprint_sha256
+        != expected_tradable_preselection_artifact_fingerprint_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection fingerprint mismatch"
         )
     economics_overlay = Path(
         training_economics_overlay_path
@@ -265,7 +316,25 @@ def prepare_fast_first_champion_evidence(
         )
 
     source_workspace = read_fast_proof_workspace_manifest_bounded(source_workspace_path)
+    if (
+        preselection_source.manifest.proof_workspace_artifact_fingerprint_sha256
+        != source_workspace.manifest.artifact_fingerprint_sha256
+        or preselection_source.manifest.feature_source_jsonl_sha256
+        != source_workspace.manifest.feature_jsonl_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection does not match proof workspace"
+        )
     before = _capture_database(database)
+    if (
+        preselection_source.manifest.observer_database_sha256
+        != before.database_sha256
+        or preselection_source.manifest.observer_database_wal_sha256
+        != before.wal_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection observer database snapshot mismatch"
+        )
 
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(
@@ -295,6 +364,33 @@ def prepare_fast_first_champion_evidence(
                 "proof workspace source changed during preparation copy"
             )
 
+        copied_preselection_path = staging / _PRESELECTION_DIR
+        shutil.copytree(
+            preselection_source_path,
+            copied_preselection_path,
+            symlinks=False,
+        )
+        copied_preselection = (
+            read_fast_first_champion_tradable_preselection(
+                copied_preselection_path
+            )
+        )
+        if copied_preselection.manifest != preselection_source.manifest:
+            raise ValueError(
+                "copied tradable preselection does not match source"
+            )
+        selected_decisions = _accepted_for_validation_policy(
+            copied_preselection,
+            validation_policy,
+        )
+        selected_identities = tuple(
+            value.decision_identity for value in selected_decisions
+        )
+        candidate_ids_by_identity = {
+            value.decision_identity: value.candidate_id
+            for value in selected_decisions
+        }
+
         feature_path = copied_workspace_path / "features.jsonl"
         bundle = build_fast_training_bundle_from_runtime_sources(
             feature_jsonl_path=feature_path,
@@ -304,6 +400,7 @@ def prepare_fast_first_champion_evidence(
             training_economics_overlay_path=economics_overlay,
             training_execution_cost_policy=training_execution_cost_policy,
             horizon_ms=horizon_ms,
+            decision_identities=selected_identities,
         )
         if (
             bundle.features.source_sha256
@@ -322,6 +419,7 @@ def prepare_fast_first_champion_evidence(
             horizon_ms=horizon_ms,
             hydration_policy=hydration_policy,
             destination=hydration_path,
+            candidate_ids_by_identity=candidate_ids_by_identity,
         )
         del bundle
         gc.collect()
@@ -341,6 +439,10 @@ def prepare_fast_first_champion_evidence(
             feature_jsonl_path=f"{_PROOF_DIR}/features.jsonl",
             observer_database_path=str(database),
             context_corpus_path=f"{_HYDRATION_DIR}/contexts.json",
+            tradable_preselection_path=_PRESELECTION_DIR,
+            expected_tradable_preselection_artifact_fingerprint_sha256=(
+                copied_preselection.manifest.artifact_fingerprint_sha256
+            ),
             training_economics_overlay_path=str(economics_overlay),
             expected_training_economics_overlay_manifest_fingerprint_sha256=(
                 economics_before.manifest_fingerprint_sha256
@@ -373,6 +475,15 @@ def prepare_fast_first_champion_evidence(
         )
 
         after = _capture_database(database)
+        preselection_source_after = (
+            read_fast_first_champion_tradable_preselection(
+                preselection_source_path
+            )
+        )
+        if preselection_source_after.manifest != preselection_source.manifest:
+            raise ValueError(
+                "first champion preparation tradable preselection changed during execution"
+            )
         economics_after = _capture_training_economics(economics_overlay)
         if economics_after != economics_before:
             raise ValueError(
@@ -389,12 +500,14 @@ def prepare_fast_first_champion_evidence(
             hydration=hydration,
             expected_training_bundle_fingerprint_sha256=bundle_fingerprint,
             proof_workspace=copied_workspace,
+            tradable_preselection=copied_preselection,
             database_snapshot=before,
         )
 
         material = _manifest_material(
             proof_workspace=copied_workspace,
             database_snapshot=before,
+            tradable_preselection=copied_preselection,
             training_economics_overlay_manifest_fingerprint_sha256=(
                 economics_before.manifest_fingerprint_sha256
             ),
@@ -447,7 +560,12 @@ def read_fast_first_champion_preparation(
         raise ValueError(
             "first champion preparation has unknown or missing entries"
         )
-    for name in (_PROOF_DIR, _HYDRATION_DIR, _CHAMPION_DIR):
+    for name in (
+        _PROOF_DIR,
+        _PRESELECTION_DIR,
+        _HYDRATION_DIR,
+        _CHAMPION_DIR,
+    ):
         child = root / name
         if child.is_symlink() or not child.is_dir():
             raise ValueError(
@@ -495,6 +613,15 @@ def read_fast_first_champion_preparation(
             ],
             observer_database_wal_sha256=document[
                 "observer_database_wal_sha256"
+            ],
+            tradable_preselection_artifact_fingerprint_sha256=document[
+                "tradable_preselection_artifact_fingerprint_sha256"
+            ],
+            tradable_preselection_accepted_identity_fingerprint_sha256=document[
+                "tradable_preselection_accepted_identity_fingerprint_sha256"
+            ],
+            tradable_preselection_candidate_binding_fingerprint_sha256=document[
+                "tradable_preselection_candidate_binding_fingerprint_sha256"
             ],
             training_economics_overlay_manifest_fingerprint_sha256=document[
                 "training_economics_overlay_manifest_fingerprint_sha256"
@@ -555,6 +682,11 @@ def read_fast_first_champion_preparation(
         )
 
     proof_workspace = read_fast_proof_workspace_manifest_bounded(root / _PROOF_DIR)
+    tradable_preselection = (
+        read_fast_first_champion_tradable_preselection(
+            root / _PRESELECTION_DIR
+        )
+    )
     hydration = read_fast_forecast_context_hydration_artifact(
         root / _HYDRATION_DIR
     )
@@ -573,6 +705,7 @@ def read_fast_first_champion_preparation(
     _validate_reopened_chain(
         manifest=manifest,
         proof_workspace=proof_workspace,
+        tradable_preselection=tradable_preselection,
         hydration=hydration,
         request=request,
         first_champion=first_champion,
@@ -581,6 +714,7 @@ def read_fast_first_champion_preparation(
         path=root,
         manifest=manifest,
         proof_workspace=proof_workspace,
+        tradable_preselection=tradable_preselection,
         context_hydration=hydration,
         request=request,
         first_champion=first_champion,
@@ -637,6 +771,7 @@ def _validate_first_champion_chain(
     hydration,
     expected_training_bundle_fingerprint_sha256: str,
     proof_workspace,
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact,
     database_snapshot: _DatabaseSnapshot,
 ) -> None:
     if first_champion.request != request:
@@ -644,6 +779,15 @@ def _validate_first_champion_chain(
             "first champion artifact request does not match preparation request"
         )
     manifest = first_champion.manifest
+    if (
+        manifest.tradable_preselection_artifact_fingerprint_sha256
+        != tradable_preselection.manifest.artifact_fingerprint_sha256
+        or request.expected_tradable_preselection_artifact_fingerprint_sha256
+        != tradable_preselection.manifest.artifact_fingerprint_sha256
+    ):
+        raise ValueError(
+            "first champion tradable preselection fingerprint mismatch"
+        )
     if (
         manifest.training_economics_overlay_manifest_fingerprint_sha256
         != request.expected_training_economics_overlay_manifest_fingerprint_sha256
@@ -700,11 +844,13 @@ def _validate_reopened_chain(
     *,
     manifest: FastFirstChampionPreparationManifest,
     proof_workspace,
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact,
     hydration,
     request: FastFirstChampionFileRequest,
     first_champion,
 ) -> None:
     proof_manifest = proof_workspace.manifest
+    preselection_manifest = tradable_preselection.manifest
     hydration_manifest = hydration.manifest
     champion_manifest = first_champion.manifest
 
@@ -724,6 +870,32 @@ def _validate_reopened_chain(
     ):
         raise ValueError(
             "preparation proof workspace does not match manifest"
+        )
+    if (
+        preselection_manifest.proof_workspace_artifact_fingerprint_sha256
+        != proof_manifest.artifact_fingerprint_sha256
+        or preselection_manifest.feature_source_jsonl_sha256
+        != proof_manifest.feature_jsonl_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection does not match proof workspace"
+        )
+    if (
+        preselection_manifest.artifact_fingerprint_sha256
+        != manifest.tradable_preselection_artifact_fingerprint_sha256
+        or preselection_manifest.accepted_identity_fingerprint_sha256
+        != manifest.tradable_preselection_accepted_identity_fingerprint_sha256
+        or preselection_manifest.candidate_binding_fingerprint_sha256
+        != manifest.tradable_preselection_candidate_binding_fingerprint_sha256
+        or preselection_manifest.observer_database_sha256
+        != manifest.observer_database_sha256
+        or preselection_manifest.observer_database_wal_sha256
+        != manifest.observer_database_wal_sha256
+        or request.expected_tradable_preselection_artifact_fingerprint_sha256
+        != preselection_manifest.artifact_fingerprint_sha256
+    ):
+        raise ValueError(
+            "preparation tradable preselection does not match manifest/request"
         )
     if (
         hydration_manifest.artifact_fingerprint_sha256
@@ -825,6 +997,7 @@ def _manifest_material(
     *,
     proof_workspace,
     database_snapshot: _DatabaseSnapshot,
+    tradable_preselection: FastFirstChampionTradablePreselectionArtifact,
     training_economics_overlay_manifest_fingerprint_sha256: str,
     training_execution_cost_policy_fingerprint_sha256: str,
     training_bundle_fingerprint_sha256: str,
@@ -858,6 +1031,15 @@ def _manifest_material(
         ),
         "observer_database_sha256": database_snapshot.database_sha256,
         "observer_database_wal_sha256": database_snapshot.wal_sha256,
+        "tradable_preselection_artifact_fingerprint_sha256": (
+            tradable_preselection.manifest.artifact_fingerprint_sha256
+        ),
+        "tradable_preselection_accepted_identity_fingerprint_sha256": (
+            tradable_preselection.manifest.accepted_identity_fingerprint_sha256
+        ),
+        "tradable_preselection_candidate_binding_fingerprint_sha256": (
+            tradable_preselection.manifest.candidate_binding_fingerprint_sha256
+        ),
         "training_economics_overlay_manifest_fingerprint_sha256": (
             training_economics_overlay_manifest_fingerprint_sha256
         ),
@@ -931,6 +1113,15 @@ def _manifest_document(
         "observer_database_wal_sha256": (
             manifest.observer_database_wal_sha256
         ),
+        "tradable_preselection_artifact_fingerprint_sha256": (
+            manifest.tradable_preselection_artifact_fingerprint_sha256
+        ),
+        "tradable_preselection_accepted_identity_fingerprint_sha256": (
+            manifest.tradable_preselection_accepted_identity_fingerprint_sha256
+        ),
+        "tradable_preselection_candidate_binding_fingerprint_sha256": (
+            manifest.tradable_preselection_candidate_binding_fingerprint_sha256
+        ),
         "training_economics_overlay_manifest_fingerprint_sha256": (
             manifest.training_economics_overlay_manifest_fingerprint_sha256
         ),
@@ -977,6 +1168,38 @@ def _manifest_document(
             manifest.artifact_fingerprint_sha256
         ),
     }
+
+
+def _accepted_for_validation_policy(
+    preselection: FastFirstChampionTradablePreselectionArtifact,
+    policy: FastChronologicalValidationPolicy,
+):
+    if (
+        type(preselection)
+        is not FastFirstChampionTradablePreselectionArtifact
+    ):
+        raise ValueError(
+            "preselection must be exact tradable preselection artifact"
+        )
+    if type(policy) is not FastChronologicalValidationPolicy:
+        raise ValueError(
+            "validation policy must be exact FastChronologicalValidationPolicy"
+        )
+    selected = tuple(
+        value
+        for value in preselection.accepted_decisions
+        if any(
+            fold.training_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+            for fold in policy.folds
+        )
+    )
+    if not selected:
+        raise ValueError(
+            "tradable preselection has no accepted decisions in validation policy domain"
+        )
+    return selected
 
 
 def _capture_database(database: Path) -> _DatabaseSnapshot:

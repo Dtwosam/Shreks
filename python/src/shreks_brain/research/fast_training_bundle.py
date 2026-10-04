@@ -243,6 +243,7 @@ def build_fast_training_bundle_from_runtime_sources(
     training_economics_overlay_path: str | Path,
     training_execution_cost_policy: FastTrainingExecutionCostPolicy,
     horizon_ms: int | None = None,
+    decision_identities: tuple[tuple[object, ...], ...] | None = None,
 ) -> FastTrainingBundle:
     """Build the exact logical FL8.1 bundle from authenticated read-only sources."""
     _positive_int("future_path_label_version", future_path_label_version)
@@ -261,8 +262,15 @@ def build_fast_training_bundle_from_runtime_sources(
         )
     if horizon_ms is not None:
         _positive_int("horizon_ms", horizon_ms)
+    requested_decision_identities = _normalize_decision_identities(
+        decision_identities
+    )
 
     if horizon_ms is None:
+        if requested_decision_identities is not None:
+            raise ValueError(
+                "decision identity restriction requires an explicit horizon_ms"
+            )
         features = read_fast_training_feature_jsonl(feature_jsonl_path)
         future_path = load_future_path_training_labels_from_sqlite(
             sqlite_path,
@@ -291,7 +299,41 @@ def build_fast_training_bundle_from_runtime_sources(
             horizon_ms=horizon_ms,
             label_version=future_path_label_version,
         )
-        decision_identities = tuple(
+        overlay_rows = overlay.rows
+        if requested_decision_identities is not None:
+            requested_set = set(requested_decision_identities)
+            overlay_identity_set = {
+                (
+                    row.decision_signature,
+                    row.decision_ordinal,
+                    row.decision_sequence,
+                    row.mint,
+                    row.quote_mint,
+                    row.venue,
+                    row.decision_observed_at_unix_ms,
+                )
+                for row in overlay_rows
+            }
+            missing = requested_set - overlay_identity_set
+            if missing:
+                raise ValueError(
+                    "requested training decision identity is absent from economics overlay"
+                )
+            overlay_rows = tuple(
+                row
+                for row in overlay_rows
+                if (
+                    row.decision_signature,
+                    row.decision_ordinal,
+                    row.decision_sequence,
+                    row.mint,
+                    row.quote_mint,
+                    row.venue,
+                    row.decision_observed_at_unix_ms,
+                )
+                in requested_set
+            )
+        selected_decision_identities = tuple(
             (
                 row.decision_signature,
                 row.decision_ordinal,
@@ -301,11 +343,15 @@ def build_fast_training_bundle_from_runtime_sources(
                 row.venue,
                 row.decision_observed_at_unix_ms,
             )
-            for row in overlay.rows
+            for row in overlay_rows
         )
+        if not selected_decision_identities:
+            raise ValueError(
+                "training decision identity restriction selected no overlay rows"
+            )
         features = read_fast_training_feature_jsonl_for_identities(
             feature_jsonl_path,
-            decision_identities=decision_identities,
+            decision_identities=selected_decision_identities,
             expected_source_sha256=(
                 overlay.manifest.feature_source_jsonl_sha256
             ),
@@ -315,7 +361,7 @@ def build_fast_training_bundle_from_runtime_sources(
                 sqlite_path,
                 future_path_label_version=future_path_label_version,
                 horizon_ms=horizon_ms,
-                decision_identities=decision_identities,
+                decision_identities=selected_decision_identities,
             )
         )
     if (
@@ -345,6 +391,11 @@ def build_fast_training_bundle_from_runtime_sources(
         raise ValueError(
             "runtime FL4 component contains duplicate decision/horizon identities"
         )
+    active_overlay_rows = (
+        overlay.rows
+        if requested_decision_identities is None
+        else overlay_rows
+    )
     overlay_by_key = {
         (
             row.decision_signature,
@@ -352,9 +403,9 @@ def build_fast_training_bundle_from_runtime_sources(
             row.horizon_ms,
             row.future_path_label_version,
         ): row
-        for row in overlay.rows
+        for row in active_overlay_rows
     }
-    if len(overlay_by_key) != len(overlay.rows):
+    if len(overlay_by_key) != len(active_overlay_rows):
         raise ValueError(
             "training economics overlay contains duplicate decision/horizon identities"
         )
@@ -470,6 +521,72 @@ def build_fast_training_bundle_from_runtime_sources(
         future_path_labels=projected_future_path,
         counterfactual_outcome_sets=tuple(outcome_sets),
     )
+
+
+def _normalize_decision_identities(
+    value: tuple[tuple[object, ...], ...] | None,
+) -> tuple[tuple[object, ...], ...] | None:
+    if value is None:
+        return None
+    if not isinstance(value, tuple) or not value:
+        raise ValueError(
+            "decision_identities must be a non-empty tuple when supplied"
+        )
+    normalized: list[tuple[object, ...]] = []
+    seen: set[tuple[object, ...]] = set()
+    for identity in value:
+        if not isinstance(identity, tuple) or len(identity) != 7:
+            raise ValueError(
+                "decision identity restriction must use exact seven-field tuples"
+            )
+        (
+            signature,
+            ordinal,
+            sequence,
+            mint,
+            quote_mint,
+            venue,
+            observed_at,
+        ) = identity
+        for name, text in (
+            ("decision_signature", signature),
+            ("mint", mint),
+            ("quote_mint", quote_mint),
+            ("venue", venue),
+        ):
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(
+                    f"{name} in decision identity restriction must be non-empty text"
+                )
+        for name, number, positive in (
+            ("decision_ordinal", ordinal, False),
+            ("decision_sequence", sequence, True),
+            ("decision_observed_at_unix_ms", observed_at, False),
+        ):
+            if isinstance(number, bool) or not isinstance(number, int):
+                raise ValueError(
+                    f"{name} in decision identity restriction must be an integer"
+                )
+            if number < 0 or (positive and number == 0):
+                raise ValueError(
+                    f"{name} in decision identity restriction is out of range"
+                )
+        canonical = (
+            signature,
+            ordinal,
+            sequence,
+            mint,
+            quote_mint,
+            venue,
+            observed_at,
+        )
+        if canonical in seen:
+            raise ValueError(
+                "decision identity restriction contains a duplicate identity"
+            )
+        seen.add(canonical)
+        normalized.append(canonical)
+    return tuple(normalized)
 
 
 def _validate_runtime_training_economics_row(

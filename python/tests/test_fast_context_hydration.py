@@ -269,6 +269,118 @@ def test_hydrator_uses_exact_sealed_fl83_prediction_population(
     )
 
 
+def test_hydrator_uses_authenticated_candidate_bindings_without_reresolution(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    bundle = chronological_bundle()
+    _install_stores(monkeypatch, bundle)
+
+    def _forbidden_resolve(*_args, **_kwargs):
+        raise AssertionError(
+            "authenticated candidate binding must bypass candidate re-resolution"
+        )
+
+    monkeypatch.setattr(
+        _FakeMarketStore,
+        "resolve_candidate_at",
+        _forbidden_resolve,
+    )
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"observer-fixture")
+    bindings = {
+        value.decision_identity: value.decision_sequence
+        for value in bundle.features.records
+    }
+
+    result = hydrate_fast_forecast_evaluation_contexts(
+        bundle=bundle,
+        observer_database_path=database,
+        validation_policy=chronological_policy(),
+        horizon_ms=HORIZON_MS,
+        hydration_policy=_policy(),
+        candidate_ids_by_identity=bindings,
+    )
+
+    assert result.context_count > 0
+    expected = _prediction_identities(result.population_validation_run)
+    assert set(expected) <= set(bindings)
+
+
+def test_hydrator_authenticated_candidate_bindings_fail_closed_on_missing_identity(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    bundle = chronological_bundle()
+    _install_stores(monkeypatch, bundle)
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"observer-fixture")
+    bindings = {
+        value.decision_identity: value.decision_sequence
+        for value in bundle.features.records
+    }
+    fold = chronological_policy().folds[0]
+    missing = next(
+        value.decision_identity
+        for value in bundle.features.records
+        if (
+            fold.validation_started_at_unix_ms
+            <= value.decision_observed_at_unix_ms
+            < fold.test_ended_at_unix_ms
+        )
+    )
+    del bindings[missing]
+
+    with pytest.raises(ValueError, match="absent.*candidate bindings"):
+        hydrate_fast_forecast_evaluation_contexts(
+            bundle=bundle,
+            observer_database_path=database,
+            validation_policy=chronological_policy(),
+            horizon_ms=HORIZON_MS,
+            hydration_policy=_policy(),
+            candidate_ids_by_identity=bindings,
+        )
+
+
+def test_hydration_artifact_writer_threads_authenticated_candidate_bindings(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    bundle = chronological_bundle()
+    _install_stores(monkeypatch, bundle)
+
+    def _forbidden_resolve(*_args, **_kwargs):
+        raise AssertionError(
+            "artifact writer must forward authenticated candidate bindings"
+        )
+
+    monkeypatch.setattr(
+        _FakeMarketStore,
+        "resolve_candidate_at",
+        _forbidden_resolve,
+    )
+    database = tmp_path / "shreks.db"
+    database.write_bytes(b"observer-fixture")
+    bindings = {
+        value.decision_identity: value.decision_sequence
+        for value in bundle.features.records
+    }
+
+    manifest = write_fast_forecast_context_hydration_artifact(
+        bundle=bundle,
+        observer_database_path=database,
+        validation_policy=chronological_policy(),
+        horizon_ms=HORIZON_MS,
+        hydration_policy=_policy(),
+        destination=tmp_path / "hydration",
+        candidate_ids_by_identity=bindings,
+    )
+
+    assert manifest.training_bundle_fingerprint_sha256 == (
+        bundle.manifest.bundle_fingerprint_sha256
+    )
+
+
 def test_hydrator_uses_conservative_exit_capacity_and_preserves_unknowns(
     monkeypatch,
     tmp_path: Path,
