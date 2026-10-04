@@ -17,6 +17,10 @@ from shreks_brain.fast_first_champion_preselection import (
     FastFirstChampionTradablePreselectionArtifact,
     FastFirstChampionTradablePreselectionManifest,
 )
+from shreks_brain.fl9_tradable_universe import (
+    Fl9TradableUniversePolicy,
+    fl9_tradable_universe_policy_fingerprint_sha256,
+)
 from shreks_brain.fast_first_champion_host_run import (
     FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_NAME,
     FAST_FIRST_CHAMPION_HOST_REQUEST_SCHEMA_VERSION,
@@ -168,7 +172,11 @@ def _install_fakes(monkeypatch, tmp_path: Path):
         schema_name="shreks.fast_first_champion_tradable_preselection",
         schema_version=1,
         policy_version="fl9-tradable-universe-v1",
-        policy_fingerprint_sha256="a" * 64,
+        policy_fingerprint_sha256=(
+            fl9_tradable_universe_policy_fingerprint_sha256(
+                Fl9TradableUniversePolicy()
+            )
+        ),
         proof_workspace_artifact_fingerprint_sha256="2" * 64,
         feature_source_jsonl_sha256=feature_sha,
         minimum_decision_observed_at_unix_ms=1_300,
