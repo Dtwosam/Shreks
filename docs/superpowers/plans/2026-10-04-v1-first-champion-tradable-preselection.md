@@ -82,7 +82,7 @@ When supplied:
 - keep decision quote-mint and decision venue policy checks;
 - preserve generic legacy resolver behavior when no binding is supplied.
 
-Add the candidate-binding fingerprint to the hydration artifact manifest so strict readback authenticates the exact binding used.
+Keep the generic hydration artifact schema unchanged. The preparation artifact must bind the preselection artifact fingerprint and candidate-binding fingerprint, and strict preparation/host readback must prove the hydration child was produced inside that authenticated chain.
 
 ## Task 4 — Thread preselection through preparation
 
