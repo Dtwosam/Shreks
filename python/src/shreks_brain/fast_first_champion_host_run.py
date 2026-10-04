@@ -753,6 +753,22 @@ def run_fast_first_champion_host_request(
         raise ValueError(
             "first champion host tradable preselection does not match proof/request"
         )
+    database_wal_path = Path(str(database_path) + "-wal")
+    current_database_sha256 = _sha256_file_stable(database_path)
+    current_database_wal_sha256 = (
+        _sha256_file_stable(database_wal_path)
+        if database_wal_path.is_file()
+        else None
+    )
+    if (
+        preselection.manifest.observer_database_sha256
+        != current_database_sha256
+        or preselection.manifest.observer_database_wal_sha256
+        != current_database_wal_sha256
+    ):
+        raise ValueError(
+            "first champion host tradable preselection observer database snapshot mismatch"
+        )
 
     selection_at = _host_wall_clock_unix_ms()
     _require_non_negative_int(
