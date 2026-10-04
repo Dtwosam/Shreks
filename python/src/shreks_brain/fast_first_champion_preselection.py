@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import argparse
 from dataclasses import asdict, dataclass
 import hashlib
 import json
@@ -718,6 +719,66 @@ def read_fast_first_champion_tradable_preselection(
         manifest=manifest,
         accepted_decisions=accepted_tuple,
     )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="shreks-fast-first-champion-preselection",
+        description=(
+            "Build one immutable input-only tradable-universe preselection "
+            "artifact for the V1 first-champion evidence chain."
+        ),
+    )
+    parser.add_argument("--proof-workspace", required=True)
+    parser.add_argument("--observer-database", required=True)
+    parser.add_argument(
+        "--minimum-decision-observed-at-unix-ms",
+        required=True,
+        type=int,
+    )
+    parser.add_argument("--destination", required=True)
+    args = parser.parse_args(argv)
+
+    artifact = build_fast_first_champion_tradable_preselection(
+        proof_workspace_path=args.proof_workspace,
+        observer_database_path=args.observer_database,
+        minimum_decision_observed_at_unix_ms=(
+            args.minimum_decision_observed_at_unix_ms
+        ),
+        destination=args.destination,
+    )
+    print(
+        json.dumps(
+            {
+                "schema_name": artifact.manifest.schema_name,
+                "schema_version": artifact.manifest.schema_version,
+                "artifact_path": str(artifact.path),
+                "artifact_fingerprint_sha256": (
+                    artifact.manifest.artifact_fingerprint_sha256
+                ),
+                "policy_fingerprint_sha256": (
+                    artifact.manifest.policy_fingerprint_sha256
+                ),
+                "assessed_row_count": (
+                    artifact.manifest.assessed_row_count
+                ),
+                "eligible_row_count": (
+                    artifact.manifest.eligible_row_count
+                ),
+                "accepted_identity_fingerprint_sha256": (
+                    artifact.manifest.accepted_identity_fingerprint_sha256
+                ),
+                "candidate_binding_fingerprint_sha256": (
+                    artifact.manifest.candidate_binding_fingerprint_sha256
+                ),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+    )
+    return 0
 
 
 def _accepted_document(
