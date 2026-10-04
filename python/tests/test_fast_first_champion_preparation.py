@@ -130,8 +130,10 @@ def _install_component_fakes(
         ),
         feature_source_jsonl_sha256=feature_sha,
         minimum_decision_observed_at_unix_ms=0,
-        observer_database_sha256="e" * 64,
-        observer_database_wal_sha256=None,
+        observer_database_sha256=_sha(database.read_bytes()),
+        observer_database_wal_sha256=(
+            _sha(wal.read_bytes()) if wal.is_file() else None
+        ),
         assessed_row_count=len(accepted),
         eligible_row_count=len(accepted),
         eligibility_reason_counts=(("eligible", len(accepted)),),
