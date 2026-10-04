@@ -150,7 +150,9 @@ def _preselection(tmp_path: Path):
         "proof_workspace_artifact_fingerprint_sha256": "b" * 64,
         "feature_source_jsonl_sha256": "c" * 64,
         "minimum_decision_observed_at_unix_ms": 0,
-        "observer_database_sha256": "e" * 64,
+        "observer_database_sha256": hashlib.sha256(
+            (tmp_path / "shreks.db").read_bytes()
+        ).hexdigest(),
         "observer_database_wal_sha256": None,
         "assessed_row_count": len(accepted),
         "eligible_row_count": len(accepted),
