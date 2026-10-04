@@ -887,6 +887,10 @@ def _validate_reopened_chain(
         != manifest.tradable_preselection_accepted_identity_fingerprint_sha256
         or preselection_manifest.candidate_binding_fingerprint_sha256
         != manifest.tradable_preselection_candidate_binding_fingerprint_sha256
+        or preselection_manifest.observer_database_sha256
+        != manifest.observer_database_sha256
+        or preselection_manifest.observer_database_wal_sha256
+        != manifest.observer_database_wal_sha256
         or request.expected_tradable_preselection_artifact_fingerprint_sha256
         != preselection_manifest.artifact_fingerprint_sha256
     ):
